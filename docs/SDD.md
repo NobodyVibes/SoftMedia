@@ -108,6 +108,12 @@ graph TD
         *   **TV Shows:** TV Maze API (Public).
         *   **Movies/General:** Wikidata (SPARQL queries) or OpenMovieDatabase (if available).
         *   **Music:** MusicBrainz API.
+    *   **Routing Strategy:** Strictly routes requests based on `Library.Type`.
+        *   *Movies* -> Wikidata / OMDb
+        *   *TV Shows* -> TVMaze
+        *   *Music* -> MusicBrainz
+        *   *Books* -> Open Library
+        *   *Games* -> Wikidata
     *   **Fallback:** Parse filename (Regex) and read embedded ID3/MKV tags.
 
 4.  **File Watcher:**
@@ -215,7 +221,17 @@ graph TD
     *   Child accounts cannot see content above their rating.
 
 ### 4.3 Data Sources & Compliance
-To ensure ethical usage and stability without API keys:
+To ensure ethical usage and prevent incorrect API calls, the system **MUST** enforce strict type mapping:
+
+| Library Type | Allowed Provider |
+| :--- | :--- |
+| **TV Shows** | TVMaze |
+| **Movies** | Wikidata |
+| **Music** | MusicBrainz |
+| **Books** | Open Library |
+| **Games** | Wikidata |
+
+**Compliance Rules:**
 1.  **TVMaze:**
     *   **Rate Limit:** Adhere to "20 calls every 10 seconds" (or current policy).
     *   **Attribution:** Display "Metadata provided by TVMaze" in the UI.

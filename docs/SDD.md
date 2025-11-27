@@ -76,6 +76,10 @@ graph TD
         API --> Library[Library Service]
         API --> Stream[Streaming Service]
         
+        Stream --> VideoLogic[Video (Range/Transcode)]
+        Stream --> AudioLogic[Audio (Range/Seek)]
+        Stream --> BookLogic[Books (Static/Page API)]
+        
         Library --> DB[(SQLite Database)]
         Library --> Watcher[File Watcher (FileSystemWatcher)]
         Library --> Meta[Metadata Fetcher]
@@ -251,7 +255,29 @@ To ensure ethical usage and prevent incorrect API calls, the system **MUST** enf
     *   **Home:** "Continue Watching", "Recently Added".
     *   **Library:** Grid view of posters. Infinite scroll.
     *   **Details:** Large backdrop image, poster, cast list, "Play" button with gradient background.
-*   **Player:** Custom HTML5 Video Player wrapper (e.g., `vidstack`) to support subtitles and quality selection.
+*   **Player:**
+    *   **Video Player:** Custom HTML5 Video Player wrapper (e.g., `vidstack`) to support subtitles, quality selection, and chapter seeking.
+    *   **Audio Player:** Persistent bottom-bar player (global state) allowing playback while browsing. Supports playlists, shuffle, and gapless playback.
+    *   **eReader:** Dedicated viewer for PDF (via `react-pdf`) and EPUB/CBZ (via `react-reader` or canvas). Supports "Remember Page" and "Double Page" view.
+
+### 4.5 Streaming & Playback Technical Specs
+To ensure a premium experience, the backend must implement specific serving strategies for each media type:
+
+1.  **Video Streaming:**
+    *   **Direct Play:** For supported containers (MP4/WebM) and codecs (H.264/AAC), serve via **HTTP Range Requests** (206 Partial Content) to allow instant seeking.
+    *   **Transcoding (HLS):** For unsupported formats (MKV/HEVC), use FFmpeg to transcode into **HLS (HTTP Live Streaming)** segments (`.ts`) and serve an `.m3u8` playlist.
+        *   *Latency:* Use short segment duration (e.g., 3-6s) for faster seeking.
+        *   *Cleanup:* Background service must aggressively clean up old segments to save disk space.
+
+2.  **Audio Streaming:**
+    *   **Strategy:** Strictly **HTTP Range Requests**.
+    *   **Transcoding:** If the client doesn't support the format (e.g., FLAC on some iOS versions), transcode on-the-fly to **AAC/MP3** pipe.
+    *   **Metadata:** Serve embedded cover art via a separate `/api/v1/audio/{id}/cover` endpoint to avoid extracting it during the stream.
+
+3.  **Book/Comic Serving:**
+    *   **PDF:** Serve via **HTTP Range Requests** (Byte-Serving) so the browser/viewer can render pages without downloading the full 100MB+ file.
+    *   **EPUB:** Unzip into memory or temporary cache and serve individual resource files (HTML/CSS/Images) to the reader.
+    *   **CBZ/CBR:** Treat as a ZIP/RAR. API must provide an endpoint to extract and serve a specific image page on demand: `GET /api/v1/books/{id}/page/{pageNumber}`.
 
 ---
 

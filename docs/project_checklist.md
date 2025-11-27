@@ -3,62 +3,62 @@
 ## Phase 1: Foundation & Backend Core
 
 ### 1.1 Project Initialization
-- [ ] **Repository Setup**
-    - [ ] Initialize Git repository (`git init`)
-    - [ ] Create `.gitignore` (Visual Studio, Node, React, macOS)
-    - [ ] Create `README.md` with basic project info
-- [ ] **Solution Setup**
-    - [ ] Create `SoftMedia.sln`
-    - [ ] Create ASP.NET Core Web API project (`SoftMedia.Server`)
-    - [ ] Create React + Vite project (`SoftMedia.Client`)
-    - [ ] Add projects to Solution
-- [ ] **Backend Configuration**
+- [x] **Repository Setup**
+    - [x] Initialize Git repository (`git init`)
+    - [x] Create `.gitignore` (Visual Studio, Node, React, macOS)
+    - [x] Create `README.md` with basic project info
+- [x] **Solution Setup**
+    - [x] Create `SoftMedia.sln`
+    - [x] Create ASP.NET Core Web API project (`SoftMedia.Server`)
+    - [x] Create React + Vite project (`SoftMedia.Client`)
+    - [x] Add projects to Solution
+- [x] **Backend Configuration**
     - [ ] Configure `appsettings.json` (ConnectionStrings, JWT Settings, RateLimits)
     - [ ] Setup Dependency Injection (DI) container in `Program.cs`
     - [ ] Configure CORS (Allow Frontend URL)
     - [ ] Configure Swagger/OpenAPI (Enable JWT Auth Support)
 
 ### 1.2 Database & Data Access
-- [ ] **EF Core Setup**
-    - [ ] Install NuGet packages (`Microsoft.EntityFrameworkCore.Sqlite`, `Design`)
-    - [ ] Create `AppDbContext` class
-- [ ] **Entities**
-    - [ ] Define `User` entity (Id, Username, PasswordHash, Role, MaxRating)
-    - [ ] Define `Library` entity (Id, Name, Path, Type)
-    - [ ] Define `MediaItem` entity (Core Columns + JSON for Type-Specific Metadata)
-- [ ] **Migrations**
-    - [ ] Create Initial Migration
-    - [ ] Update Database (Create `softmedia.db`)
+- [x] **EF Core Setup**
+    - [x] Install NuGet packages (`Microsoft.EntityFrameworkCore.Sqlite`, `Design`)
+    - [x] Create `AppDbContext` class
+- [x] **Entities**
+    - [x] Define `User` entity (Id, Username, PasswordHash, Role, MaxRating)
+    - [x] Define `Library` entity (Id, Name, Path, Type)
+    - [x] Define `MediaItem` entity (Core Columns + JSON for Type-Specific Metadata)
+- [x] **Migrations**
+    - [x] Create Initial Migration
+    - [x] Update Database (Create `softmedia.db`)
 
 ### 1.3 Authentication System
-- [ ] **Security Utilities**
-    - [ ] Install `Konscious.Security.Cryptography.Argon2`
-    - [ ] Create `PasswordHasher` service
-- [ ] **Token Management**
-    - [ ] Install `System.IdentityModel.Tokens.Jwt`
-    - [ ] Create `TokenService` (Generate Access/Refresh Tokens)
-- [ ] **API Endpoints**
-    - [ ] Create `AuthRequest` DTOs (Login/Signup)
-    - [ ] Create `AuthController` (POST /login, POST /signup)
-    - [ ] Implement Refresh Token rotation logic (HttpOnly Cookie)
-- [ ] **Testing**
-    - [ ] Setup `xUnit` Test Project
-    - [ ] Write Unit Tests for `PasswordHasher` and `TokenService`
+- [x] **Security Utilities**
+    - [x] Install `Konscious.Security.Cryptography.Argon2`
+    - [x] Create `PasswordHasher` service
+- [x] **Token Management**
+    - [x] Install `System.IdentityModel.Tokens.Jwt`
+    - [x] Create `TokenService` (Generate Access/Refresh Tokens)
+- [x] **API Endpoints**
+    - [x] Create `AuthRequest` DTOs (Login/Signup)
+    - [x] Create `AuthController` (POST /login, POST /signup)
+    - [x] Implement Refresh Token rotation logic (HttpOnly Cookie)
+- [x] **Testing**
+    - [x] Setup `xUnit` Test Project
+    - [x] Write Unit Tests for `PasswordHasher` and `TokenService`
 
 ### 1.4 Library Management (Backend)
-- [ ] **File System**
-    - [ ] Create `FileScannerService` (Recursive directory scan)
-    - [ ] Implement **Jailed** `FileSystemWatcher` (Prevent path traversal)
-- [ ] **Metadata Logic**
-    - [ ] Create `MetadataService` interface
-    - [ ] **Implement `MetadataRouter` (Selects provider based on `Library.Type`)**
-    - [ ] Implement `WikidataProvider` (Movies/Games) with **Caching**
-    - [ ] Implement `TVMazeProvider` (TV Shows) with **Rate Limiting**
-    - [ ] Implement `LocalMetadataProvider` (NFO/Sidecar)
-- [ ] **FFmpeg Integration**
-    - [ ] Install FFmpeg wrapper or create `Process` helper
-    - [ ] Implement `MediaProbe` (Extract Codec/Resolution/Duration)
-    - [ ] Implement `SubtitleExtractor` (Extract SRT/PGS from MKV)
+- [x] **File System**
+    - [x] Create `FileScannerService` (Recursive directory scan)
+    - [x] Implement **Jailed** `FileSystemWatcher` (Prevent path traversal)
+- [x] **Metadata Logic**
+    - [x] Create `MetadataService` interface
+    - [x] **Implement `MetadataRouter` (Selects provider based on `Library.Type`)**
+    - [x] Implement `WikidataProvider` (Movies/Games) with **Caching**
+    - [x] Implement `TVMazeProvider` (TV Shows) with **Rate Limiting**
+    - [x] Implement `LocalMetadataProvider` (NFO/Sidecar)
+- [x] **FFmpeg Integration**
+    - [x] Install FFmpeg wrapper or create `Process` helper
+    - [x] Implement `MediaProbe` (Extract Codec/Resolution/Duration)
+    - [x] Implement `SubtitleExtractor` (Extract SRT/PGS from MKV)
 
 ## Phase 2: Frontend Core & Direct Play
 
@@ -90,16 +90,21 @@
     - [ ] Create `FilterBar` (Genre, Year, Sort)
 
 ### 2.4 Media Playback (Direct Play)
-- [ ] **Player Component**
+- [ ] **Video Player**
     - [ ] Install `vidstack` or similar player library
-    - [ ] Create `VideoPlayer` component
-- [ ] **Streaming**
-    - [ ] Create Backend `StreamController` (Serve Static Files / Range Requests)
-    - [ ] Connect Player to Stream Endpoint
-    - [ ] **Note:** Only browser-supported formats (MP4/WebM) will play until Phase 3.
-- [ ] **Subtitles**
-    - [ ] Implement Subtitle Selector UI
-    - [ ] Fetch/Parse subtitle tracks from Backend (Embedded & Local)
+    - [ ] Create `VideoPlayer` component (Overlay controls, Subtitles)
+    - [ ] Connect to Backend Stream Endpoint (Range Requests)
+- [ ] **Audio Player**
+    - [ ] Create Global Audio Context (Zustand)
+    - [ ] Create `PersistentPlayer` component (Bottom bar)
+    - [ ] Implement Playlist Queue logic
+- [ ] **eReader (Books/Comics)**
+    - [ ] Install `react-pdf` and `epubjs` (or similar)
+    - [ ] Create `BookReader` component (Canvas/Canvas)
+    - [ ] Implement "Save Progress" logic (Page number)
+- [ ] **Streaming Backend**
+    - [ ] Create `StreamController` (Serve Static Files / Range Requests)
+    - [ ] Implement `MimeTypeResolver` (Correct headers for MP4 vs MP3 vs PDF)
 
 ## Phase 3: Advanced Features & Polish
 

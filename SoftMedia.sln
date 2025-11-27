@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{7369D935-6CAE-4A9C-844F-59213189838F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SoftMedia.Server", "src\SoftMedia.Server\SoftMedia.Server.csproj", "{2AF96916-53C6-4A0E-BD72-CE5C38F40251}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SoftMedia.Tests", "src\SoftMedia.Tests\SoftMedia.Tests.csproj", "{94AADC31-BC31-4AA0-94C3-3C42E755A967}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2AF96916-53C6-4A0E-BD72-CE5C38F40251}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2AF96916-53C6-4A0E-BD72-CE5C38F40251}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2AF96916-53C6-4A0E-BD72-CE5C38F40251}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2AF96916-53C6-4A0E-BD72-CE5C38F40251}.Release|Any CPU.Build.0 = Release|Any CPU
+		{94AADC31-BC31-4AA0-94C3-3C42E755A967}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{94AADC31-BC31-4AA0-94C3-3C42E755A967}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{94AADC31-BC31-4AA0-94C3-3C42E755A967}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{94AADC31-BC31-4AA0-94C3-3C42E755A967}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{2AF96916-53C6-4A0E-BD72-CE5C38F40251} = {7369D935-6CAE-4A9C-844F-59213189838F}
+		{94AADC31-BC31-4AA0-94C3-3C42E755A967} = {7369D935-6CAE-4A9C-844F-59213189838F}
+	EndGlobalSection
+EndGlobal

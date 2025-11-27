@@ -54,6 +54,7 @@ SoftMedia is a self-hosted, privacy-focused media server designed for the modern
 *   **Justification:** The industry standard for handling video/audio. SoftMedia will shell out to a bundled or system-installed FFmpeg for:
     *   Generating thumbnails/posters.
     *   Extracting technical metadata (resolution, codec, duration).
+    *   **Subtitle Extraction:** extracting embedded subtitles (SRT, PGS, ASS) from containers like MKV.
     *   **Transcoding:** Real-time conversion of video/audio to ensure playback on any device (Web, Mobile, TV).
     *   **Logic:** Server checks client capabilities (Codec/Container support) to decide between Direct Play, Direct Stream, or Full Transcode.
     *   **Format Support:** SoftMedia aims for universal compatibility, supporting any container/codec readable by FFmpeg (MKV, AVI, WMV, ISO, HEVC, VP9, AV1, DTS, TrueHD, etc.).
@@ -219,7 +220,7 @@ To ensure ethical usage and stability without API keys:
     *   **Rate Limit:** Adhere to "20 calls every 10 seconds" (or current policy).
     *   **Attribution:** Display "Metadata provided by TVMaze" in the UI.
 2.  **Wikidata:**
-    *   **User-Agent:** Must send a descriptive User-Agent header (e.g., `SoftMedia/1.0 (NobodySM0000@proton.me)`).
+    *   **User-Agent:** Must send a descriptive User-Agent header (e.g., `SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)`).
     *   **Caching:** Aggressively cache results locally to minimize SPARQL endpoint load.
 3.  **MusicBrainz:**
     *   **Rate Limit:** Strictly 1 request per second.
@@ -268,12 +269,20 @@ Since we do not use a central cloud relay, we recommend two methods:
 *   **How:** User installs Tailscale on the Server and their Phone/Laptop.
 *   **Result:** Access via `http://softmedia-server:8080` from anywhere safely. No open ports.
 
-**Method B: Reverse Proxy (Advanced)**
-*   **What:** Exposing the server to the public internet securely.
-*   **Tool:** **Caddy Web Server**.
-*   **Config:** Caddy automatically obtains a Let's Encrypt SSL certificate.
-*   **Flow:** Internet -> Router (Port 443) -> Caddy -> SoftMedia.
-*   **Requirement:** User must own a domain (or use DuckDNS) and forward ports on their router.
+**Method B: Reverse Proxy + DuckDNS (Free & Standard)**
+*   **Problem:** Most home ISPs change your IP address (Dynamic IP), and buying a domain costs money.
+*   **Solution:** **DuckDNS** (Free Dynamic DNS).
+*   **How:**
+    1.  User gets a free subdomain (e.g., `my-media.duckdns.org`).
+    2.  SoftMedia (or Caddy) updates DuckDNS whenever the ISP changes the home IP.
+    3.  **Caddy** automatically gets a Let's Encrypt SSL cert for that subdomain.
+*   **Result:** Secure access via `https://my-media.duckdns.org`.
+*   **Requirement:** Port forwarding (80/443) on the router.
+
+**Method C: Direct Connection (Legacy/Advanced)**
+*   **What:** Opening a port (e.g., 8080) directly to the internet.
+*   **Warning:** **NOT RECOMMENDED** without SSL. SoftMedia will support this but warn the user.
+*   **Native Apps:** Future native apps will still require one of the above methods (Tailscale, DuckDNS, or Static IP) to locate the server, as SoftMedia does not provide a central "Cloud Relay" service.
 
 ### 6.2 Application Security
 *   **CSRF Protection:** Double-Submit Cookie pattern for API requests.
@@ -345,18 +354,22 @@ This section outlines the settings available to the Admin user via the Web UI. S
 #### **[Playback] > Subtitles**
 *   **Auto-Select Audio/Subtitle:** Automatically select tracks based on user language.
     *   *Default:* `True`
-*   **Download Missing Subtitles:** Attempt to fetch subtitles from OpenSubtitles (requires login) or similar.
-    *   *Default:* `False`
+*   **Import Embedded Subtitles:** Extract and serve subtitles found inside media files (MKV/MP4).
+    *   *Default:* `True`
+*   **Import Local Subtitles:** Scan for sidecar files (e.g., `movie.srt`, `movie.en.vtt`) in the media directory.
+    *   *Default:* `True`
 
 #### **[Metadata] > Data Sources**
-*   **API Contact Email:** Email address used in User-Agent headers for ethical API usage (Required by Wikidata/MusicBrainz).
-    *   *Default:* `admin@localhost` (Must be changed)
 *   **Movie Provider:** Primary API for Movie metadata.
     *   *Default:* `Wikidata`
 *   **TV Provider:** Primary API for TV metadata.
     *   *Default:* `TVMaze`
 *   **Music Provider:** Primary API for Music metadata.
     *   *Default:* `MusicBrainz`
+*   **Books Provider:** Primary API for Book metadata.
+    *   *Default:* `Open Library`
+*   **Games Provider:** Primary API for Game metadata.
+    *   *Default:* `Wikidata`
 *   **Auto-Refresh Metadata:** Fetch new data when files are updated.
     *   *Default:* `True`
 

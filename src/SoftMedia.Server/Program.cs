@@ -55,11 +55,17 @@ if (app.Environment.IsDevelopment())
     // app.MapOpenApi(); // Requires .NET 9
 }
 
-app.UseHttpsRedirection();
+// app.UseHttpsRedirection();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Seed the database
+using (var scope = app.Services.CreateScope())
+{
+    await DbInitializer.InitializeAsync(scope.ServiceProvider);
+}
 
 app.Run();

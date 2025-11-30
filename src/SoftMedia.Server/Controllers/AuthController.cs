@@ -7,7 +7,7 @@ using SoftMedia.Server.Services;
 
 namespace SoftMedia.Server.Controllers;
 
-[Route("api/[controller]")]
+[Route("api/v1/[controller]")]
 [ApiController]
 public class AuthController : ControllerBase
 {

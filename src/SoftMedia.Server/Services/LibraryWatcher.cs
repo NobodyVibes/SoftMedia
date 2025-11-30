@@ -8,13 +8,11 @@ public class LibraryWatcher : IHostedService, IDisposable
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<LibraryWatcher> _logger;
     private readonly List<FileSystemWatcher> _watchers = new();
-    private readonly IFileScannerService _scannerService;
 
-    public LibraryWatcher(IServiceScopeFactory scopeFactory, ILogger<LibraryWatcher> logger, IFileScannerService scannerService)
+    public LibraryWatcher(IServiceScopeFactory scopeFactory, ILogger<LibraryWatcher> logger)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
-        _scannerService = scannerService;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -70,13 +68,23 @@ public class LibraryWatcher : IHostedService, IDisposable
         // In a real app, we would be more granular. For now, trigger a scan of the library containing this file.
         // Optimization: Find which library this file belongs to and scan only that.
         // For simplicity in this phase, we'll trigger a full scan (debouncing would be good here).
-        _scannerService.ScanAllLibrariesAsync().GetAwaiter().GetResult(); 
+        Task.Run(async () =>
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var scannerService = scope.ServiceProvider.GetRequiredService<IFileScannerService>();
+            await scannerService.ScanAllLibrariesAsync();
+        });
     }
 
     private void OnRenamed(object sender, RenamedEventArgs e)
     {
         _logger.LogInformation($"File renamed: {e.OldFullPath} to {e.FullPath}");
-        _scannerService.ScanAllLibrariesAsync().GetAwaiter().GetResult();
+        Task.Run(async () =>
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var scannerService = scope.ServiceProvider.GetRequiredService<IFileScannerService>();
+            await scannerService.ScanAllLibrariesAsync();
+        });
     }
 
     public void Dispose()

@@ -63,48 +63,48 @@
 ## Phase 2: Frontend Core & Direct Play
 
 ### 2.1 Frontend Foundation
-- [ ] **Build Setup**
-    - [ ] Install NPM dependencies (`axios`, `zustand`, `react-router-dom`)
-    - [ ] Configure Vite proxy for API
-- [ ] **Styling**
-    - [ ] Install Tailwind CSS
-    - [ ] Configure `tailwind.config.js` (Blue-Violet Theme Colors)
-    - [ ] Create global CSS variables
+- [x] **Build Setup**
+    - [x] Install NPM dependencies (`axios`, `zustand`, `react-router-dom`)
+    - [x] Configure Vite proxy for API
+- [x] **Styling**
+    - [x] Install Tailwind CSS
+    - [x] Configure `tailwind.config.js` (Blue-Violet Theme Colors)
+    - [x] Create global CSS variables
 
 ### 2.2 Authentication UI
-- [ ] **State Management**
-    - [ ] Create `useAuthStore` (Zustand)
-    - [ ] Implement Axios interceptor for Token Refresh
-- [ ] **Pages**
-    - [ ] Create `LoginPage`
-    - [ ] Create `SignupPage`
-    - [ ] Create `ProtectedRoute` component
+- [x] **State Management**
+    - [x] Create `useAuthStore` (Zustand)
+    - [x] Implement Axios interceptor for Token Refresh
+- [x] **Pages**
+    - [x] Create `LoginPage`
+    - [x] Create `SignupPage`
+    - [x] Create `ProtectedRoute` component
 
 ### 2.3 Library Browser
-- [ ] **API Integration**
-    - [ ] Create `LibraryService` (Frontend)
-    - [ ] Implement React Query hooks (`useLibraries`, `useMediaItems`)
-- [ ] **Components**
-    - [ ] Create `MediaCard` (Poster, Title, Year)
-    - [ ] Create `LibraryGrid` (Virtual scrolling/Pagination)
-    - [ ] Create `FilterBar` (Genre, Year, Sort)
+- [x] **API Integration**
+    - [x] Create `LibraryService` (Frontend)
+    - [x] Implement React Query hooks (`useLibraries`, `useMediaItems`)
+- [x] **Components**
+    - [x] Create `MediaCard` (Poster, Title, Year)
+    - [x] Create `LibraryGrid` (Virtual scrolling/Pagination)
+    - [x] Create `FilterBar` (Genre, Year, Sort)
 
 ### 2.4 Media Playback (Direct Play)
-- [ ] **Video Player**
-    - [ ] Install `vidstack` or similar player library
-    - [ ] Create `VideoPlayer` component (Overlay controls, Subtitles)
-    - [ ] Connect to Backend Stream Endpoint (Range Requests)
-- [ ] **Audio Player**
-    - [ ] Create Global Audio Context (Zustand)
-    - [ ] Create `PersistentPlayer` component (Bottom bar)
-    - [ ] Implement Playlist Queue logic
-- [ ] **eReader (Books/Comics)**
-    - [ ] Install `react-pdf` and `epubjs` (or similar)
-    - [ ] Create `BookReader` component (Canvas/Canvas)
-    - [ ] Implement "Save Progress" logic (Page number)
-- [ ] **Streaming Backend**
-    - [ ] Create `StreamController` (Serve Static Files / Range Requests)
-    - [ ] Implement `MimeTypeResolver` (Correct headers for MP4 vs MP3 vs PDF)
+- [x] **Video Player**
+    - [x] Install `vidstack` or similar player library
+    - [x] Create `VideoPlayer` component (Overlay controls, Subtitles)
+    - [x] Connect to Backend Stream Endpoint (Range Requests)
+- [x] **Audio Player**
+    - [x] Create Global Audio Context (Zustand)
+    - [x] Create `PersistentPlayer` component (Bottom bar)
+    - [x] Implement Playlist Queue logic
+- [x] **eReader (Books/Comics)**
+    - [x] Install `react-pdf` and `epubjs` (or similar)
+    - [x] Create `BookReader` component (Canvas/Canvas)
+    - [x] Implement "Save Progress" logic (Page number)
+- [x] **Streaming Backend**
+    - [x] Create `StreamController` (Serve Static Files / Range Requests)
+    - [x] Implement `MimeTypeResolver` (Correct headers for MP4 vs MP3 vs PDF)
 
 ## Phase 3: Advanced Features & Polish
 

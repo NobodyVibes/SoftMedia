@@ -4,7 +4,7 @@ namespace SoftMedia.Server.Services.Metadata;
 
 public interface IMetadataRouter
 {
-    Task<string?> FetchMetadataAsync(string title, LibraryType type);
+    Task<string?> FetchMetadataAsync(string title, string path, LibraryType type);
 }
 
 public class MetadataRouter : IMetadataRouter
@@ -16,12 +16,12 @@ public class MetadataRouter : IMetadataRouter
         _providers = providers;
     }
 
-    public async Task<string?> FetchMetadataAsync(string title, LibraryType type)
+    public async Task<string?> FetchMetadataAsync(string title, string path, LibraryType type)
     {
         var provider = _providers.FirstOrDefault(p => p.SupportedType == type);
         if (provider != null)
         {
-            return await provider.FetchMetadataAsync(title);
+            return await provider.FetchMetadataAsync(title, path);
         }
         return null;
     }

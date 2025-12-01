@@ -13,10 +13,10 @@
     - [x] Create React + Vite project (`SoftMedia.Client`)
     - [x] Add projects to Solution
 - [x] **Backend Configuration**
-    - [ ] Configure `appsettings.json` (ConnectionStrings, JWT Settings, RateLimits)
-    - [ ] Setup Dependency Injection (DI) container in `Program.cs`
-    - [ ] Configure CORS (Allow Frontend URL)
-    - [ ] Configure Swagger/OpenAPI (Enable JWT Auth Support)
+    - [x] Configure `appsettings.json` (ConnectionStrings, JWT Settings, RateLimits)
+    - [x] Setup Dependency Injection (DI) container in `Program.cs`
+    - [x] Configure CORS (Allow Frontend URL)
+    - [x] Configure Swagger/OpenAPI (Enable JWT Auth Support)
 
 ### 1.2 Database & Data Access
 - [x] **EF Core Setup**
@@ -54,6 +54,9 @@
     - [x] **Implement `MetadataRouter` (Selects provider based on `Library.Type`)**
     - [x] Implement `WikidataProvider` (Movies/Games) with **Caching**
     - [x] Implement `TVMazeProvider` (TV Shows) with **Rate Limiting**
+    - [x] Implement `MusicBrainzProvider` (Music) with **Rate Limiting**
+    - [x] Implement `OpenLibraryProvider` (Books) with **Rate Limiting**
+    - [x] Implement `WikidataGameProvider` (Games)
     - [x] Implement `LocalMetadataProvider` (NFO/Sidecar)
 - [x] **FFmpeg Integration**
     - [x] Install FFmpeg wrapper or create `Process` helper
@@ -109,22 +112,58 @@
 ## Phase 3: Advanced Features & Polish
 
 ### 3.1 Transcoding System
-- [ ] **Backend Logic**
-    - [ ] Create `TranscodeService`
-    - [ ] Implement FFmpeg command builder (HLS/Dash)
-    - [ ] Manage temporary transcode segments
-    - [ ] Implement `TranscodeController` (M3U8 playlists)
-- [ ] **Frontend Logic**
-    - [ ] Detect browser capabilities
-    - [ ] Request Transcode vs Direct Play
+- [x] **Backend Logic**
+    - [x] Create `TranscodeService`
+    - [x] Implement FFmpeg command builder (HLS/Dash)
+    - [x] Manage temporary transcode segments
+    - [x] Implement `TranscodeController` (M3U8 playlists)
+- [x] **Frontend Logic**
+    - [x] Detect browser capabilities
+    - [x] Request Transcode vs Direct Play
 
 ### 3.2 Settings & Administration
-- [ ] **Configuration**
-    - [ ] Create `SettingsPage` (Tabs: Server, Users, Libraries)
-    - [ ] Implement API endpoints for updating `appsettings` or DB config
-- [ ] **User Management**
-    - [ ] Create Admin User List (Ban/Promote)
-    - [ ] Implement Invite System
+- [x] **Configuration**
+    - [x] Create `SettingsPage` (Tabs: Server, Users, Libraries)
+    - [x] Update `SettingsPage` with Music, Book, and Game metadata providers
+    - [x] Implement API endpoints for updating `appsettings` or DB config
+- [x] **User Management Settings**
+    - [x] **Backend API**
+        - [x] Create `GET /api/v1/users` endpoint (Admin only, returns user list with ID, Username, Role, MaxRating, CreatedAt)
+        - [x] Create `PUT /api/v1/users/{id}/role` endpoint (Admin only, update user role: Admin/User)
+        - [x] Create `PUT /api/v1/users/{id}/ban` endpoint (Admin only, soft-delete or set IsBanned flag)
+        - [x] Create `DELETE /api/v1/users/{id}` endpoint (Admin only, hard delete user)
+        - [x] Create `POST /api/v1/invites` endpoint (Admin only, generate invite code with expiration)
+        - [x] Create `GET /api/v1/invites` endpoint (Admin only, list all active invites)
+        - [x] Create `DELETE /api/v1/invites/{code}` endpoint (Admin only, revoke invite)
+        - [x] Update `POST /api/v1/auth/signup` to validate invite code if signup is restricted
+    - [x] **Frontend UI**
+        - [x] Create `UserListTable` component (Display users with Username, Role, MaxRating, Actions)
+        - [x] Implement "Promote to Admin" / "Demote to User" button with confirmation modal
+        - [x] Implement "Ban User" button with confirmation modal
+        - [x] Implement "Delete User" button with confirmation modal
+        - [x] Create `InviteManager` component (Generate invite, copy to clipboard, list active invites)
+        - [x] Display invite expiration time and revoke button
+        - [x] Integrate `UserListTable` and `InviteManager` into `SettingsPage` Users tab
+        - [x] Remove placeholder message from Users tab
+- [ ] **Library Management Settings**
+    - [ ] **Backend API**
+        - [ ] Create `POST /api/v1/libraries` endpoint (Create library with Name, Type, Paths)
+        - [ ] Create `PUT /api/v1/libraries/{id}` endpoint (Update library Name, Type, Paths)
+        - [ ] Create `DELETE /api/v1/libraries/{id}` endpoint (Delete library and optionally cascade delete media items)
+        - [ ] Create `PUT /api/v1/libraries/reorder` endpoint (Update display order for libraries)
+        - [ ] Add validation to prevent duplicate library paths
+        - [ ] Implement path validation (ensure paths exist and are accessible)
+    - [ ] **Frontend UI**
+        - [ ] Create `LibraryForm` component (Add/Edit library with Name, Type dropdown, Path selector)
+        - [ ] Implement file/folder picker or text input with validation for Paths
+        - [ ] Create `LibraryListTable` component (Display libraries with Name, Type, Paths, Actions)
+        - [ ] Implement "Edit Library" button opening modal with `LibraryForm`
+        - [ ] Implement "Delete Library" button with confirmation modal (warn about media item deletion)
+        - [ ] Implement drag-and-drop reordering for libraries (update sidebar order)
+        - [ ] Add "Scan Now" button to trigger immediate library scan
+        - [ ] Integrate `LibraryListTable` and `LibraryForm` into `SettingsPage` Libraries tab
+        - [ ] Remove placeholder message from Libraries tab
+        - [ ] Sync library changes with Sidebar component (invalidate queries)
 
 ### 3.3 Final Polish
 - [ ] **Performance**

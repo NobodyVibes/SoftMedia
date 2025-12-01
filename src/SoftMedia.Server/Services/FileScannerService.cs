@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Metadata;
 
 namespace SoftMedia.Server.Services;
 
@@ -16,14 +17,16 @@ public class FileScannerService : IFileScannerService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<FileScannerService> _logger;
     private readonly IFileSystem _fileSystem;
+    private readonly IMetadataRouter _metadataRouter;
     private readonly string[] _videoExtensions = { ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm" };
     private readonly string[] _audioExtensions = { ".mp3", ".flac", ".aac", ".wav", ".ogg", ".m4a" };
 
-    public FileScannerService(IServiceScopeFactory scopeFactory, ILogger<FileScannerService> logger, IFileSystem fileSystem)
+    public FileScannerService(IServiceScopeFactory scopeFactory, ILogger<FileScannerService> logger, IFileSystem fileSystem, IMetadataRouter metadataRouter)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _fileSystem = fileSystem;
+        _metadataRouter = metadataRouter;
     }
 
     public async Task ScanAllLibrariesAsync()
@@ -60,27 +63,34 @@ public class FileScannerService : IFileScannerService
                 continue;
             }
 
-            var files = _fileSystem.GetFiles(path, "*.*", SearchOption.AllDirectories)
-                .Where(f => IsMediaFile(f, library.Type));
-
+            var files = _fileSystem.GetFiles(path, "*.*", SearchOption.AllDirectories);
             foreach (var file in files)
             {
-                if (!await context.MediaItems.AnyAsync(m => m.Path == file))
-                {
-                    var mediaItem = new MediaItem
-                    {
-                        LibraryId = library.Id,
-                        Title = _fileSystem.GetFileNameWithoutExtension(file),
-                        Path = file,
-                        Size = _fileSystem.GetFileLength(file),
-                        DateAdded = DateTime.UtcNow,
-                        DateModified = _fileSystem.GetLastWriteTimeUtc(file),
-                        Container = _fileSystem.GetExtension(file).TrimStart('.').ToUpper()
-                    };
+                if (!IsMediaFile(file, library.Type)) continue;
 
-                    context.MediaItems.Add(mediaItem);
-                    _logger.LogInformation($"Added media: {mediaItem.Title}");
+                if (await context.MediaItems.AnyAsync(m => m.Path == file && m.LibraryId == libraryId))
+                {
+                    continue;
                 }
+
+                var title = Path.GetFileNameWithoutExtension(file);
+                var metadataJson = await _metadataRouter.FetchMetadataAsync(title, file, library.Type);
+
+                var mediaItem = new MediaItem
+                {
+                    Id = Guid.NewGuid(),
+                    LibraryId = libraryId,
+                    Title = title,
+                    Path = file,
+                    Size = _fileSystem.GetFileLength(file),
+                    DateAdded = DateTime.UtcNow,
+                    DateModified = _fileSystem.GetLastWriteTimeUtc(file),
+                    Container = _fileSystem.GetExtension(file).TrimStart('.').ToUpper(),
+                    MetadataJson = metadataJson
+                };
+
+                context.MediaItems.Add(mediaItem);
+                _logger.LogInformation($"Added media: {mediaItem.Title}");
             }
         }
 

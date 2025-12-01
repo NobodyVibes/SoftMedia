@@ -8,4 +8,21 @@ public record SignupRequest(string Username, string Password, string? InviteCode
 
 public record AuthResponse(string AccessToken, UserDto User);
 
-public record UserDto(Guid Id, string Username, UserRole Role, string MaxRating);
+public record UserDto(Guid Id, string Username, UserRole Role, string MaxRating, DateTime CreatedAt, bool IsBanned);
+
+// User Management DTOs
+public record UpdateUserRoleRequest(string Role);
+
+public record BanUserRequest(bool IsBanned);
+
+// Invite DTOs
+public record InviteDto(
+    string Code,
+    DateTime CreatedAt,
+    DateTime? ExpiresAt,
+    DateTime? UsedAt,
+    string? UsedByUsername
+);
+
+public record CreateInviteRequest(int? ExpiresInHours);
+

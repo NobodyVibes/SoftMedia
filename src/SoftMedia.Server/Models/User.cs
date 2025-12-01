@@ -23,4 +23,10 @@ public class User
     public Guid? ParentId { get; set; }
 
     public string MaxRating { get; set; } = "PG-13";
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public bool IsBanned { get; set; } = false;
+
+    public string? RefreshToken { get; set; }
 }

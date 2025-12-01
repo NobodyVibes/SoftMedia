@@ -29,5 +29,12 @@ export const libraryService = {
 
         const response = await api.get<PagedResult<MediaItem>>(`/libraries/${libraryId}/items`, { params });
         return response.data;
+    },
+
+    getRecent: async (limit: number = 20, type?: string): Promise<MediaItem[]> => {
+        const params = new URLSearchParams({ limit: limit.toString() });
+        if (type) params.append('type', type);
+        const response = await api.get<MediaItem[]>('/media/recent', { params });
+        return response.data;
     }
 };

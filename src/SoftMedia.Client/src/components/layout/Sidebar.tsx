@@ -1,21 +1,37 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Film, Tv, Music, Book, Settings, LogOut } from 'lucide-react';
+import { Home, Film, Tv, Music, Book, LogOut, Gamepad2, Image, Settings } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useUIStore } from '../../store/uiStore';
+import { useLibraries } from '../../hooks/useLibrary';
 import { cn } from '../../lib/utils';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
+
+const libraryTypeIcons: Record<string, any> = {
+    Movie: Film,
+    TV: Tv,
+    Music: Music,
+    Book: Book,
+    Game: Gamepad2,
+    Photo: Image,
+};
 
 export default function Sidebar() {
     const location = useLocation();
     const logout = useAuthStore((state) => state.logout);
     const { isSidebarCollapsed } = useUIStore();
+    const { data: libraries } = useLibraries();
+    const { t } = useTranslation();
 
     const navItems = [
-        { name: 'Home', path: '/', icon: Home },
-        { name: 'Movies', path: '/movies', icon: Film },
-        { name: 'TV Shows', path: '/tv', icon: Tv },
-        { name: 'Music', path: '/music', icon: Music },
-        { name: 'Books', path: '/books', icon: Book },
+        { name: t('Home'), path: '/', icon: Home, isStatic: true },
+        ...(libraries || []).map(lib => ({
+            name: lib.name, // Library names are dynamic, might not be translated
+            path: `/libraries/${lib.id}`,
+            icon: libraryTypeIcons[lib.type] || Film,
+            isStatic: false,
+        })),
+        { name: t('Settings'), path: '/settings', icon: Settings, isStatic: true },
     ];
 
     return (
@@ -105,24 +121,7 @@ export default function Sidebar() {
                     );
                 })}
 
-                <div className="pt-4 mt-4 border-t border-white/5">
-                    {!isSidebarCollapsed && (
-                        <div className="text-xs font-bold text-gray-500 uppercase tracking-wider px-4 mb-3 whitespace-nowrap">
-                            More
-                        </div>
-                    )}
-                    <Link
-                        to="/settings"
-                        className={cn(
-                            "flex items-center gap-4 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition-all group",
-                            isSidebarCollapsed && "justify-center px-2"
-                        )}
-                        title={isSidebarCollapsed ? "Settings" : undefined}
-                    >
-                        <Settings size={24} className="group-hover:rotate-90 transition-transform duration-300 flex-shrink-0" />
-                        {!isSidebarCollapsed && <span className="font-semibold text-sm whitespace-nowrap">Settings</span>}
-                    </Link>
-                </div>
+
             </nav>
 
             {/* Logout Button */}
@@ -135,10 +134,10 @@ export default function Sidebar() {
                         "flex items-center gap-4 px-4 py-3 w-full text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all group border border-transparent hover:border-red-500/20",
                         isSidebarCollapsed && "justify-center px-2"
                     )}
-                    title={isSidebarCollapsed ? "Sign Out" : undefined}
+                    title={isSidebarCollapsed ? t("Sign Out") : undefined}
                 >
                     <LogOut size={24} className="group-hover:-translate-x-1 transition-transform flex-shrink-0" />
-                    {!isSidebarCollapsed && <span className="font-semibold text-sm whitespace-nowrap">Sign Out</span>}
+                    {!isSidebarCollapsed && <span className="font-semibold text-sm whitespace-nowrap">{t('Sign Out')}</span>}
                 </motion.button>
             </div>
         </motion.div>

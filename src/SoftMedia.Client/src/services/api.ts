@@ -36,7 +36,7 @@ api.interceptors.response.use(
             try {
                 // Attempt to refresh token
                 // Note: The backend should look for the refresh token in the HttpOnly cookie
-                const response = await axios.post('/api/v1/auth/refresh-token', {}, {
+                const response = await axios.post('/api/v1/auth/refresh', {}, {
                     withCredentials: true
                 });
 

@@ -1,48 +1,54 @@
-import { useLibraries } from '../hooks/useLibrary';
+import { useLibraries, useRecentMedia } from '../hooks/useLibrary';
 import HeroSection from '../components/ui/HeroSection';
 import MediaRow from '../components/ui/MediaRow';
 import { Link } from 'react-router-dom';
-import { sampleMovies, sampleTVShows } from '../lib/sampleData';
 
 export default function HomePage() {
-    const { data: libraries, isLoading } = useLibraries();
+    const { data: libraries } = useLibraries();
+    const { data: recentMovies } = useRecentMedia(10, 'Movie');
+    const { data: recentTV } = useRecentMedia(10, 'TV');
 
-    // Hero content using first item from sample data
-    const heroItem = sampleMovies[0];
+    // Hero content: Use first recent movie, or fallback to first library item if needed
+    const heroItem = recentMovies?.[0];
+
+    // Helper to find library ID for "View All" links
+    const getLibraryIdByType = (type: string) => libraries?.find(l => l.type === type)?.id;
+    const movieLibraryId = getLibraryIdByType('Movie');
+    const tvLibraryId = getLibraryIdByType('TV');
 
     return (
         <div className="pb-20 -mt-6">
             {/* Hero Section */}
-            <HeroSection
-                title={heroItem.title}
-                description={heroItem.description || ''}
-                imageUrl={heroItem.backdropPath || heroItem.posterPath || ''}
-                year={heroItem.year}
-                rating={heroItem.rating}
-                duration={heroItem.duration}
-                onPlay={() => window.location.href = `/media/${heroItem.id}`}
-                onMoreInfo={() => console.log('More Info clicked')}
-            />
-
-            {/* Continue Watching */}
-            <MediaRow
-                title="Continue Watching"
-                items={[sampleMovies[0], sampleTVShows[0], sampleMovies[2]]}
-            />
+            {heroItem && (
+                <HeroSection
+                    title={heroItem.title}
+                    description={heroItem.description || ''}
+                    imageUrl={heroItem.backdropPath || heroItem.posterPath || ''}
+                    year={heroItem.year}
+                    rating={heroItem.rating}
+                    duration={heroItem.duration}
+                    onPlay={() => window.location.href = `/media/${heroItem.id}`}
+                    onMoreInfo={() => console.log('More Info clicked')}
+                />
+            )}
 
             {/* Recently Added Movies */}
-            <MediaRow
-                title="Recently Added Movies"
-                items={sampleMovies}
-                viewAllLink="/movies"
-            />
+            {recentMovies && recentMovies.length > 0 && (
+                <MediaRow
+                    title="Recently Added Movies"
+                    items={recentMovies}
+                    viewAllLink={movieLibraryId ? `/libraries/${movieLibraryId}` : undefined}
+                />
+            )}
 
             {/* Recently Added TV Shows */}
-            <MediaRow
-                title="Recently Added TV Shows"
-                items={sampleTVShows}
-                viewAllLink="/tv"
-            />
+            {recentTV && recentTV.length > 0 && (
+                <MediaRow
+                    title="Recently Added TV Shows"
+                    items={recentTV}
+                    viewAllLink={tvLibraryId ? `/libraries/${tvLibraryId}` : undefined}
+                />
+            )}
 
             {/* Libraries Section */}
             {libraries && libraries.length > 0 && (

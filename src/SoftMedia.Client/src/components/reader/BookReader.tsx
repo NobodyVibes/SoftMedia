@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { ReactReader } from 'react-reader';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';

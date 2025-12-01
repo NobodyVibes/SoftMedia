@@ -30,11 +30,46 @@ public class AuthController : ControllerBase
             return BadRequest("Username already exists.");
         }
 
+        // Validate invite code if provided
+        if (!string.IsNullOrEmpty(request.InviteCode))
+        {
+            var invite = await _context.Invites
+                .Include(i => i.UsedBy)
+                .FirstOrDefaultAsync(i => i.Code == request.InviteCode);
+
+            if (invite == null)
+            {
+                return BadRequest("Invalid invite code.");
+            }
+
+            if (invite.IsRevoked)
+            {
+                return BadRequest("This invite has been revoked.");
+            }
+
+            if (invite.UsedAt != null)
+            {
+                return BadRequest("This invite has already been used.");
+            }
+
+            if (invite.ExpiresAt != null && invite.ExpiresAt < DateTime.UtcNow)
+            {
+                return BadRequest("This invite has expired.");
+            }
+        }
+        // If there are existing users and no invite code provided, check if invites are required
+        else if (await _context.Users.AnyAsync())
+        {
+            // For now, we'll allow signup without invite. This can be controlled by a setting later.
+            // TODO: Add RequireInviteForSignup setting
+        }
+
         var user = new User
         {
             Username = request.Username,
             PasswordHash = _passwordHasher.HashPassword(request.Password),
-            Role = UserRole.User // Default role
+            Role = UserRole.User, // Default role
+            CreatedAt = DateTime.UtcNow
         };
 
         // First user becomes Admin
@@ -44,6 +79,18 @@ public class AuthController : ControllerBase
         }
 
         _context.Users.Add(user);
+
+        // Mark invite as used if one was provided
+        if (!string.IsNullOrEmpty(request.InviteCode))
+        {
+            var invite = await _context.Invites.FirstOrDefaultAsync(i => i.Code == request.InviteCode);
+            if (invite != null)
+            {
+                invite.UsedAt = DateTime.UtcNow;
+                invite.UsedById = user.Id;
+            }
+        }
+
         await _context.SaveChangesAsync();
 
         var accessToken = _tokenService.GenerateAccessToken(user);
@@ -51,7 +98,7 @@ public class AuthController : ControllerBase
 
         SetRefreshToken(refreshToken);
 
-        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating)));
+        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned)));
     }
 
     [HttpPost("login")]
@@ -63,12 +110,18 @@ public class AuthController : ControllerBase
             return Unauthorized("Invalid username or password.");
         }
 
+        // Check if user is banned
+        if (user.IsBanned)
+        {
+            return Unauthorized("This account has been banned.");
+        }
+
         var accessToken = _tokenService.GenerateAccessToken(user);
         var refreshToken = _tokenService.GenerateRefreshToken();
 
         SetRefreshToken(refreshToken);
 
-        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating)));
+        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned)));
     }
 
     [HttpPost("refresh")]

@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { Search, Bell, Menu, ChevronDown, User as UserIcon, Settings, AlertCircle, HelpCircle, Users, LogOut } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useUIStore } from '../../store/uiStore';
@@ -106,10 +107,10 @@ export default function TopBar() {
                                         <UserIcon size={16} className="text-gray-400 group-hover:text-primary transition-colors" />
                                         <span>View Profile</span>
                                     </button>
-                                    <button className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors group">
+                                    <Link to="/settings" className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors group">
                                         <Settings size={16} className="text-gray-400 group-hover:text-primary transition-colors" />
                                         <span>Account Settings</span>
-                                    </button>
+                                    </Link>
                                     <button className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors group">
                                         <AlertCircle size={16} className="text-gray-400 group-hover:text-primary transition-colors" />
                                         <span>Report Issues</span>

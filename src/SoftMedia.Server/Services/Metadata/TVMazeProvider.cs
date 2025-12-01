@@ -15,7 +15,7 @@ public class TVMazeProvider : IMetadataProvider
         _logger = logger;
     }
 
-    public async Task<string?> FetchMetadataAsync(string title)
+    public async Task<string?> FetchMetadataAsync(string title, string path)
     {
         try
         {

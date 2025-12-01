@@ -17,7 +17,7 @@ public class WikidataProvider : IMetadataProvider
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
     }
 
-    public async Task<string?> FetchMetadataAsync(string title)
+    public async Task<string?> FetchMetadataAsync(string title, string path)
     {
         try
         {

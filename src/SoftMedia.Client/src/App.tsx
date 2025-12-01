@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { Toaster } from 'sonner';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import ProtectedRoute from './components/auth/ProtectedRoute';
@@ -7,6 +8,7 @@ import HomePage from './pages/HomePage';
 import LibraryPage from './pages/LibraryPage';
 import PlayerPage from './pages/PlayerPage';
 import ReaderPage from './pages/ReaderPage';
+import SettingsPage from './pages/SettingsPage';
 
 import { PersistentPlayer } from './components/player/PersistentPlayer';
 
@@ -21,6 +23,7 @@ function App() {
           <Route element={<MainLayout />}>
             <Route path="/" element={<HomePage />} />
             <Route path="/libraries/:id" element={<LibraryPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Route>
           {/* PlayerPage might want to be full screen, so maybe outside MainLayout or handle internally */}
           <Route path="/media/:id" element={<PlayerPage />} />
@@ -30,6 +33,7 @@ function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <PersistentPlayer />
+      <Toaster position="top-right" theme="dark" />
     </>
   );
 }

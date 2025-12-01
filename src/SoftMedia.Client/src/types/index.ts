@@ -21,6 +21,7 @@ export interface MediaItem {
     rating?: string; // "TV-MA", "PG-13", etc.
     progress?: number; // 0-100 for continue watching
     description?: string;
+    container?: string;
 }
 
 export interface PagedResult<T> {

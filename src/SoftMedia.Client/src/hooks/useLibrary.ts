@@ -34,3 +34,10 @@ export const useLibraryItems = (
         enabled: !!libraryId,
     });
 };
+
+export const useRecentMedia = (limit: number = 20, type?: string) => {
+    return useQuery({
+        queryKey: ['recentMedia', limit, type],
+        queryFn: () => libraryService.getRecent(limit, type),
+    });
+};

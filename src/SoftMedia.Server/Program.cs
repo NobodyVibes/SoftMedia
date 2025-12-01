@@ -1,6 +1,9 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Services;
 using SoftMedia.Server.Services.Abstractions;
@@ -25,8 +28,41 @@ builder.Services.AddHttpClient<WikidataProvider>();
 builder.Services.AddHttpClient<TVMazeProvider>();
 builder.Services.AddScoped<IMetadataProvider, WikidataProvider>();
 builder.Services.AddScoped<IMetadataProvider, TVMazeProvider>();
+builder.Services.AddHttpClient<MusicBrainzProvider>();
+builder.Services.AddHttpClient<OpenLibraryProvider>();
+builder.Services.AddHttpClient<GameMetadataProvider>();
+builder.Services.AddScoped<IMetadataProvider, MusicBrainzProvider>();
+builder.Services.AddScoped<IMetadataProvider, OpenLibraryProvider>();
+builder.Services.AddScoped<IMetadataProvider, GameMetadataProvider>();
+builder.Services.AddScoped<IMetadataProvider, ExifMetadataProvider>();
 builder.Services.AddScoped<IMetadataRouter, MetadataRouter>();
-builder.Services.AddScoped<IFFmpegService, FFmpegService>();
+builder.Services.AddSingleton<IFFmpegService, FFmpegService>();
+builder.Services.AddSingleton<TranscodeService>();
+builder.Services.AddScoped<ISettingsService, SettingsService>();
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+        policy.WithOrigins(origins)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
+});
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddFixedWindowLimiter("fixed", limiterOptions =>
+    {
+        limiterOptions.PermitLimit = 100;
+        limiterOptions.Window = TimeSpan.FromSeconds(10);
+        limiterOptions.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+        limiterOptions.QueueLimit = 5;
+    });
+});
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -45,17 +81,46 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-// builder.Services.AddOpenApi(); // Requires .NET 9
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "SoftMedia API", Version = "v1" });
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\"",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
 
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    // app.MapOpenApi(); // Requires .NET 9
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
 
 // app.UseHttpsRedirection();
+
+app.UseCors("AllowFrontend");
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();

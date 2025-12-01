@@ -7,6 +7,7 @@ namespace SoftMedia.Server.Services;
 public interface IFFmpegService
 {
     Task<MediaProbeResult?> ProbeMediaAsync(string path);
+    ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix);
 }
 
 public class MediaProbeResult
@@ -32,9 +33,10 @@ public class FFmpegService : IFFmpegService
     {
         try
         {
+            var ffprobePath = File.Exists("ffprobe.exe") ? "ffprobe.exe" : "ffprobe";
             var startInfo = new ProcessStartInfo
             {
-                FileName = "ffprobe",
+                FileName = ffprobePath,
                 Arguments = $"-v quiet -print_format json -show_format -show_streams \"{path}\"",
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
@@ -86,5 +88,38 @@ public class FFmpegService : IFFmpegService
             _logger.LogError(ex, $"Error probing media: {path}");
             return null;
         }
+    }
+
+    public ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix)
+    {
+        // Ensure output directory exists
+        Directory.CreateDirectory(outputDir);
+
+        var playlistPath = Path.Combine(outputDir, "master.m3u8");
+        var segmentPath = Path.Combine(outputDir, $"{segmentPrefix}_%03d.ts");
+
+        // Basic HLS Transcoding:
+        // -c:v libx264: Transcode video to H.264
+        // -preset veryfast: Balance speed/quality
+        // -c:a aac: Transcode audio to AAC
+        // -f hls: Output format HLS
+        // -hls_time 6: 6 second segments
+        // -hls_list_size 0: Keep all segments in playlist (VOD)
+        
+        var arguments = $"-i \"{inputPath}\" " +
+                        $"-c:v libx264 -preset veryfast -crf 23 " +
+                        $"-c:a aac -b:a 128k " +
+                        $"-f hls -hls_time 6 -hls_playlist_type event -hls_segment_filename \"{segmentPath}\" " +
+                        $"\"{playlistPath}\"";
+
+        var ffmpegPath = File.Exists("ffmpeg.exe") ? "ffmpeg.exe" : "ffmpeg";
+        return new ProcessStartInfo
+        {
+            FileName = ffmpegPath,
+            Arguments = arguments,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardError = true // Capture logs for debugging
+        };
     }
 }

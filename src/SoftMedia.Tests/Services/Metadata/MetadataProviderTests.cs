@@ -30,7 +30,7 @@ public class MetadataProviderTests
         var provider = new WikidataProvider(httpClient, Mock.Of<ILogger<WikidataProvider>>());
 
         // Act
-        var result = await provider.FetchMetadataAsync("Matrix");
+        var result = await provider.FetchMetadataAsync("Matrix", "");
 
         // Assert
         Assert.NotNull(result);
@@ -58,7 +58,7 @@ public class MetadataProviderTests
         var provider = new TVMazeProvider(httpClient, Mock.Of<ILogger<TVMazeProvider>>());
 
         // Act
-        var result = await provider.FetchMetadataAsync("Friends");
+        var result = await provider.FetchMetadataAsync("Friends", "");
 
         // Assert
         Assert.NotNull(result);

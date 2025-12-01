@@ -6,6 +6,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Metadata;
 using Xunit;
 
 namespace SoftMedia.Tests.Services;
@@ -16,6 +17,7 @@ public class FileScannerServiceTests
     private readonly Mock<IServiceScopeFactory> _scopeFactoryMock;
     private readonly Mock<IServiceScope> _scopeMock;
     private readonly Mock<IServiceProvider> _serviceProviderMock;
+    private readonly Mock<IMetadataRouter> _metadataRouterMock;
     private readonly AppDbContext _dbContext;
     private readonly FileScannerService _service;
 
@@ -25,6 +27,7 @@ public class FileScannerServiceTests
         _scopeFactoryMock = new Mock<IServiceScopeFactory>();
         _scopeMock = new Mock<IServiceScope>();
         _serviceProviderMock = new Mock<IServiceProvider>();
+        _metadataRouterMock = new Mock<IMetadataRouter>();
 
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
@@ -35,7 +38,7 @@ public class FileScannerServiceTests
         _scopeMock.Setup(s => s.ServiceProvider).Returns(_serviceProviderMock.Object);
         _serviceProviderMock.Setup(s => s.GetService(typeof(AppDbContext))).Returns(_dbContext);
 
-        _service = new FileScannerService(_scopeFactoryMock.Object, Mock.Of<ILogger<FileScannerService>>(), _fileSystemMock.Object);
+        _service = new FileScannerService(_scopeFactoryMock.Object, Mock.Of<ILogger<FileScannerService>>(), _fileSystemMock.Object, _metadataRouterMock.Object);
     }
 
     [Fact]

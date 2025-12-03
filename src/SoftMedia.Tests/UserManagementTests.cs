@@ -6,6 +6,8 @@ using SoftMedia.Server.Models;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Moq;
+using SoftMedia.Server.Services;
 
 namespace SoftMedia.Tests;
 
@@ -21,10 +23,14 @@ public class UserManagementTests
 
     private UsersController GetUsersController(AppDbContext context, User currentUser)
     {
-        var controller = new UsersController(context);
+        var mockPasswordHasher = new Mock<IPasswordHasher>();
+        mockPasswordHasher.Setup(x => x.HashPassword(It.IsAny<string>())).Returns("hashed_password");
+
+        var controller = new UsersController(context, mockPasswordHasher.Object);
         var claims = new List<Claim>
         {
-            new Claim("sub", currentUser.Id.ToString()),
+            new Claim(ClaimTypes.NameIdentifier, currentUser.Id.ToString()),
+            new Claim("sub", currentUser.Id.ToString()), // Added sub claim
             new Claim(ClaimTypes.Name, currentUser.Username),
             new Claim(ClaimTypes.Role, currentUser.Role.ToString())
         };
@@ -140,5 +146,96 @@ public class UserManagementTests
         Assert.IsType<OkResult>(result);
         var deletedUser = await context.Users.FindAsync(user1.Id);
         Assert.Null(deletedUser);
+    }
+    [Fact]
+    public async Task ApproveUser_ApprovesUser()
+    {
+        // Arrange
+        using var context = GetInMemoryDbContext();
+        var admin = new User { Username = "admin", Role = UserRole.Admin };
+        var user1 = new User { Username = "user1", Role = UserRole.User, IsApproved = false };
+        context.Users.AddRange(admin, user1);
+        await context.SaveChangesAsync();
+
+        var controller = GetUsersController(context, admin);
+
+        // Act
+        var result = await controller.ApproveUser(user1.Id, new ApproveUserRequest(true));
+
+        // Assert
+        Assert.IsType<OkResult>(result);
+        var approvedUser = await context.Users.FindAsync(user1.Id);
+        Assert.True(approvedUser.IsApproved);
+    }
+
+    [Fact]
+    public async Task DenyUser_DeniesUser()
+    {
+        // Arrange
+        using var context = GetInMemoryDbContext();
+        var admin = new User { Username = "admin", Role = UserRole.Admin };
+        var user1 = new User { Username = "user1", Role = UserRole.User, IsApproved = false };
+        context.Users.AddRange(admin, user1);
+        await context.SaveChangesAsync();
+
+        var controller = GetUsersController(context, admin);
+
+        // Act
+        var result = await controller.DenyUser(user1.Id);
+
+        // Assert
+        Assert.IsType<OkResult>(result);
+        var deniedUser = await context.Users.FindAsync(user1.Id);
+        Assert.True(deniedUser.IsRejected);
+        Assert.False(deniedUser.IsApproved);
+    }
+
+    [Fact]
+    public async Task CreateUser_CreatesUser()
+    {
+        // Arrange
+        using var context = GetInMemoryDbContext();
+        var admin = new User { Username = "admin", Role = UserRole.Admin };
+        context.Users.Add(admin);
+        await context.SaveChangesAsync();
+
+        var controller = GetUsersController(context, admin);
+        var request = new CreateUserRequest("newuser", "password123", "User");
+
+        // Act
+        var result = await controller.CreateUser(request);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        var userDto = Assert.IsType<UserDto>(okResult.Value);
+        Assert.Equal("newuser", userDto.Username);
+        Assert.True(userDto.IsApproved);
+        
+        var dbUser = await context.Users.FirstOrDefaultAsync(u => u.Username == "newuser");
+        Assert.NotNull(dbUser);
+    }
+
+    [Fact]
+    public async Task UpdateUserRatings_UpdatesRatings()
+    {
+        // Arrange
+        using var context = GetInMemoryDbContext();
+        var admin = new User { Username = "admin", Role = UserRole.Admin };
+        var user = new User { Username = "user1", Role = UserRole.User };
+        context.Users.AddRange(admin, user);
+        await context.SaveChangesAsync();
+
+        var controller = GetUsersController(context, admin);
+        var ratings = new Dictionary<string, string> { { "Movie", "R" }, { "Game", "M" } };
+        var request = new UpdateUserRatingsRequest(ratings);
+
+        // Act
+        var result = await controller.UpdateUserRatings(user.Id, request);
+
+        // Assert
+        Assert.IsType<OkResult>(result);
+        var dbUser = await context.Users.FindAsync(user.Id);
+        Assert.Contains("R", dbUser.ContentRatings);
+        Assert.Contains("M", dbUser.ContentRatings);
     }
 }

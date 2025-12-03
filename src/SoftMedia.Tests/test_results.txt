@@ -1,0 +1,37 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  SoftMedia.Server -> C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server\bin\Debug\net8.0\SoftMedia.Server.dll
+  SoftMedia.Tests -> C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Tests\bin\Debug\net9.0\SoftMedia.Tests.dll
+Test run for C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Tests\bin\Debug\net9.0\SoftMedia.Tests.dll (.NETCoreApp,Version=v9.0)
+VSTest version 17.12.0 (x64)
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+  Failed SoftMedia.Tests.UserManagementTests.UpdateUserRole_UpdatesRole [16 ms]
+  Error Message:
+   Assert.IsType() Failure: Value is not the exact type
+Expected: typeof(Microsoft.AspNetCore.Mvc.OkResult)
+Actual:   typeof(Microsoft.AspNetCore.Mvc.UnauthorizedResult)
+  Stack Trace:
+     at SoftMedia.Tests.UserManagementTests.UpdateUserRole_UpdatesRole() in C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Tests\UserManagementTests.cs:line 119
+--- End of stack trace from previous location ---
+  Failed SoftMedia.Tests.UserManagementTests.BanUser_BansUser [1 ms]
+  Error Message:
+   Assert.IsType() Failure: Value is not the exact type
+Expected: typeof(Microsoft.AspNetCore.Mvc.OkResult)
+Actual:   typeof(Microsoft.AspNetCore.Mvc.UnauthorizedResult)
+  Stack Trace:
+     at SoftMedia.Tests.UserManagementTests.BanUser_BansUser() in C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Tests\UserManagementTests.cs:line 79
+--- End of stack trace from previous location ---
+  Failed SoftMedia.Tests.UserManagementTests.BanUser_CannotBanSelf [< 1 ms]
+  Error Message:
+   Assert.IsType() Failure: Value is not the exact type
+Expected: typeof(Microsoft.AspNetCore.Mvc.BadRequestObjectResult)
+Actual:   typeof(Microsoft.AspNetCore.Mvc.UnauthorizedResult)
+  Stack Trace:
+     at SoftMedia.Tests.UserManagementTests.BanUser_CannotBanSelf() in C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Tests\UserManagementTests.cs:line 99
+--- End of stack trace from previous location ---
+
+Failed!  - Failed:     3, Passed:    21, Skipped:     0, Total:    24, Duration: 4 s - SoftMedia.Tests.dll (net9.0)
+
+Workload updates are available. Run `dotnet workload list` for more information.

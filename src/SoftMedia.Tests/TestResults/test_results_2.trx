@@ -1,0 +1,69 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="4bc2a6ef-a906-48f3-a1a0-a7bc67c39098" name="Admin@GAMING 2025-12-02 13:32:08" runUser="GAMING\Admin" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2025-12-02T13:32:08.2078861-08:00" queuing="2025-12-02T13:32:08.2078862-08:00" start="2025-12-02T13:32:07.4140281-08:00" finish="2025-12-02T13:32:08.2163554-08:00" />
+  <TestSettings name="default" id="bc642a94-ab48-4d6d-9e07-87728e37c426">
+    <Deployment runDeploymentRoot="Admin_GAMING_2025-12-02_13_32_08" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="7fda9fbb-3f7a-4a0d-9d55-5ef55ccfafc7" testId="6443f1ee-ebec-73ab-1342-ee837f68c88b" testName="SoftMedia.Tests.AuthSecurityTests.Login_WhenUserIsNotApproved_ShouldReturnUnauthorized" computerName="GAMING" duration="00:00:00.0242593" startTime="2025-12-02T13:32:08.1527024-08:00" endTime="2025-12-02T13:32:08.1527026-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7fda9fbb-3f7a-4a0d-9d55-5ef55ccfafc7" />
+    <UnitTestResult executionId="e522c7f9-ded0-44d0-899e-63ae8eacc139" testId="146a60a1-1272-746a-1699-b8d9c2ce0a50" testName="SoftMedia.Tests.AuthSecurityTests.Signup_WhenAllowSignupIsFalse_ShouldReturnForbidden" computerName="GAMING" duration="00:00:00.3785588" startTime="2025-12-02T13:32:08.1307744-08:00" endTime="2025-12-02T13:32:08.1307873-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e522c7f9-ded0-44d0-899e-63ae8eacc139">
+      <Output>
+        <ErrorInfo>
+          <Message>System.ArgumentNullException : Value cannot be null. (Parameter 'stringToEscape')</Message>
+          <StackTrace>   at System.ArgumentNullException.Throw(String paramName)&#xD;
+   at System.ArgumentNullException.ThrowIfNull(Object argument, String paramName)&#xD;
+   at System.UriHelper.EscapeString(String stringToEscape, Boolean checkExistingEscaped, SearchValues`1 noEscape)&#xD;
+   at Microsoft.AspNetCore.Http.ResponseCookies.Append(String key, String value, CookieOptions options)&#xD;
+   at SoftMedia.Server.Controllers.AuthController.SetRefreshToken(String refreshToken) in C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server\Controllers\AuthController.cs:line 186&#xD;
+   at SoftMedia.Server.Controllers.AuthController.Signup(SignupRequest request) in C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server\Controllers\AuthController.cs:line 112&#xD;
+   at SoftMedia.Tests.AuthSecurityTests.Signup_WhenAllowSignupIsFalse_ShouldReturnForbidden() in C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Tests\AuthSecurityTests.cs:line 50&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="SoftMedia.Tests.AuthSecurityTests.Signup_WhenAllowSignupIsFalse_ShouldReturnForbidden" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.tests\bin\debug\net9.0\softmedia.tests.dll" id="146a60a1-1272-746a-1699-b8d9c2ce0a50">
+      <Execution id="e522c7f9-ded0-44d0-899e-63ae8eacc139" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.AuthSecurityTests" name="Signup_WhenAllowSignupIsFalse_ShouldReturnForbidden" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.AuthSecurityTests.Login_WhenUserIsNotApproved_ShouldReturnUnauthorized" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.tests\bin\debug\net9.0\softmedia.tests.dll" id="6443f1ee-ebec-73ab-1342-ee837f68c88b">
+      <Execution id="7fda9fbb-3f7a-4a0d-9d55-5ef55ccfafc7" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.AuthSecurityTests" name="Login_WhenUserIsNotApproved_ShouldReturnUnauthorized" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="6443f1ee-ebec-73ab-1342-ee837f68c88b" executionId="7fda9fbb-3f7a-4a0d-9d55-5ef55ccfafc7" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="146a60a1-1272-746a-1699-b8d9c2ce0a50" executionId="e522c7f9-ded0-44d0-899e-63ae8eacc139" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="2" executed="2" passed="1" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 9.0.2)&#xD;
+[xUnit.net 00:00:00.04]   Discovering: SoftMedia.Tests&#xD;
+[xUnit.net 00:00:00.06]   Discovered:  SoftMedia.Tests&#xD;
+[xUnit.net 00:00:00.06]   Starting:    SoftMedia.Tests&#xD;
+[xUnit.net 00:00:00.47]       System.ArgumentNullException : Value cannot be null. (Parameter 'stringToEscape')&#xD;
+[xUnit.net 00:00:00.47]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.47]            at System.ArgumentNullException.Throw(String paramName)&#xD;
+[xUnit.net 00:00:00.47]            at System.ArgumentNullException.ThrowIfNull(Object argument, String paramName)&#xD;
+[xUnit.net 00:00:00.47]            at System.UriHelper.EscapeString(String stringToEscape, Boolean checkExistingEscaped, SearchValues`1 noEscape)&#xD;
+[xUnit.net 00:00:00.47]            at Microsoft.AspNetCore.Http.ResponseCookies.Append(String key, String value, CookieOptions options)&#xD;
+[xUnit.net 00:00:00.47]         C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server\Controllers\AuthController.cs(186,0): at SoftMedia.Server.Controllers.AuthController.SetRefreshToken(String refreshToken)&#xD;
+[xUnit.net 00:00:00.47]         C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server\Controllers\AuthController.cs(112,0): at SoftMedia.Server.Controllers.AuthController.Signup(SignupRequest request)&#xD;
+[xUnit.net 00:00:00.47]         C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Tests\AuthSecurityTests.cs(50,0): at SoftMedia.Tests.AuthSecurityTests.Signup_WhenAllowSignupIsFalse_ShouldReturnForbidden()&#xD;
+[xUnit.net 00:00:00.47]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:00.49]   Finished:    SoftMedia.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="GAMING" outcome="Error" timestamp="2025-12-02T13:32:08.1292834-08:00">
+        <Text>[xUnit.net 00:00:00.47]     SoftMedia.Tests.AuthSecurityTests.Signup_WhenAllowSignupIsFalse_ShouldReturnForbidden [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

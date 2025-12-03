@@ -14,17 +14,29 @@ public class AuthController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IPasswordHasher _passwordHasher;
     private readonly ITokenService _tokenService;
+    private readonly ISettingsService _settingsService;
 
-    public AuthController(AppDbContext context, IPasswordHasher passwordHasher, ITokenService tokenService)
+    public AuthController(AppDbContext context, IPasswordHasher passwordHasher, ITokenService tokenService, ISettingsService settingsService)
     {
         _context = context;
         _passwordHasher = passwordHasher;
         _tokenService = tokenService;
+        _settingsService = settingsService;
     }
 
     [HttpPost("signup")]
     public async Task<ActionResult<AuthResponse>> Signup(SignupRequest request)
     {
+        var allowSignup = await _settingsService.GetSettingAsync("AllowUserSignup", false);
+        if (!allowSignup)
+        {
+            // Check if this is the first user (setup mode)
+            if (await _context.Users.AnyAsync())
+            {
+                return Forbid("Public signup is disabled.");
+            }
+        }
+
         if (await _context.Users.AnyAsync(u => u.Username == request.Username))
         {
             return BadRequest("Username already exists.");
@@ -72,10 +84,11 @@ public class AuthController : ControllerBase
             CreatedAt = DateTime.UtcNow
         };
 
-        // First user becomes Admin
+        // First user becomes Admin and is Approved
         if (!await _context.Users.AnyAsync())
         {
             user.Role = UserRole.Admin;
+            user.IsApproved = true;
         }
 
         _context.Users.Add(user);
@@ -98,7 +111,7 @@ public class AuthController : ControllerBase
 
         SetRefreshToken(refreshToken);
 
-        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned)));
+        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned, user.IsApproved, user.IsRejected, new Dictionary<string, string>())));
     }
 
     [HttpPost("login")]
@@ -116,12 +129,18 @@ public class AuthController : ControllerBase
             return Unauthorized("This account has been banned.");
         }
 
+        // Check if user is approved
+        if (!user.IsApproved)
+        {
+            return Unauthorized("Account pending approval.");
+        }
+
         var accessToken = _tokenService.GenerateAccessToken(user);
         var refreshToken = _tokenService.GenerateRefreshToken();
 
         SetRefreshToken(refreshToken);
 
-        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned)));
+        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned, user.IsApproved, user.IsRejected, string.IsNullOrEmpty(user.ContentRatings) ? new Dictionary<string, string>() : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(user.ContentRatings, (System.Text.Json.JsonSerializerOptions?)null) ?? new Dictionary<string, string>())));
     }
 
     [HttpPost("refresh")]

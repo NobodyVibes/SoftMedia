@@ -1,0 +1,118 @@
+import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
+import { userService, type UserDto } from '../services/userService';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+
+interface RatingsModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    user: UserDto | null;
+}
+
+const MOVIE_RATINGS = ['G', 'PG', 'PG-13', 'R', 'NC-17'];
+const TV_RATINGS = ['TV-Y', 'TV-Y7', 'TV-G', 'TV-PG', 'TV-14', 'TV-MA'];
+const GAME_RATINGS = ['E', 'E10+', 'T', 'M', 'AO'];
+
+export const RatingsModal: React.FC<RatingsModalProps> = ({ isOpen, onClose, user }) => {
+    const queryClient = useQueryClient();
+    const [ratings, setRatings] = useState<Record<string, string>>({});
+
+    useEffect(() => {
+        if (user) {
+            setRatings(user.contentRatings || {});
+        }
+    }, [user]);
+
+    const updateMutation = useMutation({
+        mutationFn: ({ userId, contentRatings }: { userId: string; contentRatings: Record<string, string> }) =>
+            userService.updateUserRatings(userId, contentRatings),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['users'] });
+            toast.success('Ratings updated successfully');
+            onClose();
+        },
+        onError: (error: any) => {
+            toast.error(error.response?.data || 'Failed to update ratings');
+        },
+    });
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!user) return;
+        updateMutation.mutate({ userId: user.id, contentRatings: ratings });
+    };
+
+    const handleRatingChange = (type: string, value: string) => {
+        setRatings(prev => ({
+            ...prev,
+            [type]: value
+        }));
+    };
+
+    if (!isOpen || !user) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
+                <h2 className="text-xl font-bold text-white mb-4">Edit Content Ratings for {user.username}</h2>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">Movies (MPAA)</label>
+                        <select
+                            value={ratings['Movie'] || ''}
+                            onChange={(e) => handleRatingChange('Movie', e.target.value)}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-primary"
+                        >
+                            <option value="">None (Unrestricted)</option>
+                            {MOVIE_RATINGS.map(r => (
+                                <option key={r} value={r}>{r}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">TV Shows</label>
+                        <select
+                            value={ratings['TV'] || ''}
+                            onChange={(e) => handleRatingChange('TV', e.target.value)}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-primary"
+                        >
+                            <option value="">None (Unrestricted)</option>
+                            {TV_RATINGS.map(r => (
+                                <option key={r} value={r}>{r}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">Games (ESRB)</label>
+                        <select
+                            value={ratings['Game'] || ''}
+                            onChange={(e) => handleRatingChange('Game', e.target.value)}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-primary"
+                        >
+                            <option value="">None (Unrestricted)</option>
+                            {GAME_RATINGS.map(r => (
+                                <option key={r} value={r}>{r}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-4">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="px-4 py-2 rounded text-gray-300 hover:bg-gray-700 transition-colors"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={updateMutation.isPending}
+                            className="px-4 py-2 rounded bg-primary hover:bg-primary/90 text-white transition-colors disabled:opacity-50"
+                        >
+                            {updateMutation.isPending ? 'Saving...' : 'Save Ratings'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};

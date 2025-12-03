@@ -23,10 +23,16 @@ public class User
     public Guid? ParentId { get; set; }
 
     public string MaxRating { get; set; } = "PG-13";
+    
+    // JSON string storing ratings per type: { "Movie": "PG-13", "TV": "TV-14", "Game": "T" }
+    public string ContentRatings { get; set; } = "{}";
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public bool IsBanned { get; set; } = false;
+
+    public bool IsApproved { get; set; } = false;
+    public bool IsRejected { get; set; } = false;
 
     public string? RefreshToken { get; set; }
 }

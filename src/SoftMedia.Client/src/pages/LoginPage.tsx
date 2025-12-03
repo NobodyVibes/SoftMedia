@@ -88,7 +88,7 @@ export default function LoginPage() {
 
                     <Button
                         type="submit"
-                        className="w-full bg-brand-gradient hover:opacity-90 transition-opacity py-6 text-lg font-bold shadow-lg shadow-primary/20"
+                        className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:opacity-90 transition-opacity py-6 text-lg font-bold shadow-lg shadow-blue-500/20"
                         isLoading={isLoading}
                     >
                         Sign In

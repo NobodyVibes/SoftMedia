@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
+using System.Security.Claims;
 using System.Security.Cryptography;
 
 namespace SoftMedia.Server.Controllers;
@@ -24,10 +25,7 @@ public class InvitesController : ControllerBase
     public async Task<ActionResult<InviteDto>> CreateInvite(CreateInviteRequest request)
     {
         // Get current user ID from claims
-        var currentUserId = User.FindFirst("sub")?.Value 
-            ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
-            ?? User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
-
+        var currentUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (currentUserId == null || !Guid.TryParse(currentUserId, out var userId))
         {
             return Unauthorized();

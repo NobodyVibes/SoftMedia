@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services;
 using System.Security.Claims;
 
 namespace SoftMedia.Server.Controllers;
@@ -14,12 +15,12 @@ namespace SoftMedia.Server.Controllers;
 public class UsersController : ControllerBase
 {
     private readonly AppDbContext _context;
-    private readonly ILogger<UsersController> _logger;
+    private readonly IPasswordHasher _passwordHasher;
 
-    public UsersController(AppDbContext context, ILogger<UsersController> logger)
+    public UsersController(AppDbContext context, IPasswordHasher passwordHasher)
     {
         _context = context;
-        _logger = logger;
+        _passwordHasher = passwordHasher;
     }
 
     [HttpGet]
@@ -32,11 +33,69 @@ public class UsersController : ControllerBase
                 u.Role,
                 u.MaxRating,
                 u.CreatedAt,
-                u.IsBanned
+                u.IsBanned,
+                u.IsApproved,
+                u.IsRejected,
+                string.IsNullOrEmpty(u.ContentRatings) 
+                    ? new Dictionary<string, string>() 
+                    : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(u.ContentRatings, (System.Text.Json.JsonSerializerOptions?)null) ?? new Dictionary<string, string>()
             ))
             .ToListAsync();
 
         return Ok(users);
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> CreateUser(CreateUserRequest request)
+    {
+        if (await _context.Users.AnyAsync(u => u.Username == request.Username))
+        {
+            return BadRequest("Username already exists.");
+        }
+
+        if (!Enum.TryParse<UserRole>(request.Role, out var role))
+        {
+            return BadRequest("Invalid role.");
+        }
+
+        var user = new User
+        {
+            Username = request.Username,
+            PasswordHash = _passwordHasher.HashPassword(request.Password),
+            Role = role,
+            IsApproved = true, // Admin created users are auto-approved
+            ContentRatings = "{}"
+        };
+
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+
+        return Ok(new UserDto(
+            user.Id,
+            user.Username,
+            user.Role,
+            user.MaxRating,
+            user.CreatedAt,
+            user.IsBanned,
+            user.IsApproved,
+            user.IsRejected,
+            new Dictionary<string, string>()
+        ));
+    }
+
+    [HttpPut("{id}/ratings")]
+    public async Task<IActionResult> UpdateUserRatings(Guid id, UpdateUserRatingsRequest request)
+    {
+        var user = await _context.Users.FindAsync(id);
+        if (user == null)
+        {
+            return NotFound("User not found.");
+        }
+
+        user.ContentRatings = System.Text.Json.JsonSerializer.Serialize(request.ContentRatings);
+        await _context.SaveChangesAsync();
+
+        return Ok();
     }
 
     [HttpPut("{id}/role")]
@@ -49,7 +108,7 @@ public class UsersController : ControllerBase
         }
 
         // Get current user ID from claims
-        var currentUserId = GetCurrentUserId();
+        var currentUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (currentUserId == null)
         {
             return Unauthorized();
@@ -87,7 +146,7 @@ public class UsersController : ControllerBase
         }
 
         // Get current user ID from claims
-        var currentUserId = GetCurrentUserId();
+        var currentUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (currentUserId == null)
         {
             return Unauthorized();
@@ -105,49 +164,62 @@ public class UsersController : ControllerBase
         return Ok();
     }
 
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> DeleteUser(Guid id)
+    [HttpPut("{id}/approve")]
+    public async Task<IActionResult> ApproveUser(Guid id, ApproveUserRequest request)
     {
-        _logger.LogInformation($"Attempting to delete user {id}");
-
         var user = await _context.Users.FindAsync(id);
         if (user == null)
         {
-            _logger.LogWarning($"User {id} not found");
+            return NotFound("User not found.");
+        }
+
+        user.IsApproved = request.IsApproved;
+        await _context.SaveChangesAsync();
+
+        return Ok();
+    }
+
+    [HttpPut("{id}/deny")]
+    public async Task<IActionResult> DenyUser(Guid id)
+    {
+        var user = await _context.Users.FindAsync(id);
+        if (user == null)
+        {
+            return NotFound("User not found.");
+        }
+
+        user.IsRejected = true;
+        user.IsApproved = false; // Ensure they are not approved
+        await _context.SaveChangesAsync();
+
+        return Ok();
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteUser(Guid id)
+    {
+        var user = await _context.Users.FindAsync(id);
+        if (user == null)
+        {
             return NotFound("User not found.");
         }
 
         // Get current user ID from claims
-        var currentUserId = GetCurrentUserId();
+        var currentUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (currentUserId == null)
         {
-            _logger.LogWarning("Current user ID could not be determined from claims");
-            foreach (var claim in User.Claims)
-            {
-                _logger.LogDebug($"Claim: {claim.Type} = {claim.Value}");
-            }
             return Unauthorized();
         }
 
         // Prevent self-deletion
         if (user.Id.ToString() == currentUserId)
         {
-            _logger.LogWarning($"User {currentUserId} attempted to delete themselves");
             return BadRequest("Cannot delete yourself.");
         }
 
         _context.Users.Remove(user);
         await _context.SaveChangesAsync();
-        
-        _logger.LogInformation($"User {id} deleted successfully");
 
         return Ok();
-    }
-
-    private string? GetCurrentUserId()
-    {
-        return User.FindFirst("sub")?.Value 
-            ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
     }
 }

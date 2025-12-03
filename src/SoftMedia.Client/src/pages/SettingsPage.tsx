@@ -95,7 +95,15 @@ export default function SettingsPage() {
                     <div key={setting.key} className="flex flex-col gap-2">
                         <label className="text-sm font-medium text-gray-300">{t(setting.key.replace(/([A-Z])/g, ' $1').trim())}</label>
 
-                        {setting.value === 'true' || setting.value === 'false' ? (
+                        {setting.key === 'AllowUserSignup' ? (
+                            <Combobox
+                                value={setting.value === 'true' ? 'Enabled' : setting.value === 'false' ? 'Disabled' : setting.value}
+                                onChange={(val) => handleChange(setting.key, val)}
+                                options={["Disabled", "InviteOnly", "Enabled"]}
+                                placeholder="Select signup mode..."
+                                className="max-w-md"
+                            />
+                        ) : setting.value === 'true' || setting.value === 'false' ? (
                             <div className="flex items-center gap-3">
                                 <button
                                     onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}

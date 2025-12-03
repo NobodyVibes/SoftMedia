@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using SoftMedia.Server.Data;
 
@@ -10,9 +11,11 @@ using SoftMedia.Server.Data;
 namespace SoftMedia.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251203061656_AddUserFields")]
+    partial class AddUserFields
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.2");
@@ -64,9 +67,6 @@ namespace SoftMedia.Server.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<Guid?>("UsedById")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("UsedByUsername")
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
@@ -183,9 +183,6 @@ namespace SoftMedia.Server.Migrations
                     b.Property<bool>("CreatedByAdmin")
                         .HasColumnType("INTEGER");
 
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("FirstName")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -194,9 +191,6 @@ namespace SoftMedia.Server.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("IsBanned")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("IsDeleted")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("IsRejected")

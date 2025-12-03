@@ -27,6 +27,7 @@ public class UsersController : ControllerBase
     public async Task<ActionResult<IEnumerable<UserDto>>> GetUsers()
     {
         var users = await _context.Users
+            .Where(u => !u.IsDeleted)
             .Select(u => new UserDto(
                 u.Id,
                 u.Username,
@@ -38,7 +39,11 @@ public class UsersController : ControllerBase
                 u.IsRejected,
                 string.IsNullOrEmpty(u.ContentRatings) 
                     ? new Dictionary<string, string>() 
-                    : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(u.ContentRatings, (System.Text.Json.JsonSerializerOptions?)null) ?? new Dictionary<string, string>()
+                    : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(u.ContentRatings, (System.Text.Json.JsonSerializerOptions?)null) ?? new Dictionary<string, string>(),
+                u.FirstName,
+                u.LastName,
+                u.CreatedByAdmin,
+                _context.Invites.Where(i => i.UsedById == u.Id).Select(i => i.Code).FirstOrDefault()
             ))
             .ToListAsync();
 
@@ -64,7 +69,10 @@ public class UsersController : ControllerBase
             PasswordHash = _passwordHasher.HashPassword(request.Password),
             Role = role,
             IsApproved = true, // Admin created users are auto-approved
-            ContentRatings = "{}"
+            ContentRatings = "{}",
+            FirstName = request.FirstName,
+            LastName = request.LastName,
+            CreatedByAdmin = true
         };
 
         _context.Users.Add(user);
@@ -79,7 +87,11 @@ public class UsersController : ControllerBase
             user.IsBanned,
             user.IsApproved,
             user.IsRejected,
-            new Dictionary<string, string>()
+            new Dictionary<string, string>(),
+            user.FirstName,
+            user.LastName,
+            user.CreatedByAdmin,
+            null
         ));
     }
 
@@ -217,7 +229,28 @@ public class UsersController : ControllerBase
             return BadRequest("Cannot delete yourself.");
         }
 
-        _context.Users.Remove(user);
+        // Soft Delete Implementation
+        user.IsDeleted = true;
+        user.DeletedAt = DateTime.UtcNow;
+        
+        // Rename user to free up the username for future use
+        // Format: original_deleted_guid
+        user.Username = $"{user.Username}_deleted_{Guid.NewGuid().ToString().Substring(0, 8)}";
+
+        // We DO NOT need to nullify UsedById on Invites anymore, because the user row still exists!
+        // This preserves the foreign key integrity and the history.
+        
+        // However, to prevent confusion in the UI (where we show UsedByUsername), we should append (Deleted)
+        // This distinguishes this "johndoe" from any future "johndoe"
+        var usedInvites = await _context.Invites.Where(i => i.UsedById == id).ToListAsync();
+        foreach (var invite in usedInvites)
+        {
+            if (!string.IsNullOrEmpty(invite.UsedByUsername) && !invite.UsedByUsername.Contains("(Deleted)"))
+            {
+                invite.UsedByUsername = $"{invite.UsedByUsername} (Deleted)";
+            }
+        }
+
         await _context.SaveChangesAsync();
 
         return Ok();

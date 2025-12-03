@@ -49,7 +49,8 @@ public class InvitesController : ControllerBase
             invite.CreatedAt,
             invite.ExpiresAt,
             null,
-            null
+            null,
+            false
         );
 
         return Ok(dto);
@@ -65,7 +66,8 @@ public class InvitesController : ControllerBase
                 i.CreatedAt,
                 i.ExpiresAt,
                 i.UsedAt,
-                i.UsedBy != null ? i.UsedBy.Username : null
+                i.UsedByUsername ?? (i.UsedBy != null ? i.UsedBy.Username : null),
+                i.IsRevoked
             ))
             .ToListAsync();
 

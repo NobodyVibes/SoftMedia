@@ -21,5 +21,7 @@ public class Invite
     public Guid? UsedById { get; set; }
     public User? UsedBy { get; set; }
 
+    public string? UsedByUsername { get; set; }
+
     public bool IsRevoked { get; set; } = false;
 }

@@ -6,6 +6,7 @@ export interface InviteDto {
     expiresAt: string | null;
     usedAt: string | null;
     usedByUsername: string | null;
+    isRevoked: boolean;
 }
 
 export interface CreateInviteRequest {

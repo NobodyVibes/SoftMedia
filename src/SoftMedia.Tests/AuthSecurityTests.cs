@@ -51,7 +51,7 @@ public class AuthSecurityTests
         SetupControllerContext(controller);
         
         // Act
-        var result = await controller.Signup(new SignupRequest("newuser", "password", null));
+        var result = await controller.Signup(new SignupRequest("newuser", "password", null, "New", "User"));
 
         // Assert
         Assert.IsType<ForbidResult>(result.Result);
@@ -109,7 +109,7 @@ public class AuthSecurityTests
         SetupControllerContext(controller);
 
         // Act
-        var result = await controller.Signup(new SignupRequest("admin", "password", null));
+        var result = await controller.Signup(new SignupRequest("admin", "password", null, "Admin", "User"));
 
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result.Result);

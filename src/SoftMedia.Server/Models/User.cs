@@ -34,5 +34,12 @@ public class User
     public bool IsApproved { get; set; } = false;
     public bool IsRejected { get; set; } = false;
 
+    public string FirstName { get; set; } = string.Empty;
+    public string LastName { get; set; } = string.Empty;
+    public bool CreatedByAdmin { get; set; } = false;
+
     public string? RefreshToken { get; set; }
+
+    public bool IsDeleted { get; set; } = false;
+    public DateTime? DeletedAt { get; set; }
 }

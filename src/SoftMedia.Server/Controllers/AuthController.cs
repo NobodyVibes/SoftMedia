@@ -27,14 +27,20 @@ public class AuthController : ControllerBase
     [HttpPost("signup")]
     public async Task<ActionResult<AuthResponse>> Signup(SignupRequest request)
     {
-        var allowSignup = await _settingsService.GetSettingAsync("AllowUserSignup", false);
-        if (!allowSignup)
+        var signupSetting = await _settingsService.GetSettingAsync("AllowUserSignup", "Disabled");
+        
+        // First user setup is always allowed
+        if (!await _context.Users.AnyAsync())
         {
-            // Check if this is the first user (setup mode)
-            if (await _context.Users.AnyAsync())
-            {
-                return Forbid("Public signup is disabled.");
-            }
+            // Proceed to creation
+        }
+        else if (signupSetting == "Disabled")
+        {
+            return Forbid("Public signup is disabled.");
+        }
+        else if (signupSetting == "InviteOnly" && string.IsNullOrEmpty(request.InviteCode))
+        {
+            return BadRequest("Invite code is required.");
         }
 
         if (await _context.Users.AnyAsync(u => u.Username == request.Username))
@@ -81,7 +87,9 @@ public class AuthController : ControllerBase
             Username = request.Username,
             PasswordHash = _passwordHasher.HashPassword(request.Password),
             Role = UserRole.User, // Default role
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            FirstName = request.FirstName,
+            LastName = request.LastName
         };
 
         // First user becomes Admin and is Approved
@@ -89,6 +97,12 @@ public class AuthController : ControllerBase
         {
             user.Role = UserRole.Admin;
             user.IsApproved = true;
+        }
+
+        // Auto-approve if invite code was used
+        if (!string.IsNullOrEmpty(request.InviteCode))
+        {
+             user.IsApproved = true;
         }
 
         _context.Users.Add(user);
@@ -101,6 +115,7 @@ public class AuthController : ControllerBase
             {
                 invite.UsedAt = DateTime.UtcNow;
                 invite.UsedById = user.Id;
+                invite.UsedByUsername = user.Username;
             }
         }
 
@@ -111,7 +126,7 @@ public class AuthController : ControllerBase
 
         SetRefreshToken(refreshToken);
 
-        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned, user.IsApproved, user.IsRejected, new Dictionary<string, string>())));
+        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned, user.IsApproved, user.IsRejected, new Dictionary<string, string>(), user.FirstName, user.LastName, user.CreatedByAdmin, request.InviteCode)));
     }
 
     [HttpPost("login")]
@@ -129,6 +144,12 @@ public class AuthController : ControllerBase
             return Unauthorized("This account has been banned.");
         }
 
+        // Check if user is deleted
+        if (user.IsDeleted)
+        {
+            return Unauthorized("Invalid username or password.");
+        }
+
         // Check if user is approved
         if (!user.IsApproved)
         {
@@ -140,7 +161,9 @@ public class AuthController : ControllerBase
 
         SetRefreshToken(refreshToken);
 
-        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned, user.IsApproved, user.IsRejected, string.IsNullOrEmpty(user.ContentRatings) ? new Dictionary<string, string>() : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(user.ContentRatings, (System.Text.Json.JsonSerializerOptions?)null) ?? new Dictionary<string, string>())));
+        var usedInviteCode = await _context.Invites.Where(i => i.UsedById == user.Id).Select(i => i.Code).FirstOrDefaultAsync();
+
+        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned, user.IsApproved, user.IsRejected, string.IsNullOrEmpty(user.ContentRatings) ? new Dictionary<string, string>() : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(user.ContentRatings, (System.Text.Json.JsonSerializerOptions?)null) ?? new Dictionary<string, string>(), user.FirstName, user.LastName, user.CreatedByAdmin, usedInviteCode)));
     }
 
     [HttpPost("refresh")]

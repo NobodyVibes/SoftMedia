@@ -200,7 +200,7 @@ public class UserManagementTests
         await context.SaveChangesAsync();
 
         var controller = GetUsersController(context, admin);
-        var request = new CreateUserRequest("newuser", "password123", "User");
+        var request = new CreateUserRequest("newuser", "password123", "User", "New", "User");
 
         // Act
         var result = await controller.CreateUser(request);

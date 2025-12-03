@@ -10,6 +10,10 @@ export interface UserDto {
     isApproved: boolean;
     isRejected: boolean;
     contentRatings: Record<string, string>;
+    firstName: string;
+    lastName: string;
+    createdByAdmin: boolean;
+    usedInviteCode: string | null;
 }
 
 export interface UpdateUserRoleRequest {
@@ -46,7 +50,7 @@ export const userService = {
         await api.delete(`/users/${userId}`);
     },
 
-    async createUser(data: { username: string; password: string; role: string }): Promise<UserDto> {
+    async createUser(data: { username: string; password: string; role: string; firstName: string; lastName: string }): Promise<UserDto> {
         const response = await api.post<UserDto>('/users', data);
         return response.data;
     },

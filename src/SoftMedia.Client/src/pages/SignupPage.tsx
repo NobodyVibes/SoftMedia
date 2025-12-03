@@ -7,9 +7,12 @@ import { Button } from '../components/ui/Button';
 export default function SignupPage() {
     const navigate = useNavigate();
 
+    const [firstName, setFirstName] = useState('');
+    const [lastName, setLastName] = useState('');
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [inviteCode, setInviteCode] = useState('');
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
@@ -25,7 +28,7 @@ export default function SignupPage() {
         setIsLoading(true);
 
         try {
-            await api.post('/auth/signup', { username, password });
+            await api.post('/auth/signup', { username, password, inviteCode, firstName, lastName });
             // On success, redirect to login
             navigate('/login');
         } catch (err: any) {
@@ -50,6 +53,26 @@ export default function SignupPage() {
 
                 <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
                     <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <Input
+                                id="firstName"
+                                type="text"
+                                label="First Name"
+                                placeholder="First Name"
+                                value={firstName}
+                                onChange={(e) => setFirstName(e.target.value)}
+                                required
+                            />
+                            <Input
+                                id="lastName"
+                                type="text"
+                                label="Last Name"
+                                placeholder="Last Name"
+                                value={lastName}
+                                onChange={(e) => setLastName(e.target.value)}
+                                required
+                            />
+                        </div>
                         <Input
                             id="username"
                             type="text"
@@ -76,6 +99,14 @@ export default function SignupPage() {
                             value={confirmPassword}
                             onChange={(e) => setConfirmPassword(e.target.value)}
                             required
+                        />
+                        <Input
+                            id="inviteCode"
+                            type="text"
+                            label="Invite Code (Optional)"
+                            placeholder="Enter invite code"
+                            value={inviteCode}
+                            onChange={(e) => setInviteCode(e.target.value)}
                         />
                     </div>
 

@@ -13,6 +13,8 @@ export const CreateUserModal: React.FC<CreateUserModalProps> = ({ isOpen, onClos
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [role, setRole] = useState('User');
+    const [firstName, setFirstName] = useState('');
+    const [lastName, setLastName] = useState('');
 
     const createMutation = useMutation({
         mutationFn: userService.createUser,
@@ -23,6 +25,8 @@ export const CreateUserModal: React.FC<CreateUserModalProps> = ({ isOpen, onClos
             setUsername('');
             setPassword('');
             setRole('User');
+            setFirstName('');
+            setLastName('');
         },
         onError: (error: any) => {
             toast.error(error.response?.data || 'Failed to create user');
@@ -31,11 +35,11 @@ export const CreateUserModal: React.FC<CreateUserModalProps> = ({ isOpen, onClos
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!username || !password) {
-            toast.error('Username and password are required');
+        if (!username || !password || !firstName || !lastName) {
+            toast.error('All fields are required');
             return;
         }
-        createMutation.mutate({ username, password, role });
+        createMutation.mutate({ username, password, role, firstName, lastName });
     };
 
     if (!isOpen) return null;
@@ -45,6 +49,28 @@ export const CreateUserModal: React.FC<CreateUserModalProps> = ({ isOpen, onClos
             <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
                 <h2 className="text-xl font-bold text-white mb-4">Create New User</h2>
                 <form onSubmit={handleSubmit} className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">First Name</label>
+                            <input
+                                type="text"
+                                value={firstName}
+                                onChange={(e) => setFirstName(e.target.value)}
+                                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-primary"
+                                placeholder="First Name"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">Last Name</label>
+                            <input
+                                type="text"
+                                value={lastName}
+                                onChange={(e) => setLastName(e.target.value)}
+                                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-primary"
+                                placeholder="Last Name"
+                            />
+                        </div>
+                    </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-400 mb-1">Username</label>
                         <input

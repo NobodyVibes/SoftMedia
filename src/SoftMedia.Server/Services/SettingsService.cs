@@ -94,7 +94,7 @@ public class SettingsService : ISettingsService
             new() { Key = "AutoRefreshMetadata", Value = "true", Group = "Metadata", Description = "Fetch new data when files are updated." },
             
             // Users
-            new() { Key = "AllowUserSignup", Value = "false", Group = "Users", Description = "Allow public registration." },
+            new() { Key = "AllowUserSignup", Value = "Disabled", Group = "Users", Description = "Control public registration (Disabled, InviteOnly, Enabled)." },
         };
 
         foreach (var def in defaults)

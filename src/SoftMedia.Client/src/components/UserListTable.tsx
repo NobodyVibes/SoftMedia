@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { userService, type UserDto } from '../services/userService';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -6,6 +6,20 @@ import { useAuthStore } from '../store/authStore';
 import { toast } from 'sonner';
 import { CreateUserModal } from './CreateUserModal';
 import { RatingsModal } from './RatingsModal';
+import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+
+type SortConfig = {
+    key: keyof UserDto | 'name' | 'origin' | 'status';
+    direction: 'asc' | 'desc';
+};
+
+type UserFilters = {
+    username: string;
+    name: string;
+    role: string;
+    origin: string;
+    status: string;
+};
 
 export const UserListTable: React.FC = () => {
     const queryClient = useQueryClient();
@@ -23,9 +37,19 @@ export const UserListTable: React.FC = () => {
         action: () => { },
         variant: 'default',
     });
-    const [showBannedOrRejected, setShowBannedOrRejected] = useState(false);
+
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [ratingsModalUser, setRatingsModalUser] = useState<UserDto | null>(null);
+
+    // Sorting and Filtering State
+    const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'username', direction: 'asc' });
+    const [filters, setFilters] = useState<UserFilters>({
+        username: '',
+        name: '',
+        role: 'All',
+        origin: 'All',
+        status: 'All', // Replaces showBannedOrRejected
+    });
 
     const { data: users, isLoading } = useQuery({
         queryKey: ['users'],
@@ -167,30 +191,118 @@ export const UserListTable: React.FC = () => {
         });
     };
 
+    // Sorting Logic
+    const handleSort = (key: SortConfig['key']) => {
+        let direction: 'asc' | 'desc' = 'asc';
+        if (sortConfig.key === key && sortConfig.direction === 'asc') {
+            direction = 'desc';
+        }
+        setSortConfig({ key, direction });
+    };
+
+    // Filter Logic
+    const handleFilterChange = (key: keyof UserFilters, value: string) => {
+        setFilters(prev => ({ ...prev, [key]: value }));
+    };
+
+    // Processed Users
+    const processedUsers = useMemo(() => {
+        if (!users) return [];
+
+        let result = [...users];
+
+        // 1. Filtering
+        result = result.filter(user => {
+            // Username
+            if (filters.username && !user.username.toLowerCase().includes(filters.username.toLowerCase())) return false;
+
+            // Name
+            const fullName = `${user.firstName || ''} ${user.lastName || ''}`.trim().toLowerCase();
+            if (filters.name && !fullName.includes(filters.name.toLowerCase())) return false;
+
+            // Role
+            if (filters.role !== 'All' && user.role !== filters.role) return false;
+
+            // Origin
+            if (filters.origin !== 'All') {
+                if (filters.origin === 'Admin Created' && !user.createdByAdmin) return false;
+                if (filters.origin === 'Invite' && !user.usedInviteCode) return false;
+                if (filters.origin === 'Public' && (user.createdByAdmin || user.usedInviteCode)) return false;
+            }
+
+            // Status
+            if (filters.status !== 'All') {
+                if (filters.status === 'Active' && (!user.isApproved || user.isBanned || user.isRejected)) return false;
+                if (filters.status === 'Pending' && (user.isApproved || user.isRejected)) return false;
+                if (filters.status === 'Banned' && !user.isBanned) return false;
+                if (filters.status === 'Denied' && !user.isRejected) return false;
+            }
+
+            return true;
+        });
+
+        // 2. Sorting
+        result.sort((a, b) => {
+            let aValue: any = '';
+            let bValue: any = '';
+
+            switch (sortConfig.key) {
+                case 'username':
+                    aValue = a.username;
+                    bValue = b.username;
+                    break;
+                case 'name':
+                    aValue = `${a.firstName || ''} ${a.lastName || ''}`;
+                    bValue = `${b.firstName || ''} ${b.lastName || ''}`;
+                    break;
+                case 'role':
+                    aValue = a.role;
+                    bValue = b.role;
+                    break;
+                case 'origin':
+                    aValue = a.createdByAdmin ? 'Admin' : a.usedInviteCode ? 'Invite' : 'Public';
+                    bValue = b.createdByAdmin ? 'Admin' : b.usedInviteCode ? 'Invite' : 'Public';
+                    break;
+                case 'status':
+                    // Custom status priority: Active > Pending > Denied > Banned
+                    const getStatusPriority = (u: UserDto) => {
+                        if (u.isBanned) return 0;
+                        if (u.isRejected) return 1;
+                        if (!u.isApproved) return 2;
+                        return 3;
+                    };
+                    aValue = getStatusPriority(a);
+                    bValue = getStatusPriority(b);
+                    break;
+                case 'createdAt':
+                    aValue = new Date(a.createdAt).getTime();
+                    bValue = new Date(b.createdAt).getTime();
+                    break;
+                default:
+                    aValue = (a as any)[sortConfig.key];
+                    bValue = (b as any)[sortConfig.key];
+            }
+
+            if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        return result;
+    }, [users, filters, sortConfig]);
+
     if (isLoading) {
         return <div className="text-gray-400">Loading users...</div>;
     }
 
-    const filteredUsers = users?.filter(user => {
-        if (showBannedOrRejected) return true;
-        return !user.isBanned && !user.isRejected;
-    });
+    const renderSortIcon = (key: SortConfig['key']) => {
+        if (sortConfig.key !== key) return <ArrowUpDown className="w-4 h-4 ml-1 text-gray-600" />;
+        return sortConfig.direction === 'asc' ? <ArrowUp className="w-4 h-4 ml-1 text-primary" /> : <ArrowDown className="w-4 h-4 ml-1 text-primary" />;
+    };
 
     return (
         <>
-            <div className="mb-4 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    <input
-                        type="checkbox"
-                        id="showBannedOrRejected"
-                        checked={showBannedOrRejected}
-                        onChange={(e) => setShowBannedOrRejected(e.target.checked)}
-                        className="rounded border-gray-600 bg-gray-700 text-primary focus:ring-primary"
-                    />
-                    <label htmlFor="showBannedOrRejected" className="text-sm text-gray-300">
-                        Show banned/denied users
-                    </label>
-                </div>
+            <div className="mb-4 flex items-center justify-end">
                 <button
                     onClick={() => setIsCreateModalOpen(true)}
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-md transition-all font-medium flex items-center gap-2"
@@ -204,28 +316,92 @@ export const UserListTable: React.FC = () => {
                     <table className="w-full relative">
                         <thead className="bg-gray-900 sticky top-0 z-10">
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                    Username
-                                </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                    Role
-                                </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                    Ratings
-                                </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                    Created
-                                </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                    Status
-                                </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                    Actions
-                                </th>
+                                {/* Headers with Sort */}
+                                {[
+                                    { key: 'username', label: 'Username' },
+                                    { key: 'name', label: 'Name' },
+                                    { key: 'role', label: 'Role' },
+                                    { key: 'origin', label: 'Origin' },
+                                    { key: null, label: 'Ratings' }, // No sort
+                                    { key: 'createdAt', label: 'Created' },
+                                    { key: 'status', label: 'Status' },
+                                    { key: null, label: 'Actions' }, // No sort
+                                ].map((col, idx) => (
+                                    <th
+                                        key={idx}
+                                        className={`px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider ${col.key ? 'cursor-pointer hover:bg-gray-800 select-none' : ''}`}
+                                        onClick={() => col.key && handleSort(col.key as SortConfig['key'])}
+                                    >
+                                        <div className="flex items-center">
+                                            {col.label}
+                                            {col.key && renderSortIcon(col.key as SortConfig['key'])}
+                                        </div>
+                                    </th>
+                                ))}
+                            </tr>
+                            {/* Filter Row */}
+                            <tr className="bg-gray-850 border-b border-gray-700">
+                                <td className="px-6 py-2">
+                                    <input
+                                        type="text"
+                                        placeholder="Filter..."
+                                        value={filters.username}
+                                        onChange={(e) => handleFilterChange('username', e.target.value)}
+                                        className="w-full bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:border-primary focus:outline-none"
+                                    />
+                                </td>
+                                <td className="px-6 py-2">
+                                    <input
+                                        type="text"
+                                        placeholder="Filter..."
+                                        value={filters.name}
+                                        onChange={(e) => handleFilterChange('name', e.target.value)}
+                                        className="w-full bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:border-primary focus:outline-none"
+                                    />
+                                </td>
+                                <td className="px-6 py-2">
+                                    <select
+                                        value={filters.role}
+                                        onChange={(e) => handleFilterChange('role', e.target.value)}
+                                        className="w-full bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:border-primary focus:outline-none"
+                                    >
+                                        <option value="All">All</option>
+                                        <option value="User">User</option>
+                                        <option value="Admin">Admin</option>
+                                    </select>
+                                </td>
+                                <td className="px-6 py-2">
+                                    <select
+                                        value={filters.origin}
+                                        onChange={(e) => handleFilterChange('origin', e.target.value)}
+                                        className="w-full bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:border-primary focus:outline-none"
+                                    >
+                                        <option value="All">All</option>
+                                        <option value="Admin Created">Admin Created</option>
+                                        <option value="Invite">Invite</option>
+                                        <option value="Public">Public</option>
+                                    </select>
+                                </td>
+                                <td className="px-6 py-2"></td> {/* Ratings */}
+                                <td className="px-6 py-2"></td> {/* Created */}
+                                <td className="px-6 py-2">
+                                    <select
+                                        value={filters.status}
+                                        onChange={(e) => handleFilterChange('status', e.target.value)}
+                                        className="w-full bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:border-primary focus:outline-none"
+                                    >
+                                        <option value="All">All</option>
+                                        <option value="Active">Active</option>
+                                        <option value="Pending">Pending</option>
+                                        <option value="Banned">Banned</option>
+                                        <option value="Denied">Denied</option>
+                                    </select>
+                                </td>
+                                <td className="px-6 py-2"></td> {/* Actions */}
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-700">
-                            {filteredUsers?.map((user) => {
+                            {processedUsers.map((user) => {
                                 const isCurrentUser = user.id === currentUser?.id;
                                 return (
                                     <tr key={user.id} className="hover:bg-gray-750">
@@ -234,6 +410,9 @@ export const UserListTable: React.FC = () => {
                                             {isCurrentUser && (
                                                 <span className="ml-2 text-xs text-gray-400">(You)</span>
                                             )}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                                            {user.firstName} {user.lastName}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <select
@@ -246,6 +425,15 @@ export const UserListTable: React.FC = () => {
                                                 <option value="User">User</option>
                                                 <option value="Admin">Admin</option>
                                             </select>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                                            {user.createdByAdmin ? (
+                                                <span className="text-blue-400">Admin Created</span>
+                                            ) : user.usedInviteCode ? (
+                                                <span className="text-green-400">Invite: {user.usedInviteCode}</span>
+                                            ) : (
+                                                <span className="text-gray-500">Public Signup</span>
+                                            )}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                             <button

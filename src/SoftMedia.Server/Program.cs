@@ -18,6 +18,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
 builder.Services.AddScoped<ITokenService, TokenService>();
+builder.Services.AddHttpClient();
 
 // Library Management Services
 builder.Services.AddSingleton<IFileSystem, FileSystem>();

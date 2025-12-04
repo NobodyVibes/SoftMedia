@@ -1,7 +1,9 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.EntityFrameworkCore;
 
 namespace SoftMedia.Server.Models;
 
+[Index(nameof(LibraryId))]
 public class MediaItem
 {
     public Guid Id { get; set; } = Guid.NewGuid();

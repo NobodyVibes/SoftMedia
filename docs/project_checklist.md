@@ -145,30 +145,97 @@
         - [x] Display invite expiration time and revoke button
         - [x] Integrate `UserListTable` and `InviteManager` into `SettingsPage` Users tab
         - [x] Remove placeholder message from Users tab
-- [ ] **Library Management Settings**
-    - [ ] **Backend API**
-        - [ ] Create `POST /api/v1/libraries` endpoint (Create library with Name, Type, Paths)
-        - [ ] Create `PUT /api/v1/libraries/{id}` endpoint (Update library Name, Type, Paths)
-        - [ ] Create `DELETE /api/v1/libraries/{id}` endpoint (Delete library and optionally cascade delete media items)
-        - [ ] Create `PUT /api/v1/libraries/reorder` endpoint (Update display order for libraries)
-        - [ ] Add validation to prevent duplicate library paths
-        - [ ] Implement path validation (ensure paths exist and are accessible)
-    - [ ] **Frontend UI**
-        - [ ] Create `LibraryForm` component (Add/Edit library with Name, Type dropdown, Path selector)
-        - [ ] Implement file/folder picker or text input with validation for Paths
-        - [ ] Create `LibraryListTable` component (Display libraries with Name, Type, Paths, Actions)
-        - [ ] Implement "Edit Library" button opening modal with `LibraryForm`
-        - [ ] Implement "Delete Library" button with confirmation modal (warn about media item deletion)
-        - [ ] Implement drag-and-drop reordering for libraries (update sidebar order)
-        - [ ] Add "Scan Now" button to trigger immediate library scan
-        - [ ] Integrate `LibraryListTable` and `LibraryForm` into `SettingsPage` Libraries tab
-        - [ ] Remove placeholder message from Libraries tab
-        - [ ] Sync library changes with Sidebar component (invalidate queries)
+- [x] **Library Management Settings**
+    - [x] **Backend API**
+        - [x] Create `POST /api/v1/libraries` endpoint (Create library with Name, Type, Paths)
+        - [x] Create `PUT /api/v1/libraries/{id}` endpoint (Update library Name, Type, Paths)
+        - [x] Create `DELETE /api/v1/libraries/{id}` endpoint (Delete library and optionally cascade delete media items)
+        - [x] Create `PUT /api/v1/libraries/reorder` endpoint (Update display order for libraries)
+        - [x] Add validation to prevent duplicate library paths
+        - [x] Implement path validation (ensure paths exist and are accessible)
+        - [x] Create `POST /api/v1/libraries/{id}/scan` endpoint (Trigger manual scan)
+    - [x] **Frontend UI**
+        - [x] Create `LibraryForm` component (Add/Edit library with Name, Type dropdown, Path selector)
+        - [x] Implement file/folder picker or text input with validation for Paths
+        - [x] Create `LibraryListTable` component (Display libraries with Name, Type, Paths, Actions)
+        - [x] Implement "Edit Library" button opening modal with `LibraryForm`
+        - [x] Implement "Delete Library" button with confirmation modal (warn about media item deletion)
+        - [x] Implement reordering for libraries (Up/Down buttons)
+        - [x] Add "Scan Now" button to trigger immediate library scan
+        - [x] Integrate `LibraryListTable` and `LibraryForm` into `SettingsPage` Libraries tab
+        - [x] Remove placeholder message from Libraries tab
+        - [x] Sync library changes with Sidebar component (invalidate queries)
 
-### 3.3 Final Polish
-- [ ] **Performance**
-    - [ ] Implement Image Caching (Frontend & Backend)
-    - [ ] Optimize Database Indices
+### 3.3 Enhanced Media Experience & Metadata
+- [ ] **Metadata Fetching & Storage (Backend)**
+    - [ ] **Core Metadata Logic**
+        - [ ] Update `MediaItem` entity to support rich metadata (People, Studios, Tags)
+        - [ ] Implement `MetadataAggregator` to merge results from multiple sources (Embedded + API)
+    - [ ] **Movie Metadata**
+        - [ ] Enhance `WikidataProvider` to fetch Director, Cast, Content Rating (MPAA), Production Company
+        - [ ] Implement fallback to embedded metadata (Title, Year) if API fails
+    - [ ] **TV Show Metadata**
+        - [ ] Enhance `TVMazeProvider` to fetch Network, Status, Genre, Content Rating
+        - [ ] Implement Episode-level metadata fetching (Summary, Air Date, Guest Stars)
+        - [ ] Implement Season-level grouping logic in API responses
+    - [ ] **Music Metadata**
+        - [ ] Enhance `MusicBrainzProvider` to fetch Artist Bio, Release Date, Record Label
+        - [ ] Implement `TagLib#` integration for robust embedded ID3 tag reading (Track, Disk, Album Art)
+        - [ ] Implement Artist -> Album -> Disc -> Track hierarchy in API
+    - [ ] **Book Metadata**
+        - [ ] Enhance `OpenLibraryProvider` to fetch ISBN, Page Count, Publisher, Subjects
+        - [ ] Implement EPUB/PDF metadata extraction (Title, Author)
+    - [ ] **Game (ROM) Metadata**
+        - [ ] Enhance `WikidataGameProvider` to fetch Platform, Developer, Publisher, Game Mode
+        - [ ] Implement multi-disc detection and grouping (e.g., "Game (Disc 1).iso", "Game (Disc 2).iso")
+    - [ ] **Photo Metadata**
+        - [ ] Implement `ExifReader` service to extract Camera, ISO, F-Stop, GPS, Date Taken
+        - [ ] Implement reverse geocoding (optional/future) or simple coordinate storage
+- [ ] **Frontend Media Display & Detail Pages**
+    - [ ] **Routing & Layout**
+        - [ ] Create dynamic routes for media details (`/item/{id}`)
+        - [ ] Implement `MediaDetailLayout` (Hero image/Backdrop, Poster, Info Column)
+        - [ ] Implement **User Star Rating** component (Interactive 1-5 stars)
+    - [ ] **Movie Experience**
+        - [ ] Update `MediaCard` to show Year and Content Rating badges
+        - [ ] Create `MovieDetailPage` (Display Plot, Cast Grid, Director, Studio, Tech Specs)
+    - [ ] **TV Experience**
+        - [ ] Create `TVShowDetailPage` (Series Info, Season List)
+        - [ ] Create `SeasonDetailPage` (Episode List with thumbnails and summaries)
+        - [ ] Implement "Next Episode" logic
+    - [ ] **Music Experience**
+        - [ ] **Implement View Toggle** (Artist [Default] vs Album) for Music Libraries
+        - [ ] Create `ArtistDetailPage` (Bio, Album Grid)
+        - [ ] Create `AlbumDetailPage` (Tracklist, Disc separation, Release Date)
+    - [ ] **Book & Audiobook Experience**
+        - [ ] Create `BookDetailPage` (Summary, Author, Page Count, ISBN)
+        - [ ] Add "Read" button for E-Books and "Listen" button for Audiobooks
+        - [ ] Support "Narrator" metadata field for Audiobooks
+    - [ ] **Game Experience**
+        - [ ] Create `GameDetailPage` (Platform, Developer, Multiplayer/Singleplayer tags)
+        - [ ] Handle multi-disc selection in "Play/Download" action
+    - [ ] **Photo Experience**
+        - [ ] **Implement Masonry/Justified Grid Layout** for Photo Libraries
+        - [ ] Create `PhotoDetailPage` (Large preview, EXIF data sidebar)
+        - [ ] Implement "Next/Prev" navigation for photo albums
+- [ ] **Search & Filtering**
+    - [ ] **Backend Filtering**
+        - [ ] Implement `GET /api/v1/libraries/{id}/filter` endpoint
+        - [ ] Support filtering by: Genre, Year, Content Rating, Resolution, Video Codec, Audio Codec, **User Rating**
+        - [ ] Support sorting by: Date Added, Release Date, Title, IMDB Rating, **User Rating**
+    - [ ] **User Rating System (Backend)**
+        - [ ] Add `UserRating` field to `MediaItem` (or separate table for per-user ratings)
+        - [ ] Create `POST /api/v1/media/{id}/rate` endpoint
+    - [ ] **Frontend Filter UI**
+        - [ ] Update `FilterBar` to fetch available filters from backend
+        - [ ] Implement multi-select for Genres
+        - [ ] Implement Range slider for Years or Ratings (optional)
+        - [ ] Implement Text Search input (Debounced)
+
+### 3.4 Final Polish
+- [x] **Performance**
+    - [x] Implement Image Caching (Frontend & Backend)
+    - [x] Optimize Database Indices
 - [ ] **Security**
     - [ ] Run Security Audit (LFI, XSS, CSRF)
     - [ ] Verify Remote Access (DuckDNS/Tailscale)

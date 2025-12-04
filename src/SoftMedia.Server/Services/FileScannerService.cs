@@ -19,7 +19,7 @@ public class FileScannerService : IFileScannerService
     private readonly IFileSystem _fileSystem;
     private readonly IMetadataRouter _metadataRouter;
     private readonly string[] _videoExtensions = { ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm" };
-    private readonly string[] _audioExtensions = { ".mp3", ".flac", ".aac", ".wav", ".ogg", ".m4a" };
+    private readonly string[] _audioExtensions = { ".mp3", ".flac", ".aac", ".wav", ".ogg", ".m4a", ".weba" };
 
     public FileScannerService(IServiceScopeFactory scopeFactory, ILogger<FileScannerService> logger, IFileSystem fileSystem, IMetadataRouter metadataRouter)
     {

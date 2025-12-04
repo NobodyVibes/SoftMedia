@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
+using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
 
 namespace SoftMedia.Server.Controllers;
@@ -19,7 +20,7 @@ public class MediaController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<MediaItem>> GetMediaItem(Guid id)
+    public async Task<ActionResult<MediaItemDto>> GetMediaItem(Guid id)
     {
         var item = await _context.MediaItems
             .Include(m => m.Library)
@@ -30,11 +31,11 @@ public class MediaController : ControllerBase
             return NotFound();
         }
 
-        return item;
+        return MediaItemDto.FromMediaItem(item, "/api/v1/image/proxy");
     }
 
     [HttpGet("recent")]
-    public async Task<ActionResult<IEnumerable<MediaItem>>> GetRecentMedia([FromQuery] int limit = 20, [FromQuery] string? type = null)
+    public async Task<ActionResult<IEnumerable<MediaItemDto>>> GetRecentMedia([FromQuery] int limit = 20, [FromQuery] string? type = null)
     {
         IQueryable<MediaItem> query = _context.MediaItems;
 
@@ -53,6 +54,6 @@ public class MediaController : ControllerBase
             .Take(limit)
             .ToListAsync();
 
-        return items;
+        return items.Select(i => MediaItemDto.FromMediaItem(i, "/api/v1/image/proxy")).ToList();
     }
 }

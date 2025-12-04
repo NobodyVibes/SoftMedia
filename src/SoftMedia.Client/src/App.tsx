@@ -9,7 +9,6 @@ import LibraryPage from './pages/LibraryPage';
 import PlayerPage from './pages/PlayerPage';
 import ReaderPage from './pages/ReaderPage';
 import SettingsPage from './pages/SettingsPage';
-
 import { PersistentPlayer } from './components/player/PersistentPlayer';
 
 function App() {

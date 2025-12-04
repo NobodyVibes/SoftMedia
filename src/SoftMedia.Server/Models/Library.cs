@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.EntityFrameworkCore;
 
 namespace SoftMedia.Server.Models;
 
@@ -12,6 +13,7 @@ public enum LibraryType
     Photo
 }
 
+[Index(nameof(Order))]
 public class Library
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -23,4 +25,6 @@ public class Library
 
     // Stored as JSON
     public List<string> Paths { get; set; } = new();
+
+    public int Order { get; set; }
 }

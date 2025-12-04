@@ -36,5 +36,26 @@ export const libraryService = {
         if (type) params.append('type', type);
         const response = await api.get<MediaItem[]>('/media/recent', { params });
         return response.data;
-    }
+    },
+
+    create: async (library: { name: string; type: string; paths: string[] }): Promise<Library> => {
+        const response = await api.post<Library>('/libraries', library);
+        return response.data;
+    },
+
+    update: async (id: string, library: { name: string; type: string; paths: string[] }): Promise<void> => {
+        await api.put(`/libraries/${id}`, library);
+    },
+
+    delete: async (id: string): Promise<void> => {
+        await api.delete(`/libraries/${id}`);
+    },
+
+    reorderLibraries: async (orderedIds: string[]) => {
+        await api.put('/libraries/reorder', orderedIds);
+    },
+
+    scanLibrary: async (id: string) => {
+        await api.post(`/libraries/${id}/scan`);
+    },
 };

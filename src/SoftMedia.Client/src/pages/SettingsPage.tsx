@@ -1,14 +1,18 @@
 import { useState, useEffect } from 'react';
-import { Settings, Server, Users, Library, Save, RefreshCw, Database, Network, Play } from 'lucide-react';
+import { Settings, Server, Users, Library as LibraryIcon, Save, RefreshCw, Database, Network, Play, Plus } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Combobox } from '../components/ui/Combobox';
 import { settingsService, type AppSetting } from '../services/settingsService';
+import { libraryService } from '../services/libraryService';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
 import { UserListTable } from '../components/UserListTable';
 import { InviteManager } from '../components/InviteManager';
+import { LibraryListTable } from '../components/LibraryListTable';
+import { LibraryForm } from '../components/LibraryForm';
+import type { Library } from '../types';
 
 type Tab = 'server' | 'users' | 'libraries' | 'metadata' | 'playback' | 'network';
 
@@ -18,10 +22,20 @@ export default function SettingsPage() {
     const [localSettings, setLocalSettings] = useState<AppSetting[]>([]);
     const { t, i18n } = useTranslation();
 
+    // Library State
+    const [isLibraryFormOpen, setIsLibraryFormOpen] = useState(false);
+    const [editingLibrary, setEditingLibrary] = useState<Library | undefined>(undefined);
+
     // Fetch Settings
     const { data: settings, isLoading } = useQuery({
         queryKey: ['settings'],
         queryFn: settingsService.getAll,
+    });
+
+    // Fetch Libraries
+    const { data: libraries, isLoading: isLoadingLibraries } = useQuery({
+        queryKey: ['libraries'],
+        queryFn: libraryService.getAll,
     });
 
     // Update local state when data is fetched
@@ -41,8 +55,6 @@ export default function SettingsPage() {
             // Update language if it changed
             const langSetting = localSettings.find(s => s.key === 'Language');
             if (langSetting && langSetting.value !== i18n.language) {
-                // Map full locale codes to short codes if necessary, or ensure i18n resources match
-                // For now, assuming direct match or fallback
                 i18n.changeLanguage(langSetting.value);
             }
         },
@@ -51,12 +63,75 @@ export default function SettingsPage() {
         }
     });
 
+    // Library Mutations
+    const createLibraryMutation = useMutation({
+        mutationFn: libraryService.create,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['libraries'] });
+            toast.success(t('Library created successfully'));
+            setIsLibraryFormOpen(false);
+        },
+        onError: () => {
+            toast.error(t('Failed to create library'));
+        }
+    });
+
+    const updateLibraryMutation = useMutation({
+        mutationFn: ({ id, data }: { id: string; data: { name: string; type: string; paths: string[] } }) =>
+            libraryService.update(id, data),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['libraries'] });
+            toast.success(t('Library updated successfully'));
+            setIsLibraryFormOpen(false);
+            setEditingLibrary(undefined);
+        },
+        onError: () => {
+            toast.error(t('Failed to update library'));
+        }
+    });
+
+    const deleteLibraryMutation = useMutation({
+        mutationFn: libraryService.delete,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['libraries'] });
+            toast.success(t('Library deleted successfully'));
+        },
+        onError: () => {
+            toast.error(t('Failed to delete library'));
+        }
+    });
+
+    const reorderLibraryMutation = useMutation({
+        mutationFn: libraryService.reorderLibraries,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['libraries'] });
+            toast.success('Library order updated');
+        },
+        onError: () => toast.error('Failed to reorder libraries'),
+    });
+
+    const scanLibraryMutation = useMutation({
+        mutationFn: libraryService.scanLibrary,
+        onSuccess: () => {
+            toast.success('Library scan started');
+        },
+        onError: () => toast.error('Failed to start library scan'),
+    });
+
     const handleSave = () => {
         updateMutation.mutate(localSettings);
     };
 
     const handleChange = (key: string, value: string) => {
         setLocalSettings(prev => prev.map(s => s.key === key ? { ...s, value } : s));
+    };
+
+    const handleLibrarySubmit = async (data: { name: string; type: string; paths: string[] }) => {
+        if (editingLibrary) {
+            await updateLibraryMutation.mutateAsync({ id: editingLibrary.id, data });
+        } else {
+            await createLibraryMutation.mutateAsync(data);
+        }
     };
 
     const languageOptions = [
@@ -80,7 +155,7 @@ export default function SettingsPage() {
         { id: 'playback', label: t('Playback'), icon: Play },
         { id: 'metadata', label: t('Metadata'), icon: Database },
         { id: 'users', label: t('Users'), icon: Users },
-        { id: 'libraries', label: t('Libraries'), icon: Library },
+        { id: 'libraries', label: t('Libraries'), icon: LibraryIcon },
     ];
 
     // Helper to render settings by group
@@ -203,7 +278,7 @@ export default function SettingsPage() {
     };
 
     return (
-        <div className="p-8 max-w-6xl mx-auto pb-24">
+        <div className="p-8 max-w-6xl mx-auto pb-24" >
             <div className="flex items-center justify-between mb-8">
                 <div className="flex items-center gap-4">
                     <Settings className="w-8 h-8 text-primary" />
@@ -317,18 +392,60 @@ export default function SettingsPage() {
 
                             {activeTab === 'libraries' && (
                                 <div>
-                                    <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
-                                        <Library className="text-primary" /> Library Management
-                                    </h2>
-                                    <div className="p-4 rounded-lg bg-green-500/10 border border-green-500/20 text-green-200">
-                                        Library management is currently handled via the database. UI coming soon.
+                                    <div className="flex items-center justify-between mb-6">
+                                        <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+                                            <LibraryIcon className="text-primary" /> Library Management
+                                        </h2>
+                                        <button
+                                            onClick={() => {
+                                                setEditingLibrary(undefined);
+                                                setIsLibraryFormOpen(true);
+                                            }}
+                                            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg font-medium transition-colors"
+                                        >
+                                            <Plus size={18} />
+                                            Add Library
+                                        </button>
                                     </div>
+
+                                    {isLoadingLibraries ? (
+                                        <div className="text-center py-12">
+                                            <RefreshCw className="animate-spin w-8 h-8 text-primary mx-auto" />
+                                        </div>
+                                    ) : (
+                                        <LibraryListTable
+                                            libraries={libraries || []}
+                                            onEdit={(library) => {
+                                                setEditingLibrary(library);
+                                                setIsLibraryFormOpen(true);
+                                            }}
+                                            onDelete={(library) => {
+                                                if (confirm(`Are you sure you want to delete "${library.name}"?`)) {
+                                                    deleteLibraryMutation.mutate(library.id);
+                                                }
+                                            }}
+                                            onReorder={(orderedIds) => reorderLibraryMutation.mutate(orderedIds)}
+                                            onScan={(library) => scanLibraryMutation.mutate(library.id)}
+                                        />
+                                    )}
                                 </div>
                             )}
                         </>
                     )}
                 </div>
             </div>
-        </div>
+
+            {isLibraryFormOpen && (
+                <LibraryForm
+                    initialData={editingLibrary}
+                    onSubmit={handleLibrarySubmit}
+                    onCancel={() => {
+                        setIsLibraryFormOpen(false);
+                        setEditingLibrary(undefined);
+                    }}
+                    isLoading={createLibraryMutation.isPending || updateLibraryMutation.isPending}
+                />
+            )}
+        </div >
     );
 }

@@ -8,7 +8,9 @@ public record SignupRequest(string Username, string Password, string? InviteCode
 
 public record AuthResponse(string AccessToken, UserDto User);
 
-public record UserDto(Guid Id, string Username, UserRole Role, string MaxRating, DateTime CreatedAt, bool IsBanned, bool IsApproved, bool IsRejected, Dictionary<string, string> ContentRatings, string FirstName, string LastName, bool CreatedByAdmin, string? UsedInviteCode);
+public record ChangePasswordRequest(string OldPassword, string NewPassword);
+
+public record UserDto(Guid Id, string Username, UserRole Role, string MaxRating, DateTime CreatedAt, bool IsBanned, bool IsApproved, bool IsRejected, Dictionary<string, string> ContentRatings, string FirstName, string LastName, bool CreatedByAdmin, string? UsedInviteCode, bool MustChangePassword);
 
 // User Management DTOs
 public record UpdateUserRoleRequest(string Role);

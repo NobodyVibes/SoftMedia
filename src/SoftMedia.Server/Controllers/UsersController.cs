@@ -43,7 +43,8 @@ public class UsersController : ControllerBase
                 u.FirstName,
                 u.LastName,
                 u.CreatedByAdmin,
-                _context.Invites.Where(i => i.UsedById == u.Id).Select(i => i.Code).FirstOrDefault()
+                _context.Invites.Where(i => i.UsedById == u.Id).Select(i => i.Code).FirstOrDefault(),
+                u.MustChangePassword
             ))
             .ToListAsync();
 
@@ -91,7 +92,8 @@ public class UsersController : ControllerBase
             user.FirstName,
             user.LastName,
             user.CreatedByAdmin,
-            null
+            null,
+            user.MustChangePassword
         ));
     }
 

@@ -42,4 +42,6 @@ public class User
 
     public bool IsDeleted { get; set; } = false;
     public DateTime? DeletedAt { get; set; }
+
+    public bool MustChangePassword { get; set; } = false;
 }

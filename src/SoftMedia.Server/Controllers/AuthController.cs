@@ -126,7 +126,7 @@ public class AuthController : ControllerBase
 
         SetRefreshToken(refreshToken);
 
-        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned, user.IsApproved, user.IsRejected, new Dictionary<string, string>(), user.FirstName, user.LastName, user.CreatedByAdmin, request.InviteCode)));
+        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned, user.IsApproved, user.IsRejected, new Dictionary<string, string>(), user.FirstName, user.LastName, user.CreatedByAdmin, request.InviteCode, false)));
     }
 
     [HttpPost("login")]
@@ -163,7 +163,36 @@ public class AuthController : ControllerBase
 
         var usedInviteCode = await _context.Invites.Where(i => i.UsedById == user.Id).Select(i => i.Code).FirstOrDefaultAsync();
 
-        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned, user.IsApproved, user.IsRejected, string.IsNullOrEmpty(user.ContentRatings) ? new Dictionary<string, string>() : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(user.ContentRatings, (System.Text.Json.JsonSerializerOptions?)null) ?? new Dictionary<string, string>(), user.FirstName, user.LastName, user.CreatedByAdmin, usedInviteCode)));
+        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned, user.IsApproved, user.IsRejected, string.IsNullOrEmpty(user.ContentRatings) ? new Dictionary<string, string>() : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(user.ContentRatings, (System.Text.Json.JsonSerializerOptions?)null) ?? new Dictionary<string, string>(), user.FirstName, user.LastName, user.CreatedByAdmin, usedInviteCode, user.MustChangePassword)));
+    }
+
+    [HttpPost("change-password")]
+    public async Task<IActionResult> ChangePassword(ChangePasswordRequest request)
+    {
+        // Get current user ID from claims
+        var userIdString = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (userIdString == null || !Guid.TryParse(userIdString, out var userId))
+        {
+            return Unauthorized();
+        }
+
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null)
+        {
+            return NotFound("User not found.");
+        }
+
+        if (!_passwordHasher.VerifyPassword(request.OldPassword, user.PasswordHash))
+        {
+            return BadRequest("Invalid old password.");
+        }
+
+        user.PasswordHash = _passwordHasher.HashPassword(request.NewPassword);
+        user.MustChangePassword = false; // Reset the flag
+
+        await _context.SaveChangesAsync();
+
+        return Ok("Password changed successfully.");
     }
 
     [HttpPost("refresh")]

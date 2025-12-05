@@ -1,0 +1,148 @@
+﻿[
+    {
+        "Items":  {
+                      "value":  [
+                                    {
+                                        "id":  "762abfa9-7c05-4085-a613-3dc5e8dfcc71",
+                                        "title":  "small soldiers",
+                                        "path":  "C:\\Users\\Admin\\Videos\\Movies\\small.soldiers.1998.1080p.bluray.x264-veto.mkv",
+                                        "metadataJson":  "{\"year\":\"1998\",\"description\":\"1998 film directed by Joe Dante\",\"director\":\"Joe Dante\",\"genres\":[\"speculative fiction film\"],\"contentRating\":\"PG-13\"}",
+                                        "type":  "Movie",
+                                        "seriesId":  null,
+                                        "seasonNumber":  null,
+                                        "episodeNumber":  null
+                                    },
+                                    {
+                                        "id":  "950954b7-f4d5-426e-80ee-754665f681e1",
+                                        "title":  "2002 Austin Powers- Goldmember",
+                                        "path":  "C:\\Users\\Admin\\Videos\\Movies\\Austin Powers Trilogy (1997-2002)\\2002.Austin.Powers-.Goldmember.1920x816.BDRip.x264.TrueHD.mkv",
+                                        "metadataJson":  null,
+                                        "type":  "Movie",
+                                        "seriesId":  null,
+                                        "seasonNumber":  null,
+                                        "episodeNumber":  null
+                                    },
+                                    {
+                                        "id":  "be32a7a7-c1ed-4f6d-ad67-e94f85336a62",
+                                        "title":  "1999 Austin Powers- The Spy Who Shagged Me",
+                                        "path":  "C:\\Users\\Admin\\Videos\\Movies\\Austin Powers Trilogy (1997-2002)\\1999.Austin.Powers-.The.Spy.Who.Shagged.Me.1920x818.BDRip.x264.TrueHD.mkv",
+                                        "metadataJson":  null,
+                                        "type":  "Movie",
+                                        "seriesId":  null,
+                                        "seasonNumber":  null,
+                                        "episodeNumber":  null
+                                    },
+                                    {
+                                        "id":  "f91c927a-14b1-4c5d-95f4-101cf7eedaff",
+                                        "title":  "1997 Austin Powers- International Man Of Mystery",
+                                        "path":  "C:\\Users\\Admin\\Videos\\Movies\\Austin Powers Trilogy (1997-2002)\\1997.Austin.Powers-.International.Man.Of.Mystery.1920x818.BDRip.x264.TrueHD.mkv",
+                                        "metadataJson":  null,
+                                        "type":  "Movie",
+                                        "seriesId":  null,
+                                        "seasonNumber":  null,
+                                        "episodeNumber":  null
+                                    }
+                                ],
+                      "Count":  4
+                  },
+        "Library":  "Movies"
+    },
+    {
+        "Items":  {
+                      "value":  [
+                                    {
+                                        "id":  "45f19b74-d11b-4087-8d44-af8027673d44",
+                                        "title":  "Fallout 2024",
+                                        "path":  "C:\\Users\\Admin\\Videos\\tv",
+                                        "metadataJson":  null,
+                                        "type":  "Series",
+                                        "seriesId":  null,
+                                        "seasonNumber":  null,
+                                        "episodeNumber":  null
+                                    },
+                                    {
+                                        "id":  "46b67703-ffb8-4421-8b84-1925fa37e2b4",
+                                        "title":  "The Witcher",
+                                        "path":  "C:\\Users\\Admin\\Videos\\tv",
+                                        "metadataJson":  null,
+                                        "type":  "Series",
+                                        "seriesId":  null,
+                                        "seasonNumber":  null,
+                                        "episodeNumber":  null
+                                    },
+                                    {
+                                        "id":  "4a48fb75-0e51-44e5-827e-a1eea45d0856",
+                                        "title":  "Futurama",
+                                        "path":  "C:\\Users\\Admin\\Videos\\tv",
+                                        "metadataJson":  null,
+                                        "type":  "Series",
+                                        "seriesId":  null,
+                                        "seasonNumber":  null,
+                                        "episodeNumber":  null
+                                    },
+                                    {
+                                        "id":  "481ce8b2-cd6e-4a7b-9bdc-47fbde0f9540",
+                                        "title":  "The World is Hot Enough 1080p DSNP WEB-DL DDP5 1 H 264-STC[EZTVx to]",
+                                        "path":  "C:\\Users\\Admin\\Videos\\tv\\Futurama S10E02 The World is Hot Enough 1080p DSNP WEB-DL DDP5 1 H 264-STC[EZTVx.to].mkv",
+                                        "metadataJson":  null,
+                                        "type":  "Episode",
+                                        "seriesId":  "4a48fb75-0e51-44e5-827e-a1eea45d0856",
+                                        "seasonNumber":  10,
+                                        "episodeNumber":  2
+                                    },
+                                    {
+                                        "id":  "74feba26-1702-41f6-909a-09ce17b681d6",
+                                        "title":  "Destroy Tall Monsters 1080p DSNP WEB-DL DDP5 1 H 264-FLUX[EZTVx to]",
+                                        "path":  "C:\\Users\\Admin\\Videos\\tv\\Futurama S10E01 Destroy Tall Monsters 1080p DSNP WEB-DL DDP5 1 H 264-FLUX[EZTVx.to].mkv",
+                                        "metadataJson":  null,
+                                        "type":  "Episode",
+                                        "seriesId":  "4a48fb75-0e51-44e5-827e-a1eea45d0856",
+                                        "seasonNumber":  10,
+                                        "episodeNumber":  1
+                                    },
+                                    {
+                                        "id":  "93532690-7951-4eff-93d0-9dc1d639030d",
+                                        "title":  "Everybody Has a Plan \u0027til They Get Punched in the Face",
+                                        "path":  "C:\\Users\\Admin\\Videos\\tv\\The Witcher_S03E06_Everybody Has a Plan \u0027til They Get Punched in the Face.mkv",
+                                        "metadataJson":  null,
+                                        "type":  "Episode",
+                                        "seriesId":  "46b67703-ffb8-4421-8b84-1925fa37e2b4",
+                                        "seasonNumber":  3,
+                                        "episodeNumber":  6
+                                    },
+                                    {
+                                        "id":  "955b92a1-f049-45da-850f-7b728735e32e",
+                                        "title":  "2160p WEB H265-LAZYCUNTS",
+                                        "path":  "C:\\Users\\Admin\\Videos\\tv\\Fallout.2024.S01E01.2160p.WEB.H265-LAZYCUNTS.mkv",
+                                        "metadataJson":  null,
+                                        "type":  "Episode",
+                                        "seriesId":  "45f19b74-d11b-4087-8d44-af8027673d44",
+                                        "seasonNumber":  1,
+                                        "episodeNumber":  1
+                                    },
+                                    {
+                                        "id":  "b228d3d8-b2f5-40a3-949a-ed9758dc9d1c",
+                                        "title":  "The Numberland Gap 1080p DSNP WEB-DL DDP5 1 H 264-FLUX[EZTVx to]",
+                                        "path":  "C:\\Users\\Admin\\Videos\\tv\\Futurama S10E04 The Numberland Gap 1080p DSNP WEB-DL DDP5 1 H 264-FLUX[EZTVx.to].mkv",
+                                        "metadataJson":  null,
+                                        "type":  "Episode",
+                                        "seriesId":  "4a48fb75-0e51-44e5-827e-a1eea45d0856",
+                                        "seasonNumber":  10,
+                                        "episodeNumber":  4
+                                    },
+                                    {
+                                        "id":  "c1f8de78-3605-4d20-b99f-52b686c38e2f",
+                                        "title":  "Fifty Shades of Green 1080p DSNP WEB-DL DDP5 1 H 264-FLUX[EZTVx to]",
+                                        "path":  "C:\\Users\\Admin\\Videos\\tv\\Futurama S10E03 Fifty Shades of Green 1080p DSNP WEB-DL DDP5 1 H 264-FLUX[EZTVx.to].mkv",
+                                        "metadataJson":  null,
+                                        "type":  "Episode",
+                                        "seriesId":  "4a48fb75-0e51-44e5-827e-a1eea45d0856",
+                                        "seasonNumber":  10,
+                                        "episodeNumber":  3
+                                    }
+                                ],
+                      "Count":  9
+                  },
+        "Library":  "TV Shows"
+    }
+]

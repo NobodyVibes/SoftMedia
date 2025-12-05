@@ -12,6 +12,7 @@ import { UserListTable } from '../components/UserListTable';
 import { InviteManager } from '../components/InviteManager';
 import { LibraryListTable } from '../components/LibraryListTable';
 import { LibraryForm } from '../components/LibraryForm';
+import { ConfirmationModal } from '../components/ConfirmationModal';
 import type { Library } from '../types';
 
 type Tab = 'server' | 'users' | 'libraries' | 'metadata' | 'playback' | 'network';
@@ -25,6 +26,7 @@ export default function SettingsPage() {
     // Library State
     const [isLibraryFormOpen, setIsLibraryFormOpen] = useState(false);
     const [editingLibrary, setEditingLibrary] = useState<Library | undefined>(undefined);
+    const [libraryToDelete, setLibraryToDelete] = useState<Library | null>(null);
 
     // Fetch Settings
     const { data: settings, isLoading } = useQuery({
@@ -419,11 +421,7 @@ export default function SettingsPage() {
                                                 setEditingLibrary(library);
                                                 setIsLibraryFormOpen(true);
                                             }}
-                                            onDelete={(library) => {
-                                                if (confirm(`Are you sure you want to delete "${library.name}"?`)) {
-                                                    deleteLibraryMutation.mutate(library.id);
-                                                }
-                                            }}
+                                            onDelete={(library) => setLibraryToDelete(library)}
                                             onReorder={(orderedIds) => reorderLibraryMutation.mutate(orderedIds)}
                                             onScan={(library) => scanLibraryMutation.mutate(library.id)}
                                         />
@@ -446,6 +444,20 @@ export default function SettingsPage() {
                     isLoading={createLibraryMutation.isPending || updateLibraryMutation.isPending}
                 />
             )}
+
+            <ConfirmationModal
+                isOpen={!!libraryToDelete}
+                title="Delete Library"
+                message={`Are you sure you want to delete "${libraryToDelete?.name}"? This action cannot be undone.`}
+                onConfirm={() => {
+                    if (libraryToDelete) {
+                        deleteLibraryMutation.mutate(libraryToDelete.id);
+                        setLibraryToDelete(null);
+                    }
+                }}
+                onCancel={() => setLibraryToDelete(null)}
+                variant="danger"
+            />
         </div >
     );
 }

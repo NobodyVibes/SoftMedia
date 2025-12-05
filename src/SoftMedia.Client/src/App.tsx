@@ -9,6 +9,7 @@ import LibraryPage from './pages/LibraryPage';
 import PlayerPage from './pages/PlayerPage';
 import ReaderPage from './pages/ReaderPage';
 import SettingsPage from './pages/SettingsPage';
+import MediaDetailPage from './pages/MediaDetailPage';
 import { PersistentPlayer } from './components/player/PersistentPlayer';
 
 function App() {
@@ -25,7 +26,8 @@ function App() {
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
           {/* PlayerPage might want to be full screen, so maybe outside MainLayout or handle internally */}
-          <Route path="/media/:id" element={<PlayerPage />} />
+          <Route path="/media/:id" element={<MediaDetailPage />} />
+          <Route path="/play/:id" element={<PlayerPage />} />
           <Route path="/read/:id" element={<ReaderPage />} />
         </Route>
 

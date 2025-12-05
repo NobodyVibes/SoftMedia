@@ -197,35 +197,119 @@ public class LibrariesController : ControllerBase
         [FromQuery] int page = 1, 
         [FromQuery] int pageSize = 50,
         [FromQuery] string? search = null,
-        [FromQuery] string? sortBy = null)
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? genre = null,
+        [FromQuery] int? year = null,
+        [FromQuery] int? minRating = null,
+        [FromQuery] bool? isFavorite = null,
+        [FromQuery] string? viewMode = null)
     {
-        if (!await _context.Libraries.AnyAsync(l => l.Id == id))
+        var library = await _context.Libraries.FindAsync(id);
+        if (library == null)
         {
             return NotFound("Library not found.");
         }
 
-        var query = _context.MediaItems.Where(m => m.LibraryId == id);
+        var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        Guid userGuid = userIdClaim != null ? Guid.Parse(userIdClaim) : Guid.Empty;
 
+        var query = _context.MediaItems.AsNoTracking().Where(m => m.LibraryId == id);
+
+        // TV Library: Show only Series
+        if (library.Type == LibraryType.TV)
+        {
+            query = query.Where(m => m.Type == MediaType.Series);
+        }
+        // Music Library: Handle View Modes
+        else if (library.Type == LibraryType.Music)
+        {
+            if (viewMode == "artists")
+            {
+                query = query.Where(m => m.Type == MediaType.Artist);
+            }
+            else if (viewMode == "albums")
+            {
+                query = query.Where(m => m.Type == MediaType.Album);
+            }
+            else // Default to Songs/Tracks or Albums depending on preference? Let's default to Albums for now as it's cleaner, or Songs?
+                 // Actually, usually "Songs" view shows all tracks.
+            {
+                // If no view mode, maybe default to Albums? Or Songs?
+                // Let's default to Albums if not specified, or handle "songs" explicitly.
+                if (viewMode == "songs")
+                {
+                    query = query.Where(m => m.Type == MediaType.Audio);
+                }
+                else 
+                {
+                    // Default to Albums for Music library root
+                    query = query.Where(m => m.Type == MediaType.Album);
+                }
+            }
+        }
+
+        // Join with User Interactions
+        var joinedQuery = from m in query
+                          join umi in _context.UserMediaInteractions.AsNoTracking()
+                            on new { MediaItemId = m.Id, UserId = userGuid } equals new { umi.MediaItemId, umi.UserId } into umis
+                          from umi in umis.DefaultIfEmpty()
+                          select new { Media = m, Interaction = umi };
+
+        // Filtering
         if (!string.IsNullOrWhiteSpace(search))
         {
-            query = query.Where(m => m.Title.ToLower().Contains(search.ToLower()));
+            joinedQuery = joinedQuery.Where(x => x.Media.Title.ToLower().Contains(search.ToLower()));
+        }
+
+        if (year.HasValue)
+        {
+            joinedQuery = joinedQuery.Where(x => x.Media.Year == year.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(genre))
+        {
+            // Simple JSON string match for SQLite
+            joinedQuery = joinedQuery.Where(x => x.Media.MetadataJson != null && x.Media.MetadataJson.Contains(genre));
+        }
+
+        if (minRating.HasValue)
+        {
+            // Filter by User Rating
+            joinedQuery = joinedQuery.Where(x => x.Interaction.Rating >= minRating.Value);
+        }
+
+        if (isFavorite.HasValue)
+        {
+            joinedQuery = joinedQuery.Where(x => x.Interaction.IsFavorite == isFavorite.Value);
         }
 
         // Sorting
-        query = sortBy?.ToLower() switch
+        joinedQuery = sortBy?.ToLower() switch
         {
-            "title" => query.OrderBy(m => m.Title),
-            "dateadded" => query.OrderByDescending(m => m.DateAdded),
-            _ => query.OrderBy(m => m.Title)
+            "title" => joinedQuery.OrderBy(x => x.Media.Title),
+            "dateadded" => joinedQuery.OrderByDescending(x => x.Media.DateAdded),
+            "year" => joinedQuery.OrderByDescending(x => x.Media.Year),
+            "rating" => joinedQuery.OrderByDescending(x => x.Interaction.Rating), // User Rating
+            _ => joinedQuery.OrderBy(x => x.Media.Title)
         };
 
-        var totalCount = await query.CountAsync();
-        var items = await query
+        var totalCount = await joinedQuery.CountAsync();
+        var items = await joinedQuery
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync();
 
-        var dtos = items.Select(i => MediaItemDto.FromMediaItem(i, "/api/v1/image/proxy")).ToList();
+        var dtos = items.Select(x => 
+        {
+            var dto = MediaItemDto.FromMediaItem(x.Media, "/api/v1/image/proxy");
+            if (x.Interaction != null)
+            {
+                dto.UserRating = x.Interaction.Rating;
+                dto.IsFavorite = x.Interaction.IsFavorite;
+                dto.Watched = x.Interaction.IsWatched;
+            }
+            return dto;
+        }).ToList();
 
         return new PagedResult<MediaItemDto>
         {
@@ -234,5 +318,110 @@ public class LibrariesController : ControllerBase
             Page = page,
             PageSize = pageSize
         };
+    }
+
+    [HttpGet("series/{seriesId}/episodes")]
+    public async Task<ActionResult<IEnumerable<MediaItemDto>>> GetSeriesEpisodes(Guid seriesId)
+    {
+        var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        Guid userGuid = userIdClaim != null ? Guid.Parse(userIdClaim) : Guid.Empty;
+
+        var query = _context.MediaItems.AsNoTracking()
+            .Where(m => m.SeriesId == seriesId)
+            .OrderBy(m => m.SeasonNumber)
+            .ThenBy(m => m.EpisodeNumber);
+
+        var joinedQuery = from m in query
+                          join umi in _context.UserMediaInteractions.AsNoTracking()
+                            on new { MediaItemId = m.Id, UserId = userGuid } equals new { umi.MediaItemId, umi.UserId } into umis
+                          from umi in umis.DefaultIfEmpty()
+                          select new { Media = m, Interaction = umi };
+
+        var items = await joinedQuery.ToListAsync();
+
+        return items.Select(x => 
+        {
+            var dto = MediaItemDto.FromMediaItem(x.Media, "/api/v1/image/proxy");
+             if (x.Interaction != null)
+            {
+                dto.UserRating = x.Interaction.Rating;
+                dto.IsFavorite = x.Interaction.IsFavorite;
+                dto.Watched = x.Interaction.IsWatched;
+            }
+            return dto;
+        }).ToList();
+    }
+
+    [HttpGet("artists/{artistId}/albums")]
+    public async Task<ActionResult<IEnumerable<MediaItemDto>>> GetArtistAlbums(Guid artistId)
+    {
+        var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        Guid userGuid = userIdClaim != null ? Guid.Parse(userIdClaim) : Guid.Empty;
+
+        var query = _context.MediaItems.AsNoTracking()
+            .Where(m => m.ArtistId == artistId && m.Type == MediaType.Album)
+            .OrderByDescending(m => m.Year)
+            .ThenBy(m => m.Title);
+
+        var joinedQuery = from m in query
+                          join umi in _context.UserMediaInteractions.AsNoTracking()
+                            on new { MediaItemId = m.Id, UserId = userGuid } equals new { umi.MediaItemId, umi.UserId } into umis
+                          from umi in umis.DefaultIfEmpty()
+                          select new { Media = m, Interaction = umi };
+
+        var items = await joinedQuery.ToListAsync();
+
+        return items.Select(x => 
+        {
+            var dto = MediaItemDto.FromMediaItem(x.Media, "/api/v1/image/proxy");
+             if (x.Interaction != null)
+            {
+                dto.UserRating = x.Interaction.Rating;
+                dto.IsFavorite = x.Interaction.IsFavorite;
+                dto.Watched = x.Interaction.IsWatched;
+            }
+            return dto;
+        }).ToList();
+    }
+
+    [HttpGet("albums/{albumId}/tracks")]
+    public async Task<ActionResult<IEnumerable<MediaItemDto>>> GetAlbumTracks(Guid albumId)
+    {
+        var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        Guid userGuid = userIdClaim != null ? Guid.Parse(userIdClaim) : Guid.Empty;
+
+        var query = _context.MediaItems.AsNoTracking()
+            .Where(m => m.AlbumId == albumId && m.Type == MediaType.Audio)
+            .OrderBy(m => m.DiscNumber)
+            .ThenBy(m => m.TrackNumber);
+
+        var joinedQuery = from m in query
+                          join umi in _context.UserMediaInteractions.AsNoTracking()
+                            on new { MediaItemId = m.Id, UserId = userGuid } equals new { umi.MediaItemId, umi.UserId } into umis
+                          from umi in umis.DefaultIfEmpty()
+                          select new { Media = m, Interaction = umi };
+
+        var items = await joinedQuery.ToListAsync();
+
+        return items.Select(x => 
+        {
+            var dto = MediaItemDto.FromMediaItem(x.Media, "/api/v1/image/proxy");
+             if (x.Interaction != null)
+            {
+                dto.UserRating = x.Interaction.Rating;
+                dto.IsFavorite = x.Interaction.IsFavorite;
+                dto.Watched = x.Interaction.IsWatched;
+            }
+            return dto;
+        }).ToList();
+    }
+    [HttpGet("{id}/debug"), AllowAnonymous]
+    public async Task<ActionResult> GetLibraryDebug(Guid id)
+    {
+        var items = await _context.MediaItems
+            .Where(m => m.LibraryId == id)
+            .Select(m => new { m.Id, m.Title, m.Path, m.MetadataJson, m.Type, m.SeriesId, m.SeasonNumber, m.EpisodeNumber })
+            .ToListAsync();
+        return Ok(items);
     }
 }

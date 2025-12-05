@@ -26,7 +26,7 @@ export default function HomePage() {
                     imageUrl={heroItem.backdropPath || heroItem.posterPath || ''}
                     year={heroItem.year}
                     rating={heroItem.rating}
-                    duration={heroItem.duration}
+                    duration={heroItem.duration ? `${Math.floor(Number(heroItem.duration) / 60)}m` : undefined}
                     onPlay={() => window.location.href = `/media/${heroItem.id}`}
                     onMoreInfo={() => console.log('More Info clicked')}
                 />

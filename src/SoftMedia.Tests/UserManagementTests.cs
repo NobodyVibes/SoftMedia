@@ -145,7 +145,8 @@ public class UserManagementTests
         // Assert
         Assert.IsType<OkResult>(result);
         var deletedUser = await context.Users.FindAsync(user1.Id);
-        Assert.Null(deletedUser);
+        Assert.NotNull(deletedUser);
+        Assert.True(deletedUser.IsDeleted);
     }
     [Fact]
     public async Task ApproveUser_ApprovesUser()
@@ -237,5 +238,28 @@ public class UserManagementTests
         var dbUser = await context.Users.FindAsync(user.Id);
         Assert.Contains("R", dbUser.ContentRatings);
         Assert.Contains("M", dbUser.ContentRatings);
+    }
+    [Fact]
+    public async Task ResetUserPassword_UpdatesPasswordHash()
+    {
+        // Arrange
+        using var context = GetInMemoryDbContext();
+        var admin = new User { Username = "admin", Role = UserRole.Admin };
+        var user = new User { Username = "user1", Role = UserRole.User, PasswordHash = "old_hash", MustChangePassword = true };
+        context.Users.AddRange(admin, user);
+        await context.SaveChangesAsync();
+
+        var controller = GetUsersController(context, admin);
+        var request = new ResetUserPasswordRequest("new_password");
+
+        // Act
+        var result = await controller.ResetUserPassword(user.Id, request);
+
+        // Assert
+        Assert.IsType<OkResult>(result);
+        var updatedUser = await context.Users.FindAsync(user.Id);
+        Assert.NotNull(updatedUser);
+        Assert.Equal("hashed_password", updatedUser.PasswordHash); // Mock returns "hashed_password"
+        Assert.False(updatedUser.MustChangePassword);
     }
 }

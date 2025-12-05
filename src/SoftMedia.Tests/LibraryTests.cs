@@ -5,6 +5,9 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
 
+using Moq;
+using SoftMedia.Server.Services;
+
 namespace SoftMedia.Tests;
 
 public class LibraryTests
@@ -28,7 +31,8 @@ public class LibraryTests
         );
         await context.SaveChangesAsync();
 
-        var controller = new LibrariesController(context);
+        var mockScanner = new Mock<IFileScannerService>();
+        var controller = new LibrariesController(context, mockScanner.Object);
 
         // Act
         var result = await controller.GetLibraries();
@@ -45,7 +49,8 @@ public class LibraryTests
     {
         // Arrange
         using var context = GetDbContext();
-        var controller = new LibrariesController(context);
+        var mockScanner = new Mock<IFileScannerService>();
+        var controller = new LibrariesController(context, mockScanner.Object);
         var request = new CreateLibraryRequest
         {
             Name = "New Lib",
@@ -81,7 +86,8 @@ public class LibraryTests
         context.Libraries.AddRange(lib1, lib2);
         await context.SaveChangesAsync();
 
-        var controller = new LibrariesController(context);
+        var mockScanner = new Mock<IFileScannerService>();
+        var controller = new LibrariesController(context, mockScanner.Object);
         var orderedIds = new List<Guid> { lib2.Id, lib1.Id };
 
         // Act

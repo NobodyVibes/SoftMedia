@@ -9,6 +9,7 @@ import { useAudioStore } from '../../store/audioStore';
 interface MediaCardProps {
     item: MediaItem;
     libraryType?: string;
+    enableHoverScale?: boolean;
 }
 
 const genreColors: Record<string, string> = {
@@ -23,7 +24,7 @@ const genreColors: Record<string, string> = {
     'Mystery': 'from-indigo-600 to-purple-600',
 };
 
-export default function MediaCard({ item, libraryType }: MediaCardProps) {
+export default function MediaCard({ item, libraryType, enableHoverScale = true }: MediaCardProps) {
     const primaryGenre = item.genres?.[0] || 'Drama';
     const glowColor = genreColors[primaryGenre] || 'from-primary to-secondary';
     const { playTrack, addToQueue } = useAudioStore();
@@ -45,19 +46,17 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
 
     const CardContent = (
         <motion.div
-            className="relative aspect-[2/3] overflow-hidden rounded-xl shadow-xl"
+            className="relative aspect-[2/3] overflow-hidden rounded-xl shadow-xl w-full h-full"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            whileHover={{
-                scale: 1.08,
-                y: -12,
-                rotateY: 2,
+            whileHover={enableHoverScale ? {
+                scale: 1.15,
                 transition: {
                     type: "spring",
                     stiffness: 300,
                     damping: 20
                 }
-            }}
+            } : {}}
         >
             {/* Poster Image */}
             {item.posterPath ? (
@@ -180,7 +179,7 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
 
     if (isAudio) {
         return (
-            <div className="block group/card cursor-pointer">
+            <div className="block group/card cursor-pointer relative hover:z-50">
                 {CardContent}
             </div>
         );
@@ -190,7 +189,7 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
     const linkTarget = isBook ? `/read/${item.id}` : `/media/${item.id}`;
 
     return (
-        <Link to={linkTarget} className="block group/card">
+        <Link to={linkTarget} className="block group/card relative hover:z-50">
             {CardContent}
         </Link>
     );

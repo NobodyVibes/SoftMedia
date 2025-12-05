@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { X, Plus, Trash2 } from 'lucide-react';
 import { Combobox } from './ui/Combobox';
 import type { Library } from '../types';
@@ -64,7 +64,7 @@ export function LibraryForm({ initialData, onSubmit, onCancel, isLoading }: Libr
                         <label className="block text-sm font-medium text-gray-300 mb-1">Type</label>
                         <Combobox
                             value={type}
-                            onChange={setType}
+                            onChange={(val) => setType(val as Library['type'])}
                             options={libraryTypes}
                             placeholder="Select type..."
                             className="w-full"

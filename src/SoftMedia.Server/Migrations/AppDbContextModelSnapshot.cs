@@ -114,10 +114,22 @@ namespace SoftMedia.Server.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("AlbumId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("ArtistId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("AudioCodec")
                         .HasColumnType("TEXT");
 
+                    b.Property<double?>("CommunityRating")
+                        .HasColumnType("REAL");
+
                     b.Property<string>("Container")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ContentRating")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("DateAdded")
@@ -126,8 +138,14 @@ namespace SoftMedia.Server.Migrations
                     b.Property<DateTime>("DateModified")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("DiscNumber")
+                        .HasColumnType("INTEGER");
+
                     b.Property<double>("Duration")
                         .HasColumnType("REAL");
+
+                    b.Property<int?>("EpisodeNumber")
+                        .HasColumnType("INTEGER");
 
                     b.Property<bool>("IsFavorite")
                         .HasColumnType("INTEGER");
@@ -141,6 +159,9 @@ namespace SoftMedia.Server.Migrations
                     b.Property<string>("MetadataJson")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Overview")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Path")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -148,7 +169,16 @@ namespace SoftMedia.Server.Migrations
                     b.Property<int>("PlayCount")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTime?>("ReleaseDate")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Resolution")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("SeasonNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("SeriesId")
                         .HasColumnType("TEXT");
 
                     b.Property<long>("Size")
@@ -162,12 +192,27 @@ namespace SoftMedia.Server.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("TrackNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("VideoCodec")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("Year")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
+                    b.HasIndex("AlbumId");
+
+                    b.HasIndex("ArtistId");
+
                     b.HasIndex("LibraryId");
+
+                    b.HasIndex("SeriesId");
 
                     b.ToTable("MediaItems");
                 });
@@ -243,6 +288,33 @@ namespace SoftMedia.Server.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("SoftMedia.Server.Models.UserMediaInteraction", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("MediaItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsFavorite")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsWatched")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("LastPlayed")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("Rating")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("UserId", "MediaItemId");
+
+                    b.HasIndex("MediaItemId");
+
+                    b.ToTable("UserMediaInteractions");
+                });
+
             modelBuilder.Entity("SoftMedia.Server.Models.Invite", b =>
                 {
                     b.HasOne("SoftMedia.Server.Models.User", "CreatedBy")
@@ -262,13 +334,53 @@ namespace SoftMedia.Server.Migrations
 
             modelBuilder.Entity("SoftMedia.Server.Models.MediaItem", b =>
                 {
+                    b.HasOne("SoftMedia.Server.Models.MediaItem", "Album")
+                        .WithMany()
+                        .HasForeignKey("AlbumId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("SoftMedia.Server.Models.MediaItem", "Artist")
+                        .WithMany()
+                        .HasForeignKey("ArtistId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.HasOne("SoftMedia.Server.Models.Library", "Library")
                         .WithMany()
                         .HasForeignKey("LibraryId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("SoftMedia.Server.Models.MediaItem", "Series")
+                        .WithMany()
+                        .HasForeignKey("SeriesId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Album");
+
+                    b.Navigation("Artist");
+
                     b.Navigation("Library");
+
+                    b.Navigation("Series");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.UserMediaInteraction", b =>
+                {
+                    b.HasOne("SoftMedia.Server.Models.MediaItem", "MediaItem")
+                        .WithMany()
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SoftMedia.Server.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaItem");
+
+                    b.Navigation("User");
                 });
 #pragma warning restore 612, 618
         }

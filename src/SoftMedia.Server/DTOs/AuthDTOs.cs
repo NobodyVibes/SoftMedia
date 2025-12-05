@@ -23,6 +23,8 @@ public record CreateUserRequest(string Username, string Password, string Role, s
 
 public record UpdateUserRatingsRequest(Dictionary<string, string> ContentRatings);
 
+public record ResetUserPasswordRequest(string NewPassword);
+
 // Invite DTOs
 public record InviteDto(
     string Code,

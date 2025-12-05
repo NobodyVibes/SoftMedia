@@ -38,6 +38,43 @@ public class MediaItem
     public string? Resolution { get; set; }
     public double Duration { get; set; } // Seconds
 
+    // Rich Metadata (Promoted from JSON)
+    public int? Year { get; set; }
+    public DateTime? ReleaseDate { get; set; }
+    public string? Overview { get; set; }
+    public double? CommunityRating { get; set; }
+    public string? ContentRating { get; set; }
+
     // Type-Specific Metadata (JSON)
     public string? MetadataJson { get; set; }
+
+    public MediaType Type { get; set; }
+
+    public Guid? SeriesId { get; set; }
+    public MediaItem? Series { get; set; }
+
+    public int? SeasonNumber { get; set; }
+    public int? EpisodeNumber { get; set; }
+
+    public Guid? ArtistId { get; set; }
+    public MediaItem? Artist { get; set; }
+
+    public Guid? AlbumId { get; set; }
+    public MediaItem? Album { get; set; }
+
+    public int? TrackNumber { get; set; }
+    public int? DiscNumber { get; set; }
+}
+
+public enum MediaType
+{
+    Movie,
+    Series,
+    Episode,
+    Audio,
+    Book,
+    Game,
+    Photo,
+    Artist,
+    Album
 }

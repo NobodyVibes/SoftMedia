@@ -1,49 +1,92 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useLibrary, useLibraryItems } from '../hooks/useLibrary';
-import FilterBar from '../components/library/FilterBar';
-import LibraryGrid from '../components/library/LibraryGrid';
+import { useQuery } from '@tanstack/react-query';
+import api from '../services/api';
+import HoverableMediaCardWrapper from '../components/items/HoverableMediaCardWrapper';
+import { FilterBar } from '../components/library/FilterBar';
+import { type MediaItem, type PagedResult, type Library } from '../types';
 
 export default function LibraryPage() {
     const { id } = useParams<{ id: string }>();
+    const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+    // Fetch Library Details
+    const { data: library } = useQuery({
+        queryKey: ['library', id],
+        queryFn: async () => {
+            const res = await api.get<Library>(`/libraries/${id}`);
+            return res.data;
+        },
+        enabled: !!id
+    });
+
+    // Filter State
     const [search, setSearch] = useState('');
-    const [sortBy, setSortBy] = useState('dateAdded_desc');
+    const [sortBy, setSortBy] = useState('title');
+    const [genre, setGenre] = useState('');
+    const [year, setYear] = useState<number | null>(null);
+    const [minRating, setMinRating] = useState<number | null>(null);
+    const [isFavorite, setIsFavorite] = useState<boolean | null>(null);
+    const [viewMode, setViewMode] = useState('albums'); // Default to albums for Music
 
-    const { data: library } = useLibrary(id!);
-    const {
-        data,
-        fetchNextPage,
-        hasNextPage,
-        isLoading
-    } = useLibraryItems(id!, search, sortBy);
+    const { data, isLoading, error } = useQuery({
+        queryKey: ['library', id, 'items', { search, sortBy, genre, year, minRating, isFavorite, viewMode }],
+        queryFn: async () => {
+            const params: any = {
+                page: 1,
+                pageSize: 100, // Fetch more for now
+                search,
+                sortBy,
+                genre,
+                year,
+                minRating,
+                isFavorite,
+                viewMode: library?.type === 'Music' ? viewMode : undefined
+            };
+            // Clean undefined/null params
+            Object.keys(params).forEach(key => (params[key] === null || params[key] === '') && delete params[key]);
 
-    const items = data?.pages.flatMap((page) => page.items) || [];
+            const response = await api.get<PagedResult<MediaItem>>(`/libraries/${id}/items`, { params });
+            return response.data;
+        },
+        enabled: !!id
+    });
+
+    if (isLoading) return <div className="p-8 text-center text-gray-400">Loading library...</div>;
+    if (error) return <div className="p-8 text-center text-red-400">Error loading library.</div>;
 
     return (
-        <div className="container mx-auto px-4 py-8">
-            <div className="mb-8">
-                <h1 className="text-3xl font-bold text-white mb-2">
-                    {library?.name || 'Library'}
-                </h1>
-                <p className="text-gray-400">
-                    {items.length} items
-                </p>
-            </div>
-
+        <div className="min-h-screen bg-background">
             <FilterBar
-                search={search}
-                onSearchChange={setSearch}
-                sortBy={sortBy}
-                onSortChange={setSortBy}
+                onSearch={setSearch}
+                onSort={setSortBy}
+                onGenre={setGenre}
+                onYear={setYear}
+                onRating={setMinRating}
+                onFavorite={setIsFavorite}
+                viewMode={library?.type === 'Music' ? viewMode : undefined}
+                onViewModeChange={library?.type === 'Music' ? setViewMode : undefined}
             />
 
-            <LibraryGrid
-                items={items}
-                isLoading={isLoading}
-                hasNextPage={!!hasNextPage}
-                fetchNextPage={fetchNextPage}
-                libraryType={library?.type}
-            />
+            <div className="container mx-auto px-4 py-8">
+                {data?.items.length === 0 ? (
+                    <div className="text-center text-gray-500 mt-12">
+                        <p className="text-xl">No items found.</p>
+                        <p className="text-sm">Try adjusting your filters.</p>
+                    </div>
+                ) : (
+                    <div className="flex flex-wrap gap-6 justify-center">
+                        {data?.items.map((item) => (
+                            <HoverableMediaCardWrapper
+                                key={item.id}
+                                item={item}
+                                hoveredId={hoveredId}
+                                setHoveredId={setHoveredId}
+                            />
+                        ))}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

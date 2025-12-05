@@ -37,6 +37,7 @@ builder.Services.AddScoped<IMetadataProvider, OpenLibraryProvider>();
 builder.Services.AddScoped<IMetadataProvider, GameMetadataProvider>();
 builder.Services.AddScoped<IMetadataProvider, ExifMetadataProvider>();
 builder.Services.AddScoped<IMetadataRouter, MetadataRouter>();
+builder.Services.AddScoped<MetadataAggregator>();
 builder.Services.AddSingleton<IFFmpegService, FFmpegService>();
 builder.Services.AddSingleton<TranscodeService>();
 builder.Services.AddScoped<ISettingsService, SettingsService>();

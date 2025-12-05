@@ -1,0 +1,149 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="d846cb92-ba41-4e2b-971f-bf97a19281ef" name="Admin@GAMING 2025-12-04 23:03:27" runUser="GAMING\Admin" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2025-12-04T23:03:27.6230588-08:00" queuing="2025-12-04T23:03:27.6230589-08:00" start="2025-12-04T23:03:27.2209509-08:00" finish="2025-12-04T23:03:27.6452884-08:00" />
+  <TestSettings name="default" id="6fb4ee30-ba44-4760-b0f6-a8191219ac74">
+    <Deployment runDeploymentRoot="Admin_GAMING_2025-12-04_23_03_27" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="7354382b-6e6e-45fb-9b20-451e142aa848" testId="b79bac93-0d9d-74b7-4799-fdb58c8849ce" testName="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;Game of Thrones - 1x01 - Winter Is Coming.mkv&quot;, expectedShow: &quot;Game of Thrones&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;Winter Is Coming&quot;)" computerName="GAMING" duration="00:00:00.0001666" startTime="2025-12-04T23:03:27.5844472-08:00" endTime="2025-12-04T23:03:27.5844472-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7354382b-6e6e-45fb-9b20-451e142aa848" />
+    <UnitTestResult executionId="9ff4662c-25dd-4c5a-ae3e-0dc93cf5b88d" testId="da01d859-0c52-89d4-5266-94ee489811cd" testName="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;Interstellar_2014_IMAX_1080p.mkv&quot;, expectedTitle: &quot;Interstellar&quot;, expectedYear: 2014)" computerName="GAMING" duration="00:00:00.0008614" startTime="2025-12-04T23:03:27.6065056-08:00" endTime="2025-12-04T23:03:27.6065056-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9ff4662c-25dd-4c5a-ae3e-0dc93cf5b88d">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Strings differ&#xD;
+Expected: "Interstellar"&#xD;
+Actual:   "Interstellar 2014 IMAX"&#xD;
+                       ↑ (pos 12)</Message>
+          <StackTrace>   at SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(String fileName, String expectedTitle, Nullable`1 expectedYear) in C:\Users\Admin\Documents\coding2\SoftMedia\tests\FileNameParserTests.cs:line 20&#xD;
+   at InvokeStub_FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(Object, Span`1)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="71715cd0-b46e-436a-b36c-0d68b7c33229" testId="e0da054c-31cf-6ccf-8509-517546dd0343" testName="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;S10E01.mkv&quot;, expectedShow: &quot;&quot;, expectedSeason: 10, expectedEpisode: 1, expectedTitle: &quot;&quot;)" computerName="GAMING" duration="00:00:00.0000036" startTime="2025-12-04T23:03:27.5842640-08:00" endTime="2025-12-04T23:03:27.5842641-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="71715cd0-b46e-436a-b36c-0d68b7c33229" />
+    <UnitTestResult executionId="8afd5ca9-9029-48bc-a1b2-90fd1bdae776" testId="43598bcf-527d-0166-83a1-5783395ede94" testName="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;1999.Austin.Powers-.The.Spy.Who.Shagged.Me.mkv&quot;, expectedTitle: &quot;Austin Powers The Spy Who Shagged Me&quot;, expectedYear: 1999)" computerName="GAMING" duration="00:00:00.0049780" startTime="2025-12-04T23:03:27.5895779-08:00" endTime="2025-12-04T23:03:27.5895780-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8afd5ca9-9029-48bc-a1b2-90fd1bdae776" />
+    <UnitTestResult executionId="ff744794-dc41-4d2d-bc0d-7f7347d21fb4" testId="ebde53d0-ba51-9ad2-eb10-daad05a9f502" testName="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;Unknown Movie.mkv&quot;, expectedTitle: &quot;Unknown Movie&quot;, expectedYear: null)" computerName="GAMING" duration="00:00:00.0014862" startTime="2025-12-04T23:03:27.6045822-08:00" endTime="2025-12-04T23:03:27.6045822-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ff744794-dc41-4d2d-bc0d-7f7347d21fb4" />
+    <UnitTestResult executionId="fffa148e-c02a-466e-856d-92a845feabf2" testId="a65dc05c-47ac-ec2b-11e4-84156446ac76" testName="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;2002.Austin.Powers-.Goldmember.1920x816.BDRip.x264&quot;···, expectedTitle: &quot;Austin Powers Goldmember&quot;, expectedYear: 2002)" computerName="GAMING" duration="00:00:00.0000535" startTime="2025-12-04T23:03:27.6046136-08:00" endTime="2025-12-04T23:03:27.6046137-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="fffa148e-c02a-466e-856d-92a845feabf2" />
+    <UnitTestResult executionId="c0c08831-4c31-4c81-b3b0-bf280a1d7f96" testId="e8a4e6d8-1f65-6eea-5a06-cc6c0f7d392c" testName="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;Show.Name.S10E01.mkv&quot;, expectedShow: &quot;Show Name&quot;, expectedSeason: 10, expectedEpisode: 1, expectedTitle: &quot;&quot;)" computerName="GAMING" duration="00:00:00.0119471" startTime="2025-12-04T23:03:27.5744144-08:00" endTime="2025-12-04T23:03:27.5744145-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c0c08831-4c31-4c81-b3b0-bf280a1d7f96" />
+    <UnitTestResult executionId="f2bd29e6-6b52-467a-8f96-7588e04568ce" testId="d9bb4241-61c1-384b-e3b9-5a259d84d58f" testName="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;The.Matrix.1999.1080p.mkv&quot;, expectedTitle: &quot;The Matrix&quot;, expectedYear: 1999)" computerName="GAMING" duration="00:00:00.0000558" startTime="2025-12-04T23:03:27.6045674-08:00" endTime="2025-12-04T23:03:27.6045674-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f2bd29e6-6b52-467a-8f96-7588e04568ce" />
+    <UnitTestResult executionId="68ddcd77-801e-4a8b-aad5-14698654e9e2" testId="e8aac352-5e23-f38e-552a-af33d739bdd5" testName="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;Friends S10E17.mp4&quot;, expectedShow: &quot;Friends&quot;, expectedSeason: 10, expectedEpisode: 17, expectedTitle: &quot;&quot;)" computerName="GAMING" duration="00:00:00.0000461" startTime="2025-12-04T23:03:27.5845692-08:00" endTime="2025-12-04T23:03:27.5845693-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="68ddcd77-801e-4a8b-aad5-14698654e9e2" />
+    <UnitTestResult executionId="ae19b046-cdfc-4616-87e0-780761249686" testId="c6c7e583-0b8c-2b91-6888-310e7bcead66" testName="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;Breaking.Bad.S01E01.mkv&quot;, expectedShow: &quot;Breaking Bad&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;&quot;)" computerName="GAMING" duration="00:00:00.0001043" startTime="2025-12-04T23:03:27.5842447-08:00" endTime="2025-12-04T23:03:27.5842448-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ae19b046-cdfc-4616-87e0-780761249686" />
+    <UnitTestResult executionId="373f5f3d-d391-448c-b586-4c22b9d2b983" testId="5d8bc39c-8724-3fe0-c74e-462e83c102d3" testName="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;The.Office.US.Season.2.Episode.5.avi&quot;, expectedShow: &quot;The Office US&quot;, expectedSeason: 2, expectedEpisode: 5, expectedTitle: &quot;&quot;)" computerName="GAMING" duration="00:00:00.0096939" startTime="2025-12-04T23:03:27.5841240-08:00" endTime="2025-12-04T23:03:27.5841241-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="373f5f3d-d391-448c-b586-4c22b9d2b983" />
+    <UnitTestResult executionId="d1217316-18c5-482d-9d4a-20eb7d760859" testId="ccc14fa8-0fca-8f52-4a92-9f55a128a917" testName="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;Inception (2010).mp4&quot;, expectedTitle: &quot;Inception&quot;, expectedYear: 2010)" computerName="GAMING" duration="00:00:00.0000529" startTime="2025-12-04T23:03:27.6045989-08:00" endTime="2025-12-04T23:03:27.6045989-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d1217316-18c5-482d-9d4a-20eb7d760859" />
+    <UnitTestResult executionId="3737604a-72e7-4c4b-b5bd-5e542cb78f02" testId="38354bf3-e2d4-a191-1dd7-25079ca8c3c6" testName="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;1997.Austin.Powers-.International.Man.Of.Mystery.1&quot;···, expectedTitle: &quot;Austin Powers International Man Of Mystery&quot;, expectedYear: 1997)" computerName="GAMING" duration="00:00:00.0001880" startTime="2025-12-04T23:03:27.6044944-08:00" endTime="2025-12-04T23:03:27.6044945-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3737604a-72e7-4c4b-b5bd-5e542cb78f02" />
+    <UnitTestResult executionId="b8bc3649-32f9-4d90-997f-23a1be567069" testId="69f20aab-6a45-73a8-0f28-afdb234df650" testName="SoftMedia.Tests.UnitTest1.Test1" computerName="GAMING" duration="00:00:00.0013096" startTime="2025-12-04T23:03:27.5651423-08:00" endTime="2025-12-04T23:03:27.5651511-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b8bc3649-32f9-4d90-997f-23a1be567069" />
+    <UnitTestResult executionId="85a0b907-439b-4f84-b2ec-8a9182509927" testId="0f70cde8-d5df-4df1-afc7-c460645a442e" testName="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;My Show S10E01.mkv&quot;, expectedShow: &quot;My Show&quot;, expectedSeason: 10, expectedEpisode: 1, expectedTitle: &quot;&quot;)" computerName="GAMING" duration="00:00:00.0000482" startTime="2025-12-04T23:03:27.5845099-08:00" endTime="2025-12-04T23:03:27.5845099-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="85a0b907-439b-4f84-b2ec-8a9182509927" />
+    <UnitTestResult executionId="f95fe04c-47f3-43ae-84f6-a555a08129de" testId="defbdc72-82f2-3282-3f23-40e1ace8bd47" testName="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;Avatar.2009.Extended.Collector's.Edition.1080p.Blu&quot;···, expectedTitle: &quot;Avatar&quot;, expectedYear: 2009)" computerName="GAMING" duration="00:00:00.0000468" startTime="2025-12-04T23:03:27.6046362-08:00" endTime="2025-12-04T23:03:27.6046362-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f95fe04c-47f3-43ae-84f6-a555a08129de" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;Unknown Movie.mkv&quot;, expectedTitle: &quot;Unknown Movie&quot;, expectedYear: null)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="ebde53d0-ba51-9ad2-eb10-daad05a9f502">
+      <Execution id="ff744794-dc41-4d2d-bc0d-7f7347d21fb4" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseMovie_ShouldExtractTitleAndYear" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;S10E01.mkv&quot;, expectedShow: &quot;&quot;, expectedSeason: 10, expectedEpisode: 1, expectedTitle: &quot;&quot;)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="e0da054c-31cf-6ccf-8509-517546dd0343">
+      <Execution id="71715cd0-b46e-436a-b36c-0d68b7c33229" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldExtractShowInfo" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;Breaking.Bad.S01E01.mkv&quot;, expectedShow: &quot;Breaking Bad&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;&quot;)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="c6c7e583-0b8c-2b91-6888-310e7bcead66">
+      <Execution id="ae19b046-cdfc-4616-87e0-780761249686" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldExtractShowInfo" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;1999.Austin.Powers-.The.Spy.Who.Shagged.Me.mkv&quot;, expectedTitle: &quot;Austin Powers The Spy Who Shagged Me&quot;, expectedYear: 1999)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="43598bcf-527d-0166-83a1-5783395ede94">
+      <Execution id="8afd5ca9-9029-48bc-a1b2-90fd1bdae776" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseMovie_ShouldExtractTitleAndYear" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;My Show S10E01.mkv&quot;, expectedShow: &quot;My Show&quot;, expectedSeason: 10, expectedEpisode: 1, expectedTitle: &quot;&quot;)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="0f70cde8-d5df-4df1-afc7-c460645a442e">
+      <Execution id="85a0b907-439b-4f84-b2ec-8a9182509927" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldExtractShowInfo" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;Avatar.2009.Extended.Collector's.Edition.1080p.Blu&quot;···, expectedTitle: &quot;Avatar&quot;, expectedYear: 2009)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="defbdc72-82f2-3282-3f23-40e1ace8bd47">
+      <Execution id="f95fe04c-47f3-43ae-84f6-a555a08129de" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseMovie_ShouldExtractTitleAndYear" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;2002.Austin.Powers-.Goldmember.1920x816.BDRip.x264&quot;···, expectedTitle: &quot;Austin Powers Goldmember&quot;, expectedYear: 2002)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="a65dc05c-47ac-ec2b-11e4-84156446ac76">
+      <Execution id="fffa148e-c02a-466e-856d-92a845feabf2" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseMovie_ShouldExtractTitleAndYear" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;Friends S10E17.mp4&quot;, expectedShow: &quot;Friends&quot;, expectedSeason: 10, expectedEpisode: 17, expectedTitle: &quot;&quot;)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="e8aac352-5e23-f38e-552a-af33d739bdd5">
+      <Execution id="68ddcd77-801e-4a8b-aad5-14698654e9e2" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldExtractShowInfo" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;The.Matrix.1999.1080p.mkv&quot;, expectedTitle: &quot;The Matrix&quot;, expectedYear: 1999)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="d9bb4241-61c1-384b-e3b9-5a259d84d58f">
+      <Execution id="f2bd29e6-6b52-467a-8f96-7588e04568ce" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseMovie_ShouldExtractTitleAndYear" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;Show.Name.S10E01.mkv&quot;, expectedShow: &quot;Show Name&quot;, expectedSeason: 10, expectedEpisode: 1, expectedTitle: &quot;&quot;)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="e8a4e6d8-1f65-6eea-5a06-cc6c0f7d392c">
+      <Execution id="c0c08831-4c31-4c81-b3b0-bf280a1d7f96" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldExtractShowInfo" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;Game of Thrones - 1x01 - Winter Is Coming.mkv&quot;, expectedShow: &quot;Game of Thrones&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;Winter Is Coming&quot;)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="b79bac93-0d9d-74b7-4799-fdb58c8849ce">
+      <Execution id="7354382b-6e6e-45fb-9b20-451e142aa848" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldExtractShowInfo" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseTvEpisode_ShouldExtractShowInfo(fileName: &quot;The.Office.US.Season.2.Episode.5.avi&quot;, expectedShow: &quot;The Office US&quot;, expectedSeason: 2, expectedEpisode: 5, expectedTitle: &quot;&quot;)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="5d8bc39c-8724-3fe0-c74e-462e83c102d3">
+      <Execution id="373f5f3d-d391-448c-b586-4c22b9d2b983" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldExtractShowInfo" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.UnitTest1.Test1" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="69f20aab-6a45-73a8-0f28-afdb234df650">
+      <Execution id="b8bc3649-32f9-4d90-997f-23a1be567069" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.UnitTest1" name="Test1" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;Interstellar_2014_IMAX_1080p.mkv&quot;, expectedTitle: &quot;Interstellar&quot;, expectedYear: 2014)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="da01d859-0c52-89d4-5266-94ee489811cd">
+      <Execution id="9ff4662c-25dd-4c5a-ae3e-0dc93cf5b88d" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseMovie_ShouldExtractTitleAndYear" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;Inception (2010).mp4&quot;, expectedTitle: &quot;Inception&quot;, expectedYear: 2010)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="ccc14fa8-0fca-8f52-4a92-9f55a128a917">
+      <Execution id="d1217316-18c5-482d-9d4a-20eb7d760859" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseMovie_ShouldExtractTitleAndYear" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: &quot;1997.Austin.Powers-.International.Man.Of.Mystery.1&quot;···, expectedTitle: &quot;Austin Powers International Man Of Mystery&quot;, expectedYear: 1997)" storage="c:\users\admin\documents\coding2\softmedia\tests\bin\debug\net9.0\softmedia.tests.dll" id="38354bf3-e2d4-a191-1dd7-25079ca8c3c6">
+      <Execution id="3737604a-72e7-4c4b-b5bd-5e542cb78f02" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\tests\bin\Debug\net9.0\SoftMedia.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Tests.FileNameParserTests" name="ParseMovie_ShouldExtractTitleAndYear" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="b79bac93-0d9d-74b7-4799-fdb58c8849ce" executionId="7354382b-6e6e-45fb-9b20-451e142aa848" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="da01d859-0c52-89d4-5266-94ee489811cd" executionId="9ff4662c-25dd-4c5a-ae3e-0dc93cf5b88d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e0da054c-31cf-6ccf-8509-517546dd0343" executionId="71715cd0-b46e-436a-b36c-0d68b7c33229" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="43598bcf-527d-0166-83a1-5783395ede94" executionId="8afd5ca9-9029-48bc-a1b2-90fd1bdae776" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ebde53d0-ba51-9ad2-eb10-daad05a9f502" executionId="ff744794-dc41-4d2d-bc0d-7f7347d21fb4" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a65dc05c-47ac-ec2b-11e4-84156446ac76" executionId="fffa148e-c02a-466e-856d-92a845feabf2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e8a4e6d8-1f65-6eea-5a06-cc6c0f7d392c" executionId="c0c08831-4c31-4c81-b3b0-bf280a1d7f96" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d9bb4241-61c1-384b-e3b9-5a259d84d58f" executionId="f2bd29e6-6b52-467a-8f96-7588e04568ce" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e8aac352-5e23-f38e-552a-af33d739bdd5" executionId="68ddcd77-801e-4a8b-aad5-14698654e9e2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c6c7e583-0b8c-2b91-6888-310e7bcead66" executionId="ae19b046-cdfc-4616-87e0-780761249686" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="5d8bc39c-8724-3fe0-c74e-462e83c102d3" executionId="373f5f3d-d391-448c-b586-4c22b9d2b983" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ccc14fa8-0fca-8f52-4a92-9f55a128a917" executionId="d1217316-18c5-482d-9d4a-20eb7d760859" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="38354bf3-e2d4-a191-1dd7-25079ca8c3c6" executionId="3737604a-72e7-4c4b-b5bd-5e542cb78f02" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="69f20aab-6a45-73a8-0f28-afdb234df650" executionId="b8bc3649-32f9-4d90-997f-23a1be567069" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0f70cde8-d5df-4df1-afc7-c460645a442e" executionId="85a0b907-439b-4f84-b2ec-8a9182509927" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="defbdc72-82f2-3282-3f23-40e1ace8bd47" executionId="f95fe04c-47f3-43ae-84f6-a555a08129de" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="16" executed="16" passed="15" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 9.0.2)&#xD;
+[xUnit.net 00:00:00.03]   Discovering: SoftMedia.Tests&#xD;
+[xUnit.net 00:00:00.06]   Discovered:  SoftMedia.Tests&#xD;
+[xUnit.net 00:00:00.06]   Starting:    SoftMedia.Tests&#xD;
+[xUnit.net 00:00:00.12]       Assert.Equal() Failure: Strings differ&#xD;
+[xUnit.net 00:00:00.12]       Expected: "Interstellar"&#xD;
+[xUnit.net 00:00:00.12]       Actual:   "Interstellar 2014 IMAX"&#xD;
+[xUnit.net 00:00:00.12]                              ↑ (pos 12)&#xD;
+[xUnit.net 00:00:00.12]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.12]         C:\Users\Admin\Documents\coding2\SoftMedia\tests\FileNameParserTests.cs(20,0): at SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(String fileName, String expectedTitle, Nullable`1 expectedYear)&#xD;
+[xUnit.net 00:00:00.12]            at InvokeStub_FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(Object, Span`1)&#xD;
+[xUnit.net 00:00:00.12]            at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)&#xD;
+[xUnit.net 00:00:00.12]   Finished:    SoftMedia.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="GAMING" outcome="Error" timestamp="2025-12-04T23:03:27.6270608-08:00">
+        <Text>[xUnit.net 00:00:00.12]     SoftMedia.Tests.FileNameParserTests.ParseMovie_ShouldExtractTitleAndYear(fileName: "Interstellar_2014_IMAX_1080p.mkv", expectedTitle: "Interstellar", expectedYear: 2014) [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

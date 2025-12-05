@@ -167,70 +167,70 @@
         - [x] Sync library changes with Sidebar component (invalidate queries)
 
 ### 3.3 Enhanced Media Experience & Metadata
-- [ ] **Metadata Fetching & Storage (Backend)**
-    - [ ] **Core Metadata Logic**
-        - [ ] Update `MediaItem` entity to support rich metadata (People, Studios, Tags)
-        - [ ] Implement `MetadataAggregator` to merge results from multiple sources (Embedded + API)
-    - [ ] **Movie Metadata**
-        - [ ] Enhance `WikidataProvider` to fetch Director, Cast, Content Rating (MPAA), Production Company
-        - [ ] Implement fallback to embedded metadata (Title, Year) if API fails
-    - [ ] **TV Show Metadata**
-        - [ ] Enhance `TVMazeProvider` to fetch Network, Status, Genre, Content Rating
-        - [ ] Implement Episode-level metadata fetching (Summary, Air Date, Guest Stars)
-        - [ ] Implement Season-level grouping logic in API responses
-    - [ ] **Music Metadata**
-        - [ ] Enhance `MusicBrainzProvider` to fetch Artist Bio, Release Date, Record Label
-        - [ ] Implement `TagLib#` integration for robust embedded ID3 tag reading (Track, Disk, Album Art)
-        - [ ] Implement Artist -> Album -> Disc -> Track hierarchy in API
-    - [ ] **Book Metadata**
-        - [ ] Enhance `OpenLibraryProvider` to fetch ISBN, Page Count, Publisher, Subjects
-        - [ ] Implement EPUB/PDF metadata extraction (Title, Author)
-    - [ ] **Game (ROM) Metadata**
-        - [ ] Enhance `WikidataGameProvider` to fetch Platform, Developer, Publisher, Game Mode
-        - [ ] Implement multi-disc detection and grouping (e.g., "Game (Disc 1).iso", "Game (Disc 2).iso")
-    - [ ] **Photo Metadata**
-        - [ ] Implement `ExifReader` service to extract Camera, ISO, F-Stop, GPS, Date Taken
-        - [ ] Implement reverse geocoding (optional/future) or simple coordinate storage
-- [ ] **Frontend Media Display & Detail Pages**
-    - [ ] **Routing & Layout**
-        - [ ] Create dynamic routes for media details (`/item/{id}`)
-        - [ ] Implement `MediaDetailLayout` (Hero image/Backdrop, Poster, Info Column)
-        - [ ] Implement **User Star Rating** component (Interactive 1-5 stars)
-    - [ ] **Movie Experience**
-        - [ ] Update `MediaCard` to show Year and Content Rating badges
-        - [ ] Create `MovieDetailPage` (Display Plot, Cast Grid, Director, Studio, Tech Specs)
-    - [ ] **TV Experience**
-        - [ ] Create `TVShowDetailPage` (Series Info, Season List)
-        - [ ] Create `SeasonDetailPage` (Episode List with thumbnails and summaries)
-        - [ ] Implement "Next Episode" logic
-    - [ ] **Music Experience**
-        - [ ] **Implement View Toggle** (Artist [Default] vs Album) for Music Libraries
-        - [ ] Create `ArtistDetailPage` (Bio, Album Grid)
-        - [ ] Create `AlbumDetailPage` (Tracklist, Disc separation, Release Date)
+- [x] **Metadata Fetching & Storage (Backend)**
+    - [x] **Core Metadata Logic**
+        - [x] Update `MediaItem` entity to support rich metadata (People, Studios, Tags)
+        - [x] Implement `MetadataAggregator` to merge results from multiple sources (Embedded + API)
+    - [x] **Movie Metadata**
+        - [x] Enhance `WikidataProvider` to fetch Director, Cast, Content Rating (MPAA), Production Company
+        - [x] Implement fallback to embedded metadata (Title, Year) if API fails
+    - [x] **TV Show Metadata**
+        - [x] Enhance `TVMazeProvider` to fetch Network, Status, Genre, Content Rating
+        - [x] Implement Episode-level metadata fetching (Summary, Air Date, Guest Stars)
+        - [x] Implement Season-level grouping logic in API responses
+    - [x] **Music Metadata**
+        - [x] Enhance `MusicBrainzProvider` to fetch Artist Bio, Release Date, Record Label
+        - [x] Implement `TagLib#` integration for robust embedded ID3 tag reading (Track, Disk, Album Art)
+        - [x] Implement Artist -> Album -> Disc -> Track hierarchy in API
+    - [x] **Book Metadata**
+        - [x] Enhance `OpenLibraryProvider` to fetch ISBN, Page Count, Publisher, Subjects
+        - [x] Implement EPUB/PDF metadata extraction (Title, Author)
+    - [x] **Game (ROM) Metadata**
+        - [x] Enhance `WikidataGameProvider` to fetch Platform, Developer, Publisher, Game Mode
+        - [x] Implement multi-disc detection and grouping (e.g., "Game (Disc 1).iso", "Game (Disc 2).iso")
+    - [x] **Photo Metadata**
+        - [x] Implement `ExifReader` service to extract Camera, ISO, F-Stop, GPS, Date Taken
+        - [x] Implement reverse geocoding (optional/future) or simple coordinate storage
+- [x] **Frontend Media Display & Detail Pages**
+    - [x] **Routing & Layout**
+        - [x] Create dynamic routes for media details (`/item/{id}`)
+        - [x] Implement `MediaDetailLayout` (Hero image/Backdrop, Poster, Info Column)
+        - [x] Implement **User Star Rating** component (Interactive 1-5 stars)
+    - [x] **Movie Experience**
+        - [x] Update `MediaCard` to show Year and Content Rating badges
+        - [x] Create `MovieDetailPage` (Display Plot, Cast Grid, Director, Studio, Tech Specs)
+    - [x] **TV Experience**
+        - [x] Create `TVShowDetailPage` (Series Info, Season List)
+        - [x] Create `SeasonDetailPage` (Episode List with thumbnails and summaries)
+        - [x] Implement "Next Episode" logic
+    - [x] **Music Experience**
+        - [x] **Implement View Toggle** (Artist [Default] vs Album) for Music Libraries
+        - [x] Create `ArtistDetailPage` (Bio, Album Grid)
+        - [x] Create `AlbumDetailPage` (Tracklist, Disc separation, Release Date)
     - [ ] **Book & Audiobook Experience**
-        - [ ] Create `BookDetailPage` (Summary, Author, Page Count, ISBN)
+        - [x] Create `BookDetailPage` (Summary, Author, Page Count, ISBN)
         - [ ] Add "Read" button for E-Books and "Listen" button for Audiobooks
         - [ ] Support "Narrator" metadata field for Audiobooks
     - [ ] **Game Experience**
-        - [ ] Create `GameDetailPage` (Platform, Developer, Multiplayer/Singleplayer tags)
+        - [x] Create `GameDetailPage` (Platform, Developer, Multiplayer/Singleplayer tags)
         - [ ] Handle multi-disc selection in "Play/Download" action
     - [ ] **Photo Experience**
         - [ ] **Implement Masonry/Justified Grid Layout** for Photo Libraries
-        - [ ] Create `PhotoDetailPage` (Large preview, EXIF data sidebar)
+        - [x] Create `PhotoDetailPage` (Large preview, EXIF data sidebar)
         - [ ] Implement "Next/Prev" navigation for photo albums
-- [ ] **Search & Filtering**
-    - [ ] **Backend Filtering**
-        - [ ] Implement `GET /api/v1/libraries/{id}/filter` endpoint
-        - [ ] Support filtering by: Genre, Year, Content Rating, Resolution, Video Codec, Audio Codec, **User Rating**
-        - [ ] Support sorting by: Date Added, Release Date, Title, IMDB Rating, **User Rating**
-    - [ ] **User Rating System (Backend)**
-        - [ ] Add `UserRating` field to `MediaItem` (or separate table for per-user ratings)
-        - [ ] Create `POST /api/v1/media/{id}/rate` endpoint
-    - [ ] **Frontend Filter UI**
-        - [ ] Update `FilterBar` to fetch available filters from backend
-        - [ ] Implement multi-select for Genres
-        - [ ] Implement Range slider for Years or Ratings (optional)
-        - [ ] Implement Text Search input (Debounced)
+- [x] **Search & Filtering**
+    - [x] **Backend Filtering**
+        - [x] Implement `GET /api/v1/libraries/{id}/filter` endpoint
+        - [x] Support filtering by: Genre, Year, Content Rating, Resolution, Video Codec, Audio Codec, **User Rating**
+        - [x] Support sorting by: Date Added, Release Date, Title, IMDB Rating, **User Rating**
+    - [x] **User Rating System (Backend)**
+        - [x] Add `UserRating` field to `MediaItem` (or separate table for per-user ratings)
+        - [x] Create `POST /api/v1/media/{id}/rate` endpoint
+    - [x] **Frontend Filter UI**
+        - [x] Update `FilterBar` to fetch available filters from backend
+        - [x] Implement multi-select for Genres
+        - [x] Implement Range slider for Years or Ratings (optional)
+        - [x] Implement Text Search input (Debounced)
 
 ### 3.4 Final Polish
 - [x] **Performance**

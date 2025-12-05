@@ -1,7 +1,7 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import { type MediaItem } from '../../types';
-import MediaCard from '../items/MediaCard';
+import HoverableMediaCardWrapper from '../items/HoverableMediaCardWrapper';
 
 interface MediaRowProps {
     title: string;
@@ -11,6 +11,7 @@ interface MediaRowProps {
 
 export default function MediaRow({ title, items, viewAllLink }: MediaRowProps) {
     const rowRef = useRef<HTMLDivElement>(null);
+    const [hoveredId, setHoveredId] = useState<string | null>(null);
 
     const scroll = (direction: 'left' | 'right') => {
         if (rowRef.current) {
@@ -58,13 +59,16 @@ export default function MediaRow({ title, items, viewAllLink }: MediaRowProps) {
                 {/* Scroll Container */}
                 <div
                     ref={rowRef}
-                    className="flex gap-3 overflow-x-auto pb-4 scroll-smooth"
+                    className="flex gap-3 overflow-x-auto py-20 px-2 scroll-smooth items-center"
                     style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
                 >
                     {items.map((item) => (
-                        <div key={item.id} className="flex-none w-[180px]">
-                            <MediaCard item={item} />
-                        </div>
+                        <HoverableMediaCardWrapper
+                            key={item.id}
+                            item={item}
+                            hoveredId={hoveredId}
+                            setHoveredId={setHoveredId}
+                        />
                     ))}
                 </div>
 

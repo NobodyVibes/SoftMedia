@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/authStore';
 import { toast } from 'sonner';
 import { CreateUserModal } from './CreateUserModal';
 import { RatingsModal } from './RatingsModal';
+import { ResetPasswordModal } from './ResetPasswordModal';
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 type SortConfig = {
@@ -40,6 +41,7 @@ export const UserListTable: React.FC = () => {
 
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [ratingsModalUser, setRatingsModalUser] = useState<UserDto | null>(null);
+    const [resetPasswordUser, setResetPasswordUser] = useState<UserDto | null>(null);
 
     // Sorting and Filtering State
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'username', direction: 'asc' });
@@ -509,6 +511,19 @@ export const UserListTable: React.FC = () => {
                                                 >
                                                     Delete
                                                 </button>
+                                                <button
+                                                    onClick={() => {
+                                                        console.log('Password button clicked for user:', user.username);
+                                                        setResetPasswordUser(user);
+                                                    }}
+                                                    // disabled={isCurrentUser} // Requirement: "change any user's password"
+                                                    className={`px-3 py-1 rounded transition-colors text-white ${isCurrentUser
+                                                        ? 'bg-blue-600/50 hover:bg-blue-600/50 cursor-not-allowed' // Optional: if we wanted to disable it
+                                                        : 'bg-blue-600 hover:bg-blue-700'
+                                                        }`}
+                                                >
+                                                    Password
+                                                </button>
                                             </div>
                                         </td>
                                     </tr>
@@ -537,6 +552,12 @@ export const UserListTable: React.FC = () => {
                 isOpen={!!ratingsModalUser}
                 onClose={() => setRatingsModalUser(null)}
                 user={ratingsModalUser}
+            />
+
+            <ResetPasswordModal
+                isOpen={!!resetPasswordUser}
+                onClose={() => setResetPasswordUser(null)}
+                user={resetPasswordUser}
             />
         </>
     );

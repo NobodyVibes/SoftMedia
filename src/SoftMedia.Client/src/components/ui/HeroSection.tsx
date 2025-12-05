@@ -7,7 +7,7 @@ interface HeroSectionProps {
     imageUrl: string;
     year?: number;
     rating?: string;
-    duration?: string;
+    duration?: string | number;
     onPlay?: () => void;
     onMoreInfo?: () => void;
 }

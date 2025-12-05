@@ -257,4 +257,39 @@ public class UsersController : ControllerBase
 
         return Ok();
     }
+    [HttpPut("{id}/password")]
+    public async Task<IActionResult> ResetUserPassword(Guid id, ResetUserPasswordRequest request)
+    {
+        var user = await _context.Users.FindAsync(id);
+        if (user == null)
+        {
+            return NotFound("User not found.");
+        }
+
+        // Get current user ID from claims
+        var currentUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (currentUserId == null)
+        {
+            return Unauthorized();
+        }
+
+        // Prevent resetting your own password via this admin endpoint (optional, but good practice to force them to use the normal change password flow)
+        // However, for "Manual Password Change" by admin, maybe they SHOULD be able to change their own?
+        // Let's allow it for now, as it's an admin action.
+
+        user.PasswordHash = _passwordHasher.HashPassword(request.NewPassword);
+        
+        // If the user was forced to change password, maybe we should clear that flag?
+        // Or maybe we leave it, assuming the admin set a temporary password and wants the user to change it again?
+        // Let's assume the admin is setting a permanent password or communicating it to the user.
+        // If we want to force them to change it again, the admin can toggle that flag separately (if we had an endpoint for it).
+        // For now, let's NOT clear MustChangePassword automatically, unless we want to treat this as a "fix".
+        // Actually, if an admin resets it, the user probably knows the new password.
+        // Let's clear MustChangePassword so they aren't stuck in a loop if that was the issue.
+        user.MustChangePassword = false;
+
+        await _context.SaveChangesAsync();
+
+        return Ok();
+    }
 }

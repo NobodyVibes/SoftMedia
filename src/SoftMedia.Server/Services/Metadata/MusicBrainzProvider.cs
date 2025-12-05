@@ -23,38 +23,38 @@ public class MusicBrainzProvider : IMetadataProvider
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
     }
 
-    public async Task<string?> FetchMetadataAsync(string title, string path)
+    public Task<string?> FetchMetadataAsync(string title, string path)
     {
-        await _rateLimitLock.WaitAsync();
+        // 1. Try to read embedded tags first (Fast, Local)
+        var metadata = new Dictionary<string, object>();
         try
         {
-            var timeSinceLastRequest = DateTimeOffset.UtcNow - _lastRequestTime;
-            if (timeSinceLastRequest.TotalSeconds < 1.1) // Add a little buffer
+            if (File.Exists(path))
             {
-                var delay = TimeSpan.FromSeconds(1.1) - timeSinceLastRequest;
-                await Task.Delay(delay);
-            }
+                using var tfile = TagLib.File.Create(path);
+                var tag = tfile.Tag;
 
-            try
-            {
-                // Simple search query for MusicBrainz (Release Group or Recording)
-                // Searching for "release-group" (Album) by default as it maps best to a folder usually
-                var url = $"https://musicbrainz.org/ws/2/release-group?query={Uri.EscapeDataString(title)}&fmt=json";
+                if (!string.IsNullOrEmpty(tag.Title)) metadata["title"] = tag.Title;
+                if (!string.IsNullOrEmpty(tag.FirstPerformer)) metadata["artist"] = tag.FirstPerformer;
+                if (!string.IsNullOrEmpty(tag.Album)) metadata["album"] = tag.Album;
+                if (tag.Year > 0) metadata["year"] = tag.Year;
+                if (tag.Genres.Length > 0) metadata["genres"] = tag.Genres;
+                if (tag.Track > 0) metadata["track"] = tag.Track;
+                if (tag.Disc > 0) metadata["disc"] = tag.Disc;
                 
-                var response = await _httpClient.GetStringAsync(url);
-                _lastRequestTime = DateTimeOffset.UtcNow;
-                
-                return response;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Error fetching MusicBrainz metadata for {title}");
-                return null;
+                // Duration from file properties
+                metadata["duration"] = tfile.Properties.Duration.TotalSeconds;
             }
         }
-        finally
+        catch (Exception ex)
         {
-            _rateLimitLock.Release();
+            _logger.LogWarning(ex, "Error reading tags for {Path}", path);
         }
+
+        // 2. If we have enough info, we could query MusicBrainz (Optional)
+        // For now, returning local tags is a huge win.
+        // We can add API fetching later if needed, but rate limits make it tricky for 1000s of tracks.
+        
+        return Task.FromResult(metadata.Count > 0 ? JsonSerializer.Serialize(metadata) : null);
     }
 }

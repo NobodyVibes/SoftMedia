@@ -19,6 +19,7 @@ interface AudioState {
     setVolume: (volume: number) => void;
     toggleMute: () => void;
     clearQueue: () => void;
+    playPlaylist: (tracks: MediaItem[], startFrom?: MediaItem) => void;
 }
 
 export const useAudioStore = create<AudioState>((set, get) => ({
@@ -64,4 +65,19 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     toggleMute: () => set((state) => ({ isMuted: !state.isMuted })),
 
     clearQueue: () => set({ queue: [] }),
+
+    playPlaylist: (tracks, startFrom) => {
+        if (!tracks || tracks.length === 0) return;
+
+        let startIndex = 0;
+        if (startFrom) {
+            startIndex = tracks.findIndex(t => t.id === startFrom.id);
+            if (startIndex === -1) startIndex = 0;
+        }
+
+        const currentTrack = tracks[startIndex];
+        const queue = tracks.slice(startIndex + 1);
+
+        set({ currentTrack, queue, isPlaying: true });
+    }
 }));

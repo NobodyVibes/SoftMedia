@@ -196,12 +196,12 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("refresh")]
-    public async Task<ActionResult<string>> Refresh()
+    public Task<ActionResult<string>> Refresh()
     {
         var refreshToken = Request.Cookies["refreshToken"];
         if (string.IsNullOrEmpty(refreshToken))
         {
-            return Unauthorized("No refresh token provided.");
+            return Task.FromResult<ActionResult<string>>(Unauthorized("No refresh token provided."));
         }
 
         // In a real app, we would validate the refresh token against the database here.
@@ -216,7 +216,7 @@ public class AuthController : ControllerBase
         // I will add a TODO and return Unauthorized for now, or I can implement a basic version if I had the user context.
         // Actually, usually the client sends the expired access token + refresh token.
         
-        return StatusCode(501, "Refresh token logic requires DB storage implementation.");
+        return Task.FromResult<ActionResult<string>>(StatusCode(501, "Refresh token logic requires DB storage implementation."));
     }
 
     [HttpPost("logout")]

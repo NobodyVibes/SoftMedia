@@ -57,5 +57,9 @@ export const userService = {
 
     async updateUserRatings(userId: string, contentRatings: Record<string, string>): Promise<void> {
         await api.put(`/users/${userId}/ratings`, { contentRatings });
+    },
+
+    async resetUserPassword(userId: string, newPassword: string): Promise<void> {
+        await api.put(`/users/${userId}/password`, { newPassword });
     }
 };

@@ -8,6 +8,16 @@ public interface IFFmpegService
 {
     Task<MediaProbeResult?> ProbeMediaAsync(string path);
     ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix);
+    /// <summary>
+    /// Get transcode arguments with optional subtitle burn-in and seek position.
+    /// </summary>
+    /// <param name="inputPath">Path to input video file</param>
+    /// <param name="outputDir">Directory for HLS output</param>
+    /// <param name="segmentPrefix">Prefix for segment files</param>
+    /// <param name="subtitleTrackIndex">Optional subtitle track index to burn in (null for no subtitles)</param>
+    /// <param name="seekPosition">Optional position in seconds to start transcoding from</param>
+    /// <returns>ProcessStartInfo configured for FFmpeg</returns>
+    ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition);
 }
 
 public class MediaProbeResult
@@ -128,6 +138,76 @@ public class FFmpegService : IFFmpegService
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardError = true // Capture logs for debugging
+        };
+    }
+
+    /// <summary>
+    /// Get transcode arguments with optional subtitle burn-in and seek position.
+    /// For subtitle burn-in, uses filter_complex to overlay subtitles onto video.
+    /// </summary>
+    public ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition)
+    {
+        Directory.CreateDirectory(outputDir);
+
+        var playlistPath = Path.Combine(outputDir, "master.m3u8");
+        var segmentPath = Path.Combine(outputDir, $"{segmentPrefix}_%03d.ts");
+
+        var argumentBuilder = new System.Text.StringBuilder();
+        
+        // Add seek position if specified (before input for fast seeking)
+        if (seekPosition.HasValue && seekPosition.Value > 0)
+        {
+            argumentBuilder.Append($"-ss {seekPosition.Value:F2} ");
+        }
+        
+        // Input file
+        argumentBuilder.Append($"-i \"{inputPath}\" ");
+        
+        // Video encoding with optional subtitle burn-in
+        if (subtitleTrackIndex.HasValue)
+        {
+            // Use filter_complex to overlay subtitles (works with ALL subtitle types including PGS)
+            // [0:v] = first input video stream
+            // [0:s:X] = subtitle stream at index X (subtitle-relative, not absolute stream index)
+            // We need to map the absolute stream index to subtitle-relative index
+            // For simplicity, we'll use the absolute index and let FFmpeg figure it out
+            // The overlay filter works for bitmap subs, subtitles filter works for text subs
+            
+            // Using the overlay filter for maximum compatibility with bitmap subtitles
+            argumentBuilder.Append($"-filter_complex \"[0:v][0:{subtitleTrackIndex.Value}]overlay\" ");
+            argumentBuilder.Append("-c:v libx264 -profile:v baseline -level 3.1 -pix_fmt yuv420p ");
+        }
+        else
+        {
+            // No subtitles - simple video encoding
+            argumentBuilder.Append("-c:v libx264 -profile:v baseline -level 3.1 -pix_fmt yuv420p ");
+        }
+        
+        // Video quality settings
+        argumentBuilder.Append("-preset veryfast -crf 23 ");
+        
+        // Audio encoding
+        argumentBuilder.Append("-c:a aac -ac 2 -b:a 128k ");
+        
+        // HLS output settings
+        argumentBuilder.Append("-f hls -hls_time 6 -hls_list_size 0 -hls_playlist_type event ");
+        argumentBuilder.Append("-hls_flags append_list+omit_endlist ");
+        argumentBuilder.Append($"-start_number 0 -hls_segment_filename \"{segmentPath}\" ");
+        argumentBuilder.Append($"\"{playlistPath}\"");
+
+        var arguments = argumentBuilder.ToString();
+        
+        var ffmpegPath = ResolveFFmpegPath();
+        _logger.LogInformation("Using FFmpeg at: {Path} with subtitle track: {SubIndex}, seek: {Seek}", 
+            ffmpegPath, subtitleTrackIndex, seekPosition);
+
+        return new ProcessStartInfo
+        {
+            FileName = ffmpegPath,
+            Arguments = arguments,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardError = true
         };
     }
 

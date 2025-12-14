@@ -89,8 +89,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             OnMessageReceived = context =>
             {
                 var path = context.HttpContext.Request.Path;
-                // Only extract from query for streaming/transcode endpoints
-                if (path.StartsWithSegments("/api/transcode") || path.StartsWithSegments("/api/v1/stream"))
+                // Only extract from query for streaming/transcode/media endpoints
+                // This is required because browser media elements can't set Authorization headers
+                if (path.StartsWithSegments("/api/transcode") || 
+                    path.StartsWithSegments("/api/v1/stream") ||
+                    path.StartsWithSegments("/api/media"))
                 {
                     var token = context.Request.Query["token"];
                     if (!string.IsNullOrEmpty(token))

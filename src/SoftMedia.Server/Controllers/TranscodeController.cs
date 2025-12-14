@@ -9,6 +9,7 @@ namespace SoftMedia.Server.Controllers;
 /// <summary>
 /// Controller for HLS transcoding endpoints.
 /// Requires authentication to prevent unauthorized access.
+/// Supports optional subtitle burn-in via ?sub=trackIndex query parameter.
 /// </summary>
 [Authorize]
 [ApiController]
@@ -26,8 +27,15 @@ public class TranscodeController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// Get the HLS master playlist for a media item.
+    /// Optional query parameters:
+    /// - token: JWT for authentication
+    /// - sub: Subtitle track index to burn into the video
+    /// - seek: Position in seconds to start from
+    /// </summary>
     [HttpGet("{id}/master.m3u8")]
-    public async Task<IActionResult> GetMasterPlaylist(Guid id)
+    public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null)
     {
         try
         {
@@ -60,18 +68,19 @@ public class TranscodeController : ControllerBase
                 return Forbid();
             }
 
-            // Start transcoding if not already running
-            _logger.LogInformation("Starting transcode for media {Id}, path: {Path}", id, mediaItem.Path);
-            await _transcodeService.StartTranscodeAsync(id, mediaItem.Path);
+            // Start transcoding with optional subtitle and seek
+            _logger.LogInformation("Starting transcode for media {Id} (sub={Sub}, seek={Seek}), path: {Path}", 
+                id, sub, seek, mediaItem.Path);
+            await _transcodeService.StartTranscodeAsync(id, mediaItem.Path, sub, seek);
 
-            var stream = _transcodeService.GetPlaylist(id);
+            var stream = _transcodeService.GetPlaylist(id, sub);
             if (stream == null)
             {
                 _logger.LogWarning("Playlist not ready for {Id} - transcoding may still be starting", id);
                 return StatusCode(503, "Transcoding in progress, playlist not ready yet. Please retry in a few seconds.");
             }
 
-            // Read and rewrite M3U8 to inject token into segment URLs
+            // Read and rewrite M3U8 to inject token AND subtitle track into segment URLs
             var token = Request.Query["token"].ToString();
             if (!string.IsNullOrEmpty(token))
             {
@@ -80,8 +89,16 @@ public class TranscodeController : ControllerBase
                 
                 _logger.LogDebug("M3U8 content length: {Length}, rewriting with token", content.Length);
                 
-                // Append token to all .ts (segment) files
-                var rewrittenContent = content.Replace(".ts", $".ts?token={token}");
+                // Build query string for segments (include token and subtitle track)
+                var queryParts = new List<string> { $"token={token}" };
+                if (sub.HasValue)
+                {
+                    queryParts.Add($"sub={sub.Value}");
+                }
+                var queryString = string.Join("&", queryParts);
+                
+                // Append query string to all .ts (segment) files
+                var rewrittenContent = content.Replace(".ts", $".ts?{queryString}");
                 
                 // Return modified playlist as bytes
                 var bytes = System.Text.Encoding.UTF8.GetBytes(rewrittenContent);
@@ -99,19 +116,34 @@ public class TranscodeController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Get an HLS segment. Supports optional subtitle parameter for session lookup.
+    /// </summary>
     [HttpGet("{id}/{segment}")]
-    public IActionResult GetSegment(Guid id, string segment)
+    public IActionResult GetSegment(Guid id, string segment, [FromQuery] int? sub = null)
     {
-        var stream = _transcodeService.GetSegment(id, segment);
+        var stream = _transcodeService.GetSegment(id, segment, sub);
         if (stream == null) return NotFound();
 
         return File(stream, "video/MP2T");
     }
 
+    /// <summary>
+    /// Stop transcoding for a media item, optionally for a specific subtitle session.
+    /// </summary>
     [HttpDelete("{id}")]
-    public IActionResult StopTranscode(Guid id)
+    public IActionResult StopTranscode(Guid id, [FromQuery] int? sub = null, [FromQuery] bool all = false)
     {
-        _transcodeService.StopTranscode(id);
+        if (all)
+        {
+            // Stop all transcode sessions for this media (any subtitle combination)
+            _transcodeService.StopAllTranscodesForMedia(id);
+        }
+        else
+        {
+            // Stop specific session
+            _transcodeService.StopTranscode(id, sub);
+        }
         return Ok();
     }
 }

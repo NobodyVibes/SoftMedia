@@ -30,9 +30,11 @@ builder.Services.AddHttpClient<TVMazeProvider>();
 builder.Services.AddScoped<IMetadataProvider, WikidataProvider>();
 builder.Services.AddScoped<IMetadataProvider, TVMazeProvider>();
 builder.Services.AddHttpClient<MusicBrainzProvider>();
+builder.Services.AddScoped<EmbeddedMusicProvider>(); // No HttpClient needed
 builder.Services.AddHttpClient<OpenLibraryProvider>();
 builder.Services.AddHttpClient<GameMetadataProvider>();
 builder.Services.AddScoped<IMetadataProvider, MusicBrainzProvider>();
+builder.Services.AddScoped<IMetadataProvider, EmbeddedMusicProvider>();
 builder.Services.AddScoped<IMetadataProvider, OpenLibraryProvider>();
 builder.Services.AddScoped<IMetadataProvider, GameMetadataProvider>();
 builder.Services.AddScoped<IMetadataProvider, ExifMetadataProvider>();
@@ -78,6 +80,26 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidIssuer = builder.Configuration["JwtSettings:Issuer"],
             ValidAudience = builder.Configuration["JwtSettings:Audience"],
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["JwtSettings:Secret"]!))
+        };
+        
+        // Support JWT from query parameter for streaming endpoints
+        // This is required because browser media elements can't set Authorization headers
+        options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var path = context.HttpContext.Request.Path;
+                // Only extract from query for streaming/transcode endpoints
+                if (path.StartsWithSegments("/api/transcode") || path.StartsWithSegments("/api/v1/stream"))
+                {
+                    var token = context.Request.Query["token"];
+                    if (!string.IsNullOrEmpty(token))
+                    {
+                        context.Token = token;
+                    }
+                }
+                return Task.CompletedTask;
+            }
         };
     });
 

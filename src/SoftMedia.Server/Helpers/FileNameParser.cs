@@ -64,6 +64,23 @@ public static class FileNameParser
         return (string.Empty, 0, 0, string.Empty);
     }
 
+    public static (string Title, int? TrackNumber) ParseMusic(string fileName)
+    {
+        var cleanName = Path.GetFileNameWithoutExtension(fileName);
+        
+        // Regex for "01 Title" or "01 - Title" or "01. Title"
+        var match = Regex.Match(cleanName, @"^(\d+)(?:[\s\.\-_]+)(.+)$");
+        if (match.Success)
+        {
+            if (int.TryParse(match.Groups[1].Value, out var track))
+            {
+                return (match.Groups[2].Value.Trim(), track);
+            }
+        }
+        
+        return (cleanName, null);
+    }
+
     private static string CleanName(string title)
     {
         if (string.IsNullOrEmpty(title)) return string.Empty;

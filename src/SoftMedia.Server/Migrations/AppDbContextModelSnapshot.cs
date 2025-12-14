@@ -108,6 +108,34 @@ namespace SoftMedia.Server.Migrations
                     b.ToTable("Libraries");
                 });
 
+            modelBuilder.Entity("SoftMedia.Server.Models.MediaImage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Data")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("ImageType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("MediaItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaItemId");
+
+                    b.ToTable("MediaImages");
+                });
+
             modelBuilder.Entity("SoftMedia.Server.Models.MediaItem", b =>
                 {
                     b.Property<Guid>("Id")
@@ -330,6 +358,17 @@ namespace SoftMedia.Server.Migrations
                     b.Navigation("CreatedBy");
 
                     b.Navigation("UsedBy");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.MediaImage", b =>
+                {
+                    b.HasOne("SoftMedia.Server.Models.MediaItem", "MediaItem")
+                        .WithMany()
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaItem");
                 });
 
             modelBuilder.Entity("SoftMedia.Server.Models.MediaItem", b =>

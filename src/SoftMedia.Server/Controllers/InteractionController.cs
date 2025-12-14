@@ -49,6 +49,25 @@ public class InteractionController : ControllerBase
         interaction.Rating = request.Rating;
         await _context.SaveChangesAsync();
 
+        // Recalculate average rating
+        var ratings = await _context.UserMediaInteractions
+            .Where(x => x.MediaItemId == mediaId && x.Rating != null)
+            .Select(x => x.Rating)
+            .ToListAsync();
+
+        double? communityRating = null;
+        if (ratings.Any())
+        {
+            communityRating = ratings.Average(r => r.Value);
+        }
+
+        var mediaItem = await _context.MediaItems.FindAsync(mediaId);
+        if (mediaItem != null)
+        {
+            mediaItem.CommunityRating = communityRating;
+            await _context.SaveChangesAsync();
+        }
+
         return Ok();
     }
 
@@ -102,6 +121,8 @@ public class InteractionController : ControllerBase
 
         return Ok();
     }
+
+    // Maintenance endpoint removed after execution
 }
 
 public class RateRequest

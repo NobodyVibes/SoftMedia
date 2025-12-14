@@ -146,7 +146,7 @@ export default function SettingsPage() {
 
     const movieProviders = ["Wikidata"];
     const tvProviders = ["TVMaze"];
-    const musicProviders = ["MusicBrainz"];
+    const musicProviders = ["MusicBrainz", "Embedded"];
     const bookProviders = ["Open Library"];
     const gameProviders = ["Wikidata"];
     const photoProviders = ["Exif"];
@@ -170,7 +170,9 @@ export default function SettingsPage() {
             <div className="space-y-6">
                 {groupSettings.map(setting => (
                     <div key={setting.key} className="flex flex-col gap-2">
-                        <label className="text-sm font-medium text-gray-300">{t(setting.key.replace(/([A-Z])/g, ' $1').trim())}</label>
+                        {!['MusicProviderPrimary', 'MusicProviderFallback'].includes(setting.key) && (
+                            <label className="text-sm font-medium text-gray-300">{t(setting.key.replace(/([A-Z])/g, ' $1').trim())}</label>
+                        )}
 
                         {setting.key === 'AllowUserSignup' ? (
                             <Combobox
@@ -221,21 +223,53 @@ export default function SettingsPage() {
                                 className="max-w-md"
                             />
                         ) : setting.key === 'TVProvider' ? (
-                            <Combobox
-                                value={setting.value}
-                                onChange={(val) => handleChange(setting.key, val)}
-                                options={tvProviders}
-                                placeholder="Select TV provider..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'MusicProvider' ? (
-                            <Combobox
-                                value={setting.value}
-                                onChange={(val) => handleChange(setting.key, val)}
-                                options={musicProviders}
-                                placeholder="Select music provider..."
-                                className="max-w-md"
-                            />
+                            <>
+                                <Combobox
+                                    value={setting.value}
+                                    onChange={(val) => handleChange(setting.key, val)}
+                                    options={tvProviders}
+                                    placeholder="Select TV provider..."
+                                    className="max-w-md"
+                                />
+                                {setting.value === 'TVMaze' && (
+                                    <div className="mt-2 p-3 bg-blue-500/10 border border-blue-500/20 rounded-md max-w-md">
+                                        <p className="text-xs text-blue-200">
+                                            Data provided by TVMaze for free. Please consider supporting them: <a href="https://www.tvmaze.com/premium" target="_blank" rel="noopener noreferrer" className="underline hover:text-white font-bold">Donate to TVMaze</a>
+                                        </p>
+                                    </div>
+                                )}
+                            </>
+                        ) : setting.key === 'MusicProviderPrimary' ? (
+                            <>
+                                <label className="text-sm font-medium text-gray-300">Music Providers</label>
+                                <div className="bg-white/5 p-4 rounded-lg border border-white/10 space-y-4">
+
+                                    <div className="space-y-2">
+                                        <label className="text-xs text-gray-400 block">Primary Provider (First Choice)</label>
+                                        <Combobox
+                                            value={setting.value}
+                                            onChange={(val) => handleChange(setting.key, val)}
+                                            options={musicProviders}
+                                            placeholder="Select primary music provider..."
+                                            className="w-full"
+                                        />
+                                    </div>
+                                    {localSettings.find(s => s.key === 'MusicProviderFallback') && (
+                                        <div className="space-y-2">
+                                            <label className="text-xs text-gray-400 block">Fallback Provider (If Primary fails)</label>
+                                            <Combobox
+                                                value={localSettings.find(s => s.key === 'MusicProviderFallback')!.value}
+                                                onChange={(val) => handleChange('MusicProviderFallback', val)}
+                                                options={musicProviders}
+                                                placeholder="Select fallback music provider..."
+                                                className="w-full"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        ) : setting.key === 'MusicProviderFallback' ? (
+                            null // Handled in Primary block
                         ) : setting.key === 'BookProvider' ? (
                             <Combobox
                                 value={setting.value}
@@ -269,7 +303,7 @@ export default function SettingsPage() {
                             />
                         )}
 
-                        {setting.description && (
+                        {setting.description && !['MusicProviderPrimary', 'MusicProviderFallback'].includes(setting.key) && (
                             <p className="text-xs text-gray-500">{setting.description}</p>
                         )}
                     </div>

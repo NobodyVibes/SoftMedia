@@ -9,6 +9,7 @@ public class GameMetadataProvider : IMetadataProvider
     private readonly ILogger<GameMetadataProvider> _logger;
 
     public LibraryType SupportedType => LibraryType.Game;
+    public string ProviderName => "Wikidata";
 
     public GameMetadataProvider(HttpClient httpClient, ILogger<GameMetadataProvider> logger)
     {
@@ -17,8 +18,10 @@ public class GameMetadataProvider : IMetadataProvider
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
     }
 
-    public async Task<string?> FetchMetadataAsync(string title, string path)
+    public async Task<string?> FetchMetadataAsync(MediaItem item)
     {
+        var title = item.Title;
+        var path = item.Path;
         try
         {
             // SPARQL Query to find game by title and get details

@@ -7,16 +7,17 @@ interface StarRatingProps {
     onChange?: (rating: number) => void;
     readOnly?: boolean;
     size?: number;
+    max?: number;
 }
 
-export function StarRating({ rating, onChange, readOnly = false, size = 20 }: StarRatingProps) {
+export function StarRating({ rating, onChange, readOnly = false, size = 20, max = 5 }: StarRatingProps) {
     const [hoverRating, setHoverRating] = useState<number | null>(null);
 
     const displayRating = hoverRating ?? rating ?? 0;
 
     return (
         <div className="flex items-center gap-1">
-            {[1, 2, 3, 4, 5].map((star) => (
+            {Array.from({ length: max }, (_, i) => i + 1).map((star) => (
                 <button
                     key={star}
                     type="button"

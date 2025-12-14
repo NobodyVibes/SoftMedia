@@ -17,7 +17,7 @@ export default function HoverableMediaCardWrapper({
     setHoveredId,
     baseWidth = 180,
     expandedWidth = 260,
-    height = 270
+    height = 380
 }: HoverableMediaCardWrapperProps) {
     return (
         <motion.div

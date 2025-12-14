@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
@@ -5,38 +6,97 @@ using SoftMedia.Server.Services;
 
 namespace SoftMedia.Server.Controllers;
 
+/// <summary>
+/// Controller for HLS transcoding endpoints.
+/// Requires authentication to prevent unauthorized access.
+/// </summary>
+[Authorize]
 [ApiController]
 [Route("api/transcode")]
 public class TranscodeController : ControllerBase
 {
     private readonly TranscodeService _transcodeService;
     private readonly AppDbContext _context;
+    private readonly ILogger<TranscodeController> _logger;
 
-    public TranscodeController(TranscodeService transcodeService, AppDbContext context)
+    public TranscodeController(TranscodeService transcodeService, AppDbContext context, ILogger<TranscodeController> logger)
     {
         _transcodeService = transcodeService;
         _context = context;
+        _logger = logger;
     }
 
     [HttpGet("{id}/master.m3u8")]
     public async Task<IActionResult> GetMasterPlaylist(Guid id)
     {
-        var mediaItem = await _context.MediaItems.FindAsync(id);
-        if (mediaItem == null) return NotFound();
-
-        // Start transcoding if not already running
-        // Note: In a real app, we might want to check if the file actually NEEDS transcoding first
-        // For now, we force transcode for testing this feature
-        await _transcodeService.StartTranscodeAsync(id, mediaItem.Path);
-
-        var stream = _transcodeService.GetPlaylist(id);
-        if (stream == null)
+        try
         {
-            // Might need more time or failed
-            return StatusCode(500, "Transcoding failed to start or playlist not ready");
-        }
+            // Fetch media item with library for path validation
+            var mediaItem = await _context.MediaItems
+                .Include(m => m.Library)
+                .FirstOrDefaultAsync(m => m.Id == id);
 
-        return File(stream, "application/vnd.apple.mpegurl");
+            if (mediaItem?.Library == null)
+            {
+                _logger.LogWarning("Media item {Id} not found or has no library", id);
+                return NotFound("Media item not found");
+            }
+
+            // Security: Verify file exists
+            if (!System.IO.File.Exists(mediaItem.Path))
+            {
+                _logger.LogWarning("Transcode requested for missing file: {Path}", mediaItem.Path);
+                return NotFound("File not found on disk.");
+            }
+
+            // Security: LFI Protection - verify path is within authorized library directories
+            var canonicalPath = Path.GetFullPath(mediaItem.Path);
+            var isAuthorized = mediaItem.Library.Paths.Any(p =>
+                canonicalPath.StartsWith(Path.GetFullPath(p), StringComparison.OrdinalIgnoreCase));
+
+            if (!isAuthorized)
+            {
+                _logger.LogWarning("LFI attempt blocked in transcode: {Path}", mediaItem.Path);
+                return Forbid();
+            }
+
+            // Start transcoding if not already running
+            _logger.LogInformation("Starting transcode for media {Id}, path: {Path}", id, mediaItem.Path);
+            await _transcodeService.StartTranscodeAsync(id, mediaItem.Path);
+
+            var stream = _transcodeService.GetPlaylist(id);
+            if (stream == null)
+            {
+                _logger.LogWarning("Playlist not ready for {Id} - transcoding may still be starting", id);
+                return StatusCode(503, "Transcoding in progress, playlist not ready yet. Please retry in a few seconds.");
+            }
+
+            // Read and rewrite M3U8 to inject token into segment URLs
+            var token = Request.Query["token"].ToString();
+            if (!string.IsNullOrEmpty(token))
+            {
+                using var reader = new StreamReader(stream);
+                var content = await reader.ReadToEndAsync();
+                
+                _logger.LogDebug("M3U8 content length: {Length}, rewriting with token", content.Length);
+                
+                // Append token to all .ts (segment) files
+                var rewrittenContent = content.Replace(".ts", $".ts?token={token}");
+                
+                // Return modified playlist as bytes
+                var bytes = System.Text.Encoding.UTF8.GetBytes(rewrittenContent);
+                return File(bytes, "application/vnd.apple.mpegurl");
+            }
+
+            // Fallback for no token
+            _logger.LogWarning("No token provided for transcode request {Id}", id);
+            return File(stream, "application/vnd.apple.mpegurl");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in GetMasterPlaylist for {Id}: {Message}", id, ex.Message);
+            return StatusCode(500, $"Transcoding error: {ex.Message}");
+        }
     }
 
     [HttpGet("{id}/{segment}")]

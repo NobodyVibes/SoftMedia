@@ -58,16 +58,28 @@ export function FilterBar({ onSearch, onSort, onGenre, onYear, onRating, onFavor
                 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
 
                     {/* View Mode Toggle (Only if provided) */}
+                    {/* View Mode Toggle (Only if provided) */}
                     {onViewModeChange && (
-                        <select
-                            value={viewMode || 'albums'}
-                            onChange={(e) => onViewModeChange(e.target.value)}
-                            className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/50"
-                        >
-                            <option value="albums">Albums</option>
-                            <option value="artists">Artists</option>
-                            <option value="songs">Songs</option>
-                        </select>
+                        <div className="flex items-center bg-white/5 border border-white/10 rounded-lg p-1 h-[38px]">
+                            {[
+                                { id: 'albums', label: 'Albums' },
+                                { id: 'artists', label: 'Artists' },
+                                { id: 'songs', label: 'Tracks' }
+                            ].map((option) => (
+                                <button
+                                    key={option.id}
+                                    onClick={() => onViewModeChange(option.id)}
+                                    className={cn(
+                                        "px-3 py-1 text-sm font-medium rounded-md transition-all",
+                                        (viewMode || 'artists') === option.id
+                                            ? "bg-primary text-white shadow-sm" // Active State
+                                            : "text-gray-400 hover:text-white hover:bg-white/5" // Inactive State
+                                    )}
+                                >
+                                    {option.label}
+                                </button>
+                            ))}
+                        </div>
                     )}
 
                     {/* Genre */}

@@ -14,6 +14,7 @@ public class OpenLibraryProvider : IMetadataProvider
     private static DateTimeOffset _lastRequestTime = DateTimeOffset.MinValue;
 
     public LibraryType SupportedType => LibraryType.Book;
+    public string ProviderName => "Open Library";
 
     public OpenLibraryProvider(HttpClient httpClient, ILogger<OpenLibraryProvider> logger)
     {
@@ -22,8 +23,10 @@ public class OpenLibraryProvider : IMetadataProvider
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
     }
 
-    public async Task<string?> FetchMetadataAsync(string title, string path)
+    public async Task<string?> FetchMetadataAsync(MediaItem item)
     {
+        var title = item.Title;
+        var path = item.Path;
         await _rateLimitLock.WaitAsync();
         try
         {

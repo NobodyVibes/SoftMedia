@@ -19,8 +19,12 @@ public class MediaItemDto
     public string? Quality { get; set; }
     public List<string>? Genres { get; set; }
     public string? Rating { get; set; }
+    public double? CommunityRating { get; set; }
     public string? Description { get; set; }
     public string? Container { get; set; }
+    public string? VideoCodec { get; set; }
+    public string? AudioCodec { get; set; }
+    public string? Resolution { get; set; }
     public Dictionary<string, object>? Metadata { get; set; }
 
     // User Interaction
@@ -32,7 +36,7 @@ public class MediaItemDto
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
 
-    public static MediaItemDto FromMediaItem(MediaItem item, string? imageProxyBaseUrl = null)
+    public static MediaItemDto FromMediaItem(MediaItem item, string? imageProxyBaseUrl = null, UserMediaInteraction? interaction = null)
     {
         var dto = new MediaItemDto
         {
@@ -43,15 +47,29 @@ public class MediaItemDto
             Path = item.Path,
             DateAdded = item.DateAdded,
             Container = item.Container,
+            VideoCodec = item.VideoCodec,
+            AudioCodec = item.AudioCodec,
+            Resolution = item.Resolution,
             SeriesId = item.SeriesId,
             SeasonNumber = item.SeasonNumber,
             EpisodeNumber = item.EpisodeNumber
         };
 
+        // Map user interaction if available
+        if (interaction != null)
+        {
+            dto.UserRating = interaction.Rating;
+            dto.IsFavorite = interaction.IsFavorite;
+            dto.Watched = interaction.IsWatched;
+        }
+
             // Map promoted properties
             dto.Year = item.Year;
             dto.Description = item.Overview;
-            dto.Rating = item.CommunityRating?.ToString("0.0"); // Format as string for frontend
+            dto.CommunityRating = item.CommunityRating;
+            
+            // Initialize Rating as null, ensuring it only gets populated from external sources
+            dto.Rating = null; 
 
             // Fallback to MetadataJson for extra fields or if promoted fields are null (migration scenario)
             if (!string.IsNullOrEmpty(item.MetadataJson))
@@ -74,7 +92,7 @@ public class MediaItemDto
                             dto.Description = descObj.ToString();
                         }
 
-                        if (string.IsNullOrEmpty(dto.Rating) && metadata.TryGetValue("rating", out var ratingObj))
+                        if (metadata.TryGetValue("rating", out var ratingObj))
                         {
                             dto.Rating = ratingObj.ToString();
                         }
@@ -159,6 +177,12 @@ public class MediaItemDto
                     }
                     catch {}
                 }
+            }
+
+            // Fallback for embedded art if flag is present (and no other poster was found)
+            if (string.IsNullOrEmpty(dto.PosterPath) && dto.Metadata != null && dto.Metadata.ContainsKey("hasEmbeddedArt"))
+            {
+                 dto.PosterPath = $"/api/v1/audio/{dto.Id}/cover";
             }
 
             // Fallback for Duration if not in metadata but in technical details

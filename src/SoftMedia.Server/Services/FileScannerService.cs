@@ -5,6 +5,7 @@ using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Metadata;
 using SoftMedia.Server.Helpers;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 
 namespace SoftMedia.Server.Services;
 
@@ -19,16 +20,19 @@ public class FileScannerService : IFileScannerService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<FileScannerService> _logger;
     private readonly IFileSystem _fileSystem;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly string[] _videoExtensions = { ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg" };
     private readonly string[] _audioExtensions = { ".mp3", ".flac", ".aac", ".wav", ".ogg", ".m4a", ".weba", ".wma", ".alac", ".opus" };
     private readonly string[] _photoExtensions = { ".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp", ".gif", ".tiff" };
     private readonly string[] _gameExtensions = { ".iso", ".bin", ".cue", ".rom", ".nes", ".sfc", ".smc", ".n64", ".z64", ".gba", ".gbc", ".gb", ".nds", ".3ds", ".cia" };
 
-    public FileScannerService(IServiceScopeFactory scopeFactory, ILogger<FileScannerService> logger, IFileSystem fileSystem)
+
+    public FileScannerService(IServiceScopeFactory scopeFactory, ILogger<FileScannerService> logger, IFileSystem fileSystem, IHttpClientFactory httpClientFactory)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _fileSystem = fileSystem;
+        _httpClientFactory = httpClientFactory;
     }
 
     public async Task ScanAllLibrariesAsync()
@@ -175,7 +179,19 @@ public class FileScannerService : IFileScannerService
                     var parsed = FileNameParser.ParseMovie(file);
                     title = parsed.Title;
                     year = parsed.Year;
+                    title = parsed.Title;
+                    year = parsed.Year;
                     _logger.LogInformation($"Parsed Movie: {title} ({year})");
+                }
+
+                // Parse Music Filenames
+                int? musicTrackNum = null;
+                if (library.Type == LibraryType.Music)
+                {
+                    var parsed = FileNameParser.ParseMusic(file);
+                    title = parsed.Title; // Clean title
+                    musicTrackNum = parsed.TrackNumber;
+                    _logger.LogInformation($"Parsed Music: {title} (Track: {musicTrackNum})");
                 }
 
                 if (existingItem != null)
@@ -311,6 +327,168 @@ public class FileScannerService : IFileScannerService
                         }
                     }
 
+                    // Music Logic (Update & Propagation)
+                    if (library.Type == LibraryType.Music)
+                    {
+                        try 
+                        {
+                            var updFile = TagLib.File.Create(file);
+                            var updTag = updFile.Tag;
+                            // Update basic fields if changed
+                            if (existingItem.Year != (int)updTag.Year) { existingItem.Year = (int)updTag.Year; changed = true; }
+                            
+                            if (updTag.Disc > 0) existingItem.DiscNumber = (int)updTag.Disc; // Update disc too if present
+
+                            // If track number is still 0/missing, try filename
+                            if (existingItem.TrackNumber == 0 && musicTrackNum.HasValue)
+                            {
+                                existingItem.TrackNumber = musicTrackNum.Value;
+                                changed = true;
+                            }
+
+                            // Check for missing poster and force re-enrichment
+                            bool hasMetaPoster = !string.IsNullOrEmpty(existingItem.MetadataJson) && 
+                                                 (existingItem.MetadataJson.Contains("\"poster\"") || existingItem.MetadataJson.Contains("hasEmbeddedArt"));
+                            
+                            if (!hasMetaPoster)
+                            {
+                                 var hasDbPoster = await context.MediaImages.AnyAsync(i => i.MediaItemId == existingItem.Id && i.ImageType == "Poster");
+                                 if (!hasDbPoster)
+                                 {
+                                     _logger.LogInformation("Existing track missing poster, forcing enrichment: {Title}", existingItem.Title);
+                                     await metadataAggregator.EnrichMediaItemAsync(existingItem, library.Type);
+                                     changed = true;
+                                 }
+                            }
+                            
+                            if (updTag.Pictures.Length > 0)
+                            {
+                                var updPic = updTag.Pictures[0];
+                                
+                                // Check if metadata needs update
+                                bool hasMeta = !string.IsNullOrEmpty(existingItem.MetadataJson) && existingItem.MetadataJson.Contains("hasEmbeddedArt");
+                                if (!hasMeta)
+                                {
+                                    var updMeta = new Dictionary<string, object>();
+                                    if (!string.IsNullOrEmpty(existingItem.MetadataJson)) 
+                                    {
+                                        try { updMeta = JsonSerializer.Deserialize<Dictionary<string, object>>(existingItem.MetadataJson) ?? new(); } catch {}
+                                    }
+                                    updMeta["hasEmbeddedArt"] = true;
+                                    existingItem.MetadataJson = JsonSerializer.Serialize(updMeta);
+                                    changed = true;
+                                    _logger.LogInformation("Flagged existing track with hasEmbeddedArt: {Title}", existingItem.Title);
+                                }
+
+                                // Check/Save Image for Track
+                                var updTrackImg = await context.MediaImages.FirstOrDefaultAsync(i => i.MediaItemId == existingItem.Id && i.ImageType == "Poster");
+                                if (updTrackImg == null)
+                                {
+                                    context.MediaImages.Add(new MediaImage { MediaItemId = existingItem.Id, ImageType = "Poster", MimeType = updPic.MimeType, Data = updPic.Data.Data });
+                                    _logger.LogInformation("Saved embedded art for existing track: {Title}", existingItem.Title);
+                                }
+
+                                // Propagate to Album
+                                if (existingItem.AlbumId.HasValue)
+                                {
+                                    var updAlbum = await context.MediaItems.FindAsync(existingItem.AlbumId.Value);
+                                    if (updAlbum != null)
+                                    {
+                                        bool albumHasArt = (!string.IsNullOrEmpty(updAlbum.MetadataJson) && (updAlbum.MetadataJson.Contains("hasEmbeddedArt") || updAlbum.MetadataJson.Contains("\"poster\""))) || await context.MediaImages.AnyAsync(i => i.MediaItemId == updAlbum.Id && i.ImageType == "Poster");
+                                        
+                                        if (!albumHasArt)
+                                        {
+                                            var updAlbMeta = new Dictionary<string, object>();
+                                            if (!string.IsNullOrEmpty(updAlbum.MetadataJson)) try { updAlbMeta = JsonSerializer.Deserialize<Dictionary<string, object>>(updAlbum.MetadataJson) ?? new(); } catch {}
+                                            updAlbMeta["hasEmbeddedArt"] = true;
+                                            updAlbum.MetadataJson = JsonSerializer.Serialize(updAlbMeta);
+                                            
+                                            context.MediaImages.Add(new MediaImage { MediaItemId = updAlbum.Id, ImageType = "Poster", MimeType = updPic.MimeType, Data = updPic.Data.Data });
+                                            _logger.LogInformation("Propagated art to Album: {Title}", updAlbum.Title);
+                                        }
+                                    }
+                                }
+
+                                // Propagate to Artist
+                                if (existingItem.ArtistId.HasValue)
+                                {
+                                    var updArtist = await context.MediaItems.FindAsync(existingItem.ArtistId.Value);
+                                    if (updArtist != null)
+                                    {
+                                         bool artistHasArt = (!string.IsNullOrEmpty(updArtist.MetadataJson) && (updArtist.MetadataJson.Contains("hasEmbeddedArt") || updArtist.MetadataJson.Contains("\"poster\""))) || await context.MediaImages.AnyAsync(i => i.MediaItemId == updArtist.Id && i.ImageType == "Poster");
+                                         
+                                         if (!artistHasArt)
+                                         {
+                                            var updArtMeta = new Dictionary<string, object>();
+                                            if (!string.IsNullOrEmpty(updArtist.MetadataJson)) try { updArtMeta = JsonSerializer.Deserialize<Dictionary<string, object>>(updArtist.MetadataJson) ?? new(); } catch {}
+                                            updArtMeta["hasEmbeddedArt"] = true;
+                                            updArtist.MetadataJson = JsonSerializer.Serialize(updArtMeta);
+                                            
+                                            context.MediaImages.Add(new MediaImage { MediaItemId = updArtist.Id, ImageType = "Poster", MimeType = updPic.MimeType, Data = updPic.Data.Data });
+                                            _logger.LogInformation("Propagated art to Artist: {Title}", updArtist.Title);
+                                         }
+                                    }
+                                }
+                            }
+
+
+                            else 
+                            {
+                                // No embedded art, check for Remote Art (MusicBrainz)
+                                if (!string.IsNullOrEmpty(existingItem.MetadataJson) && existingItem.MetadataJson.Contains("\"poster\""))
+                                {
+                                    try 
+                                    {
+                                        var m = JsonSerializer.Deserialize<Dictionary<string, object>>(existingItem.MetadataJson);
+                                        if (m != null && m.TryGetValue("poster", out var posterUrlObj))
+                                        {
+                                            string posterUrl = posterUrlObj.ToString()!;
+                                            // Check if we already have this poster? logic is simple: if no poster, download.
+                                            var existImg = await context.MediaImages.AnyAsync(i => i.MediaItemId == existingItem.Id && i.ImageType == "Poster");
+                                            if (!existImg)
+                                            {
+                                                 var httpClient = _httpClientFactory.CreateClient();
+                                                 var bytes = await httpClient.GetByteArrayAsync(posterUrl);
+                                                 if (bytes.Length > 0)
+                                                 {
+                                                     context.MediaImages.Add(new MediaImage 
+                                                     { 
+                                                         MediaItemId = existingItem.Id, 
+                                                         ImageType = "Poster", 
+                                                         MimeType = "image/jpeg", // Assume jpeg for CAA
+                                                         Data = bytes 
+                                                     });
+                                                     _logger.LogInformation("Downloaded remote art for track: {Title}", existingItem.Title);
+                                                     
+                                                     // Propagate to Album
+                                                     if (existingItem.AlbumId.HasValue)
+                                                     {
+                                                         var updAlbum = await context.MediaItems.FindAsync(existingItem.AlbumId.Value);
+                                                          if (updAlbum != null && !await context.MediaImages.AnyAsync(i => i.MediaItemId == updAlbum.Id && i.ImageType == "Poster"))
+                                                          {
+                                                               context.MediaImages.Add(new MediaImage { MediaItemId = updAlbum.Id, ImageType = "Poster", MimeType = "image/jpeg", Data = bytes });
+                                                          }
+                                                     }
+                                                     // Propagate to Artist
+                                                     if (existingItem.ArtistId.HasValue)
+                                                     {
+                                                         var updArtist = await context.MediaItems.FindAsync(existingItem.ArtistId.Value);
+                                                          if (updArtist != null && !await context.MediaImages.AnyAsync(i => i.MediaItemId == updArtist.Id && i.ImageType == "Poster"))
+                                                          {
+                                                               context.MediaImages.Add(new MediaImage { MediaItemId = updArtist.Id, ImageType = "Poster", MimeType = "image/jpeg", Data = bytes });
+                                                          }
+                                                     }
+                                                 }
+                                            }
+                                        }
+                                    }
+                                    catch (Exception ex) { _logger.LogError(ex, "Error downloading remote art"); }
+                                }
+                            }
+                        }
+                        catch {}
+                    }
+                    
                     if (changed)
                     {
                         existingItem.DateModified = DateTime.UtcNow;
@@ -393,34 +571,55 @@ public class FileScannerService : IFileScannerService
                     // Music Logic (Create)
                     else if (library.Type == LibraryType.Music)
                     {
-                         // ... (Keep existing music logic or simplify for now)
-                         // For brevity in this replacement, I'll copy the existing logic but ensure it's correct.
-                         // Actually, to avoid massive complexity in one replacement, I will simplify Music logic here 
-                         // and assume it's mostly working or less critical than Movie/TV right now.
-                         // But I should preserve it.
-                         
                         var artistName = "Unknown Artist";
                         var albumName = "Unknown Album";
+                        
+                        // We already parsed generic title/trackNum above.
+                        // mediaItem.Title is set by initializer below
+                        if (musicTrackNum.HasValue) mediaItem.TrackNumber = musicTrackNum.Value;
+
+                        // Get Duration from file first (tech metadata)
                         try 
                         {
-                            var tfile = TagLib.File.Create(file);
-                            var tag = tfile.Tag;
-                            mediaItem.Title = !string.IsNullOrWhiteSpace(tag.Title) ? tag.Title : title;
-                            mediaItem.Year = (int)tag.Year;
-                            mediaItem.TrackNumber = (int)tag.Track;
-                            mediaItem.DiscNumber = (int)tag.Disc;
-                            mediaItem.Duration = tfile.Properties.Duration.TotalSeconds;
-                            if (!string.IsNullOrWhiteSpace(tag.FirstAlbumArtist)) artistName = tag.FirstAlbumArtist;
-                            else if (!string.IsNullOrWhiteSpace(tag.FirstPerformer)) artistName = tag.FirstPerformer;
-                            if (!string.IsNullOrWhiteSpace(tag.Album)) albumName = tag.Album;
+                             using var tfile = TagLib.File.Create(file);
+                             mediaItem.Duration = tfile.Properties.Duration.TotalSeconds;
+                             if (tfile.Tag.Year > 0) mediaItem.Year = (int)tfile.Tag.Year;
+                             if (tfile.Tag.Track > 0) mediaItem.TrackNumber = (int)tfile.Tag.Track; // Tag takes precedence over filename
+                             if (tfile.Tag.Disc > 0) mediaItem.DiscNumber = (int)tfile.Tag.Disc;
+                        } catch {}
+
+                        // Enrich via Aggregator (uses Settings: Primary -> Fallback)
+                        await metadataAggregator.EnrichMediaItemAsync(mediaItem, library.Type);
+
+                        // Extract Resulting Metadata to populate Artist/Album
+                        if (!string.IsNullOrEmpty(mediaItem.MetadataJson))
+                        {
+                            try 
+                            {
+                                var m = JsonSerializer.Deserialize<Dictionary<string, object>>(mediaItem.MetadataJson);
+                                if (m != null)
+                                {
+                                    if (m.TryGetValue("title", out var t)) mediaItem.Title = t.ToString()!;
+                                    if (m.TryGetValue("artist", out var a)) artistName = a.ToString()!;
+                                    if (m.TryGetValue("album", out var al)) albumName = al.ToString()!;
+                                    if (m.TryGetValue("year", out var y) && int.TryParse(y.ToString(), out var ny)) mediaItem.Year = ny;
+                                    // Track/Disc might be in JSON if provided by MusicBrainz or Embedded
+                                    if (m.TryGetValue("track", out var tr) && int.TryParse(tr.ToString(), out var ntr)) mediaItem.TrackNumber = ntr;
+                                }
+                            }
+                            catch {}
                         }
-                        catch {}
 
                         // Handle Artist
                         if (!existingArtists.TryGetValue(artistName, out var artistItem))
                         {
-                             artistItem = new MediaItem { Id = Guid.NewGuid(), LibraryId = libraryId, Title = artistName, Path = Path.GetDirectoryName(file) ?? path, Type = MediaType.Artist, DateAdded = DateTime.UtcNow };
-                             context.MediaItems.Add(artistItem);
+                             // Check DB again
+                             artistItem = await context.MediaItems.FirstOrDefaultAsync(m => m.LibraryId == libraryId && m.Type == MediaType.Artist && m.Title == artistName);
+                             if (artistItem == null)
+                             {
+                                 artistItem = new MediaItem { Id = Guid.NewGuid(), LibraryId = libraryId, Title = artistName, Path = Path.GetDirectoryName(file) ?? path, Type = MediaType.Artist, DateAdded = DateTime.UtcNow };
+                                 context.MediaItems.Add(artistItem);
+                             }
                              existingArtists[artistName] = artistItem;
                         }
                         mediaItem.ArtistId = artistItem.Id;
@@ -429,11 +628,91 @@ public class FileScannerService : IFileScannerService
                         var albumKey = $"{artistName}|{albumName}";
                         if (!existingAlbums.TryGetValue(albumKey, out var albumItem))
                         {
-                            albumItem = new MediaItem { Id = Guid.NewGuid(), LibraryId = libraryId, Title = albumName, Path = Path.GetDirectoryName(file) ?? path, Type = MediaType.Album, DateAdded = DateTime.UtcNow, ArtistId = artistItem.Id, Year = mediaItem.Year };
-                            context.MediaItems.Add(albumItem);
+                            // Check DB again
+                            albumItem = await context.MediaItems.FirstOrDefaultAsync(m => m.LibraryId == libraryId && m.Type == MediaType.Album && m.Title == albumName && m.ArtistId == artistItem.Id);
+                            if (albumItem == null)
+                            {
+                                albumItem = new MediaItem { Id = Guid.NewGuid(), LibraryId = libraryId, Title = albumName, Path = Path.GetDirectoryName(file) ?? path, Type = MediaType.Album, DateAdded = DateTime.UtcNow, ArtistId = artistItem.Id, Year = mediaItem.Year };
+                                context.MediaItems.Add(albumItem);
+                            }
                             existingAlbums[albumKey] = albumItem;
                         }
                         mediaItem.AlbumId = albumItem.Id;
+
+                        // Embedded Art Handling 
+                        // If "hasEmbeddedArt" flag in JSON, extract it. 
+                        // But wait, EmbeddedMusicProvider (Primary) extracts it. MusicBrainz doesn't provide art bytes.
+                        // Ideally we should extract art separately if it exists, or let EmbeddedProvider handle it.
+                        // But EmbeddedProvider returns JSON, not bytes. 
+                        // We need to re-open file to get bytes if JSON says "hasEmbeddedArt".
+                        // Logic below handles extraction if it's there.
+                        
+                        try 
+                        {
+                            using var tfile = TagLib.File.Create(file);
+                            if (tfile.Tag.Pictures.Length > 0)
+                            {
+                                 var embeddedPic = tfile.Tag.Pictures[0];
+                                 
+                                 // Save to DB
+                                 context.MediaImages.Add(new MediaImage
+                                 {
+                                     MediaItemId = mediaItem.Id,
+                                     ImageType = "Poster",
+                                     MimeType = embeddedPic.MimeType,
+                                     Data = embeddedPic.Data.Data
+                                 });
+                            }
+                            else 
+                            {
+                                // No embedded art, check for Remote Art
+                                if (!string.IsNullOrEmpty(mediaItem.MetadataJson) && mediaItem.MetadataJson.Contains("\"poster\""))
+                                {
+                                    try 
+                                    {
+                                        var m = JsonSerializer.Deserialize<Dictionary<string, object>>(mediaItem.MetadataJson);
+                                        if (m != null && m.TryGetValue("poster", out var posterUrlObj))
+                                        {
+                                            string posterUrl = posterUrlObj.ToString()!;
+                                            var httpClient = _httpClientFactory.CreateClient();
+                                            // Handle potential redirects or errors
+                                            var bytes = await httpClient.GetByteArrayAsync(posterUrl);
+                                            
+                                            if (bytes.Length > 0)
+                                            {
+                                                context.MediaImages.Add(new MediaImage 
+                                                { 
+                                                    MediaItemId = mediaItem.Id, 
+                                                    ImageType = "Poster", 
+                                                    MimeType = "image/jpeg", 
+                                                    Data = bytes 
+                                                });
+                                                _logger.LogInformation("Download remote art for new track: {Title}", mediaItem.Title);
+                                                
+                                                // Propagate (Wait, Artist/Album items were created above, but likely have no images yet)
+                                                // We can check local MediaImages context to see if we added any for them?
+                                                // Or just blindly add. Duplicate posters might be bad.
+                                                // Check context.MediaImages.Local
+                                                
+                                                var albumId = mediaItem.AlbumId;
+                                                if (albumId.HasValue) 
+                                                {
+                                                     bool hasAlb = context.MediaImages.Local.Any(i => i.MediaItemId == albumId.Value && i.ImageType == "Poster");
+                                                     if (!hasAlb) context.MediaImages.Add(new MediaImage { MediaItemId = albumId.Value, ImageType = "Poster", MimeType = "image/jpeg", Data = bytes });
+                                                }
+                                                var artistId = mediaItem.ArtistId;
+                                                if (artistId.HasValue)
+                                                {
+                                                     bool hasArt = context.MediaImages.Local.Any(i => i.MediaItemId == artistId.Value && i.ImageType == "Poster");
+                                                     if (!hasArt) context.MediaImages.Add(new MediaImage { MediaItemId = artistId.Value, ImageType = "Poster", MimeType = "image/jpeg", Data = bytes });
+                                                }
+                                            }
+                                        }
+                                    }
+                                    catch (Exception ex) { _logger.LogError(ex, "Error downloading remote art for new track"); }
+                                }
+                            }
+                        } catch {}
                     }
                     else 
                     {

@@ -106,18 +106,24 @@ export default function MediaDetailLayout({ item, children, onPlay }: MediaDetai
                             </h1>
 
                             <div className="flex flex-wrap items-center gap-6 text-sm md:text-base text-gray-300 mb-6">
-                                <StarRating
-                                    rating={item.userRating ?? 0}
-                                    onChange={(r) => rateMutation.mutate(r)}
-                                    size={24}
-                                />
+                                <div className="flex flex-col gap-1">
+                                    <StarRating
+                                        rating={item.userRating ?? 0}
+                                        onChange={(r) => rateMutation.mutate(r)}
+                                        size={20}
+                                        max={10}
+                                    />
+                                    <span className="text-xs text-gray-500 font-medium ml-1">
+                                        Community: {item.communityRating ? item.communityRating.toFixed(1) : 'N/A'}
+                                    </span>
+                                </div>
 
                                 <div className="flex items-center gap-4">
                                     {item.year && (
                                         <span className="font-semibold text-white">{item.year}</span>
                                     )}
                                     {item.rating && (
-                                        <span className="px-2 py-0.5 border border-gray-600 rounded text-xs font-bold bg-black/30">
+                                        <span className="px-2 py-0.5 border border-blue-500/30 bg-blue-500/10 rounded text-xs font-bold text-blue-200">
                                             {item.rating}
                                         </span>
                                     )}

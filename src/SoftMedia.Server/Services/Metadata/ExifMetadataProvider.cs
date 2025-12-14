@@ -9,14 +9,17 @@ public class ExifMetadataProvider : IMetadataProvider
     private readonly ILogger<ExifMetadataProvider> _logger;
 
     public LibraryType SupportedType => LibraryType.Photo;
+    public string ProviderName => "Exif";
 
     public ExifMetadataProvider(ILogger<ExifMetadataProvider> logger)
     {
         _logger = logger;
     }
 
-    public Task<string?> FetchMetadataAsync(string title, string path)
+    public Task<string?> FetchMetadataAsync(MediaItem item)
     {
+        var title = item.Title;
+        var path = item.Path;
         try
         {
             if (!File.Exists(path)) return Task.FromResult<string?>(null);

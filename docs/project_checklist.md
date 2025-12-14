@@ -180,6 +180,7 @@
         - [x] Implement Season-level grouping logic in API responses
     - [x] **Music Metadata**
         - [x] Enhance `MusicBrainzProvider` to fetch Artist Bio, Release Date, Record Label
+        - [x] Implement Refined Metadata Logic (Smart Context / Embedded Tag Prioritization)
         - [x] Implement `TagLib#` integration for robust embedded ID3 tag reading (Track, Disk, Album Art)
         - [x] Implement Artist -> Album -> Disc -> Track hierarchy in API
     - [x] **Book Metadata**

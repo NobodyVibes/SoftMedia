@@ -19,6 +19,17 @@ public class MediaController : ControllerBase
         _context = context;
     }
 
+    private Guid GetUserId()
+    {
+        var idClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier);
+        if (idClaim == null || !Guid.TryParse(idClaim.Value, out var userId))
+        {
+            // Fallback or throw? For now, we assume authorized due to [Authorize]
+            throw new UnauthorizedAccessException("Invalid user ID");
+        }
+        return userId;
+    }
+
     [HttpGet("{id}")]
     public async Task<ActionResult<MediaItemDto>> GetMediaItem(Guid id)
     {
@@ -33,7 +44,19 @@ public class MediaController : ControllerBase
             return NotFound();
         }
 
-        return MediaItemDto.FromMediaItem(item, "/api/v1/image/proxy");
+        UserMediaInteraction? interaction = null;
+        try 
+        {
+            var userId = GetUserId();
+            interaction = await _context.UserMediaInteractions
+                .FirstOrDefaultAsync(x => x.UserId == userId && x.MediaItemId == id);
+        }
+        catch 
+        {
+            // Ignore if user claim not found (shouldn't happen with [Authorize])
+        }
+
+        return MediaItemDto.FromMediaItem(item, "/api/v1/image/proxy", interaction);
     }
 
     [HttpGet("recent")]
@@ -111,6 +134,26 @@ public class MediaController : ControllerBase
             }
         }
 
-        return distinctItems.Select(i => MediaItemDto.FromMediaItem(i, "/api/v1/image/proxy")).ToList();
+        // Batch fetch interactions for all distinct items
+        var itemIds = distinctItems.Select(x => x.Id).ToList();
+        var interactions = new Dictionary<Guid, UserMediaInteraction>();
+        try
+        {
+             var userId = GetUserId();
+             var interactionList = await _context.UserMediaInteractions
+                 .Where(x => x.UserId == userId && itemIds.Contains(x.MediaItemId))
+                 .ToListAsync();
+             
+             foreach(var i in interactionList)
+             {
+                 interactions[i.MediaItemId] = i;
+             }
+        }
+        catch {}
+
+        return distinctItems.Select(i => {
+            interactions.TryGetValue(i.Id, out var interaction);
+            return MediaItemDto.FromMediaItem(i, "/api/v1/image/proxy", interaction);
+        }).ToList();
     }
 }

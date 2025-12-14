@@ -8,6 +8,7 @@ public class TVMazeProvider : IMetadataProvider
     private readonly ILogger<TVMazeProvider> _logger;
 
     public LibraryType SupportedType => LibraryType.TV;
+    public string ProviderName => "TVMaze";
 
     public TVMazeProvider(HttpClient httpClient, ILogger<TVMazeProvider> logger)
     {
@@ -15,8 +16,10 @@ public class TVMazeProvider : IMetadataProvider
         _logger = logger;
     }
 
-    public async Task<string?> FetchMetadataAsync(string title, string path)
+    public async Task<string?> FetchMetadataAsync(MediaItem item)
     {
+        var title = item.Title;
+        var path = item.Path;
         try
         {
             // Fetch show with cast and episodes

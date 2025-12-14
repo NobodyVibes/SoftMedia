@@ -49,8 +49,8 @@ public class TranscodeService
             process.BeginErrorReadLine();
             _activeTranscodes.TryAdd(mediaId, process);
             
-            // Wait a bit for the playlist to be created
-            await Task.Delay(2000); 
+            // Wait for the playlist to be created (FFmpeg needs time to start and write)
+            await Task.Delay(5000); 
         }
         else
         {

@@ -18,10 +18,14 @@ export interface MediaItem {
     duration?: string | number; // "2h 15m" format or seconds
     quality?: 'SD' | 'HD' | '4K' | 'HDR';
     genres?: string[];
-    rating?: string; // "TV-MA", "PG-13", etc.
+    rating?: string; // "TV-MA", "PG-13", etc. Actually DTO uses this for External Rating now.
+    communityRating?: number; // Internal Average Rating
     progress?: number; // 0-100 for continue watching
     description?: string;
     container?: string;
+    videoCodec?: string;
+    audioCodec?: string;
+    resolution?: string;
     metadata?: Record<string, any>;
     userRating?: number;
     isFavorite?: boolean;

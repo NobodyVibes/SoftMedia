@@ -9,6 +9,7 @@ public class WikidataProvider : IMetadataProvider
     private readonly ILogger<WikidataProvider> _logger;
 
     public LibraryType SupportedType => LibraryType.Movie;
+    public string ProviderName => "Wikidata";
 
     public WikidataProvider(HttpClient httpClient, ILogger<WikidataProvider> logger)
     {
@@ -17,8 +18,10 @@ public class WikidataProvider : IMetadataProvider
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
     }
 
-    public async Task<string?> FetchMetadataAsync(string title, string path)
+    public async Task<string?> FetchMetadataAsync(MediaItem item)
     {
+        var title = item.Title;
+        var path = item.Path;
         try
         {
             // SPARQL Query to find movie by title and get details

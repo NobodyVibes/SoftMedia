@@ -78,8 +78,12 @@ public class SettingsService : ISettingsService
             new() { Key = "DailyRescan", Value = "03:00", Group = "Scanning", Description = "Time to perform a full integrity check." },
             
             // Transcoding
-            new() { Key = "HardwareAcceleration", Value = "false", Group = "Transcoding", Description = "Use GPU (NVENC, QuickSync, VAAPI) if available." },
-            new() { Key = "TranscodeThreadCount", Value = "0", Group = "Transcoding", Description = "Number of CPU threads to dedicate to FFmpeg (0 = Auto)." },
+            new() { Key = "HardwareAcceleration", Value = "none", Group = "Transcoding", Description = "GPU encoder: none, nvidia (NVENC), amd (AMF), intel (QSV)." },
+            new() { Key = "TranscodePreset", Value = "veryfast", Group = "Transcoding", Description = "Encoding speed preset (ultrafast to veryslow)." },
+            new() { Key = "TranscodeThreadCount", Value = "0", Group = "Transcoding", Description = "CPU threads for FFmpeg (0 = auto-detect)." },
+            new() { Key = "MaxTranscodeResolution", Value = "original", Group = "Transcoding", Description = "Maximum output resolution (720p, 1080p, 4k, original)." },
+            new() { Key = "TranscodeCRF", Value = "23", Group = "Transcoding", Description = "Quality level 0-51 (lower = better, 23 = good default)." },
+            new() { Key = "DisableTranscoding", Value = "false", Group = "Transcoding", Description = "Force direct play only, no video conversion." },
             
             // Subtitles
             new() { Key = "AutoSelectSubtitle", Value = "true", Group = "Subtitles", Description = "Automatically select tracks based on user language." },

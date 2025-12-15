@@ -361,8 +361,13 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 hlsRef.current.destroy();
                 hlsRef.current = null;
             }
+            // Stop the transcode on the server when leaving the page
+            if (isTranscoding && token && item.id) {
+                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' })
+                    .catch(() => { });
+            }
         };
-    }, [src, isTranscoding]);
+    }, [src, isTranscoding, token, item.id]);
 
     // Video event handlers
     useEffect(() => {

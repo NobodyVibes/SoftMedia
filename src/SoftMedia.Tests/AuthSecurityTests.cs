@@ -24,6 +24,8 @@ public class AuthSecurityTests
     private void SetupControllerContext(AuthController controller)
     {
         var httpContext = new DefaultHttpContext();
+        // Setup response features to allow cookie operations
+        httpContext.Response.Body = new MemoryStream();
         controller.ControllerContext = new ControllerContext()
         {
             HttpContext = httpContext
@@ -45,7 +47,7 @@ public class AuthSecurityTests
         
         // Mock SettingsService to return false for AllowUserSignup
         var mockSettingsService = new Mock<ISettingsService>();
-        mockSettingsService.Setup(x => x.GetSettingAsync("AllowUserSignup", "false")).ReturnsAsync("false");
+        mockSettingsService.Setup(x => x.GetSettingAsync("AllowUserSignup", "Disabled")).ReturnsAsync("Disabled");
 
         var controller = new AuthController(context, mockPasswordHasher.Object, mockTokenService.Object, mockSettingsService.Object);
         SetupControllerContext(controller);
@@ -103,7 +105,7 @@ public class AuthSecurityTests
 
         var mockSettingsService = new Mock<ISettingsService>();
         // Even if signup is disabled, first user should be allowed
-        mockSettingsService.Setup(x => x.GetSettingAsync("AllowUserSignup", "false")).ReturnsAsync("false");
+        mockSettingsService.Setup(x => x.GetSettingAsync("AllowUserSignup", "Disabled")).ReturnsAsync("Disabled");
 
         var controller = new AuthController(context, mockPasswordHasher.Object, mockTokenService.Object, mockSettingsService.Object);
         SetupControllerContext(controller);

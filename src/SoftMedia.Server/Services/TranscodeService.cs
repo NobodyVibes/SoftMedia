@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace SoftMedia.Server.Services;
 
@@ -8,16 +9,21 @@ namespace SoftMedia.Server.Services;
 /// </summary>
 public record TranscodeSessionKey(Guid MediaId, int? SubtitleTrackIndex);
 
+/// <summary>
+/// Manages video transcoding sessions. Registered as Singleton to maintain process tracking
+/// across all HTTP requests. Uses IServiceScopeFactory to access scoped services like IFFmpegService.
+/// </summary>
 public class TranscodeService
 {
-    private readonly IFFmpegService _ffmpegService;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TranscodeService> _logger;
     private readonly ConcurrentDictionary<TranscodeSessionKey, Process> _activeTranscodes = new();
+    private readonly ConcurrentDictionary<TranscodeSessionKey, SemaphoreSlim> _sessionLocks = new();
     private readonly string _tempDir;
 
-    public TranscodeService(IFFmpegService ffmpegService, ILogger<TranscodeService> logger, IConfiguration config)
+    public TranscodeService(IServiceScopeFactory scopeFactory, ILogger<TranscodeService> logger, IConfiguration config)
     {
-        _ffmpegService = ffmpegService;
+        _scopeFactory = scopeFactory;
         _logger = logger;
         _tempDir = Path.Combine(Directory.GetCurrentDirectory(), "transcode-temp");
         if (!Directory.Exists(_tempDir))
@@ -37,6 +43,7 @@ public class TranscodeService
 
     /// <summary>
     /// Start transcoding with optional subtitle burn-in and seek position.
+    /// Uses locking to prevent multiple FFmpeg processes for the same session.
     /// </summary>
     /// <param name="mediaId">Media item ID</param>
     /// <param name="inputPath">Path to source video file</param>
@@ -46,63 +53,79 @@ public class TranscodeService
     {
         var sessionKey = new TranscodeSessionKey(mediaId, subtitleTrackIndex);
         
-        if (_activeTranscodes.ContainsKey(sessionKey))
-        {
-            // Already transcoding this exact configuration
-            return;
-        }
-
-        var sessionDir = GetSessionDir(mediaId, subtitleTrackIndex);
+        // Get or create a lock for this specific session
+        var sessionLock = _sessionLocks.GetOrAdd(sessionKey, _ => new SemaphoreSlim(1, 1));
         
-        // Clean up any existing session directory for fresh start
-        if (Directory.Exists(sessionDir))
+        await sessionLock.WaitAsync();
+        try
         {
-            try
+            // Double-check if already transcoding after acquiring lock
+            if (_activeTranscodes.ContainsKey(sessionKey))
             {
-                Directory.Delete(sessionDir, true);
+                _logger.LogDebug("Transcode session already active for {MediaId}", mediaId);
+                return;
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Could not clean up existing session dir: {Dir}", sessionDir);
-            }
-        }
 
-        ProcessStartInfo startInfo;
-        if (subtitleTrackIndex.HasValue || seekPosition.HasValue)
-        {
-            // Use the new method with subtitle/seek support
-            startInfo = _ffmpegService.GetTranscodeArguments(inputPath, sessionDir, "seg", subtitleTrackIndex, seekPosition);
-        }
-        else
-        {
-            // Use the basic method for simple transcoding
-            startInfo = _ffmpegService.GetTranscodeArguments(inputPath, sessionDir, "seg");
-        }
-
-        _logger.LogInformation("Starting transcode for {MediaId} (sub={SubTrack}, seek={Seek}): {Args}", 
-            mediaId, subtitleTrackIndex, seekPosition, startInfo.Arguments);
-
-        var process = new Process { StartInfo = startInfo };
-        
-        process.ErrorDataReceived += (sender, e) => 
-        {
-            if (!string.IsNullOrEmpty(e.Data))
-            {
-                _logger.LogDebug("FFmpeg [{MediaId}]: {Data}", mediaId, e.Data);
-            }
-        };
-
-        if (process.Start())
-        {
-            process.BeginErrorReadLine();
-            _activeTranscodes.TryAdd(sessionKey, process);
+            var sessionDir = GetSessionDir(mediaId, subtitleTrackIndex);
             
-            // Wait for the playlist to be created (FFmpeg needs time to start and write)
-            await Task.Delay(5000); 
+            // Clean up any existing session directory for fresh start
+            if (Directory.Exists(sessionDir))
+            {
+                try
+                {
+                    Directory.Delete(sessionDir, true);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not clean up existing session dir: {Dir}", sessionDir);
+                }
+            }
+
+            // Create a scope to resolve the scoped IFFmpegService
+            using var scope = _scopeFactory.CreateScope();
+            var ffmpegService = scope.ServiceProvider.GetRequiredService<IFFmpegService>();
+
+            ProcessStartInfo startInfo;
+            if (subtitleTrackIndex.HasValue || seekPosition.HasValue)
+            {
+                // Use the new method with subtitle/seek support
+                startInfo = ffmpegService.GetTranscodeArguments(inputPath, sessionDir, "seg", subtitleTrackIndex, seekPosition);
+            }
+            else
+            {
+                // Use the basic method for simple transcoding
+                startInfo = ffmpegService.GetTranscodeArguments(inputPath, sessionDir, "seg");
+            }
+
+            _logger.LogInformation("Starting transcode for {MediaId} (sub={SubTrack}, seek={Seek}): {Args}", 
+                mediaId, subtitleTrackIndex, seekPosition, startInfo.Arguments);
+
+            var process = new Process { StartInfo = startInfo };
+            
+            process.ErrorDataReceived += (sender, e) => 
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    _logger.LogDebug("FFmpeg [{MediaId}]: {Data}", mediaId, e.Data);
+                }
+            };
+
+            if (process.Start())
+            {
+                process.BeginErrorReadLine();
+                _activeTranscodes.TryAdd(sessionKey, process);
+                
+                // Wait for the playlist to be created (FFmpeg needs time to start and write)
+                await Task.Delay(5000); 
+            }
+            else
+            {
+                _logger.LogError("Failed to start FFmpeg for {MediaId}", mediaId);
+            }
         }
-        else
+        finally
         {
-            _logger.LogError("Failed to start FFmpeg for {MediaId}", mediaId);
+            sessionLock.Release();
         }
     }
 

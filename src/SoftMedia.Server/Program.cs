@@ -40,8 +40,8 @@ builder.Services.AddScoped<IMetadataProvider, GameMetadataProvider>();
 builder.Services.AddScoped<IMetadataProvider, ExifMetadataProvider>();
 builder.Services.AddScoped<IMetadataRouter, MetadataRouter>();
 builder.Services.AddScoped<MetadataAggregator>();
-builder.Services.AddSingleton<IFFmpegService, FFmpegService>();
-builder.Services.AddSingleton<TranscodeService>();
+builder.Services.AddScoped<IFFmpegService, FFmpegService>();
+builder.Services.AddSingleton<TranscodeService>(); // Singleton to maintain process tracking across requests
 builder.Services.AddScoped<ISettingsService, SettingsService>();
 
 builder.Services.AddCors(options =>

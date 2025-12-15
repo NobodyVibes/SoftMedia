@@ -151,6 +151,48 @@ export default function SettingsPage() {
     const gameProviders = ["Wikidata"];
     const photoProviders = ["Exif"];
 
+    // Transcoding options
+    const hardwareAccelOptions = [
+        { value: "none", label: "None (CPU Only)" },
+        { value: "nvidia", label: "NVIDIA (NVENC)" },
+        { value: "amd", label: "AMD (AMF)" },
+        { value: "intel", label: "Intel (QuickSync)" },
+    ];
+
+    const presetOptions = [
+        { value: "ultrafast", label: "Ultrafast (Lowest CPU)" },
+        { value: "superfast", label: "Superfast" },
+        { value: "veryfast", label: "Veryfast (Default)" },
+        { value: "faster", label: "Faster" },
+        { value: "fast", label: "Fast" },
+        { value: "medium", label: "Medium" },
+        { value: "slow", label: "Slow" },
+        { value: "slower", label: "Slower" },
+        { value: "veryslow", label: "Veryslow (Best Quality)" },
+    ];
+
+    const resolutionOptions = [
+        { value: "original", label: "Original (No Scaling) - Varies" },
+        { value: "4k", label: "4K (3840p) - 25-40 Mbps" },
+        { value: "1080p", label: "1080p Full HD - 8-12 Mbps" },
+        { value: "720p", label: "720p HD - 3-5 Mbps" },
+    ];
+
+    // CRF quality label helper
+    const getCRFLabel = (crf: number): string => {
+        if (crf <= 0) return "Lossless";
+        if (crf <= 18) return "Excellent";
+        if (crf <= 23) return "Good";
+        if (crf <= 28) return "Fair";
+        if (crf <= 35) return "Poor";
+        return "Worst";
+    };
+
+    // Calculate CRF slider thumb position percentage
+    const getCRFPosition = (crf: number): number => {
+        return (crf / 51) * 100;
+    };
+
     const tabs = [
         { id: 'server', label: t('Server'), icon: Server },
         { id: 'network', label: t('Network'), icon: Network },
@@ -162,7 +204,17 @@ export default function SettingsPage() {
 
     // Helper to render settings by group
     const renderSettingsGroup = (groupName: string) => {
-        const groupSettings = localSettings.filter(s => s.group === groupName);
+        let groupSettings = localSettings.filter(s => s.group === groupName);
+
+        // Explicit ordering for Transcoding group
+        if (groupName === 'Transcoding') {
+            const transcodingOrder = ['HardwareAcceleration', 'TranscodePreset', 'TranscodeThreadCount', 'MaxTranscodeResolution', 'TranscodeCRF', 'DisableTranscoding'];
+            groupSettings = groupSettings.sort((a, b) => {
+                const aIndex = transcodingOrder.indexOf(a.key);
+                const bIndex = transcodingOrder.indexOf(b.key);
+                return (aIndex === -1 ? 999 : aIndex) - (bIndex === -1 ? 999 : bIndex);
+            });
+        }
 
         if (groupSettings.length === 0) return <p className="text-gray-500 italic">No settings available.</p>;
 
@@ -170,7 +222,7 @@ export default function SettingsPage() {
             <div className="space-y-6">
                 {groupSettings.map(setting => (
                     <div key={setting.key} className="flex flex-col gap-2">
-                        {!['MusicProviderPrimary', 'MusicProviderFallback'].includes(setting.key) && (
+                        {!['MusicProviderPrimary', 'MusicProviderFallback', 'DisableTranscoding'].includes(setting.key) && (
                             <label className="text-sm font-medium text-gray-300">{t(setting.key.replace(/([A-Z])/g, ' $1').trim())}</label>
                         )}
 
@@ -182,7 +234,7 @@ export default function SettingsPage() {
                                 placeholder="Select signup mode..."
                                 className="max-w-md"
                             />
-                        ) : setting.value === 'true' || setting.value === 'false' ? (
+                        ) : (setting.value === 'true' || setting.value === 'false') && setting.key !== 'DisableTranscoding' ? (
                             <div className="flex items-center gap-3">
                                 <button
                                     onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}
@@ -294,6 +346,95 @@ export default function SettingsPage() {
                                 placeholder="Select photo provider..."
                                 className="max-w-md"
                             />
+                        ) : setting.key === 'HardwareAcceleration' ? (
+                            <Combobox
+                                value={hardwareAccelOptions.find(o => o.value === setting.value)?.label || setting.value}
+                                onChange={(val) => {
+                                    const option = hardwareAccelOptions.find(o => o.label === val);
+                                    handleChange(setting.key, option?.value || 'none');
+                                }}
+                                options={hardwareAccelOptions.map(o => o.label)}
+                                placeholder="Select hardware acceleration..."
+                                className="max-w-md"
+                            />
+                        ) : setting.key === 'TranscodePreset' ? (
+                            <Combobox
+                                value={presetOptions.find(o => o.value === setting.value)?.label || setting.value}
+                                onChange={(val) => {
+                                    const option = presetOptions.find(o => o.label === val);
+                                    handleChange(setting.key, option?.value || 'veryfast');
+                                }}
+                                options={presetOptions.map(o => o.label)}
+                                placeholder="Select encoding preset..."
+                                className="max-w-md"
+                            />
+                        ) : setting.key === 'MaxTranscodeResolution' ? (
+                            <Combobox
+                                value={resolutionOptions.find(o => o.value === setting.value)?.label || setting.value}
+                                onChange={(val) => {
+                                    const option = resolutionOptions.find(o => o.label === val);
+                                    handleChange(setting.key, option?.value || 'original');
+                                }}
+                                options={resolutionOptions.map(o => o.label)}
+                                placeholder="Select max resolution..."
+                                className="max-w-md"
+                            />
+                        ) : setting.key === 'TranscodeThreadCount' ? (
+                            <div className="flex items-center gap-3 max-w-md">
+                                <input
+                                    type="number"
+                                    min="0"
+                                    max="128"
+                                    value={setting.value}
+                                    onChange={(e) => handleChange(setting.key, e.target.value)}
+                                    className="w-24 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
+                                />
+                                <span className="text-sm text-gray-400">
+                                    {parseInt(setting.value) === 0 ? '(Auto)' : 'threads'}
+                                </span>
+                            </div>
+                        ) : setting.key === 'TranscodeCRF' ? (
+                            <div className="max-w-md">
+                                <div className="flex items-center gap-3">
+                                    <span className="text-xs text-gray-400 w-16">Lossless</span>
+                                    <div className="flex-1 relative">
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="51"
+                                            value={parseInt(setting.value) || 23}
+                                            onChange={(e) => handleChange(setting.key, e.target.value)}
+                                            className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-primary"
+                                        />
+                                        {/* Following label under slider thumb */}
+                                        <div
+                                            className="absolute -bottom-6 transform -translate-x-1/2 text-xs text-primary font-medium whitespace-nowrap"
+                                            style={{ left: `${getCRFPosition(parseInt(setting.value) || 23)}%` }}
+                                        >
+                                            {setting.value} ({getCRFLabel(parseInt(setting.value) || 23)})
+                                        </div>
+                                    </div>
+                                    <span className="text-xs text-gray-400 w-12 text-right">Worst</span>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-8">
+                                    Lower CRF = better quality but larger file sizes. 23 is a good balance.
+                                </p>
+                            </div>
+                        ) : setting.key === 'DisableTranscoding' ? (
+                            <div>
+                                <label className="flex items-center gap-3 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={setting.value === 'true'}
+                                        onChange={(e) => handleChange(setting.key, e.target.checked ? 'true' : 'false')}
+                                        className="w-5 h-5 rounded border-white/20 bg-black/20 text-primary focus:ring-primary focus:ring-offset-0 cursor-pointer"
+                                    />
+                                    <span className="text-sm font-medium text-gray-300">Disable Transcoding</span>
+                                </label>
+                                <p className="text-xs text-gray-500 mt-2 ml-8">
+                                    Skip video conversion and serve files directly. May cause playback issues in browsers that don't support the original video format.
+                                </p>
+                            </div>
                         ) : (
                             <input
                                 type="text"
@@ -303,7 +444,7 @@ export default function SettingsPage() {
                             />
                         )}
 
-                        {setting.description && !['MusicProviderPrimary', 'MusicProviderFallback'].includes(setting.key) && (
+                        {setting.description && !['MusicProviderPrimary', 'MusicProviderFallback', 'DisableTranscoding'].includes(setting.key) && (
                             <p className="text-xs text-gray-500">{setting.description}</p>
                         )}
                     </div>

@@ -12,6 +12,10 @@ public interface IFFmpegService
     /// Get transcode arguments with optional subtitle burn-in and seek position.
     /// </summary>
     ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition);
+    /// <summary>
+    /// Get transcode arguments with subtitle, seek, and read rate for throttling.
+    /// </summary>
+    ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate);
     
     /// <summary>
     /// Check if transcoding is disabled in settings.
@@ -240,15 +244,20 @@ public class FFmpegService : IFFmpegService
 
     public ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix)
     {
-        // Call the async version synchronously (settings loaded on first call)
         var settings = LoadSettingsAsync().GetAwaiter().GetResult();
-        return GetTranscodeArgumentsInternal(inputPath, outputDir, segmentPrefix, null, null, settings);
+        return GetTranscodeArgumentsInternal(inputPath, outputDir, segmentPrefix, null, null, null, settings);
     }
 
     public ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition)
     {
         var settings = LoadSettingsAsync().GetAwaiter().GetResult();
-        return GetTranscodeArgumentsInternal(inputPath, outputDir, segmentPrefix, subtitleTrackIndex, seekPosition, settings);
+        return GetTranscodeArgumentsInternal(inputPath, outputDir, segmentPrefix, subtitleTrackIndex, seekPosition, null, settings);
+    }
+
+    public ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate)
+    {
+        var settings = LoadSettingsAsync().GetAwaiter().GetResult();
+        return GetTranscodeArgumentsInternal(inputPath, outputDir, segmentPrefix, subtitleTrackIndex, seekPosition, readRate, settings);
     }
 
     private ProcessStartInfo GetTranscodeArgumentsInternal(
@@ -257,6 +266,7 @@ public class FFmpegService : IFFmpegService
         string segmentPrefix, 
         int? subtitleTrackIndex, 
         double? seekPosition,
+        double? readRate,
         TranscodeSettings settings)
     {
         Directory.CreateDirectory(outputDir);
@@ -276,6 +286,12 @@ public class FFmpegService : IFFmpegService
         if (seekPosition.HasValue && seekPosition.Value > 0)
         {
             argumentBuilder.Append($"-ss {seekPosition.Value:F2} ");
+        }
+
+        // Add read rate for throttling (before input)
+        if (readRate.HasValue && readRate.Value > 0)
+        {
+            argumentBuilder.Append($"-readrate {readRate.Value:F1} ");
         }
         
         // Input file
@@ -307,8 +323,10 @@ public class FFmpegService : IFFmpegService
         argumentBuilder.Append("-c:a aac -ac 2 -b:a 128k ");
         
         // HLS output settings
+        // Note: Using 'event' playlist type + 'append_list' allows live-style growing playlist
+        // Do NOT use 'omit_endlist' - FFmpeg needs to write #EXT-X-ENDLIST when done
         argumentBuilder.Append("-f hls -hls_time 6 -hls_list_size 0 -hls_playlist_type event ");
-        argumentBuilder.Append("-hls_flags append_list+omit_endlist ");
+        argumentBuilder.Append("-hls_flags append_list ");
         argumentBuilder.Append($"-start_number 0 -hls_segment_filename \"{segmentPath}\" ");
         argumentBuilder.Append($"\"{playlistPath}\"");
 

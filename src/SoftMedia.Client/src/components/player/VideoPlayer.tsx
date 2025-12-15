@@ -375,8 +375,24 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         if (!video) return;
 
         const handleTimeUpdate = () => setCurrentTime(video.currentTime);
-        const handlePlay = () => setIsPlaying(true);
-        const handlePause = () => setIsPlaying(false);
+        const handlePlay = () => {
+            setIsPlaying(true);
+            // Signal backend to resume transcoding (throttle control)
+            if (isTranscoding && token && item.id) {
+                fetch(`/api/transcode/${item.id}/resume?token=${token}${selectedSubtitleTrack !== null ? `&sub=${selectedSubtitleTrack}` : ''}`, {
+                    method: 'POST'
+                }).catch(() => { });
+            }
+        };
+        const handlePause = () => {
+            setIsPlaying(false);
+            // Signal backend to pause transcoding (throttle control)
+            if (isTranscoding && token && item.id) {
+                fetch(`/api/transcode/${item.id}/pause?token=${token}${selectedSubtitleTrack !== null ? `&sub=${selectedSubtitleTrack}` : ''}`, {
+                    method: 'POST'
+                }).catch(() => { });
+            }
+        };
         const handlePlaying = () => {
             setIsPlaying(true);
             setIsBuffering(false);
@@ -393,6 +409,14 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         };
         const handleEnterPiP = () => setIsPiP(true);
         const handleLeavePiP = () => setIsPiP(false);
+        const handleEnded = () => {
+            // Signal backend to clean up transcode session when video ends
+            if (isTranscoding && token && item.id) {
+                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, {
+                    method: 'DELETE'
+                }).catch(() => { });
+            }
+        };
 
         video.addEventListener('timeupdate', handleTimeUpdate);
         video.addEventListener('play', handlePlay);
@@ -403,6 +427,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         video.addEventListener('volumechange', handleVolumeChange);
         video.addEventListener('enterpictureinpicture', handleEnterPiP);
         video.addEventListener('leavepictureinpicture', handleLeavePiP);
+        video.addEventListener('ended', handleEnded);
 
         return () => {
             video.removeEventListener('timeupdate', handleTimeUpdate);
@@ -414,8 +439,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             video.removeEventListener('volumechange', handleVolumeChange);
             video.removeEventListener('enterpictureinpicture', handleEnterPiP);
             video.removeEventListener('leavepictureinpicture', handleLeavePiP);
+            video.removeEventListener('ended', handleEnded);
         };
-    }, [src]);
+    }, [src, isTranscoding, token, item.id, selectedSubtitleTrack]);
 
     // Fullscreen change handler
     useEffect(() => {
@@ -547,7 +573,10 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     // Calculate displayed time including seek offset (for when transcoding starts from non-zero position)
     const displayedTime = currentTime + seekOffset;
     const progressPercent = displayDuration > 0 ? (displayedTime / displayDuration) * 100 : 0;
-    const bufferedPercent = displayDuration > 0 ? (bufferedTime / displayDuration) * 100 : 0;
+
+    // For HLS streams, buffer is relative to current stream position, need to add seekOffset
+    const displayedBuffered = isTranscoding ? bufferedTime + seekOffset : bufferedTime;
+    const bufferedPercent = displayDuration > 0 ? (displayedBuffered / displayDuration) * 100 : 0;
 
     if (!token || !src) {
         return (
@@ -636,7 +665,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         onClick={handleSeek}
                     >
                         <div
-                            className="absolute top-0 left-0 h-full bg-white/30 rounded-full pointer-events-none"
+                            className="absolute top-0 left-0 h-full bg-white/50 rounded-full pointer-events-none"
                             style={{ width: `${Math.min(bufferedPercent, 100)}%` }}
                         />
                         <div

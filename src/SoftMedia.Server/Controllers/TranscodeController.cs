@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -7,7 +8,7 @@ using SoftMedia.Server.Services;
 namespace SoftMedia.Server.Controllers;
 
 /// <summary>
-/// Controller for HLS transcoding endpoints.
+/// Controller for HLS transcoding endpoints with throttling support.
 /// Requires authentication to prevent unauthorized access.
 /// Supports optional subtitle burn-in via ?sub=trackIndex query parameter.
 /// </summary>
@@ -28,6 +29,19 @@ public class TranscodeController : ControllerBase
     }
 
     /// <summary>
+    /// Get the current user ID from JWT claims.
+    /// </summary>
+    private Guid GetUserId()
+    {
+        var idClaim = User.FindFirst(ClaimTypes.NameIdentifier);
+        if (idClaim == null || !Guid.TryParse(idClaim.Value, out var userId))
+        {
+            throw new UnauthorizedAccessException("Invalid user ID");
+        }
+        return userId;
+    }
+
+    /// <summary>
     /// Get the HLS master playlist for a media item.
     /// Optional query parameters:
     /// - token: JWT for authentication
@@ -39,6 +53,8 @@ public class TranscodeController : ControllerBase
     {
         try
         {
+            var userId = GetUserId();
+            
             // Fetch media item with library for path validation
             var mediaItem = await _context.MediaItems
                 .Include(m => m.Library)
@@ -68,10 +84,10 @@ public class TranscodeController : ControllerBase
                 return Forbid();
             }
 
-            // Start transcoding with optional subtitle and seek
-            _logger.LogInformation("Starting transcode for media {Id} (sub={Sub}, seek={Seek}), path: {Path}", 
-                id, sub, seek, mediaItem.Path);
-            await _transcodeService.StartTranscodeAsync(id, mediaItem.Path, sub, seek);
+            // Start transcoding with user ID for session ownership
+            _logger.LogInformation("Starting transcode for media {Id} (user={UserId}, sub={Sub}, seek={Seek})", 
+                id, userId, sub, seek);
+            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek);
 
             var stream = _transcodeService.GetPlaylist(id, sub);
             if (stream == null)
@@ -117,11 +133,19 @@ public class TranscodeController : ControllerBase
     }
 
     /// <summary>
-    /// Get an HLS segment. Supports optional subtitle parameter for session lookup.
+    /// Get an HLS segment. Updates client position for throttling.
     /// </summary>
     [HttpGet("{id}/{segment}")]
     public IActionResult GetSegment(Guid id, string segment, [FromQuery] int? sub = null)
     {
+        // Extract segment index for throttling
+        var segmentIndex = TranscodeService.ExtractSegmentIndex(segment);
+        if (segmentIndex >= 0)
+        {
+            var sessionKey = new TranscodeSessionKey(id, sub);
+            _transcodeService.UpdateClientPosition(sessionKey, segmentIndex);
+        }
+
         var stream = _transcodeService.GetSegment(id, segment, sub);
         if (stream == null) return NotFound();
 
@@ -129,21 +153,109 @@ public class TranscodeController : ControllerBase
     }
 
     /// <summary>
-    /// Stop transcoding for a media item, optionally for a specific subtitle session.
+    /// Pause transcoding. FFmpeg will stop when buffer is full.
+    /// </summary>
+    [HttpPost("{id}/pause")]
+    public IActionResult Pause(Guid id, [FromQuery] int? sub = null)
+    {
+        try
+        {
+            var userId = GetUserId();
+            var sessionKey = new TranscodeSessionKey(id, sub);
+            
+            if (!_transcodeService.SetPaused(sessionKey, userId, isPaused: true))
+            {
+                var session = _transcodeService.GetSession(sessionKey);
+                if (session == null)
+                {
+                    return NotFound("Session not found");
+                }
+                if (session.UserId != userId)
+                {
+                    return Forbid();
+                }
+            }
+            
+            _logger.LogInformation("Pause requested for {MediaId} by user {UserId}", id, userId);
+            return Ok();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Unauthorized();
+        }
+    }
+
+    /// <summary>
+    /// Resume transcoding after pause.
+    /// </summary>
+    [HttpPost("{id}/resume")]
+    public IActionResult Resume(Guid id, [FromQuery] int? sub = null)
+    {
+        try
+        {
+            var userId = GetUserId();
+            var sessionKey = new TranscodeSessionKey(id, sub);
+            
+            if (!_transcodeService.SetPaused(sessionKey, userId, isPaused: false))
+            {
+                var session = _transcodeService.GetSession(sessionKey);
+                if (session == null)
+                {
+                    return NotFound("Session not found");
+                }
+                if (session.UserId != userId)
+                {
+                    return Forbid();
+                }
+            }
+            
+            _logger.LogInformation("Resume requested for {MediaId} by user {UserId}", id, userId);
+            return Ok();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Unauthorized();
+        }
+    }
+
+    /// <summary>
+    /// Stop transcoding for a media item and clean up files.
+    /// Called when video playback ends.
     /// </summary>
     [HttpDelete("{id}")]
     public IActionResult StopTranscode(Guid id, [FromQuery] int? sub = null, [FromQuery] bool all = false)
     {
-        if (all)
+        try
         {
-            // Stop all transcode sessions for this media (any subtitle combination)
-            _transcodeService.StopAllTranscodesForMedia(id);
+            var userId = GetUserId();
+            
+            if (all)
+            {
+                // Stop all transcode sessions for this media
+                _transcodeService.StopAllTranscodesForMedia(id);
+                _logger.LogInformation("All transcodes stopped for {MediaId} by user {UserId}", id, userId);
+            }
+            else
+            {
+                // Validate ownership before stopping
+                var sessionKey = new TranscodeSessionKey(id, sub);
+                var session = _transcodeService.GetSession(sessionKey);
+                
+                if (session != null && session.UserId != userId)
+                {
+                    _logger.LogWarning("User {UserId} attempted to stop session owned by {OwnerId}", userId, session.UserId);
+                    return Forbid();
+                }
+                
+                _transcodeService.StopTranscode(id, sub);
+                _logger.LogInformation("Transcode stopped for {MediaId} (sub={Sub}) by user {UserId}", id, sub, userId);
+            }
+            
+            return Ok();
         }
-        else
+        catch (UnauthorizedAccessException)
         {
-            // Stop specific session
-            _transcodeService.StopTranscode(id, sub);
+            return Unauthorized();
         }
-        return Ok();
     }
 }

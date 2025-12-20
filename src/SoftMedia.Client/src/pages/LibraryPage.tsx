@@ -105,6 +105,7 @@ export default function LibraryPage() {
                                     item={item}
                                     hoveredId={hoveredId}
                                     setHoveredId={setHoveredId}
+                                    libraryType={library?.type}
                                 />
                             ))}
                         </div>

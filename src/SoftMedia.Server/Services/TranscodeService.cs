@@ -6,9 +6,9 @@ using Microsoft.Extensions.DependencyInjection;
 namespace SoftMedia.Server.Services;
 
 /// <summary>
-/// Key for tracking unique transcode sessions (mediaId + subtitle track combination)
+/// Key for tracking unique transcode sessions (mediaId + userId + subtitle track combination)
 /// </summary>
-public record TranscodeSessionKey(Guid MediaId, int? SubtitleTrackIndex);
+public record TranscodeSessionKey(Guid MediaId, Guid UserId, int? SubtitleTrackIndex);
 
 /// <summary>
 /// Transcode state for throttling state machine
@@ -38,6 +38,7 @@ public class TranscodeSession
     public Process? Process { get; set; }
     public TranscodeState State { get; set; } = TranscodeState.Burst;
     public double? CurrentReadRate { get; set; } = null;  // null = BURST (full speed)
+    public double? SeekPosition { get; set; }  // Starting seek position for this session
     public int LatestSegmentIndex { get; set; } = 0;
     public int ClientSegmentIndex { get; set; } = 0;
     public DateTime LastClientRequestTime { get; set; } = DateTime.UtcNow;
@@ -45,6 +46,21 @@ public class TranscodeSession
     public bool IsPaused { get; set; } = false;
     public int CrashRetryCount { get; set; } = 0;
     public string SessionDirectory { get; init; } = string.Empty;
+    
+    /// <summary>
+    /// Path to extracted WebVTT subtitle file for sidecar delivery (null if no subtitles selected)
+    /// </summary>
+    public string? SubtitleVttPath { get; set; }
+    
+    /// <summary>
+    /// Language code of the selected subtitle track (for HLS manifest)
+    /// </summary>
+    public string? SubtitleLanguage { get; set; }
+    
+    /// <summary>
+    /// True if the selected subtitle is bitmap-based (PGS, VOBSUB) and requires burn-in
+    /// </summary>
+    public bool IsBitmapSubtitle { get; set; } = false;
 }
 
 /// <summary>
@@ -82,10 +98,11 @@ public class TranscodeService
     /// <summary>
     /// Get the session directory for a specific transcode session
     /// </summary>
-    public string GetSessionDir(Guid mediaId, int? subtitleTrackIndex)
+    public string GetSessionDir(Guid mediaId, Guid userId, int? subtitleTrackIndex)
     {
         var suffix = subtitleTrackIndex.HasValue ? $"_sub{subtitleTrackIndex.Value}" : "";
-        return Path.Combine(_tempDir, $"{mediaId}{suffix}");
+        // Include userId to isolate transcode sessions per user
+        return Path.Combine(_tempDir, $"{mediaId}_{userId}{suffix}");
     }
 
     /// <summary>
@@ -105,6 +122,15 @@ public class TranscodeService
     {
         _activeSessions.TryGetValue(key, out var session);
         return session;
+    }
+    
+    /// <summary>
+    /// Get a specific session by media/user/subtitle combination
+    /// </summary>
+    public TranscodeSession? GetSession(Guid mediaId, Guid userId, int? subtitleTrackIndex)
+    {
+        var key = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex);
+        return GetSession(key);
     }
 
     /// <summary>
@@ -149,6 +175,7 @@ public class TranscodeService
             session.ClientSegmentIndex = segmentIndex;
             session.LastClientRequestTime = DateTime.UtcNow;
             session.CrashRetryCount = 0; // Reset on successful activity
+            session.IsPaused = false;    // Client is actively requesting - wake from DORMANT if needed
             _logger.LogDebug("Client position updated: {MediaId} -> segment {Index}", key.MediaId, segmentIndex);
         }
     }
@@ -186,7 +213,7 @@ public class TranscodeService
         double? seekPosition = null,
         double? readRate = null)
     {
-        var sessionKey = new TranscodeSessionKey(mediaId, subtitleTrackIndex);
+        var sessionKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex);
         var sessionLock = _sessionLocks.GetOrAdd(sessionKey, _ => new SemaphoreSlim(1, 1));
         
         await sessionLock.WaitAsync();
@@ -195,11 +222,73 @@ public class TranscodeService
             // Check if session already exists
             if (_activeSessions.TryGetValue(sessionKey, out var existingSession))
             {
-                _logger.LogDebug("Transcode session already active for {MediaId}", mediaId);
-                return existingSession;
+                // Verify the session directory still exists (could have been cleaned up)
+                if (Directory.Exists(existingSession.SessionDirectory))
+                {
+                    // Check if seek position changed - if so, restart the transcode
+                    if (existingSession.SeekPosition != seekPosition)
+                    {
+                        _logger.LogInformation("Seek position changed from {OldSeek} to {NewSeek} for {MediaId}, restarting transcode",
+                            existingSession.SeekPosition, seekPosition, mediaId);
+                        await StopSessionInternalAsync(existingSession, sessionKey);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Transcode session already active for {MediaId}", mediaId);
+                        
+                        // Check if subtitles were requested but not extracted (e.g., session from before fix)
+                        if (subtitleTrackIndex.HasValue && existingSession.SubtitleVttPath == null && !existingSession.IsBitmapSubtitle)
+                        {
+                            _logger.LogInformation("Existing session missing subtitles, checking codec for {MediaId}", mediaId);
+                            using var scope = _scopeFactory.CreateScope();
+                            var ffmpegService = scope.ServiceProvider.GetRequiredService<IFFmpegService>();
+                            
+                            // Check if this is a bitmap subtitle (needs burn-in, not sidecar)
+                            var subtitleCodec = await ffmpegService.ProbeSubtitleCodecAsync(inputPath, subtitleTrackIndex.Value);
+                            if (FFmpegService.IsBitmapSubtitleCodec(subtitleCodec))
+                            {
+                                _logger.LogWarning("Subtitle track {Index} is bitmap-based ({Codec}) - requires burn-in. " +
+                                    "Restarting transcode with subtitle overlay.", subtitleTrackIndex.Value, subtitleCodec);
+                                existingSession.IsBitmapSubtitle = true;
+                                // Stop current session and restart with burn-in
+                                await StopSessionInternalAsync(existingSession, sessionKey);
+                                // Fall through to create a new session with burn-in
+                            }
+                            else
+                            {
+                                // Text subtitle - extract to WebVTT
+                                var subtitleStreamIndex = ffmpegService.GetSubtitleStreamIndex(inputPath, subtitleTrackIndex.Value);
+                                var vttPath = Path.Combine(existingSession.SessionDirectory, "subtitles.vtt");
+                                
+                                var extracted = await ffmpegService.ExtractSubtitleToVttAsync(inputPath, subtitleStreamIndex, vttPath);
+                                if (extracted)
+                                {
+                                    existingSession.SubtitleVttPath = vttPath;
+                                    if (existingSession.SeekPosition.HasValue && existingSession.SeekPosition.Value > 0)
+                                    {
+                                        ffmpegService.OffsetWebVttTimestamps(vttPath, existingSession.SeekPosition.Value);
+                                    }
+                                }
+                                return existingSession;
+                            }
+                        }
+                        else
+                        {
+                            return existingSession;
+                        }
+                        
+                        return existingSession;
+                    }
+                }
+                else
+                {
+                    // Session directory was cleaned up, remove stale session and restart
+                    _logger.LogInformation("Session directory missing for {MediaId}, restarting transcode", mediaId);
+                    _activeSessions.TryRemove(sessionKey, out _);
+                }
             }
 
-            var sessionDir = GetSessionDir(mediaId, subtitleTrackIndex);
+            var sessionDir = GetSessionDir(mediaId, userId, subtitleTrackIndex);
             
             // Clean up any existing session directory
             if (Directory.Exists(sessionDir))
@@ -216,12 +305,62 @@ public class TranscodeService
                 InputPath = inputPath,
                 State = TranscodeState.Burst,
                 CurrentReadRate = readRate,
+                SeekPosition = seekPosition,  // Store seek position to detect changes
                 SessionDirectory = sessionDir,
                 SessionStartTime = DateTime.UtcNow,
                 LastClientRequestTime = DateTime.UtcNow
             };
 
-            // Start FFmpeg
+            _logger.LogInformation("Created new transcode session for {MediaId}: subtitleTrackIndex={Sub}, sessionDir={Dir}",
+                mediaId, subtitleTrackIndex?.ToString() ?? "null", sessionDir);
+
+            // Extract text subtitles to WebVTT for sidecar delivery (if subtitle selected)
+            if (subtitleTrackIndex.HasValue)
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var ffmpegService = scope.ServiceProvider.GetRequiredService<IFFmpegService>();
+                
+                // Create session directory if it doesn't exist (needed before FFmpeg starts)
+                Directory.CreateDirectory(sessionDir);
+                
+                // Check if subtitle is bitmap-based (PGS, VOBSUB) - these need burn-in
+                var subtitleCodec = await ffmpegService.ProbeSubtitleCodecAsync(inputPath, subtitleTrackIndex.Value);
+                if (FFmpegService.IsBitmapSubtitleCodec(subtitleCodec))
+                {
+                    _logger.LogInformation("Subtitle track {Index} is bitmap-based ({Codec}) - will use burn-in overlay.", 
+                        subtitleTrackIndex.Value, subtitleCodec);
+                    session.IsBitmapSubtitle = true;
+                    // Burn-in will be handled by StartFFmpegProcessAsync
+                }
+                else
+                {
+                    // Get the subtitle stream index within subtitle streams (0-based for -map 0:s:N)
+                    var subtitleStreamIndex = ffmpegService.GetSubtitleStreamIndex(inputPath, subtitleTrackIndex.Value);
+                    var vttPath = Path.Combine(sessionDir, "subtitles.vtt");
+                    
+                    _logger.LogInformation("Extracting subtitle track {Index} (stream {Stream}, codec={Codec}) to WebVTT", 
+                        subtitleTrackIndex.Value, subtitleStreamIndex, subtitleCodec ?? "unknown");
+                    
+                    var extracted = await ffmpegService.ExtractSubtitleToVttAsync(inputPath, subtitleStreamIndex, vttPath);
+                    if (extracted)
+                    {
+                        session.SubtitleVttPath = vttPath;
+                        _logger.LogInformation("Subtitle extracted successfully for session {MediaId}", mediaId);
+                        
+                        // Offset timestamps if seeking - VTT has absolute times but HLS plays from 0
+                        if (seekPosition.HasValue && seekPosition.Value > 0)
+                        {
+                            ffmpegService.OffsetWebVttTimestamps(vttPath, seekPosition.Value);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Failed to extract subtitle - will transcode without subtitles");
+                    }
+                }
+            }
+
+            // Start FFmpeg (without subtitle burn-in since we're using sidecar)
             var process = await StartFFmpegProcessAsync(session, seekPosition);
             if (process == null)
             {
@@ -231,6 +370,9 @@ public class TranscodeService
 
             session.Process = process;
             _activeSessions.TryAdd(sessionKey, session);
+            
+            _logger.LogInformation("Session {MediaId} added to active sessions. SubtitleVttPath={Path}",
+                mediaId, session.SubtitleVttPath ?? "null");
             
             // Wait for playlist to be created
             await Task.Delay(3000);
@@ -306,11 +448,20 @@ public class TranscodeService
         using var scope = _scopeFactory.CreateScope();
         var ffmpegService = scope.ServiceProvider.GetRequiredService<IFFmpegService>();
 
+        // For text subtitles, we use sidecar WebVTT - no burn-in needed
+        // For bitmap subtitles (PGS), we need to burn them into the video stream
+        int? subtitleBurnInIndex = null;
+        if (session.IsBitmapSubtitle && session.Key.SubtitleTrackIndex.HasValue)
+        {
+            subtitleBurnInIndex = session.Key.SubtitleTrackIndex.Value;
+            _logger.LogInformation("Using burn-in for bitmap subtitle track {Index}", subtitleBurnInIndex);
+        }
+        
         var startInfo = ffmpegService.GetTranscodeArguments(
             session.InputPath, 
             session.SessionDirectory, 
             "seg", 
-            session.Key.SubtitleTrackIndex, 
+            subtitleBurnInIndex,  // Pass subtitle for burn-in if bitmap, null otherwise (sidecar WebVTT)
             seekPosition,
             session.CurrentReadRate);
 
@@ -339,9 +490,9 @@ public class TranscodeService
     /// <summary>
     /// Get the HLS playlist for a transcode session.
     /// </summary>
-    public Stream? GetPlaylist(Guid mediaId, int? subtitleTrackIndex = null)
+    public Stream? GetPlaylist(Guid mediaId, Guid userId, int? subtitleTrackIndex = null)
     {
-        var sessionDir = GetSessionDir(mediaId, subtitleTrackIndex);
+        var sessionDir = GetSessionDir(mediaId, userId, subtitleTrackIndex);
         var playlistPath = Path.Combine(sessionDir, "master.m3u8");
         if (File.Exists(playlistPath))
         {
@@ -353,7 +504,7 @@ public class TranscodeService
     /// <summary>
     /// Get a segment file from a transcode session.
     /// </summary>
-    public Stream? GetSegment(Guid mediaId, string segmentName, int? subtitleTrackIndex = null)
+    public Stream? GetSegment(Guid mediaId, Guid userId, string segmentName, int? subtitleTrackIndex = null)
     {
         // Validate segment name pattern (security)
         if (!SegmentPattern.IsMatch(segmentName))
@@ -362,7 +513,7 @@ public class TranscodeService
             return null;
         }
 
-        var sessionDir = GetSessionDir(mediaId, subtitleTrackIndex);
+        var sessionDir = GetSessionDir(mediaId, userId, subtitleTrackIndex);
         var segmentPath = Path.Combine(sessionDir, segmentName);
         if (File.Exists(segmentPath))
         {
@@ -374,9 +525,9 @@ public class TranscodeService
     /// <summary>
     /// Stop a specific transcode session and clean up.
     /// </summary>
-    public void StopTranscode(Guid mediaId, int? subtitleTrackIndex = null, bool deleteFiles = true)
+    public void StopTranscode(Guid mediaId, Guid userId, int? subtitleTrackIndex = null, bool deleteFiles = true)
     {
-        var sessionKey = new TranscodeSessionKey(mediaId, subtitleTrackIndex);
+        var sessionKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex);
         
         if (_activeSessions.TryRemove(sessionKey, out var session))
         {
@@ -385,11 +536,11 @@ public class TranscodeService
     }
 
     /// <summary>
-    /// Stop all transcode sessions for a given media item.
+    /// Stop all transcode sessions for a given media item and user.
     /// </summary>
-    public void StopAllTranscodesForMedia(Guid mediaId)
+    public void StopAllTranscodesForUser(Guid mediaId, Guid userId)
     {
-        var keysToRemove = _activeSessions.Keys.Where(k => k.MediaId == mediaId).ToList();
+        var keysToRemove = _activeSessions.Keys.Where(k => k.MediaId == mediaId && k.UserId == userId).ToList();
         foreach (var key in keysToRemove)
         {
             if (_activeSessions.TryRemove(key, out var session))
@@ -421,6 +572,7 @@ public class TranscodeService
             }
             session.Process = null;
             session.State = TranscodeState.Dormant;
+            session.IsPaused = true; // Mark as paused so we only wake on new segment requests
             _logger.LogInformation("Session {MediaId} entered DORMANT state", key.MediaId);
         }
     }
@@ -435,6 +587,17 @@ public class TranscodeService
             StopSession(session, deleteFiles: true);
             _logger.LogInformation("Dormant session {MediaId} deleted", key.MediaId);
         }
+    }
+
+    /// <summary>
+    /// Internal helper to stop a session and remove it from active sessions.
+    /// Used when restarting a session with different parameters.
+    /// </summary>
+    private async Task StopSessionInternalAsync(TranscodeSession session, TranscodeSessionKey sessionKey)
+    {
+        StopSession(session, deleteFiles: true);
+        _activeSessions.TryRemove(sessionKey, out _);
+        await Task.Delay(100); // Brief delay for filesystem to settle
     }
 
     private void StopSession(TranscodeSession session, bool deleteFiles)

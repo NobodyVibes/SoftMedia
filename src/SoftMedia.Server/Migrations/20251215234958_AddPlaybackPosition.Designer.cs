@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using SoftMedia.Server.Data;
 
@@ -10,9 +11,11 @@ using SoftMedia.Server.Data;
 namespace SoftMedia.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251215234958_AddPlaybackPosition")]
+    partial class AddPlaybackPosition
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.2");
@@ -346,25 +349,6 @@ namespace SoftMedia.Server.Migrations
                     b.ToTable("UserMediaInteractions");
                 });
 
-            modelBuilder.Entity("SoftMedia.Server.Models.UserSeriesPreference", b =>
-                {
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("SeriesId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("PreferredSubtitleLanguage")
-                        .HasMaxLength(10)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("UserId", "SeriesId");
-
-                    b.HasIndex("SeriesId");
-
-                    b.ToTable("UserSeriesPreferences");
-                });
-
             modelBuilder.Entity("SoftMedia.Server.Models.Invite", b =>
                 {
                     b.HasOne("SoftMedia.Server.Models.User", "CreatedBy")
@@ -440,25 +424,6 @@ namespace SoftMedia.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("MediaItem");
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("SoftMedia.Server.Models.UserSeriesPreference", b =>
-                {
-                    b.HasOne("SoftMedia.Server.Models.MediaItem", "Series")
-                        .WithMany()
-                        .HasForeignKey("SeriesId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("SoftMedia.Server.Models.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Series");
 
                     b.Navigation("User");
                 });

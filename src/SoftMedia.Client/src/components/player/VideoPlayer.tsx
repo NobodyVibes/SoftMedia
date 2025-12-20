@@ -35,6 +35,16 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const containerRef = useRef<HTMLDivElement>(null);
     const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const seekAfterLoadRef = useRef<number>(0); // Position to seek to after HLS reloads
+    const progressSaveIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const lastSavedPositionRef = useRef<number>(0); // Track last saved position to avoid redundant saves
+    const effectivePlaybackPositionRef = useRef<number>(0); // Track actual playback position for subtitle switching
+    const isInsideMenuRef = useRef<boolean>(false); // Track if mouse is inside a menu (for auto-hide logic)
+
+    // Resume position from server (loaded on mount)
+    const [resumePosition, setResumePosition] = useState<number>(0);
+    const [hasLoadedProgress, setHasLoadedProgress] = useState(false);
+    const [hasLoadedSubtitlePref, setHasLoadedSubtitlePref] = useState(false); // Track if subtitle preference loaded
+    const [isSubtitleChange, setIsSubtitleChange] = useState(false); // Track if subtitle just changed
 
     const [src, setSrc] = useState<string>('');
     const [isTranscoding, setIsTranscoding] = useState(false);
@@ -64,6 +74,17 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     // Duration from FFprobe (when not in metadata)
     const [probedDuration, setProbedDuration] = useState<number>(0);
+
+    // Progress bar drag/hover state
+    const [isDragging, setIsDragging] = useState(false);
+    const [hoverTime, setHoverTime] = useState<number | null>(null);
+    const [hoverPosition, setHoverPosition] = useState<number>(0);
+
+    // Frame preview for scrubber
+    const [framePreviewUrl, setFramePreviewUrl] = useState<string | null>(null);
+    const [frameLoaded, setFrameLoaded] = useState(false);
+    const wasPlayingBeforeDragRef = useRef(false);
+    const frameDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
     const token = useAuthStore((state) => state.token);
 
@@ -105,6 +126,95 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         fetchDuration();
     }, [actualDuration, token, item.id]);
 
+    // Load saved playback position on mount
+    useEffect(() => {
+        if (!token || !item.id) return;
+
+        const fetchProgress = async () => {
+            try {
+                const response = await fetch(`/api/v1/interaction/${item.id}/progress`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.position > 0) {
+                        // Validate: position must be less than duration (with 5s buffer)
+                        // If position exceeds duration, it's corrupted - reset to beginning
+                        // Duration may be a number (seconds) or a formatted string like "24m 46s" or "1h 30m 15s"
+                        let durationSeconds = 0;
+                        if (typeof item.duration === 'number') {
+                            durationSeconds = item.duration;
+                        } else if (typeof item.duration === 'string') {
+                            // Parse formatted duration like "24m 46s" or "1h 30m 15s"
+                            const hours = item.duration.match(/(\d+)h/);
+                            const minutes = item.duration.match(/(\d+)m/);
+                            const seconds = item.duration.match(/(\d+)s/);
+                            durationSeconds =
+                                (hours ? parseInt(hours[1]) * 3600 : 0) +
+                                (minutes ? parseInt(minutes[1]) * 60 : 0) +
+                                (seconds ? parseInt(seconds[1]) : 0);
+                        }
+                        const maxValidPosition = durationSeconds > 0 ? durationSeconds - 5 : Infinity;
+                        console.log(`Resume validation: position=${data.position}, duration=${item.duration}(parsed=${durationSeconds}s), maxValid=${maxValidPosition}`);
+                        if (data.position < maxValidPosition) {
+                            console.log(`Resuming from saved position: ${data.position}s`);
+                            setResumePosition(data.position);
+                        } else {
+                            console.log(`Saved position ${data.position}s exceeds duration ${durationSeconds}s - starting from beginning`);
+                            // Don't set resume position - will start from beginning
+                        }
+                    }
+                }
+            } catch {
+                // Silently fail - will start from beginning
+            } finally {
+                // Mark progress as loaded so playback strategy can proceed
+                setHasLoadedProgress(true);
+            }
+        };
+        fetchProgress();
+    }, [token, item.id]);
+
+    // Save playback position periodically (every 10 seconds) and on unmount
+    useEffect(() => {
+        if (!token || !item.id) return;
+
+        const saveProgress = async () => {
+            const effectivePosition = currentTime + seekOffset;
+            // Only save if position changed significantly (> 5 seconds difference)
+            if (Math.abs(effectivePosition - lastSavedPositionRef.current) > 5 && effectivePosition > 0) {
+                try {
+                    await fetch(`/api/v1/interaction/${item.id}/progress`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            Authorization: `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ position: effectivePosition })
+                    });
+                    lastSavedPositionRef.current = effectivePosition;
+                } catch {
+                    // Silently fail - position will be saved next interval
+                }
+            }
+        };
+
+        // Save every 10 seconds while playing
+        progressSaveIntervalRef.current = setInterval(() => {
+            if (isPlaying) {
+                saveProgress();
+            }
+        }, 10000);
+
+        return () => {
+            // Save on unmount
+            saveProgress();
+            if (progressSaveIntervalRef.current) {
+                clearInterval(progressSaveIntervalRef.current);
+            }
+        };
+    }, [token, item.id, currentTime, seekOffset, isPlaying]);
+
     // Use metadata duration, probed duration, or video element duration as fallback
     const displayDuration = actualDuration > 0 ? actualDuration : (probedDuration > 0 ? probedDuration : (videoRef.current?.duration || 0));
     const formatTime = (seconds: number): string => {
@@ -124,7 +234,8 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             clearTimeout(controlsTimeoutRef.current);
         }
         setShowControls(true);
-        if (isPlaying) {
+        // Don't set auto-hide timeout if mouse is inside a menu
+        if (isPlaying && !isInsideMenuRef.current) {
             controlsTimeoutRef.current = setTimeout(() => {
                 setShowControls(false);
                 setShowSpeedMenu(false);
@@ -135,10 +246,30 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     // Prevent auto-hide when interacting with menus
     const handleMenuInteraction = (isEntering: boolean) => {
+        isInsideMenuRef.current = isEntering;
         if (isEntering) {
             if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
         } else {
             resetControlsTimeout();
+        }
+    };
+
+    // Save subtitle preference for TV episodes
+    const saveSubtitlePreference = async (language: string | null) => {
+        if (!item.seriesId || !token) return; // Only save for TV episodes
+
+        try {
+            await fetch(`/api/v1/series/${item.seriesId}/subtitle-preference`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({ language })
+            });
+            console.log(`Saved subtitle preference: ${language ?? 'off'} for series ${item.seriesId}`);
+        } catch {
+            // Silently fail - preference save is not critical
         }
     };
 
@@ -199,8 +330,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     }, [resetControlsTimeout]);
 
     // Determine playback strategy based on container/codec
+    // Wait for progress AND subtitle preference to be loaded before starting transcode
     useEffect(() => {
-        if (!token) return;
+        if (!token || !hasLoadedProgress || !hasLoadedSubtitlePref) return;
 
         const container = item.container?.toLowerCase() || '';
         const videoCodec = item.videoCodec?.toLowerCase() || '';
@@ -215,32 +347,53 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         if (needsTranscode) {
             console.log(`Format ${container}/${videoCodec} not supported, switching to HLS transcoding.`);
 
-            // Save current playback position before switching subtitles
+            // Determine starting position
             const currentPosition = videoRef.current?.currentTime || 0;
-            const effectivePosition = currentPosition + seekOffset; // Include any existing offset
+            let startPosition = 0;
 
-            if (effectivePosition > 5) {
-                // Starting from a non-zero position
-                seekAfterLoadRef.current = effectivePosition;
-                setSeekOffset(Math.floor(effectivePosition));
+            // Priority 1: If this is a subtitle change mid-playback, use the tracked effective position
+            if (isSubtitleChange && effectivePlaybackPositionRef.current > 1) {
+                startPosition = Math.floor(effectivePlaybackPositionRef.current);
+                console.log(`Subtitle change: continuing from tracked position: ${startPosition}s`);
+                setIsSubtitleChange(false); // Reset the flag
+
+                // Stop the previous transcode session before starting new one with subtitles
+                // This prevents duplicate FFmpeg instances
+                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' })
+                    .catch(() => { /* Ignore cleanup errors */ });
+            }
+            // Priority 2: If we have a resume position and video hasn't started playing, use it
+            else if (resumePosition > 0 && currentPosition < 1 && effectivePlaybackPositionRef.current < 1) {
+                startPosition = resumePosition;
+                console.log(`Using saved resume position: ${resumePosition}s`);
+            }
+            // Priority 3: If user has been seeking (seekOffset > 0), calculate from current position
+            else if (seekOffset > 0) {
+                startPosition = currentPosition + seekOffset;
+                console.log(`Continuing from current position: ${startPosition}s`);
+            }
+            // Priority 4: Current position in direct play being switched to transcode
+            else if (currentPosition > 1) {
+                startPosition = currentPosition;
+                console.log(`Switching to transcode at position: ${startPosition}s`);
+            }
+
+            // Set offset for time display
+            if (startPosition > 0) {
+                seekAfterLoadRef.current = startPosition;
+                setSeekOffset(Math.floor(startPosition));
             } else {
-                // Starting from the beginning
                 seekAfterLoadRef.current = 0;
                 setSeekOffset(0);
             }
 
-            // Cleanup all previous transcodes for this media before starting new one
-            fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' })
-                .catch(() => { });
-
-            // Include subtitle track and seek position in the HLS URL
+            // Build HLS URL with seek position for transcode
             let hlsUrl = `/api/transcode/${item.id}/master.m3u8?token=${token}`;
             if (selectedSubtitleTrack !== null) {
                 hlsUrl += `&sub=${selectedSubtitleTrack}`;
             }
-            // Pass seek position to start transcoding from current position
-            if (effectivePosition > 5) {
-                hlsUrl += `&seek=${Math.floor(effectivePosition)}`;
+            if (startPosition > 0) {
+                hlsUrl += `&seek=${Math.floor(startPosition)}`;
             }
             setSrc(hlsUrl);
             setIsTranscoding(true);
@@ -251,9 +404,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             setIsTranscoding(false);
             setSeekOffset(0); // Reset offset for direct play
         }
-    }, [item, initialSrc, token, selectedSubtitleTrack]); // Re-run when subtitle changes to update HLS URL
+    }, [item, initialSrc, token, selectedSubtitleTrack, resumePosition, hasLoadedProgress, hasLoadedSubtitlePref, isSubtitleChange]); // Wait for progress & subtitle pref load
 
-    // Fetch audio and subtitle tracks
+    // Fetch audio and subtitle tracks, and apply saved subtitle preference for TV episodes
     useEffect(() => {
         if (!token || !item.id) return;
 
@@ -267,20 +420,49 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     setAudioTracks(data.audioTracks || []);
                     setSubtitleTracks(data.subtitleTracks || []);
 
-                    // Set defaults
+                    // Set default audio
                     const defaultAudio = data.audioTracks?.find(t => t.isDefault);
                     if (defaultAudio) setSelectedAudioTrack(defaultAudio.index);
 
+                    // For TV episodes, try to load saved subtitle preference
+                    if (item.seriesId) {
+                        try {
+                            const prefResponse = await fetch(`/api/v1/series/${item.seriesId}/subtitle-preference`, {
+                                headers: { Authorization: `Bearer ${token}` }
+                            });
+                            if (prefResponse.ok) {
+                                const prefData = await prefResponse.json();
+                                if (prefData.language) {
+                                    // Find a subtitle track matching the saved language
+                                    const matchingTrack = data.subtitleTracks?.find(
+                                        t => t.language?.toLowerCase() === prefData.language.toLowerCase()
+                                    );
+                                    if (matchingTrack) {
+                                        console.log(`Applying saved subtitle preference: ${prefData.language}`);
+                                        setSelectedSubtitleTrack(matchingTrack.index);
+                                        return; // Skip default selection
+                                    }
+                                }
+                            }
+                        } catch {
+                            // Ignore preference load errors - fall back to default
+                        }
+                    }
+
+                    // Fall back to default subtitle if no saved preference
                     const defaultSub = data.subtitleTracks?.find(t => t.isDefault);
                     if (defaultSub) setSelectedSubtitleTrack(defaultSub.index);
                 }
             } catch (err) {
                 console.error('Failed to fetch tracks:', err);
+            } finally {
+                // Mark subtitle preference as loaded (even if it failed or wasn't a TV show)
+                setHasLoadedSubtitlePref(true);
             }
         };
 
         fetchTracks();
-    }, [item.id, token]);
+    }, [item.id, item.seriesId, token]);
 
     // Setup HLS.js or native playback
     useEffect(() => {
@@ -308,6 +490,8 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     manifestLoadingRetryDelay: 2000,
                     levelLoadingMaxRetry: 6,
                     fragLoadingMaxRetry: 6,
+                    // Enable native subtitle track rendering for WebVTT sidecar subtitles
+                    renderTextTracksNatively: true,
                 });
 
                 hls.loadSource(src);
@@ -317,11 +501,46 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     console.log('HLS manifest parsed, ready to play');
                     setIsLoading(false);
 
-                    // Auto-play if we were switching subtitles (seekAfterLoadRef > 0)
-                    // The seek position is handled by FFmpeg's -ss flag, so we just need to play
+                    // Add WebVTT subtitle track directly if subtitles are selected
+                    // This approach works better than HLS manifest subtitles for single VTT files
+                    if (selectedSubtitleTrack !== null && token) {
+                        const subtitleUrl = `/api/transcode/${item.id}/subtitles.vtt?token=${token}&sub=${selectedSubtitleTrack}`;
+                        console.log(`Adding subtitle track: ${subtitleUrl}`);
+
+                        // Remove any existing track elements
+                        const existingTracks = video.querySelectorAll('track');
+                        existingTracks.forEach(t => t.remove());
+
+                        // Create and add new track element
+                        const trackElement = document.createElement('track');
+                        trackElement.kind = 'subtitles';
+                        trackElement.label = 'Subtitles';
+                        trackElement.srclang = 'en';
+                        trackElement.src = subtitleUrl;
+                        trackElement.default = true;
+                        video.appendChild(trackElement);
+
+                        // Enable the track after adding
+                        setTimeout(() => {
+                            if (video.textTracks && video.textTracks.length > 0) {
+                                for (let i = 0; i < video.textTracks.length; i++) {
+                                    const track = video.textTracks[i];
+                                    if (track.kind === 'subtitles' || track.kind === 'captions') {
+                                        track.mode = 'showing';
+                                        console.log(`Enabled text track: ${track.label}`);
+                                        break;
+                                    }
+                                }
+                            }
+                        }, 100);
+                    }
+
+                    // Auto-play when ready
+                    video.play().catch(() => { });
+
+                    // Reset seek ref if we were switching subtitles
                     if (seekAfterLoadRef.current > 0) {
-                        video.play().catch(() => { });
-                        seekAfterLoadRef.current = 0; // Reset after use
+                        seekAfterLoadRef.current = 0;
                     }
                 });
 
@@ -361,20 +580,21 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 hlsRef.current.destroy();
                 hlsRef.current = null;
             }
-            // Stop the transcode on the server when leaving the page
+            // Explicitly stop transcode when leaving the player
             if (isTranscoding && token && item.id) {
-                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' })
-                    .catch(() => { });
+                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, {
+                    method: 'DELETE'
+                }).catch(() => { /* Ignore cleanup errors */ });
             }
         };
-    }, [src, isTranscoding, token, item.id]);
+    }, [src, isTranscoding, token, item.id, selectedSubtitleTrack]);
 
     // Video event handlers
     useEffect(() => {
         const video = videoRef.current;
         if (!video) return;
 
-        const handleTimeUpdate = () => setCurrentTime(video.currentTime);
+        // handleTimeUpdate is defined below with enhanced end detection
         const handlePlay = () => {
             setIsPlaying(true);
             // Signal backend to resume transcoding (throttle control)
@@ -410,6 +630,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         const handleEnterPiP = () => setIsPiP(true);
         const handleLeavePiP = () => setIsPiP(false);
         const handleEnded = () => {
+            console.log('Video ended event fired');
             // Signal backend to clean up transcode session when video ends
             if (isTranscoding && token && item.id) {
                 fetch(`/api/transcode/${item.id}?all=true&token=${token}`, {
@@ -418,6 +639,25 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             }
         };
 
+        // For HLS streams, the 'ended' event may not fire if playlist lacks #EXT-X-ENDLIST
+        // So we also check if we've reached the end based on time comparison
+        const handleTimeUpdate = () => {
+            setCurrentTime(video.currentTime);
+
+            // Track effective playback position for subtitle switching
+            const effectiveTime = video.currentTime + seekOffset;
+            effectivePlaybackPositionRef.current = effectiveTime;
+
+            // Manual end detection for HLS: if effective time is within 1 second of known duration
+            if (displayDuration > 0 && effectiveTime >= displayDuration - 1 && !video.paused) {
+                // At end of video - check if HLS hasn't properly ended
+                if (video.currentTime >= (video.duration || 0) - 0.5) {
+                    console.log('Manual end detection: effective time reached duration');
+                    video.pause();
+                    handleEnded();
+                }
+            }
+        };
         video.addEventListener('timeupdate', handleTimeUpdate);
         video.addEventListener('play', handlePlay);
         video.addEventListener('pause', handlePause);
@@ -441,7 +681,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             video.removeEventListener('leavepictureinpicture', handleLeavePiP);
             video.removeEventListener('ended', handleEnded);
         };
-    }, [src, isTranscoding, token, item.id, selectedSubtitleTrack]);
+    }, [src, isTranscoding, token, item.id, selectedSubtitleTrack, displayDuration, seekOffset]);
 
     // Fullscreen change handler
     useEffect(() => {
@@ -451,6 +691,21 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         document.addEventListener('fullscreenchange', handleFullscreenChange);
         return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
     }, []);
+
+    // Clean up transcode when browser tab is closed or refreshed
+    useEffect(() => {
+        if (!isTranscoding || !token || !item.id) return;
+
+        const handleBeforeUnload = () => {
+            // Use sendBeacon for reliable delivery even during page unload
+            // Using POST /stop endpoint since sendBeacon only sends POST
+            const url = `/api/transcode/${item.id}/stop?all=true&token=${token}`;
+            navigator.sendBeacon(url);
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    }, [isTranscoding, token, item.id]);
 
     // Note: Burn-in subtitles are handled via the HLS URL - no need for text tracks
     // The selectedSubtitleTrack state triggers HLS URL change (via playback strategy useEffect)
@@ -463,63 +718,6 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             videoRef.current.pause();
         } else {
             videoRef.current.play();
-        }
-    };
-
-    const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!progressRef.current || !videoRef.current || displayDuration <= 0) return;
-        const rect = progressRef.current.getBoundingClientRect();
-        const percent = (e.clientX - rect.left) / rect.width;
-        const seekTime = Math.max(0, percent * displayDuration);
-
-        // For transcoding: check if seeking beyond the current video duration (transcoded portion)
-        // If so, restart transcode from the seek position
-        const currentTranscodedDuration = videoRef.current.duration || 0;
-        const effectiveCurrentTime = currentTime + seekOffset;
-
-        if (isTranscoding && token && seekTime > effectiveCurrentTime + currentTranscodedDuration + 5) {
-            // Seeking beyond transcoded portion - restart transcode at this position
-            console.log(`Seeking to ${seekTime}s - beyond transcoded range, restarting transcode`);
-
-            // Store seek position for auto-play after restart and set offset
-            seekAfterLoadRef.current = seekTime;
-            setSeekOffset(Math.floor(seekTime)); // Track the offset for time display
-
-            // Cleanup current transcode
-            fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' })
-                .catch(() => { });
-
-            // Build new URL with seek position
-            let hlsUrl = `/api/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}`;
-            if (selectedSubtitleTrack !== null) {
-                hlsUrl += `&sub=${selectedSubtitleTrack}`;
-            }
-
-            // Update src which triggers HLS reinit
-            setSrc(hlsUrl);
-        } else {
-            // Seeking within current range - calculate target time relative to current offset
-            const targetInStream = seekTime - seekOffset;
-            if (targetInStream >= 0 && targetInStream <= currentTranscodedDuration) {
-                videoRef.current.currentTime = targetInStream;
-            } else if (isTranscoding && token && targetInStream < 0) {
-                // Seeking before current offset - need to restart from new position
-                console.log(`Seeking to ${seekTime}s - before current offset, restarting transcode`);
-                seekAfterLoadRef.current = seekTime;
-                setSeekOffset(Math.floor(seekTime));
-
-                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' })
-                    .catch(() => { });
-
-                let hlsUrl = `/api/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}`;
-                if (selectedSubtitleTrack !== null) {
-                    hlsUrl += `&sub=${selectedSubtitleTrack}`;
-                }
-                setSrc(hlsUrl);
-            } else {
-                // Non-transcoding direct play
-                videoRef.current.currentTime = Math.min(seekTime, videoRef.current.duration || Infinity);
-            }
         }
     };
 
@@ -546,6 +744,8 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     const skip = (seconds: number) => {
         if (!videoRef.current) return;
+        // Simply adjust currentTime within the current stream
+        // The displayed time is calculated as currentTime + seekOffset
         videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime + seconds);
     };
 
@@ -568,6 +768,241 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             console.error('PiP error:', err);
         }
     };
+
+    // Find the chapter that contains a given time (returns the most recent chapter before that time)
+    const getChapterAtTime = useCallback((time: number): string | null => {
+        if (!item.chapters || item.chapters.length === 0) return null;
+
+        // Find the last chapter that starts before or at this time
+        let currentChapter: string | null = null;
+        for (const chapter of item.chapters) {
+            if (chapter.startTime <= time) {
+                currentChapter = chapter.title || 'Chapter';
+            } else {
+                break;
+            }
+        }
+        return currentChapter;
+    }, [item.chapters]);
+
+    // Get current chapter index based on playback position
+    const getCurrentChapterIndex = useCallback((): number => {
+        if (!item.chapters || item.chapters.length === 0) return -1;
+        const time = currentTime + seekOffset;
+        let idx = -1;
+        for (let i = 0; i < item.chapters.length; i++) {
+            if (item.chapters[i].startTime <= time) {
+                idx = i;
+            } else {
+                break;
+            }
+        }
+        return idx;
+    }, [item.chapters, currentTime, seekOffset]);
+
+    // Skip to previous or next chapter
+    const skipToChapter = (direction: 'prev' | 'next') => {
+        if (!item.chapters || item.chapters.length === 0) return;
+
+        const currentIdx = getCurrentChapterIndex();
+        const currentPlaybackTime = currentTime + seekOffset;
+
+        if (direction === 'prev') {
+            // If we're more than 3 seconds into current chapter, go to start of current chapter
+            // Otherwise go to previous chapter
+            if (currentIdx >= 0) {
+                const currentChapterStart = item.chapters[currentIdx].startTime;
+                if (currentPlaybackTime - currentChapterStart > 3) {
+                    // Go to start of current chapter
+                    handleSeekToTime(currentChapterStart);
+                } else if (currentIdx > 0) {
+                    // Go to previous chapter
+                    handleSeekToTime(item.chapters[currentIdx - 1].startTime);
+                } else {
+                    // Already at first chapter, go to beginning
+                    handleSeekToTime(0);
+                }
+            } else {
+                handleSeekToTime(0);
+            }
+        } else {
+            // Go to next chapter, or end of video if at last chapter
+            if (currentIdx < item.chapters.length - 1) {
+                handleSeekToTime(item.chapters[currentIdx + 1].startTime);
+            } else {
+                // At last chapter, go to end
+                handleSeekToTime(displayDuration);
+            }
+        }
+    };
+
+    // Navigate to previous or next episode (for TV shows)
+    const navigateEpisode = (direction: 'prev' | 'next') => {
+        // This would need series/episode data from the backend
+        // For now, log and potentially navigate via URL
+        console.log(`Navigate to ${direction} episode - not yet implemented`);
+        // TODO: Implement episode navigation when series data is available
+    };
+
+    // Progress bar mouse handlers for drag and hover
+    const getTimeFromMouseEvent = (e: React.MouseEvent<HTMLDivElement> | MouseEvent): number => {
+        if (!progressRef.current || displayDuration <= 0) return 0;
+        const rect = progressRef.current.getBoundingClientRect();
+        const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        return percent * displayDuration;
+    };
+
+    const handleProgressMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+        // Prevent default browser drag behavior (shows cancel cursor)
+        e.preventDefault();
+
+        // Remember if video was playing before drag
+        wasPlayingBeforeDragRef.current = isPlaying;
+
+        // Pause video during drag
+        if (videoRef.current && isPlaying) {
+            videoRef.current.pause();
+        }
+
+        setIsDragging(true);
+        const time = getTimeFromMouseEvent(e);
+        setHoverTime(time);
+
+        if (progressRef.current) {
+            const rect = progressRef.current.getBoundingClientRect();
+            setHoverPosition(e.clientX - rect.left);
+        }
+
+        // Fetch frame preview (debounced)
+        fetchFramePreview(time);
+    };
+
+    const handleProgressMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (!progressRef.current) return;
+        const rect = progressRef.current.getBoundingClientRect();
+        setHoverPosition(e.clientX - rect.left);
+        const time = getTimeFromMouseEvent(e);
+        setHoverTime(time);
+
+        // Only fetch frame preview while dragging
+        if (isDragging) {
+            fetchFramePreview(time);
+        }
+    };
+
+    const handleProgressMouseLeave = () => {
+        if (!isDragging) {
+            setHoverTime(null);
+            setFramePreviewUrl(null);
+        }
+    };
+
+    // Fetch frame preview with debouncing
+    const fetchFramePreview = useCallback((time: number) => {
+        if (frameDebounceRef.current) {
+            clearTimeout(frameDebounceRef.current);
+        }
+
+        frameDebounceRef.current = setTimeout(() => {
+            if (!token) return;
+
+            // Reset loaded state for new URL
+            setFrameLoaded(false);
+
+            const url = `/api/transcode/${item.id}/frame?time=${time.toFixed(1)}&token=${token}`;
+            setFramePreviewUrl(url);
+        }, 100); // 100ms debounce - fast but prevents excessive requests
+    }, [token, item.id]);
+
+    // Helper that performs the actual seek (used by both click and drag)
+    const handleSeekToTime = (seekTime: number) => {
+        if (!videoRef.current || displayDuration <= 0) return;
+
+        // For transcoding: check if seeking beyond the current video duration (transcoded portion)
+        const currentTranscodedDuration = videoRef.current.duration || 0;
+        const effectiveCurrentTime = currentTime + seekOffset;
+
+        if (isTranscoding && token && seekTime > effectiveCurrentTime + currentTranscodedDuration + 5) {
+            // Seeking beyond transcoded portion - restart transcode at this position
+            console.log(`Seeking to ${seekTime}s - beyond transcoded range, restarting transcode`);
+
+            seekAfterLoadRef.current = seekTime;
+            setSeekOffset(Math.floor(seekTime));
+
+            fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' })
+                .catch(() => { });
+
+            let hlsUrl = `/api/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}`;
+            if (selectedSubtitleTrack !== null) {
+                hlsUrl += `&sub=${selectedSubtitleTrack}`;
+            }
+            setSrc(hlsUrl);
+        } else {
+            const targetInStream = seekTime - seekOffset;
+            if (targetInStream >= 0 && targetInStream <= currentTranscodedDuration) {
+                videoRef.current.currentTime = targetInStream;
+            } else if (isTranscoding && token && targetInStream < 0) {
+                console.log(`Seeking to ${seekTime}s - before current offset, restarting transcode`);
+                seekAfterLoadRef.current = seekTime;
+                setSeekOffset(Math.floor(seekTime));
+
+                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' })
+                    .catch(() => { });
+
+                let hlsUrl = `/api/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}`;
+                if (selectedSubtitleTrack !== null) {
+                    hlsUrl += `&sub=${selectedSubtitleTrack}`;
+                }
+                setSrc(hlsUrl);
+            } else {
+                videoRef.current.currentTime = Math.min(seekTime, videoRef.current.duration || Infinity);
+            }
+        }
+    };
+
+    // Global mouse handlers for drag (to handle drag outside progress bar)
+    useEffect(() => {
+        if (!isDragging) return;
+
+        const handleGlobalMouseMove = (e: MouseEvent) => {
+            const time = getTimeFromMouseEvent(e);
+            setHoverTime(time);
+            if (progressRef.current) {
+                const rect = progressRef.current.getBoundingClientRect();
+                setHoverPosition(e.clientX - rect.left);
+            }
+            // Fetch frame preview while dragging (don't seek yet)
+            fetchFramePreview(time);
+        };
+
+        const handleGlobalMouseUp = (e: MouseEvent) => {
+            // Seek to final position
+            const seekTime = getTimeFromMouseEvent(e);
+            handleSeekToTime(seekTime);
+
+            // Resume playback if was playing before drag
+            if (wasPlayingBeforeDragRef.current && videoRef.current) {
+                videoRef.current.play();
+            }
+
+            // Clean up
+            setIsDragging(false);
+            setHoverTime(null);
+            setFramePreviewUrl(null);
+            setFrameLoaded(false);
+            if (frameDebounceRef.current) {
+                clearTimeout(frameDebounceRef.current);
+            }
+        };
+
+        window.addEventListener('mousemove', handleGlobalMouseMove);
+        window.addEventListener('mouseup', handleGlobalMouseUp);
+
+        return () => {
+            window.removeEventListener('mousemove', handleGlobalMouseMove);
+            window.removeEventListener('mouseup', handleGlobalMouseUp);
+        };
+    }, [isDragging, displayDuration, isTranscoding, token, seekOffset, currentTime, selectedSubtitleTrack, fetchFramePreview]);
 
     // Progress bar percentages
     // Calculate displayed time including seek offset (for when transcoding starts from non-zero position)
@@ -659,229 +1094,386 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         }`}
                 >
                     {/* Progress Bar */}
-                    <div
-                        ref={progressRef}
-                        className="relative w-full h-1.5 bg-white/20 rounded-full cursor-pointer mb-3 group/progress hover:h-2.5 transition-all overflow-hidden"
-                        onClick={handleSeek}
-                    >
+                    <div className="relative mb-3">
+                        {/* Hover/Drag Tooltip - shows frame preview, time and chapter */}
+                        {hoverTime !== null && progressRef.current && (
+                            <div
+                                className="absolute bottom-full mb-2 transform -translate-x-1/2 pointer-events-none z-10 flex flex-col items-center"
+                                style={{ left: Math.max(80, Math.min(hoverPosition, progressRef.current.getBoundingClientRect().width - 80)) }}
+                            >
+                                {/* Frame preview thumbnail (shown while dragging) */}
+                                {isDragging && framePreviewUrl && (
+                                    <div className="mb-2 rounded overflow-hidden shadow-lg border border-white/20 bg-black/80 min-w-40 min-h-24 flex items-center justify-center">
+                                        <img
+                                            src={framePreviewUrl}
+                                            alt="Frame preview"
+                                            className="w-40 h-auto"
+                                            onLoad={() => {
+                                                setFrameLoaded(true);
+                                            }}
+                                            onError={() => {
+                                            }}
+                                        />
+                                    </div>
+                                )}
+                                {/* Loading placeholder only when no frame has loaded yet */}
+                                {isDragging && !framePreviewUrl && !frameLoaded && (
+                                    <div className="mb-2 w-40 h-24 bg-black/80 rounded flex items-center justify-center border border-white/20">
+                                        <div className="text-white/50 text-xs">Loading...</div>
+                                    </div>
+                                )}
+                                {/* Time and chapter label */}
+                                <div className="bg-black/90 text-white text-sm px-2 py-1 rounded whitespace-nowrap">
+                                    <span className="font-medium">{formatTime(hoverTime)}</span>
+                                    {getChapterAtTime(hoverTime) && (
+                                        <span className="text-gray-300 ml-2">- {getChapterAtTime(hoverTime)}</span>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Progress bar track */}
                         <div
-                            className="absolute top-0 left-0 h-full bg-white/50 rounded-full pointer-events-none"
-                            style={{ width: `${Math.min(bufferedPercent, 100)}%` }}
-                        />
-                        <div
-                            className="absolute top-0 left-0 h-full bg-blue-500 rounded-full pointer-events-none"
-                            style={{ width: `${Math.min(progressPercent, 100)}%` }}
-                        />
-                        <div
-                            className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-blue-500 rounded-full opacity-0 group-hover/progress:opacity-100 transition-opacity shadow-lg pointer-events-none"
-                            style={{ left: `calc(${Math.min(progressPercent, 100)}% - 7px)` }}
-                        />
+                            ref={progressRef}
+                            className="relative w-full h-1.5 bg-white/20 rounded-full cursor-pointer group/progress hover:h-2.5 transition-all"
+                            onMouseDown={handleProgressMouseDown}
+                            onMouseMove={handleProgressMouseMove}
+                            onMouseLeave={handleProgressMouseLeave}
+                        >
+                            {/* Buffered progress */}
+                            <div
+                                className="absolute top-0 left-0 h-full bg-white/30 rounded-full pointer-events-none"
+                                style={{ width: `${Math.min(bufferedPercent, 100)}%` }}
+                            />
+                            {/* Played progress */}
+                            <div
+                                className="absolute top-0 left-0 h-full bg-blue-500 rounded-full pointer-events-none"
+                                style={{ width: `${Math.min(progressPercent, 100)}%` }}
+                            />
+
+                            {/* Chapter markers - render ALL chapters with tooltips */}
+                            {item.chapters && displayDuration > 0 && item.chapters.map((chapter, idx) => {
+                                const isCredits = chapter.title?.toLowerCase().includes('credit') ||
+                                    chapter.title?.toLowerCase().includes('end') ||
+                                    chapter.title?.toLowerCase().includes('outro');
+                                return (
+                                    <div
+                                        key={idx}
+                                        className="absolute top-0 h-full group/chapter"
+                                        style={{ left: `${(chapter.startTime / displayDuration) * 100}%` }}
+                                    >
+                                        {/* Visible marker line */}
+                                        <div className={`w-0.5 h-full ${isCredits ? 'bg-yellow-400/80' : 'bg-white/60'}`} />
+                                        {/* Larger invisible hit area for hover */}
+                                        <div className="absolute top-0 -left-2 w-4 h-full cursor-pointer" />
+                                        {/* Chapter tooltip on hover */}
+                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-black/90 text-white text-xs px-2 py-1 rounded whitespace-nowrap opacity-0 group-hover/chapter:opacity-100 transition-opacity pointer-events-none">
+                                            {chapter.title || 'Chapter'} ({formatTime(chapter.startTime)})
+                                        </div>
+                                    </div>
+                                );
+                            })}
+
+                            {/* Fallback: Single creditsStart marker */}
+                            {!item.chapters && item.creditsStart && displayDuration > 0 && (
+                                <div
+                                    className="absolute top-0 h-full w-0.5 bg-yellow-400/80"
+                                    style={{ left: `${(item.creditsStart / displayDuration) * 100}%` }}
+                                />
+                            )}
+
+                            {/* Scrubber ball - always visible, draggable */}
+                            {(() => {
+                                // During drag, ball follows mouse position; otherwise shows playback position
+                                const ballPercent = isDragging && hoverTime !== null && displayDuration > 0
+                                    ? (hoverTime / displayDuration) * 100
+                                    : progressPercent;
+                                return (
+                                    <div
+                                        className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-blue-500 rounded-full shadow-lg cursor-grab active:cursor-grabbing border-2 border-white transition-transform hover:scale-110"
+                                        style={{ left: `calc(${Math.min(ballPercent, 100)}% - 8px)` }}
+                                    />
+                                );
+                            })()}
+                        </div>
                     </div>
 
-                    {/* Controls row */}
-                    <div className="flex items-center gap-3">
-                        {/* Play/Pause */}
-                        <button onClick={togglePlay} className="text-white hover:text-blue-400 transition-colors" title={isPlaying ? 'Pause (K)' : 'Play (K)'}>
-                            {isPlaying ? (
-                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-                                </svg>
-                            ) : (
-                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M8 5v14l11-7z" />
-                                </svg>
-                            )}
-                        </button>
-
-                        {/* Skip backward */}
-                        <button onClick={() => skip(-10)} className="text-white/70 hover:text-white transition-colors" title="Back 10s (J)">
-                            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z" />
-                            </svg>
-                        </button>
-
-                        {/* Skip forward */}
-                        <button onClick={() => skip(10)} className="text-white/70 hover:text-white transition-colors" title="Forward 10s (L)">
-                            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" />
-                            </svg>
-                        </button>
-
-                        {/* Volume */}
-                        <div className="flex items-center gap-1 group/volume">
-                            <button onClick={toggleMute} className="text-white/70 hover:text-white transition-colors" title="Mute (M)">
-                                {isMuted || volume === 0 ? (
-                                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                                        <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" />
-                                    </svg>
-                                ) : (
-                                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                                        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
-                                    </svg>
-                                )}
-                            </button>
-                            <div className="overflow-hidden w-0 group-hover/volume:w-20 transition-all duration-200">
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="1"
-                                    step="0.05"
-                                    value={isMuted ? 0 : volume}
-                                    onChange={handleVolumeChange}
-                                    className="w-20 accent-blue-500 cursor-pointer"
-                                />
+                    {/* Controls row - [Time] | [Navigation] | [Settings] */}
+                    <div className="flex items-center justify-between gap-2">
+                        {/* Left: Time display */}
+                        <div className="flex items-center gap-2 min-w-[140px]">
+                            <div className="text-white text-base font-mono">
+                                {formatTime(displayedTime)} / {formatTime(displayDuration)}
                             </div>
                         </div>
 
-                        {/* Time display */}
-                        <div className="text-white text-sm font-mono ml-2">
-                            {formatTime(displayedTime)} / {formatTime(displayDuration)}
-                        </div>
-
-                        {/* Spacer */}
-                        <div className="flex-1" />
-
-                        {/* Playback Speed */}
-                        <div className="relative">
+                        {/* Center: Playback navigation controls */}
+                        <div className="flex items-center gap-1">
+                            {/* Previous Episode */}
                             <button
-                                onClick={() => setShowSpeedMenu(!showSpeedMenu)}
-                                className="text-white/70 hover:text-white transition-colors text-sm font-medium px-2"
-                                title="Playback Speed"
+                                onClick={() => navigateEpisode('prev')}
+                                className="text-white/50 hover:text-white transition-colors p-1.5"
+                                title="Previous Episode"
                             >
-                                {playbackSpeed}x
+                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M5 6h2v12H5zm4 6l7 5V7l-7 5zm7 0l7 5V7l-7 5z" />
+                                </svg>
                             </button>
-                            {showSpeedMenu && (
-                                <div
-                                    className="absolute bottom-full right-0 mb-2 bg-black/90 rounded-lg py-1 min-w-[80px] shadow-xl"
-                                    onMouseEnter={() => handleMenuInteraction(true)}
-                                    onMouseLeave={() => handleMenuInteraction(false)}
-                                >
-                                    {PLAYBACK_SPEEDS.map(speed => (
-                                        <button
-                                            key={speed}
-                                            onClick={() => changePlaybackSpeed(speed)}
-                                            className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${playbackSpeed === speed ? 'text-blue-400' : 'text-white'
-                                                }`}
-                                        >
-                                            {speed}x
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
 
-                        {/* Subtitle/Audio Track Selection */}
-                        {(subtitleTracks.length > 0 || audioTracks.length > 0) && (
-                            <div className="relative">
+                            {/* Previous Chapter - ◀| icon */}
+                            {item.chapters && item.chapters.length > 0 && (
                                 <button
-                                    onClick={() => setShowTrackMenu(!showTrackMenu)}
-                                    className="text-white/70 hover:text-white transition-colors"
-                                    title="Subtitle & Audio Tracks"
+                                    onClick={() => skipToChapter('prev')}
+                                    className="text-white/60 hover:text-white transition-colors p-1.5"
+                                    title="Previous Chapter"
                                 >
-                                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                                        <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM6 10h2v2H6zm0 4h8v2H6zm10 0h2v2h-2zm-6-4h8v2h-8z" />
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M6 6h2v12H6zm12 0l-9 6 9 6V6z" />
                                     </svg>
                                 </button>
-                                {showTrackMenu && (
+                            )}
+
+                            {/* Skip backward 10s */}
+                            <button
+                                onClick={() => skip(-10)}
+                                className="text-white/70 hover:text-white transition-colors p-1.5"
+                                title="Back 10s (J)"
+                            >
+                                <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z" />
+                                    <text x="9" y="15" fontSize="6" fontWeight="bold">10</text>
+                                </svg>
+                            </button>
+
+                            {/* Play/Pause - centered and larger */}
+                            <button
+                                onClick={togglePlay}
+                                className="text-white hover:text-blue-400 transition-colors p-2 mx-1"
+                                title={isPlaying ? 'Pause (K)' : 'Play (K)'}
+                            >
+                                {isPlaying ? (
+                                    <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                                    </svg>
+                                ) : (
+                                    <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M8 5v14l11-7z" />
+                                    </svg>
+                                )}
+                            </button>
+
+                            {/* Skip forward 10s */}
+                            <button
+                                onClick={() => skip(10)}
+                                className="text-white/70 hover:text-white transition-colors p-1.5"
+                                title="Forward 10s (L)"
+                            >
+                                <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z" />
+                                    <text x="9" y="15" fontSize="6" fontWeight="bold">10</text>
+                                </svg>
+                            </button>
+
+                            {/* Next Chapter - |▶ icon */}
+                            {item.chapters && item.chapters.length > 0 && (
+                                <button
+                                    onClick={() => skipToChapter('next')}
+                                    className="text-white/60 hover:text-white transition-colors p-1.5"
+                                    title="Next Chapter"
+                                >
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M6 18l9-6-9-6v12zM16 6v12h2V6h-2z" />
+                                    </svg>
+                                </button>
+                            )}
+
+                            {/* Next Episode */}
+                            <button
+                                onClick={() => navigateEpisode('next')}
+                                className="text-white/50 hover:text-white transition-colors p-1.5"
+                                title="Next Episode"
+                            >
+                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M4 6l6 6-6 6V6zm6 0l6 6-6 6V6zM17 6h2v12h-2z" />
+                                </svg>
+                            </button>
+                        </div>
+
+                        {/* Right: Settings controls */}
+                        <div className="flex items-center gap-2">
+                            {/* Volume */}
+                            <div className="relative group/volume">
+                                <button onClick={toggleMute} className="text-white/70 hover:text-white transition-colors" title="Mute (M)">
+                                    {isMuted || volume === 0 ? (
+                                        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" />
+                                        </svg>
+                                    ) : (
+                                        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+                                        </svg>
+                                    )}
+                                </button>
+                                {/* Vertical volume slider popup */}
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 opacity-0 scale-y-0 origin-bottom group-hover/volume:opacity-100 group-hover/volume:scale-y-100 pointer-events-none group-hover/volume:pointer-events-auto transition-all duration-200 ease-out">
+                                    <div className="bg-black/90 rounded-lg px-3 py-4 flex flex-col items-center shadow-xl border border-white/10">
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.05"
+                                            value={isMuted ? 0 : volume}
+                                            onChange={handleVolumeChange}
+                                            className="h-24 accent-blue-500 cursor-pointer"
+                                            style={{ writingMode: 'vertical-lr', transform: 'rotate(180deg)' }}
+                                        />
+                                        <span className="text-white/70 text-xs mt-2">{Math.round((isMuted ? 0 : volume) * 100)}%</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Subtitle/Audio Track Selection */}
+                            {(subtitleTracks.length > 0 || audioTracks.length > 0) && (
+                                <div className="relative">
+                                    <button
+                                        onClick={() => setShowTrackMenu(!showTrackMenu)}
+                                        className="text-white/70 hover:text-white transition-colors"
+                                        title="Subtitle & Audio Tracks"
+                                    >
+                                        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM6 10h2v2H6zm0 4h8v2H6zm10 0h2v2h-2zm-6-4h8v2h-8z" />
+                                        </svg>
+                                    </button>
+                                    {showTrackMenu && (
+                                        <div
+                                            className="absolute bottom-full right-0 mb-2 bg-black/95 rounded-lg py-2 min-w-[200px] shadow-xl max-h-80 overflow-y-auto"
+                                            onMouseEnter={() => handleMenuInteraction(true)}
+                                            onMouseLeave={() => handleMenuInteraction(false)}
+                                            onMouseDown={() => handleMenuInteraction(true)}
+                                            onScroll={() => handleMenuInteraction(true)}
+                                        >
+                                            {/* Subtitle Tracks */}
+                                            {subtitleTracks.length > 0 && (
+                                                <>
+                                                    <div className="px-3 py-1 text-xs text-white/50 uppercase font-semibold">Subtitles</div>
+                                                    <button
+                                                        onClick={() => {
+                                                            setIsSubtitleChange(true);
+                                                            setSelectedSubtitleTrack(null);
+                                                            setShowTrackMenu(false);
+                                                            saveSubtitlePreference(null); // Save "off" preference for TV episodes
+                                                        }}
+                                                        className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedSubtitleTrack === null ? 'text-blue-400' : 'text-white'}`}
+                                                    >
+                                                        Off
+                                                    </button>
+                                                    {subtitleTracks.map(track => (
+                                                        <button
+                                                            key={track.index}
+                                                            onClick={() => {
+                                                                setIsSubtitleChange(true);
+                                                                setSelectedSubtitleTrack(track.index);
+                                                                setShowTrackMenu(false);
+                                                                saveSubtitlePreference(track.language || null); // Save language preference for TV episodes
+                                                            }}
+                                                            className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedSubtitleTrack === track.index ? 'text-blue-400' : 'text-white'}`}
+                                                        >
+                                                            {track.language ? track.language.toUpperCase() : 'Unknown'}
+                                                            {track.title && <span className="text-white/50 ml-1">({track.title})</span>}
+                                                        </button>
+                                                    ))}
+                                                </>
+                                            )}
+
+                                            {/* Audio Tracks */}
+                                            {audioTracks.length > 1 && (
+                                                <>
+                                                    <div className="px-3 py-1 text-xs text-white/50 uppercase font-semibold mt-2 border-t border-white/10 pt-2">Audio</div>
+                                                    {audioTracks.map(track => (
+                                                        <button
+                                                            key={track.index}
+                                                            onClick={() => {
+                                                                setSelectedAudioTrack(track.index);
+                                                                setShowTrackMenu(false);
+                                                            }}
+                                                            className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedAudioTrack === track.index ? 'text-blue-400' : 'text-white'}`}
+                                                        >
+                                                            {track.language ? track.language.toUpperCase() : 'Track ' + (track.index + 1)}
+                                                            {track.title && <span className="text-white/50 ml-1">({track.title})</span>}
+                                                        </button>
+                                                    ))}
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Playback Speed */}
+                            <div className="relative">
+                                <button
+                                    onClick={() => setShowSpeedMenu(!showSpeedMenu)}
+                                    className="text-white/70 hover:text-white transition-colors text-sm font-medium px-2"
+                                    title="Playback Speed"
+                                >
+                                    {playbackSpeed}x
+                                </button>
+                                {showSpeedMenu && (
                                     <div
-                                        className="absolute bottom-full right-0 mb-2 bg-black/95 rounded-lg py-2 min-w-[200px] shadow-xl max-h-80 overflow-y-auto"
+                                        className="absolute bottom-full right-0 mb-2 bg-black/90 rounded-lg py-1 min-w-[80px] shadow-xl"
                                         onMouseEnter={() => handleMenuInteraction(true)}
                                         onMouseLeave={() => handleMenuInteraction(false)}
                                     >
-                                        {/* Subtitle Tracks */}
-                                        {subtitleTracks.length > 0 && (
-                                            <>
-                                                <div className="px-3 py-1 text-xs text-white/50 uppercase font-semibold">Subtitles</div>
-                                                <button
-                                                    onClick={() => {
-                                                        setSelectedSubtitleTrack(null);
-                                                        setShowTrackMenu(false);
-                                                    }}
-                                                    className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedSubtitleTrack === null ? 'text-blue-400' : 'text-white'
-                                                        }`}
-                                                >
-                                                    Off
-                                                </button>
-                                                {subtitleTracks.map(track => (
-                                                    <button
-                                                        key={track.index}
-                                                        onClick={() => {
-                                                            setSelectedSubtitleTrack(track.index);
-                                                            setShowTrackMenu(false);
-                                                        }}
-                                                        className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedSubtitleTrack === track.index ? 'text-blue-400' : 'text-white'
-                                                            }`}
-                                                    >
-                                                        {track.language ? track.language.toUpperCase() : 'Unknown'}
-                                                        {track.title && <span className="text-white/50 ml-1">({track.title})</span>}
-                                                    </button>
-                                                ))}
-                                            </>
-                                        )}
-
-                                        {/* Audio Tracks */}
-                                        {audioTracks.length > 1 && (
-                                            <>
-                                                <div className="px-3 py-1 text-xs text-white/50 uppercase font-semibold mt-2 border-t border-white/10 pt-2">Audio</div>
-                                                {audioTracks.map(track => (
-                                                    <button
-                                                        key={track.index}
-                                                        onClick={() => {
-                                                            setSelectedAudioTrack(track.index);
-                                                            setShowTrackMenu(false);
-                                                            // Note: Switching audio tracks mid-playback requires re-transcoding with the new audio track
-                                                            // For now, just store the selection - full implementation would restart transcode with -map 0:v -map 0:[audioIndex]
-                                                        }}
-                                                        className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedAudioTrack === track.index ? 'text-blue-400' : 'text-white'
-                                                            }`}
-                                                    >
-                                                        {track.language ? track.language.toUpperCase() : 'Track ' + (track.index + 1)}
-                                                        {track.title && <span className="text-white/50 ml-1">({track.title})</span>}
-                                                    </button>
-                                                ))}
-                                            </>
-                                        )}
+                                        {PLAYBACK_SPEEDS.map(speed => (
+                                            <button
+                                                key={speed}
+                                                onClick={() => changePlaybackSpeed(speed)}
+                                                className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${playbackSpeed === speed ? 'text-blue-400' : 'text-white'}`}
+                                            >
+                                                {speed}x
+                                            </button>
+                                        ))}
                                     </div>
                                 )}
                             </div>
-                        )}
 
-                        {/* Picture-in-Picture */}
-                        {document.pictureInPictureEnabled && (
-                            <button
-                                onClick={togglePiP}
-                                className={`transition-colors ${isPiP ? 'text-blue-400' : 'text-white/70 hover:text-white'}`}
-                                title="Picture-in-Picture (P)"
-                            >
-                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14z" />
-                                </svg>
-                            </button>
-                        )}
-
-                        {/* Fullscreen */}
-                        <button onClick={toggleFullscreen} className="text-white/70 hover:text-white transition-colors" title="Fullscreen (F)">
-                            {isFullscreen ? (
-                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" />
-                                </svg>
-                            ) : (
-                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
-                                </svg>
+                            {/* Picture-in-Picture */}
+                            {document.pictureInPictureEnabled && (
+                                <button
+                                    onClick={togglePiP}
+                                    className={`transition-colors ${isPiP ? 'text-blue-400' : 'text-white/70 hover:text-white'}`}
+                                    title="Picture-in-Picture (P)"
+                                >
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14z" />
+                                    </svg>
+                                </button>
                             )}
-                        </button>
+
+                            {/* Fullscreen */}
+                            <button onClick={toggleFullscreen} className="text-white/70 hover:text-white transition-colors" title="Fullscreen (F)">
+                                {isFullscreen ? (
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" />
+                                    </svg>
+                                ) : (
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+                                    </svg>
+                                )}
+                            </button>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            {/* Keyboard shortcuts hint */}
-            <div className="text-xs text-white/40 text-center mt-2 space-x-4">
-                <span>Space: Play/Pause</span>
-                <span>←/→: Seek ±10s</span>
-                <span>↑/↓: Volume</span>
-                <span>M: Mute</span>
-                <span>F: Fullscreen</span>
+                {/* Keyboard shortcuts hint */}
+                <div className="text-xs text-white/40 text-center mt-2 space-x-4">
+                    <span>Space: Play/Pause</span>
+                    <span>←/→: Seek ±10s</span>
+                    <span>↑/↓: Volume</span>
+                    <span>M: Mute</span>
+                    <span>F: Fullscreen</span>
+                </div>
             </div>
         </div>
     );

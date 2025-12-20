@@ -266,12 +266,47 @@ public class MediaTracksController : ControllerBase
                 // All subtitle formats are now supported via burn-in transcoding
                 // Bitmap formats (PGS, VOBSUB) are burned into the video during transcode
                 // Text formats (SRT, ASS) work the same way
+                
+                // Check for additional disposition flags to differentiate subtitle tracks
+                var isForced = false;
+                var isHearingImpaired = false;
+                var isComment = false;
+                if (stream.TryGetProperty("disposition", out var subDisposition))
+                {
+                    if (subDisposition.TryGetProperty("forced", out var forcedProp))
+                        isForced = forcedProp.GetInt32() == 1;
+                    if (subDisposition.TryGetProperty("hearing_impaired", out var hiProp))
+                        isHearingImpaired = hiProp.GetInt32() == 1;
+                    if (subDisposition.TryGetProperty("comment", out var commentProp))
+                        isComment = commentProp.GetInt32() == 1;
+                }
+                
+                // Generate a descriptive title if none exists
+                var displayTitle = title;
+                if (string.IsNullOrEmpty(displayTitle))
+                {
+                    var descriptors = new List<string>();
+                    if (isForced) descriptors.Add("Forced");
+                    if (isHearingImpaired) descriptors.Add("SDH");
+                    if (isComment) descriptors.Add("Commentary");
+                    
+                    if (descriptors.Count > 0)
+                    {
+                        displayTitle = string.Join(", ", descriptors);
+                    }
+                    else
+                    {
+                        // Use track number as fallback differentiator
+                        displayTitle = $"Track {response.SubtitleTracks.Count + 1}";
+                    }
+                }
+                
                 response.SubtitleTracks.Add(new MediaTrackInfo
                 {
                     Index = index,
                     Type = "subtitle",
                     Language = language,
-                    Title = title,
+                    Title = displayTitle,
                     Codec = codec,
                     IsDefault = isDefault
                 });

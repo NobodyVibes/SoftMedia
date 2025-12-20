@@ -21,18 +21,20 @@ public class FileScannerService : IFileScannerService
     private readonly ILogger<FileScannerService> _logger;
     private readonly IFileSystem _fileSystem;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IFFmpegService _ffmpegService;
     private readonly string[] _videoExtensions = { ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg" };
     private readonly string[] _audioExtensions = { ".mp3", ".flac", ".aac", ".wav", ".ogg", ".m4a", ".weba", ".wma", ".alac", ".opus" };
     private readonly string[] _photoExtensions = { ".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp", ".gif", ".tiff" };
     private readonly string[] _gameExtensions = { ".iso", ".bin", ".cue", ".rom", ".nes", ".sfc", ".smc", ".n64", ".z64", ".gba", ".gbc", ".gb", ".nds", ".3ds", ".cia" };
 
 
-    public FileScannerService(IServiceScopeFactory scopeFactory, ILogger<FileScannerService> logger, IFileSystem fileSystem, IHttpClientFactory httpClientFactory)
+    public FileScannerService(IServiceScopeFactory scopeFactory, ILogger<FileScannerService> logger, IFileSystem fileSystem, IHttpClientFactory httpClientFactory, IFFmpegService ffmpegService)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _fileSystem = fileSystem;
         _httpClientFactory = httpClientFactory;
+        _ffmpegService = ffmpegService;
     }
 
     public async Task ScanAllLibrariesAsync()
@@ -231,10 +233,113 @@ public class FileScannerService : IFileScannerService
                         await metadataAggregator.EnrichMediaItemAsync(existingItem, library.Type);
                         changed = true;
                     }
+                    
+                    // Movie: Always probe for video duration and chapters (even for existing items)
+                    if (library.Type == LibraryType.Movie)
+                    {
+                        var probeResult = await _ffmpegService.ProbeMediaAsync(file);
+                        if (probeResult != null)
+                        {
+                            if (existingItem.Duration != probeResult.Duration && probeResult.Duration > 0)
+                            {
+                                existingItem.Duration = probeResult.Duration;
+                                changed = true;
+                            }
+                            if (existingItem.VideoCodec != probeResult.VideoCodec && !string.IsNullOrEmpty(probeResult.VideoCodec))
+                            {
+                                existingItem.VideoCodec = probeResult.VideoCodec;
+                                changed = true;
+                            }
+                            if (existingItem.AudioCodec != probeResult.AudioCodec && !string.IsNullOrEmpty(probeResult.AudioCodec))
+                            {
+                                existingItem.AudioCodec = probeResult.AudioCodec;
+                                changed = true;
+                            }
+                            if (existingItem.Resolution != probeResult.Resolution && !string.IsNullOrEmpty(probeResult.Resolution))
+                            {
+                                existingItem.Resolution = probeResult.Resolution;
+                                changed = true;
+                            }
+                            
+                            // Store ALL chapters in metadata
+                            if (probeResult.Chapters != null && probeResult.Chapters.Count > 0)
+                            {
+                                var metadata = new Dictionary<string, object>();
+                                if (!string.IsNullOrEmpty(existingItem.MetadataJson))
+                                {
+                                    try { metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(existingItem.MetadataJson) ?? new(); } catch {}
+                                }
+                                
+                                // Store all chapters as array of objects
+                                var chaptersArray = probeResult.Chapters.Select(c => new { startTime = c.StartTime, title = c.Title }).ToList();
+                                metadata["chapters"] = chaptersArray;
+                                
+                                // Also set creditsStart if found
+                                if (probeResult.CreditsStart.HasValue)
+                                {
+                                    metadata["creditsStart"] = probeResult.CreditsStart.Value;
+                                }
+                                
+                                existingItem.MetadataJson = JsonSerializer.Serialize(metadata);
+                                _logger.LogInformation("Updated {Count} chapters for: {Title}", probeResult.Chapters.Count, existingItem.Title);
+                                changed = true;
+                            }
+                        }
+                    }
 
                     // TV Show Logic Update
                     if (library.Type == LibraryType.TV)
                     {
+                        // Always probe for video duration and chapters (even for existing items)
+                        var probeResult = await _ffmpegService.ProbeMediaAsync(file);
+                        if (probeResult != null)
+                        {
+                            if (existingItem.Duration != probeResult.Duration && probeResult.Duration > 0)
+                            {
+                                existingItem.Duration = probeResult.Duration;
+                                changed = true;
+                            }
+                            if (existingItem.VideoCodec != probeResult.VideoCodec && !string.IsNullOrEmpty(probeResult.VideoCodec))
+                            {
+                                existingItem.VideoCodec = probeResult.VideoCodec;
+                                changed = true;
+                            }
+                            if (existingItem.AudioCodec != probeResult.AudioCodec && !string.IsNullOrEmpty(probeResult.AudioCodec))
+                            {
+                                existingItem.AudioCodec = probeResult.AudioCodec;
+                                changed = true;
+                            }
+                            if (existingItem.Resolution != probeResult.Resolution && !string.IsNullOrEmpty(probeResult.Resolution))
+                            {
+                                existingItem.Resolution = probeResult.Resolution;
+                                changed = true;
+                            }
+                            
+                            // Store ALL chapters in metadata
+                            if (probeResult.Chapters != null && probeResult.Chapters.Count > 0)
+                            {
+                                var metadata = new Dictionary<string, object>();
+                                if (!string.IsNullOrEmpty(existingItem.MetadataJson))
+                                {
+                                    try { metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(existingItem.MetadataJson) ?? new(); } catch {}
+                                }
+                                
+                                // Store all chapters as array of objects
+                                var chaptersArray = probeResult.Chapters.Select(c => new { startTime = c.StartTime, title = c.Title }).ToList();
+                                metadata["chapters"] = chaptersArray;
+                                
+                                // Also set creditsStart if found
+                                if (probeResult.CreditsStart.HasValue)
+                                {
+                                    metadata["creditsStart"] = probeResult.CreditsStart.Value;
+                                }
+                                
+                                existingItem.MetadataJson = JsonSerializer.Serialize(metadata);
+                                _logger.LogInformation("Updated {Count} chapters for: {Title}", probeResult.Chapters.Count, existingItem.Title);
+                                changed = true;
+                            }
+                        }
+                        
                         var tvResult = FileNameParser.ParseTvEpisode(file);
                         string? showName = tvResult.ShowName;
                         int season = tvResult.Season;
@@ -519,6 +624,39 @@ public class FileScannerService : IFileScannerService
                     // TV Show Logic (Create)
                     if (library.Type == LibraryType.TV)
                     {
+                        // Probe for video duration and chapters
+                        var probeResult = await _ffmpegService.ProbeMediaAsync(file);
+                        if (probeResult != null)
+                        {
+                            mediaItem.Duration = probeResult.Duration;
+                            mediaItem.VideoCodec = probeResult.VideoCodec;
+                            mediaItem.AudioCodec = probeResult.AudioCodec;
+                            mediaItem.Resolution = probeResult.Resolution;
+                            
+                            // Store ALL chapters in metadata
+                            if (probeResult.Chapters != null && probeResult.Chapters.Count > 0)
+                            {
+                                var metadata = new Dictionary<string, object>();
+                                if (!string.IsNullOrEmpty(mediaItem.MetadataJson))
+                                {
+                                    try { metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(mediaItem.MetadataJson) ?? new(); } catch {}
+                                }
+                                
+                                // Store all chapters as array of objects
+                                var chaptersArray = probeResult.Chapters.Select(c => new { startTime = c.StartTime, title = c.Title }).ToList();
+                                metadata["chapters"] = chaptersArray;
+                                
+                                // Also set creditsStart if found
+                                if (probeResult.CreditsStart.HasValue)
+                                {
+                                    metadata["creditsStart"] = probeResult.CreditsStart.Value;
+                                }
+                                
+                                mediaItem.MetadataJson = JsonSerializer.Serialize(metadata);
+                                _logger.LogInformation("Found {Count} chapters for: {Title}", probeResult.Chapters.Count, mediaItem.Title);
+                            }
+                        }
+                        
                         var tvResult = FileNameParser.ParseTvEpisode(file);
                         string? showName = tvResult.ShowName;
                         int season = tvResult.Season;
@@ -714,9 +852,46 @@ public class FileScannerService : IFileScannerService
                             }
                         } catch {}
                     }
-                    else 
+                    else if (library.Type == LibraryType.Movie)
                     {
-                        // For Movies and others, enrich normally
+                        // Probe for video duration and chapters
+                        var probeResult = await _ffmpegService.ProbeMediaAsync(file);
+                        if (probeResult != null)
+                        {
+                            mediaItem.Duration = probeResult.Duration;
+                            mediaItem.VideoCodec = probeResult.VideoCodec;
+                            mediaItem.AudioCodec = probeResult.AudioCodec;
+                            mediaItem.Resolution = probeResult.Resolution;
+                            
+                            // Store ALL chapters in metadata
+                            if (probeResult.Chapters != null && probeResult.Chapters.Count > 0)
+                            {
+                                var metadata = new Dictionary<string, object>();
+                                if (!string.IsNullOrEmpty(mediaItem.MetadataJson))
+                                {
+                                    try { metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(mediaItem.MetadataJson) ?? new(); } catch {}
+                                }
+                                
+                                // Store all chapters as array of objects
+                                var chaptersArray = probeResult.Chapters.Select(c => new { startTime = c.StartTime, title = c.Title }).ToList();
+                                metadata["chapters"] = chaptersArray;
+                                
+                                // Also set creditsStart if found
+                                if (probeResult.CreditsStart.HasValue)
+                                {
+                                    metadata["creditsStart"] = probeResult.CreditsStart.Value;
+                                }
+                                
+                                mediaItem.MetadataJson = JsonSerializer.Serialize(metadata);
+                                _logger.LogInformation("Found {Count} chapters for: {Title}", probeResult.Chapters.Count, mediaItem.Title);
+                            }
+                        }
+                        
+                        // For Movies, enrich normally
+                        await metadataAggregator.EnrichMediaItemAsync(mediaItem, library.Type);
+                    }
+                    else
+                    {
                         await metadataAggregator.EnrichMediaItemAsync(mediaItem, library.Type);
                     }
 

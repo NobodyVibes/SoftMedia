@@ -89,7 +89,7 @@ public class TranscodeController : ControllerBase
                 id, userId, sub, seek);
             await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek);
 
-            var stream = _transcodeService.GetPlaylist(id, sub);
+            var stream = _transcodeService.GetPlaylist(id, userId, sub);
             if (stream == null)
             {
                 _logger.LogWarning("Playlist not ready for {Id} - transcoding may still be starting", id);
@@ -113,11 +113,43 @@ public class TranscodeController : ControllerBase
                 }
                 var queryString = string.Join("&", queryParts);
                 
+                // Check if we have a WebVTT subtitle file to include in the playlist
+                var session = _transcodeService.GetSession(id, userId, sub);
+                var hasSubtitles = session?.SubtitleVttPath != null && System.IO.File.Exists(session.SubtitleVttPath);
+                
+                _logger.LogInformation("Playlist for {Id}: session={Session}, SubtitleVttPath={Path}, hasSubtitles={HasSubs}",
+                    id, session != null ? "found" : "null", session?.SubtitleVttPath ?? "null", hasSubtitles);
+                
+                var rewrittenContent = new System.Text.StringBuilder();
+                
+                // If subtitles available, add HLS subtitle track reference
+                if (hasSubtitles && content.Contains("#EXTM3U"))
+                {
+                    // Insert subtitle track definition after #EXTM3U
+                    // Include both token and sub parameter for proper session lookup
+                    var subtitleQueryParts = new List<string> { $"token={token}" };
+                    if (sub.HasValue) subtitleQueryParts.Add($"sub={sub.Value}");
+                    var subtitleUrl = $"/api/transcode/{id}/subtitles.vtt?{string.Join("&", subtitleQueryParts)}";
+                    
+                    rewrittenContent.AppendLine("#EXTM3U");
+                    rewrittenContent.AppendLine($"#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Subtitles\",DEFAULT=YES,AUTOSELECT=YES,URI=\"{subtitleUrl}\"");
+                    
+                    // Add the rest of the playlist content (skip #EXTM3U since we already added it)
+                    var restOfContent = content.Replace("#EXTM3U", "").TrimStart();
+                    rewrittenContent.Append(restOfContent);
+                    
+                    _logger.LogInformation("Added subtitle track reference to HLS manifest for {Id}", id);
+                }
+                else
+                {
+                    rewrittenContent.Append(content);
+                }
+                
                 // Append query string to all .ts (segment) files
-                var rewrittenContent = content.Replace(".ts", $".ts?{queryString}");
+                var finalContent = rewrittenContent.ToString().Replace(".ts", $".ts?{queryString}");
                 
                 // Return modified playlist as bytes
-                var bytes = System.Text.Encoding.UTF8.GetBytes(rewrittenContent);
+                var bytes = System.Text.Encoding.UTF8.GetBytes(finalContent);
                 return File(bytes, "application/vnd.apple.mpegurl");
             }
 
@@ -138,18 +170,60 @@ public class TranscodeController : ControllerBase
     [HttpGet("{id}/{segment}")]
     public IActionResult GetSegment(Guid id, string segment, [FromQuery] int? sub = null)
     {
-        // Extract segment index for throttling
-        var segmentIndex = TranscodeService.ExtractSegmentIndex(segment);
-        if (segmentIndex >= 0)
+        try
         {
-            var sessionKey = new TranscodeSessionKey(id, sub);
-            _transcodeService.UpdateClientPosition(sessionKey, segmentIndex);
+            var userId = GetUserId();
+            
+            // Extract segment index for throttling
+            var segmentIndex = TranscodeService.ExtractSegmentIndex(segment);
+            if (segmentIndex >= 0)
+            {
+                var sessionKey = new TranscodeSessionKey(id, userId, sub);
+                _transcodeService.UpdateClientPosition(sessionKey, segmentIndex);
+            }
+
+            var stream = _transcodeService.GetSegment(id, userId, segment, sub);
+            if (stream == null) return NotFound();
+
+            return File(stream, "video/MP2T");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Unauthorized();
         }
 
-        var stream = _transcodeService.GetSegment(id, segment, sub);
-        if (stream == null) return NotFound();
+    }
 
-        return File(stream, "video/MP2T");
+    /// <summary>
+    /// Get the WebVTT subtitle file for HLS sidecar delivery.
+    /// HLS.js will request this file based on the manifest #EXT-X-MEDIA reference.
+    /// </summary>
+    [HttpGet("{id}/subtitles.vtt")]
+    public IActionResult GetSubtitlesVtt(Guid id, [FromQuery] int? sub = null)
+    {
+        try
+        {
+            var userId = GetUserId();
+            var session = _transcodeService.GetSession(id, userId, sub);
+            
+            if (session?.SubtitleVttPath == null || !System.IO.File.Exists(session.SubtitleVttPath))
+            {
+                _logger.LogWarning("Subtitle file not found for {Id}", id);
+                return NotFound("Subtitle file not available");
+            }
+            
+            var stream = new FileStream(session.SubtitleVttPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return File(stream, "text/vtt");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Unauthorized();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error serving subtitles for {Id}", id);
+            return StatusCode(500, "Error reading subtitle file");
+        }
     }
 
     /// <summary>
@@ -161,7 +235,7 @@ public class TranscodeController : ControllerBase
         try
         {
             var userId = GetUserId();
-            var sessionKey = new TranscodeSessionKey(id, sub);
+            var sessionKey = new TranscodeSessionKey(id, userId, sub);
             
             if (!_transcodeService.SetPaused(sessionKey, userId, isPaused: true))
             {
@@ -194,7 +268,7 @@ public class TranscodeController : ControllerBase
         try
         {
             var userId = GetUserId();
-            var sessionKey = new TranscodeSessionKey(id, sub);
+            var sessionKey = new TranscodeSessionKey(id, userId, sub);
             
             if (!_transcodeService.SetPaused(sessionKey, userId, isPaused: false))
             {
@@ -231,27 +305,170 @@ public class TranscodeController : ControllerBase
             
             if (all)
             {
-                // Stop all transcode sessions for this media
-                _transcodeService.StopAllTranscodesForMedia(id);
+                // Stop all transcode sessions for this media and user
+                _transcodeService.StopAllTranscodesForUser(id, userId);
                 _logger.LogInformation("All transcodes stopped for {MediaId} by user {UserId}", id, userId);
             }
             else
             {
-                // Validate ownership before stopping
-                var sessionKey = new TranscodeSessionKey(id, sub);
-                var session = _transcodeService.GetSession(sessionKey);
-                
-                if (session != null && session.UserId != userId)
-                {
-                    _logger.LogWarning("User {UserId} attempted to stop session owned by {OwnerId}", userId, session.UserId);
-                    return Forbid();
-                }
-                
-                _transcodeService.StopTranscode(id, sub);
+                // Stop specific session (already user-scoped by session key)
+                _transcodeService.StopTranscode(id, userId, sub);
                 _logger.LogInformation("Transcode stopped for {MediaId} (sub={Sub}) by user {UserId}", id, sub, userId);
             }
             
             return Ok();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Unauthorized();
+        }
+    }
+
+    /// <summary>
+    /// Stop transcoding via POST (for sendBeacon during page unload).
+    /// Same as DELETE but accepts POST since navigator.sendBeacon only sends POST.
+    /// </summary>
+    [HttpPost("{id}/stop")]
+    public IActionResult StopTranscodePost(Guid id, [FromQuery] int? sub = null, [FromQuery] bool all = false)
+    {
+        return StopTranscode(id, sub, all);
+    }
+
+    /// <summary>
+    /// Get a single frame preview at a specific timestamp.
+    /// Used for scrubber thumbnail preview while dragging.
+    /// </summary>
+    private static readonly Dictionary<string, (byte[] Data, DateTime Expires)> _frameCache = new();
+    private static readonly object _frameCacheLock = new();
+    
+    [HttpGet("{id}/frame")]
+    public async Task<IActionResult> GetFramePreview(Guid id, [FromQuery] double time, [FromQuery] string? token = null)
+    {
+        try
+        {
+            // Validate token (same as other endpoints)
+            if (!string.IsNullOrEmpty(token))
+            {
+                var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+                if (tokenHandler.CanReadToken(token))
+                {
+                    var jwtToken = tokenHandler.ReadJwtToken(token);
+                    var userIdClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier || c.Type == "sub");
+                    if (userIdClaim == null) return Unauthorized();
+                }
+            }
+            else
+            {
+                GetUserId(); // Will throw if not authenticated
+            }
+            
+            // Round time to 1 second to increase cache hits
+            var roundedTime = Math.Floor(time);
+            var cacheKey = $"{id}_{roundedTime}";
+            
+            // Check cache first
+            lock (_frameCacheLock)
+            {
+                if (_frameCache.TryGetValue(cacheKey, out var cached) && cached.Expires > DateTime.UtcNow)
+                {
+                    return File(cached.Data, "image/jpeg");
+                }
+            }
+
+            // Get media item path
+            using var scope = HttpContext.RequestServices.CreateScope();
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var mediaItem = await context.MediaItems.FindAsync(id);
+            if (mediaItem == null) return NotFound();
+
+            // Extract single frame using FFmpeg
+            var ffmpegPath = "ffmpeg"; // Assumes ffmpeg is on PATH
+            var tempFile = Path.Combine(Path.GetTempPath(), $"frame_{id}_{roundedTime}.jpg");
+            
+            try
+            {
+                // Use FFmpeg to extract frame at timestamp (fast seek with -ss before -i)
+                var arguments = $"-ss {roundedTime:F0} -i \"{mediaItem.Path}\" -vframes 1 -q:v 8 -vf scale=320:-1 -f image2 -y \"{tempFile}\"";
+                _logger.LogDebug("FFmpeg frame extraction: {Args}", arguments);
+                
+                var startInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = ffmpegPath,
+                    Arguments = arguments,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = System.Diagnostics.Process.Start(startInfo);
+                if (process == null)
+                {
+                    _logger.LogError("Failed to start FFmpeg process");
+                    return StatusCode(500, "Failed to start FFmpeg");
+                }
+                
+                // Read stderr asynchronously
+                var stderrTask = process.StandardError.ReadToEndAsync();
+                
+                // Wait with timeout of 5 seconds (increased for slower files)
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try
+                {
+                    await process.WaitForExitAsync(cts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Timeout - kill the process
+                    try { process.Kill(true); } catch { }
+                    _logger.LogWarning("Frame extraction timed out for {MediaId} at {Time}s", id, time);
+                    return StatusCode(504, "Frame extraction timed out");
+                }
+                
+                var stderr = await stderrTask;
+                
+                if (process.ExitCode != 0)
+                {
+                    _logger.LogError("FFmpeg frame extraction failed with exit code {ExitCode}: {Stderr}", process.ExitCode, stderr);
+                    return StatusCode(500, $"FFmpeg failed: {stderr.Substring(0, Math.Min(500, stderr.Length))}");
+                }
+
+                if (!System.IO.File.Exists(tempFile))
+                {
+                    _logger.LogError("FFmpeg did not create output file. Stderr: {Stderr}", stderr);
+                    return StatusCode(500, "Failed to extract frame - no output file");
+                }
+
+                var bytes = await System.IO.File.ReadAllBytesAsync(tempFile);
+                
+                if (bytes.Length == 0)
+                {
+                    _logger.LogError("FFmpeg created empty file. Stderr: {Stderr}", stderr);
+                    return StatusCode(500, "Failed to extract frame - empty file");
+                }
+                
+                // Cache for 30 seconds
+                lock (_frameCacheLock)
+                {
+                    _frameCache[cacheKey] = (bytes, DateTime.UtcNow.AddSeconds(30));
+                    
+                    // Cleanup old cache entries
+                    var expiredKeys = _frameCache.Where(kv => kv.Value.Expires < DateTime.UtcNow).Select(kv => kv.Key).ToList();
+                    foreach (var key in expiredKeys) _frameCache.Remove(key);
+                }
+                
+                // Cleanup temp file
+                try { System.IO.File.Delete(tempFile); } catch { }
+                
+                _logger.LogDebug("Frame extracted successfully: {Bytes} bytes", bytes.Length);
+
+                return File(bytes, "image/jpeg");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to extract frame at {Time}s for {MediaId}", time, id);
+                return StatusCode(500, $"Frame extraction failed: {ex.Message}");
+            }
         }
         catch (UnauthorizedAccessException)
         {

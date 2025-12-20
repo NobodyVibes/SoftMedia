@@ -1,8 +1,9 @@
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Play, ListMusic, Heart, Check, Clock, Star } from 'lucide-react';
 import { type MediaItem } from '../../types';
 import QualityBadge from '../ui/QualityBadge';
 import { useAudioStore } from '../../store/audioStore';
+import api from '../../services/api';
 
 interface MediaCardProps {
     item: MediaItem;
@@ -26,12 +27,17 @@ const genreColors: Record<string, string> = {
 };
 
 export default function MediaCard({ item, libraryType }: MediaCardProps) {
+    const navigate = useNavigate();
     const { playTrack, addToQueue } = useAudioStore();
     const primaryGenre = item.genres?.[0] || 'Drama';
     // Use the genre color or a default pleasing gradient
     const glowGradient = genreColors[primaryGenre] || 'from-blue-600 to-violet-600';
 
     const isAudio = libraryType === 'Music';
+    const isMovie = libraryType === 'Movie';
+    // For TV: if it has an episodeNumber, it's an episode; otherwise treat as a series
+    const isTVEpisode = libraryType === 'TV' && !!item.episodeNumber;
+    const isTVSeries = libraryType === 'TV' && !item.episodeNumber;
 
     // Logic for "New" Badge (14 days threshold)
     const isNew = (() => {
@@ -43,10 +49,28 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
         return diffDays <= 14;
     })();
 
-    const handlePlay = (e: React.MouseEvent) => {
+    const handlePlay = async (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+
         if (isAudio) {
-            e.preventDefault();
             playTrack(item);
+        } else if (isMovie || isTVEpisode) {
+            // Navigate directly to player
+            navigate(`/play/${item.id}`);
+        } else if (isTVSeries) {
+            // Fetch next episode to play using smart continue logic
+            console.log('[MediaCard] TV Series detected, fetching next episode for:', item.id, item.title);
+            try {
+                const response = await api.get(`/series/${item.id}/next-episode`);
+                console.log('[MediaCard] Next episode response:', response.data);
+                const nextEpisode = response.data;
+                navigate(`/play/${nextEpisode.episodeId}`);
+            } catch (error) {
+                // Fallback: navigate to series detail page
+                console.error('[MediaCard] Failed to fetch next episode:', error);
+                navigate(`/media/${item.id}`);
+            }
         }
     };
 

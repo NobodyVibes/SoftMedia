@@ -11,7 +11,7 @@ public class UserMediaInteraction
     public Guid MediaItemId { get; set; }
     public MediaItem MediaItem { get; set; } = null!;
 
-    [Range(1, 5)]
+    [Range(1, 10)]
     public int? Rating { get; set; }
 
     public bool IsFavorite { get; set; }
@@ -19,4 +19,9 @@ public class UserMediaInteraction
     public bool IsWatched { get; set; }
 
     public DateTime? LastPlayed { get; set; }
+    
+    /// <summary>
+    /// Playback position in seconds for resume functionality
+    /// </summary>
+    public double? PlaybackPosition { get; set; }
 }

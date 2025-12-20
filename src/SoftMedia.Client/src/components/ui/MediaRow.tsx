@@ -7,9 +7,10 @@ interface MediaRowProps {
     title: string;
     items: MediaItem[];
     viewAllLink?: string;
+    libraryType?: string;
 }
 
-export default function MediaRow({ title, items, viewAllLink }: MediaRowProps) {
+export default function MediaRow({ title, items, viewAllLink, libraryType }: MediaRowProps) {
     const rowRef = useRef<HTMLDivElement>(null);
     const [hoveredId, setHoveredId] = useState<string | null>(null);
 
@@ -68,6 +69,7 @@ export default function MediaRow({ title, items, viewAllLink }: MediaRowProps) {
                             item={item}
                             hoveredId={hoveredId}
                             setHoveredId={setHoveredId}
+                            libraryType={libraryType}
                         />
                     ))}
                 </div>

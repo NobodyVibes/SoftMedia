@@ -9,6 +9,7 @@ interface HoverableMediaCardWrapperProps {
     baseWidth?: number;
     expandedWidth?: number;
     height?: number;
+    libraryType?: string;
 }
 
 export default function HoverableMediaCardWrapper({
@@ -17,7 +18,8 @@ export default function HoverableMediaCardWrapper({
     setHoveredId,
     baseWidth = 180,
     expandedWidth = 260,
-    height = 380
+    height = 380,
+    libraryType
 }: HoverableMediaCardWrapperProps) {
     return (
         <motion.div
@@ -37,7 +39,7 @@ export default function HoverableMediaCardWrapper({
             onHoverEnd={() => setHoveredId(null)}
         >
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full">
-                <MediaCard item={item} enableHoverScale={false} />
+                <MediaCard item={item} enableHoverScale={false} libraryType={libraryType} />
             </div>
         </motion.div>
     );

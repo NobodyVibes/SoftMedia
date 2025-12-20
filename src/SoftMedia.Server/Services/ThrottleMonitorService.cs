@@ -22,6 +22,7 @@ public class ThrottleMonitorService : BackgroundService
     // Throttling thresholds (from plan)
     private const int MinDiskSpaceThresholdMB = 500;
     private const int MaxDormantAgeHours = 24;
+    private const int ClientInactivityTimeoutSeconds = 90;  // Stop FFmpeg if no segment requests for 90s (accounts for HLS buffering)
 
     private DateTime _lastDiskCheck = DateTime.MinValue;
     private DateTime _lastStaleCheck = DateTime.MinValue;
@@ -93,6 +94,21 @@ public class ThrottleMonitorService : BackgroundService
                     session.Process.HasExited)
                 {
                     await HandleCrashAsync(session);
+                    continue;
+                }
+
+                // Check for client inactivity (no segment requests = user navigated away or closed browser)
+                // Only enter DORMANT if:
+                // 1. No segment requests for ClientInactivityTimeoutSeconds
+                // 2. We have enough buffer so user can still watch (if they're still there)
+                var inactiveSeconds = (DateTime.UtcNow - session.LastClientRequestTime).TotalSeconds;
+                if (session.State != TranscodeState.Dormant && 
+                    inactiveSeconds > ClientInactivityTimeoutSeconds &&
+                    bufferSeconds >= TranscodeService.ThrottleThresholdSeconds)
+                {
+                    _logger.LogInformation("Session {MediaId} entering DORMANT due to client inactivity ({Inactive}s, buffer={Buffer}s)", 
+                        session.Key.MediaId, (int)inactiveSeconds, bufferSeconds);
+                    _transcodeService.EnterDormantState(session.Key);
                     continue;
                 }
 
@@ -228,7 +244,7 @@ public class ThrottleMonitorService : BackgroundService
         if (session.CrashRetryCount >= TranscodeService.MaxCrashRetries)
         {
             _logger.LogError("Max crash retries exceeded for {MediaId}, cleaning up", session.Key.MediaId);
-            _transcodeService.StopTranscode(session.Key.MediaId, session.Key.SubtitleTrackIndex, deleteFiles: true);
+            _transcodeService.StopTranscode(session.Key.MediaId, session.Key.UserId, session.Key.SubtitleTrackIndex, deleteFiles: true);
             return;
         }
 

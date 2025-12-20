@@ -38,6 +38,15 @@ export interface MediaItem {
     albumId?: string;
     trackNumber?: number;
     discNumber?: number;
+
+    // Timecode markers
+    creditsStart?: number; // Seconds from start where credits begin
+    chapters?: Chapter[]; // All chapter markers
+}
+
+export interface Chapter {
+    startTime: number;
+    title: string;
 }
 
 export const MediaType = {

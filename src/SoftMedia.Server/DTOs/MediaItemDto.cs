@@ -3,6 +3,12 @@ using SoftMedia.Server.Models;
 
 namespace SoftMedia.Server.DTOs;
 
+public class ChapterDto
+{
+    public double StartTime { get; set; }
+    public string Title { get; set; } = string.Empty;
+}
+
 public class MediaItemDto
 {
     public Guid Id { get; set; }
@@ -26,6 +32,10 @@ public class MediaItemDto
     public string? AudioCodec { get; set; }
     public string? Resolution { get; set; }
     public Dictionary<string, object>? Metadata { get; set; }
+    
+    // Timecode markers for progress bar
+    public double? CreditsStart { get; set; }
+    public List<ChapterDto>? Chapters { get; set; }
 
     // User Interaction
     public int? UserRating { get; set; }
@@ -133,6 +143,35 @@ public class MediaItemDto
                         {
                             dto.Genres = genresElement.EnumerateArray().Select(x => x.ToString()).ToList();
                         }
+                        
+                        // Extract credits start timecode for progress bar marker
+                        if (metadata.TryGetValue("creditsStart", out var creditsStartObj))
+                        {
+                            if (double.TryParse(creditsStartObj.ToString(), out var creditsStart))
+                            {
+                                dto.CreditsStart = creditsStart;
+                            }
+                        }
+                        
+                        // Extract all chapters for progress bar markers
+                        if (metadata.TryGetValue("chapters", out var chaptersObj) && chaptersObj is System.Text.Json.JsonElement chaptersElement && chaptersElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                        {
+                            dto.Chapters = new List<ChapterDto>();
+                            foreach (var chapter in chaptersElement.EnumerateArray())
+                            {
+                                var chapterDto = new ChapterDto();
+                                if (chapter.TryGetProperty("startTime", out var startEl))
+                                {
+                                    double.TryParse(startEl.ToString(), out var st);
+                                    chapterDto.StartTime = st;
+                                }
+                                if (chapter.TryGetProperty("title", out var titleEl))
+                                {
+                                    chapterDto.Title = titleEl.GetString() ?? "";
+                                }
+                                dto.Chapters.Add(chapterDto);
+                            }
+                        }
                     }
                 }
                 catch
@@ -189,7 +228,14 @@ public class MediaItemDto
             if (string.IsNullOrEmpty(dto.Duration) && item.Duration > 0)
             {
                 var ts = TimeSpan.FromSeconds(item.Duration);
-                dto.Duration = $"{(int)ts.TotalHours}h {ts.Minutes}m";
+                if (ts.TotalHours >= 1)
+                {
+                    dto.Duration = $"{(int)ts.TotalHours}h {ts.Minutes}m {ts.Seconds}s";
+                }
+                else
+                {
+                    dto.Duration = $"{ts.Minutes}m {ts.Seconds}s";
+                }
             }
 
         return dto;

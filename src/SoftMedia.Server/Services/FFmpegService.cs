@@ -18,6 +18,32 @@ public interface IFFmpegService
     ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate);
     
     /// <summary>
+    /// Extract a subtitle track to WebVTT format for HLS sidecar delivery.
+    /// </summary>
+    /// <param name="inputPath">Path to the input video file</param>
+    /// <param name="subtitleStreamIndex">Index of the subtitle stream in FFmpeg notation (0-based among subtitle streams)</param>
+    /// <param name="outputPath">Path where the WebVTT file will be written</param>
+    /// <returns>True if extraction succeeded, false otherwise</returns>
+    Task<bool> ExtractSubtitleToVttAsync(string inputPath, int subtitleStreamIndex, string outputPath);
+    
+    /// <summary>
+    /// Convert an absolute stream index to a subtitle-relative index.
+    /// Needed because FFmpeg's -map 0:s:N uses subtitle-relative indexing.
+    /// </summary>
+    int GetSubtitleStreamIndex(string inputPath, int absoluteStreamIndex);
+    
+    /// <summary>
+    /// Offset all timestamps in a WebVTT file by subtracting the given offset.
+    /// This is needed when seeking - the video starts at seek position but plays from time 0.
+    /// </summary>
+    void OffsetWebVttTimestamps(string vttPath, double offsetSeconds);
+    
+    /// <summary>
+    /// Probe a file to get the subtitle codec for a specific track.
+    /// </summary>
+    Task<string?> ProbeSubtitleCodecAsync(string inputPath, int subtitleTrackIndex);
+    
+    /// <summary>
     /// Check if transcoding is disabled in settings.
     /// </summary>
     Task<bool> IsTranscodingDisabledAsync();
@@ -29,6 +55,8 @@ public class MediaProbeResult
     public string? VideoCodec { get; set; }
     public string? AudioCodec { get; set; }
     public string? Resolution { get; set; }
+    public double? CreditsStart { get; set; }  // Start time of credits chapter (if found)
+    public List<(double StartTime, string Title)>? Chapters { get; set; }  // All chapters
 }
 
 /// <summary>
@@ -190,7 +218,7 @@ public class FFmpegService : IFFmpegService
             var startInfo = new ProcessStartInfo
             {
                 FileName = ffprobePath,
-                Arguments = $"-v quiet -print_format json -show_format -show_streams \"{path}\"",
+                Arguments = $"-v quiet -print_format json -show_format -show_streams -show_chapters \"{path}\"",
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
@@ -233,6 +261,46 @@ public class FFmpegService : IFFmpegService
                 }
             }
 
+            // Parse chapters to find credits start time
+            if (doc.RootElement.TryGetProperty("chapters", out var chapters))
+            {
+                result.Chapters = new List<(double StartTime, string Title)>();
+                
+                foreach (var chapter in chapters.EnumerateArray())
+                {
+                    double startTime = 0;
+                    string title = "";
+                    
+                    // Get start time (in seconds)
+                    if (chapter.TryGetProperty("start_time", out var startTimeEl))
+                    {
+                        double.TryParse(startTimeEl.GetString(), out startTime);
+                    }
+                    
+                    // Get title from tags
+                    if (chapter.TryGetProperty("tags", out var tags))
+                    {
+                        if (tags.TryGetProperty("title", out var titleEl))
+                        {
+                            title = titleEl.GetString() ?? "";
+                        }
+                    }
+                    
+                    result.Chapters.Add((startTime, title));
+                    
+                    // Check if this is a credits chapter
+                    var lowerTitle = title.ToLowerInvariant();
+                    if (result.CreditsStart == null && 
+                        (lowerTitle.Contains("credit") || 
+                         lowerTitle.Contains("end credits") ||
+                         lowerTitle.Contains("outro") ||
+                         lowerTitle.Contains("ending")))
+                    {
+                        result.CreditsStart = startTime;
+                    }
+                }
+            }
+
             return result;
         }
         catch (Exception ex)
@@ -260,6 +328,66 @@ public class FFmpegService : IFFmpegService
         return GetTranscodeArgumentsInternal(inputPath, outputDir, segmentPrefix, subtitleTrackIndex, seekPosition, readRate, settings);
     }
 
+    /// <summary>
+    /// Determines if a subtitle codec is bitmap-based (requires overlay filter)
+    /// or text-based (requires subtitles filter).
+    /// </summary>
+    public static bool IsBitmapSubtitleCodec(string? codec)
+    {
+        if (string.IsNullOrEmpty(codec)) return false;
+        
+        // Bitmap subtitle formats that can be overlaid directly
+        var bitmapCodecs = new[] 
+        { 
+            "hdmv_pgs_subtitle", "pgs", 
+            "dvd_subtitle", "dvdsub", 
+            "xsub",
+            "dvb_subtitle"
+        };
+        
+        return bitmapCodecs.Contains(codec.ToLowerInvariant());
+    }
+
+    /// <summary>
+    /// Probe a file to get the subtitle codec for a specific track.
+    /// </summary>
+    public async Task<string?> ProbeSubtitleCodecAsync(string inputPath, int subtitleTrackIndex)
+    {
+        try
+        {
+            var ffprobePath = ResolveFFprobePath();
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = ffprobePath,
+                Arguments = $"-v quiet -print_format json -show_streams -select_streams {subtitleTrackIndex} \"{inputPath}\"",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            var output = await _processRunner.RunProcessAsync(startInfo);
+            if (string.IsNullOrEmpty(output)) return null;
+
+            using var doc = JsonDocument.Parse(output);
+            if (doc.RootElement.TryGetProperty("streams", out var streams))
+            {
+                foreach (var stream in streams.EnumerateArray())
+                {
+                    if (stream.TryGetProperty("codec_name", out var codecProp))
+                    {
+                        return codecProp.GetString();
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to probe subtitle codec for track {Index} in {Path}", subtitleTrackIndex, inputPath);
+        }
+        
+        return null;
+    }
+
     private ProcessStartInfo GetTranscodeArgumentsInternal(
         string inputPath, 
         string outputDir, 
@@ -274,6 +402,40 @@ public class FFmpegService : IFFmpegService
         var playlistPath = Path.Combine(outputDir, "master.m3u8");
         var segmentPath = Path.Combine(outputDir, $"{segmentPrefix}_%03d.ts");
 
+        // Determine subtitle codec type FIRST (needed to decide seek strategy)
+        bool hasSubtitleOverlay = subtitleTrackIndex.HasValue;
+        string? subtitleCodec = null;
+        bool useTextSubtitles = false;
+        
+        if (hasSubtitleOverlay)
+        {
+            subtitleCodec = ProbeSubtitleCodecAsync(inputPath, subtitleTrackIndex!.Value)
+                .GetAwaiter().GetResult();
+            _logger.LogInformation("Subtitle track {Index} codec: {Codec}", subtitleTrackIndex, subtitleCodec ?? "unknown");
+            useTextSubtitles = !IsBitmapSubtitleCodec(subtitleCodec);
+            
+            // WORKAROUND: FFmpeg's subtitles filter on Windows cannot handle apostrophes in paths
+            // regardless of escaping method. Skip text subtitle burn-in for these files.
+            if (useTextSubtitles && inputPath.Contains("'"))
+            {
+                _logger.LogWarning("Skipping text subtitle burn-in for file with apostrophe in path: {Path}", inputPath);
+                hasSubtitleOverlay = false;
+                useTextSubtitles = false;
+            }
+            
+            // WORKAROUND: When resuming at large positions (>60s), fast seek is required for 
+            // reasonable startup time, but this causes text subtitles to be completely desynced
+            // (subtitles start from beginning while video is at seek position).
+            // Skip text subtitle burn-in in this case - user can restart from beginning if needed.
+            const double MaxSeekForTextSubtitles = 60.0;
+            if (useTextSubtitles && seekPosition.HasValue && seekPosition.Value > MaxSeekForTextSubtitles)
+            {
+                _logger.LogWarning("Skipping text subtitle burn-in for large seek position {Seek}s (would be desynced)", seekPosition.Value);
+                hasSubtitleOverlay = false;
+                useTextSubtitles = false;
+            }
+        }
+
         var argumentBuilder = new System.Text.StringBuilder();
         
         // Thread count (if specified)
@@ -282,9 +444,24 @@ public class FFmpegService : IFFmpegService
             argumentBuilder.Append($"-threads {settings.ThreadCount} ");
         }
 
-        // Add seek position if specified (before input for fast seeking)
-        if (seekPosition.HasValue && seekPosition.Value > 0)
+        // SEEK STRATEGY:
+        // - For text subtitles: Use SLOW SEEK (-ss after -i) to keep subtitle timing in sync
+        //   The subtitles filter reads from the file directly, so fast seek would cause desync
+        // - For bitmap subtitles or no subtitles: Use FAST SEEK (-ss before -i) for quick startup
+        // - EXCEPTION: For large seek positions (>60s), always use fast seek to avoid
+        //   catastrophically slow startup for 4K/HEVC files. Accept minor subtitle desync.
+        const double MaxSlowSeekSeconds = 60.0;
+        bool seekIsTooLarge = seekPosition.HasValue && seekPosition.Value > MaxSlowSeekSeconds;
+        bool useFastSeek = !useTextSubtitles || seekIsTooLarge;
+        
+        if (seekIsTooLarge && useTextSubtitles)
         {
+            _logger.LogInformation("Using fast seek for large position {Seek}s (slow seek would be too slow)", seekPosition.Value);
+        }
+        
+        if (useFastSeek && seekPosition.HasValue && seekPosition.Value > 0)
+        {
+            // Fast seek: -ss before -i (video starts quickly but subtitles filter would desync)
             argumentBuilder.Append($"-ss {seekPosition.Value:F2} ");
         }
 
@@ -297,14 +474,67 @@ public class FFmpegService : IFFmpegService
         // Input file
         argumentBuilder.Append($"-i \"{inputPath}\" ");
         
+        // Slow seek: -ss after -i (decodes from start but keeps subtitle timing correct)
+        if (!useFastSeek && seekPosition.HasValue && seekPosition.Value > 0)
+        {
+            argumentBuilder.Append($"-ss {seekPosition.Value:F2} ");
+            _logger.LogInformation("Using slow seek for text subtitle synchronization at {Seek}s", seekPosition.Value);
+        }
+        
         // Video encoding with optional subtitle burn-in and scaling
-        bool hasSubtitleOverlay = subtitleTrackIndex.HasValue;
         string scaleFilter = GetScaleFilter(settings.MaxResolution, hasSubtitleOverlay);
         
         if (hasSubtitleOverlay)
         {
-            // Use filter_complex for subtitle overlay (and optional scaling)
-            argumentBuilder.Append($"-filter_complex \"[0:v][0:{subtitleTrackIndex.Value}]overlay{scaleFilter}\" ");
+            var filterChain = new System.Text.StringBuilder();
+            
+            if (IsBitmapSubtitleCodec(subtitleCodec))
+            {
+                // Bitmap subtitles (PGS, DVD): use overlay filter
+                // The [v] label captures the output for mapping
+                filterChain.Append($"[0:v][0:{subtitleTrackIndex.Value}]overlay");
+                
+                // Add scaling if needed
+                if (!string.IsNullOrEmpty(scaleFilter))
+                {
+                    filterChain.Append(scaleFilter);
+                }
+                
+                // Add output label for mapping
+                filterChain.Append("[v]");
+                
+                argumentBuilder.Append($"-filter_complex \"{filterChain}\" ");
+                // Map the filtered video output and first audio stream
+                argumentBuilder.Append("-map \"[v]\" -map 0:a:0 ");
+            }
+            else
+            {
+                // Text subtitles (SRT, ASS, SSA, WebVTT): use subtitles filter
+                // Escape special characters in Windows paths for FFmpeg filter.
+                // Multi-level escaping is needed:
+                // Level 1: C# string literal (handled by @"" or regular escaping)
+                // Level 2: Process command line parsing
+                // Level 3: FFmpeg filter parsing
+                // 
+                // For single quotes: use \\' (two backslashes in output)
+                // The C# string @"\\'" produces the string \\' which FFmpeg sees as \'
+                var escapedPath = inputPath
+                    .Replace("\\", "/")
+                    .Replace(":", "\\:")
+                    .Replace("'", @"\\'");
+                
+                // Build filter: subtitles filter with stream index, then optional scale
+                filterChain.Append($"subtitles='{escapedPath}':si={GetSubtitleStreamIndex(inputPath, subtitleTrackIndex!.Value)}");
+                
+                // Add scaling if needed (chain after subtitles)
+                if (!string.IsNullOrEmpty(scaleFilter))
+                {
+                    filterChain.Append(scaleFilter);
+                }
+                
+                argumentBuilder.Append($"-vf \"{filterChain}\" ");
+            }
+            
             argumentBuilder.Append(GetEncoderOptions(settings));
         }
         else if (!string.IsNullOrEmpty(scaleFilter))
@@ -345,6 +575,55 @@ public class FFmpegService : IFFmpegService
             CreateNoWindow = true,
             RedirectStandardError = true
         };
+    }
+
+    /// <summary>
+    /// Get the subtitle stream index (relative to subtitle streams only) for the subtitles filter.
+    /// The subtitles filter uses 'si' (stream index) which is relative to subtitle streams, not absolute.
+    /// </summary>
+    public int GetSubtitleStreamIndex(string inputPath, int absoluteStreamIndex)
+    {
+        try
+        {
+            var ffprobePath = ResolveFFprobePath();
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = ffprobePath,
+                Arguments = $"-v quiet -print_format json -show_streams \"{inputPath}\"",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            var output = _processRunner.RunProcessAsync(startInfo).GetAwaiter().GetResult();
+            if (string.IsNullOrEmpty(output)) return 0;
+
+            using var doc = JsonDocument.Parse(output);
+            if (doc.RootElement.TryGetProperty("streams", out var streams))
+            {
+                int subtitleIndex = 0;
+                foreach (var stream in streams.EnumerateArray())
+                {
+                    var index = stream.GetProperty("index").GetInt32();
+                    var codecType = stream.TryGetProperty("codec_type", out var ct) ? ct.GetString() : null;
+                    
+                    if (codecType == "subtitle")
+                    {
+                        if (index == absoluteStreamIndex)
+                        {
+                            return subtitleIndex;
+                        }
+                        subtitleIndex++;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to calculate subtitle stream index, using 0");
+        }
+        
+        return 0;
     }
 
     /// <summary>
@@ -395,5 +674,197 @@ public class FFmpegService : IFFmpegService
         }
 
         return "ffprobe";
+    }
+
+    /// <summary>
+    /// Extract a subtitle track to WebVTT format for HLS sidecar delivery.
+    /// Uses FFmpeg to extract and convert the subtitle stream.
+    /// </summary>
+    public async Task<bool> ExtractSubtitleToVttAsync(string inputPath, int subtitleStreamIndex, string outputPath)
+    {
+        try
+        {
+            var ffmpegPath = ResolveFFmpegPath();
+            
+            // FFmpeg command to extract subtitle track and convert to WebVTT
+            // -i input: input file
+            // -map 0:s:{index}: select specific subtitle stream
+            // -c:s webvtt: convert to WebVTT format
+            // -y: overwrite output file
+            var arguments = $"-i \"{inputPath}\" -map 0:s:{subtitleStreamIndex} -c:s webvtt -y \"{outputPath}\"";
+            
+            _logger.LogInformation("Extracting subtitle track {Index} to WebVTT: {Path}", subtitleStreamIndex, outputPath);
+            
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = ffmpegPath,
+                Arguments = arguments,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var process = new Process { StartInfo = startInfo };
+            
+            var errorOutput = new System.Text.StringBuilder();
+            process.ErrorDataReceived += (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    errorOutput.AppendLine(e.Data);
+                }
+            };
+            
+            process.Start();
+            process.BeginErrorReadLine();
+            
+            // Wait up to 30 seconds for extraction
+            var completed = await Task.Run(() => process.WaitForExit(30000));
+            
+            if (!completed)
+            {
+                _logger.LogWarning("Subtitle extraction timed out for {Path}", inputPath);
+                try { process.Kill(); } catch { }
+                return false;
+            }
+
+            if (process.ExitCode != 0)
+            {
+                _logger.LogWarning("Subtitle extraction failed (exit code {Code}): {Error}", 
+                    process.ExitCode, errorOutput.ToString().Substring(0, Math.Min(500, errorOutput.Length)));
+                return false;
+            }
+
+            // Verify output file was created
+            if (!File.Exists(outputPath))
+            {
+                _logger.LogWarning("Subtitle extraction did not create output file: {Path}", outputPath);
+                return false;
+            }
+
+            var fileInfo = new FileInfo(outputPath);
+            _logger.LogInformation("Subtitle extracted successfully: {Path} ({Size} bytes)", outputPath, fileInfo.Length);
+            
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error extracting subtitle track {Index} from {Path}", subtitleStreamIndex, inputPath);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Offset all timestamps in a WebVTT file by subtracting the given offset.
+    /// This is needed when seeking - the video starts at seek position but plays from time 0.
+    /// </summary>
+    public void OffsetWebVttTimestamps(string vttPath, double offsetSeconds)
+    {
+        if (offsetSeconds <= 0 || !File.Exists(vttPath))
+            return;
+
+        try
+        {
+            var lines = File.ReadAllLines(vttPath);
+            var offsetTimeSpan = TimeSpan.FromSeconds(offsetSeconds);
+            var result = new List<string>();
+            var skipCue = false;
+            
+            for (int i = 0; i < lines.Length; i++)
+            {
+                var line = lines[i];
+                
+                // Check if this line contains a timestamp cue (format: HH:MM:SS.mmm --> HH:MM:SS.mmm)
+                if (line.Contains(" --> "))
+                {
+                    var parts = line.Split(new[] { " --> " }, StringSplitOptions.None);
+                    if (parts.Length == 2)
+                    {
+                        if (TryParseVttTimestamp(parts[0].Trim(), out var startTime) && 
+                            TryParseVttTimestamp(parts[1].Trim(), out var endTime))
+                        {
+                            // Subtract offset
+                            var newStart = startTime - offsetTimeSpan;
+                            var newEnd = endTime - offsetTimeSpan;
+                            
+                            // Skip cues that end before the offset point
+                            if (newEnd < TimeSpan.Zero)
+                            {
+                                skipCue = true;
+                                continue;
+                            }
+                            
+                            // Clamp start to 0 if it goes negative
+                            if (newStart < TimeSpan.Zero)
+                                newStart = TimeSpan.Zero;
+                            
+                            result.Add($"{FormatVttTimestamp(newStart)} --> {FormatVttTimestamp(newEnd)}");
+                            skipCue = false;
+                            continue;
+                        }
+                    }
+                }
+                
+                // Skip content lines for cues we're skipping
+                if (skipCue)
+                {
+                    // Keep blank lines as they separate cues
+                    if (string.IsNullOrWhiteSpace(line))
+                    {
+                        skipCue = false;
+                        result.Add(line);
+                    }
+                    continue;
+                }
+                
+                result.Add(line);
+            }
+            
+            File.WriteAllLines(vttPath, result);
+            _logger.LogInformation("Offset WebVTT timestamps by {Offset}s: {Path}", offsetSeconds, vttPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error offsetting WebVTT timestamps in {Path}", vttPath);
+        }
+    }
+    
+    private bool TryParseVttTimestamp(string timestamp, out TimeSpan result)
+    {
+        result = TimeSpan.Zero;
+        // VTT timestamp format: HH:MM:SS.mmm or MM:SS.mmm
+        try
+        {
+            var parts = timestamp.Split(':');
+            if (parts.Length == 3)
+            {
+                // HH:MM:SS.mmm
+                var hours = int.Parse(parts[0]);
+                var minutes = int.Parse(parts[1]);
+                var secondsParts = parts[2].Split('.');
+                var seconds = int.Parse(secondsParts[0]);
+                var milliseconds = secondsParts.Length > 1 ? int.Parse(secondsParts[1].PadRight(3, '0').Substring(0, 3)) : 0;
+                result = new TimeSpan(0, hours, minutes, seconds, milliseconds);
+                return true;
+            }
+            else if (parts.Length == 2)
+            {
+                // MM:SS.mmm
+                var minutes = int.Parse(parts[0]);
+                var secondsParts = parts[1].Split('.');
+                var seconds = int.Parse(secondsParts[0]);
+                var milliseconds = secondsParts.Length > 1 ? int.Parse(secondsParts[1].PadRight(3, '0').Substring(0, 3)) : 0;
+                result = new TimeSpan(0, 0, minutes, seconds, milliseconds);
+                return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+    
+    private string FormatVttTimestamp(TimeSpan ts)
+    {
+        return $"{(int)ts.TotalHours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
     }
 }

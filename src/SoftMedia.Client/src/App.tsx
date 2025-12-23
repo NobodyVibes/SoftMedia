@@ -24,9 +24,9 @@ function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/libraries/:id" element={<LibraryPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/media/:id" element={<MediaDetailPage />} />
           </Route>
-          {/* PlayerPage might want to be full screen, so maybe outside MainLayout or handle internally */}
-          <Route path="/media/:id" element={<MediaDetailPage />} />
+          {/* PlayerPage and ReaderPage are full screen - outside MainLayout */}
           <Route path="/play/:id" element={<PlayerPage />} />
           <Route path="/read/:id" element={<ReaderPage />} />
         </Route>

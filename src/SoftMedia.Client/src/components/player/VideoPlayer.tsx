@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import Hls from 'hls.js';
 import { type MediaItem } from '../../types';
 import { useAuthStore } from '../../store/authStore';
+import { NextEpisodeOverlay, type NextEpisodeInfo } from './NextEpisodeOverlay';
 
 interface VideoPlayerProps {
     item: MediaItem;
@@ -39,6 +41,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const lastSavedPositionRef = useRef<number>(0); // Track last saved position to avoid redundant saves
     const effectivePlaybackPositionRef = useRef<number>(0); // Track actual playback position for subtitle switching
     const isInsideMenuRef = useRef<boolean>(false); // Track if mouse is inside a menu (for auto-hide logic)
+    const lastLoadedItemIdRef = useRef<string>(''); // Track last loaded item ID to detect fresh episode loads
 
     // Resume position from server (loaded on mount)
     const [resumePosition, setResumePosition] = useState<number>(0);
@@ -86,7 +89,19 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const wasPlayingBeforeDragRef = useRef(false);
     const frameDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
+    // Next Episode Overlay state
+    const [showNextEpisodeOverlay, setShowNextEpisodeOverlay] = useState(false);
+    const [nextEpisodeInfo, setNextEpisodeInfo] = useState<NextEpisodeInfo | null>(null);
+    // Track if we've reached thresholds (reset when seeking backward past them)
+    const lastThresholdTimeRef = useRef<number>(0); // Last time we triggered the overlay
+    const hasShownOverlayRef = useRef(false); // Whether overlay was shown for this threshold crossing
+
     const token = useAuthStore((state) => state.token);
+    const navigate = useNavigate();
+    const location = useLocation();
+
+    // Check for ?start=0 query param to force starting from beginning
+    const forceStartFromBeginning = new URLSearchParams(location.search).get('start') === '0';
 
     // Get actual duration from media item metadata (in seconds)
     const getActualDuration = useCallback((): number => {
@@ -126,9 +141,30 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         fetchDuration();
     }, [actualDuration, token, item.id]);
 
-    // Load saved playback position on mount
+    // Load saved playback position on mount or when item changes
     useEffect(() => {
         if (!token || !item.id) return;
+
+        // COMPREHENSIVE RESET for new item - this is critical when navigating between episodes
+        // Reset all playback-related state and refs to prevent old values bleeding into new video
+        setResumePosition(0);
+        setHasLoadedProgress(false);
+        setCurrentTime(0);
+        setSeekOffset(0);
+        effectivePlaybackPositionRef.current = 0;
+        lastSavedPositionRef.current = 0;
+        hasShownOverlayRef.current = false;
+        lastThresholdTimeRef.current = 0;
+        setShowNextEpisodeOverlay(false);
+        setNextEpisodeInfo(null);
+        console.log(`[VideoPlayer] Reset all state for new item: ${item.id}, forceStartFromBeginning: ${forceStartFromBeginning}`);
+
+        // If ?start=0 query param is present, skip fetching resume position and start from beginning
+        if (forceStartFromBeginning) {
+            console.log(`[VideoPlayer] Force start from beginning - skipping resume position fetch`);
+            setHasLoadedProgress(true);
+            return;
+        }
 
         const fetchProgress = async () => {
             try {
@@ -155,7 +191,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                 (seconds ? parseInt(seconds[1]) : 0);
                         }
                         const maxValidPosition = durationSeconds > 0 ? durationSeconds - 5 : Infinity;
-                        console.log(`Resume validation: position=${data.position}, duration=${item.duration}(parsed=${durationSeconds}s), maxValid=${maxValidPosition}`);
+                        console.log(`Resume validation for ${item.id}: position=${data.position}, duration=${item.duration}(parsed=${durationSeconds}s), maxValid=${maxValidPosition}`);
                         if (data.position < maxValidPosition) {
                             console.log(`Resuming from saved position: ${data.position}s`);
                             setResumePosition(data.position);
@@ -173,7 +209,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             }
         };
         fetchProgress();
-    }, [token, item.id]);
+    }, [token, item.id, forceStartFromBeginning]);
 
     // Save playback position periodically (every 10 seconds) and on unmount
     useEffect(() => {
@@ -344,15 +380,25 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         const isCodecSupported = !videoCodec || directPlayCodecs.some(c => videoCodec.includes(c));
         const needsTranscode = !isContainerSupported || !isCodecSupported;
 
+        // Detect if this is a FRESH episode load (different from last loaded item)
+        // If so, we should NOT use videoRef.current.currentTime as it contains stale data from the previous video
+        const isFreshEpisodeLoad = lastLoadedItemIdRef.current !== item.id;
+
         if (needsTranscode) {
             console.log(`Format ${container}/${videoCodec} not supported, switching to HLS transcoding.`);
 
             // Determine starting position
-            const currentPosition = videoRef.current?.currentTime || 0;
+            // IMPORTANT: Only use video element's currentTime if this is NOT a fresh episode load
+            const currentPosition = isFreshEpisodeLoad ? 0 : (videoRef.current?.currentTime || 0);
             let startPosition = 0;
 
-            // Priority 1: If this is a subtitle change mid-playback, use the tracked effective position
-            if (isSubtitleChange && effectivePlaybackPositionRef.current > 1) {
+            // Check if we should force start from beginning (from ?start=0 query param)
+            if (forceStartFromBeginning) {
+                startPosition = 0;
+                console.log(`Forced start from beginning via query param`);
+            }
+            // Priority 1: If this is a subtitle change mid-playback, use the tracked effective position (only if not fresh load)
+            else if (!isFreshEpisodeLoad && isSubtitleChange && effectivePlaybackPositionRef.current > 1) {
                 startPosition = Math.floor(effectivePlaybackPositionRef.current);
                 console.log(`Subtitle change: continuing from tracked position: ${startPosition}s`);
                 setIsSubtitleChange(false); // Reset the flag
@@ -362,18 +408,18 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' })
                     .catch(() => { /* Ignore cleanup errors */ });
             }
-            // Priority 2: If we have a resume position and video hasn't started playing, use it
-            else if (resumePosition > 0 && currentPosition < 1 && effectivePlaybackPositionRef.current < 1) {
+            // Priority 2: If we have a resume position from API, use it (for fresh episode loads)
+            else if (resumePosition > 0) {
                 startPosition = resumePosition;
                 console.log(`Using saved resume position: ${resumePosition}s`);
             }
-            // Priority 3: If user has been seeking (seekOffset > 0), calculate from current position
-            else if (seekOffset > 0) {
+            // Priority 3: If user has been seeking (seekOffset > 0), calculate from current position (only if not fresh load)
+            else if (!isFreshEpisodeLoad && seekOffset > 0) {
                 startPosition = currentPosition + seekOffset;
                 console.log(`Continuing from current position: ${startPosition}s`);
             }
-            // Priority 4: Current position in direct play being switched to transcode
-            else if (currentPosition > 1) {
+            // Priority 4: Current position in direct play being switched to transcode (only if not fresh load)
+            else if (!isFreshEpisodeLoad && currentPosition > 1) {
                 startPosition = currentPosition;
                 console.log(`Switching to transcode at position: ${startPosition}s`);
             }
@@ -404,7 +450,10 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             setIsTranscoding(false);
             setSeekOffset(0); // Reset offset for direct play
         }
-    }, [item, initialSrc, token, selectedSubtitleTrack, resumePosition, hasLoadedProgress, hasLoadedSubtitlePref, isSubtitleChange]); // Wait for progress & subtitle pref load
+
+        // Update the last loaded item ID so subsequent runs know this is not a fresh load
+        lastLoadedItemIdRef.current = item.id;
+    }, [item, initialSrc, token, selectedSubtitleTrack, resumePosition, hasLoadedProgress, hasLoadedSubtitlePref, isSubtitleChange, forceStartFromBeginning]); // Wait for progress & subtitle pref load
 
     // Fetch audio and subtitle tracks, and apply saved subtitle preference for TV episodes
     useEffect(() => {
@@ -589,6 +638,178 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         };
     }, [src, isTranscoding, token, item.id, selectedSubtitleTrack]);
 
+    // Fetch next episode info for "Play Next" overlay
+    const fetchNextEpisode = useCallback(async () => {
+        if (!token || !item.id) return;
+
+        try {
+            const response = await fetch(`/api/v1/episode/${item.id}/next`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+
+            if (response.ok) {
+                const data: NextEpisodeInfo = await response.json();
+                console.log('[PlayNext] Fetched next episode:', data);
+                setNextEpisodeInfo(data);
+                setShowNextEpisodeOverlay(true);
+            } else if (response.status === 404) {
+                // No next episode - show series complete overlay
+                setNextEpisodeInfo({
+                    episodeId: '',
+                    seriesId: item.seriesId || '',
+                    seasonNumber: 0,
+                    episodeNumber: 0,
+                    title: '',
+                    resumePosition: 0,
+                    isSeriesComplete: true
+                });
+                setShowNextEpisodeOverlay(true);
+            }
+        } catch (error) {
+            console.error('[PlayNext] Failed to fetch next episode:', error);
+        }
+    }, [token, item.id, item.seriesId]);
+
+    // Handle playing the next episode from resume position (default)
+    const handlePlayNextResume = useCallback(async () => {
+        if (!nextEpisodeInfo || !nextEpisodeInfo.episodeId) return;
+
+        // Mark current episode as watched
+        if (token && item.id) {
+            try {
+                await fetch(`/api/v1/interaction/${item.id}/watched`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ watched: true })
+                });
+            } catch {
+                // Silently fail
+            }
+
+            // Clean up transcode session before navigating
+            if (isTranscoding) {
+                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, {
+                    method: 'DELETE'
+                }).catch(() => { });
+            }
+        }
+
+        // Navigate to next episode (will resume from saved position)
+        setShowNextEpisodeOverlay(false);
+        navigate(`/play/${nextEpisodeInfo.episodeId}`);
+    }, [nextEpisodeInfo, token, item.id, isTranscoding, navigate]);
+
+    // Handle playing the next episode from start
+    const handlePlayNextFromStart = useCallback(async () => {
+        if (!nextEpisodeInfo || !nextEpisodeInfo.episodeId) return;
+
+        // Mark current episode as watched
+        if (token && item.id) {
+            try {
+                await fetch(`/api/v1/interaction/${item.id}/watched`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ watched: true })
+                });
+            } catch {
+                // Silently fail
+            }
+
+            // Reset the next episode's playback position to 0 and WAIT for it to complete
+            try {
+                await fetch(`/api/v1/interaction/${nextEpisodeInfo.episodeId}/progress`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ position: 0 })
+                });
+                console.log(`[PlayNext] Reset position to 0 for next episode: ${nextEpisodeInfo.episodeId}`);
+            } catch {
+                // Silently fail
+            }
+
+            // Clean up transcode session before navigating
+            if (isTranscoding) {
+                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, {
+                    method: 'DELETE'
+                }).catch(() => { });
+            }
+        }
+
+        // Navigate to next episode with ?start=0 to force starting from beginning
+        setShowNextEpisodeOverlay(false);
+        navigate(`/play/${nextEpisodeInfo.episodeId}?start=0`);
+    }, [nextEpisodeInfo, token, item.id, isTranscoding, navigate]);
+
+    // Handle return to library
+    const handleReturnToLibrary = useCallback(() => {
+        setShowNextEpisodeOverlay(false);
+        // Mark current episode as watched
+        if (token && item.id) {
+            fetch(`/api/v1/interaction/${item.id}/watched`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({ watched: true })
+            }).catch(() => { });
+
+            // Clean up transcode session
+            if (isTranscoding) {
+                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, {
+                    method: 'DELETE'
+                }).catch(() => { });
+            }
+        }
+    }, [token, item.id, isTranscoding]);
+
+    // Handle rating the current episode from the overlay
+    const handleRateCurrentEpisode = useCallback(async (rating: number) => {
+        if (!token || !item.id) return;
+
+        try {
+            await fetch(`/api/v1/interaction/${item.id}/rate`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({ rating })
+            });
+            console.log(`[PlayNext] Rated current episode: ${rating}`);
+        } catch {
+            // Silently fail
+        }
+    }, [token, item.id]);
+
+    // Handle continue watching (dismiss overlay and resume playback)
+    const handleContinueWatching = useCallback(() => {
+        console.log('[PlayNext] Continue watching - dismissing overlay');
+        setShowNextEpisodeOverlay(false);
+        // Don't reset hasShownOverlayRef - once dismissed, don't show again this session
+    }, []);
+
+    // Handle pause/unpause video from overlay
+    const handlePauseVideo = useCallback((paused: boolean) => {
+        const video = videoRef.current;
+        if (!video) return;
+
+        if (paused) {
+            video.pause();
+        } else {
+            video.play().catch(() => { });
+        }
+    }, []);
+
     // Video event handlers
     useEffect(() => {
         const video = videoRef.current;
@@ -647,6 +868,45 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             // Track effective playback position for subtitle switching
             const effectiveTime = video.currentTime + seekOffset;
             effectivePlaybackPositionRef.current = effectiveTime;
+
+            // Next Episode Detection for TV Episodes only (has seriesId)
+            // Trigger when reaching creditsStart or 98% of duration
+            // IMPORTANT: Skip if this is a fresh episode load (state may be stale)
+            const isFreshLoad = lastLoadedItemIdRef.current !== item.id;
+            if (item.seriesId && displayDuration > 0 && !isFreshLoad && video.currentTime > 5) {
+                const threshold98 = displayDuration * 0.98;
+                const creditsStart = item.creditsStart;
+
+                // Determine the earliest threshold (credits or 95%)
+                const firstThreshold = (creditsStart && creditsStart > 0)
+                    ? Math.min(creditsStart, threshold98)
+                    : threshold98;
+
+                // Check if we've reached any threshold
+                const reachedCredits = creditsStart && creditsStart > 0 && effectiveTime >= creditsStart;
+                const reached95Percent = effectiveTime >= threshold98;
+                const reachedAnyThreshold = reachedCredits || reached95Percent;
+
+                // Reset if we've seeked backward past all thresholds
+                if (effectiveTime < firstThreshold - 5) {
+                    // User seeked backward - allow overlay to show again
+                    if (hasShownOverlayRef.current && !showNextEpisodeOverlay) {
+                        console.log('[PlayNext] User seeked backward, resetting overlay trigger');
+                        hasShownOverlayRef.current = false;
+                        lastThresholdTimeRef.current = 0;
+                    }
+                }
+
+                // Show overlay if we've crossed a threshold and haven't already shown it this pass
+                if (reachedAnyThreshold && !hasShownOverlayRef.current && !showNextEpisodeOverlay) {
+                    console.log(`[PlayNext] Threshold reached: credits=${reachedCredits}, 95%=${reached95Percent}, time=${effectiveTime}`);
+                    hasShownOverlayRef.current = true;
+                    lastThresholdTimeRef.current = effectiveTime;
+
+                    // Fetch next episode info
+                    fetchNextEpisode();
+                }
+            }
 
             // Manual end detection for HLS: if effective time is within 1 second of known duration
             if (displayDuration > 0 && effectiveTime >= displayDuration - 1 && !video.paused) {
@@ -1059,6 +1319,23 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                             </div>
                         </div>
                     </div>
+                )}
+
+                {/* Next Episode Overlay (for TV Episodes only) */}
+                {showNextEpisodeOverlay && nextEpisodeInfo && (
+                    <NextEpisodeOverlay
+                        currentEpisodeId={item.id}
+                        currentEpisodeTitle={item.title}
+                        nextEpisode={nextEpisodeInfo}
+                        currentRating={item.userRating}
+                        onPlayNextResume={handlePlayNextResume}
+                        onPlayNextFromStart={handlePlayNextFromStart}
+                        onContinueWatching={handleContinueWatching}
+                        onReturnToLibrary={handleReturnToLibrary}
+                        onRateCurrent={handleRateCurrentEpisode}
+                        onPauseVideo={handlePauseVideo}
+                        libraryId={item.libraryId}
+                    />
                 )}
 
                 {/* Video element */}

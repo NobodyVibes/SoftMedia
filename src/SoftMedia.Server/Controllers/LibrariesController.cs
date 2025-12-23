@@ -202,6 +202,7 @@ public class LibrariesController : ControllerBase
         [FromQuery] int? year = null,
         [FromQuery] int? minRating = null,
         [FromQuery] bool? isFavorite = null,
+        [FromQuery] bool? watched = null,
         [FromQuery] string? viewMode = null)
     {
         var library = await _context.Libraries.FindAsync(id);
@@ -283,6 +284,11 @@ public class LibrariesController : ControllerBase
             joinedQuery = joinedQuery.Where(x => x.Interaction.IsFavorite == isFavorite.Value);
         }
 
+        if (watched.HasValue)
+        {
+            joinedQuery = joinedQuery.Where(x => x.Interaction.IsWatched == watched.Value);
+        }
+
         // Sorting
         joinedQuery = sortBy?.ToLower() switch
         {
@@ -347,9 +353,106 @@ public class LibrariesController : ControllerBase
                 dto.UserRating = x.Interaction.Rating;
                 dto.IsFavorite = x.Interaction.IsFavorite;
                 dto.Watched = x.Interaction.IsWatched;
+                dto.PlaybackPosition = x.Interaction.PlaybackPosition;
+                
+                // Calculate progress percentage based on playback position and duration
+                if (x.Interaction.PlaybackPosition > 0 && x.Media.Duration > 0)
+                {
+                    dto.Progress = (x.Interaction.PlaybackPosition / x.Media.Duration) * 100;
+                }
             }
             return dto;
         }).ToList();
+    }
+
+    [HttpGet("series/{seriesId}/seasons")]
+    public async Task<ActionResult<IEnumerable<object>>> GetSeriesSeasons(Guid seriesId)
+    {
+        // Get the series item to access its metadata
+        var series = await _context.MediaItems.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Id == seriesId && m.Type == MediaType.Series);
+
+        if (series == null)
+        {
+            return NotFound("Series not found");
+        }
+
+        // Get distinct seasons from episodes
+        var seasonNumbers = await _context.MediaItems.AsNoTracking()
+            .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode)
+            .Select(m => m.SeasonNumber ?? 1)
+            .Distinct()
+            .OrderBy(s => s)
+            .ToListAsync();
+
+        // Parse seasons from series metadata
+        var seasonsFromMetadata = new Dictionary<int, object?>();
+        if (!string.IsNullOrEmpty(series.MetadataJson))
+        {
+            try
+            {
+                var metadata = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(series.MetadataJson);
+                if (metadata != null && metadata.TryGetValue("seasons", out var seasonsObj) && seasonsObj is System.Text.Json.JsonElement seasonsArray)
+                {
+                    foreach (var season in seasonsArray.EnumerateArray())
+                    {
+                        int? num = season.TryGetProperty("number", out var numProp) && numProp.ValueKind != System.Text.Json.JsonValueKind.Null 
+                            ? numProp.GetInt32() 
+                            : null;
+                        
+                        if (num.HasValue)
+                        {
+                            string? poster = season.TryGetProperty("poster", out var posterProp) && posterProp.ValueKind != System.Text.Json.JsonValueKind.Null
+                                ? $"/api/v1/image/proxy?url={Uri.EscapeDataString(posterProp.GetString() ?? "")}"
+                                : null;
+                            
+                            int? episodeCount = season.TryGetProperty("episodeCount", out var epCountProp) && epCountProp.ValueKind != System.Text.Json.JsonValueKind.Null
+                                ? epCountProp.GetInt32()
+                                : null;
+                            
+                            string? premiereDate = season.TryGetProperty("premiereDate", out var premProp) && premProp.ValueKind != System.Text.Json.JsonValueKind.Null
+                                ? premProp.GetString()
+                                : null;
+
+                            seasonsFromMetadata[num.Value] = new { number = num.Value, poster, episodeCount, premiereDate };
+                        }
+                    }
+                }
+            }
+            catch { /* Ignore parsing errors */ }
+        }
+
+        // Build result combining episode data with metadata
+        var result = seasonNumbers.Select(seasonNum =>
+        {
+            var episodeCount = _context.MediaItems.AsNoTracking()
+                .Count(m => m.SeriesId == seriesId && m.SeasonNumber == seasonNum && m.Type == MediaType.Episode);
+
+            if (seasonsFromMetadata.TryGetValue(seasonNum, out var metaSeason))
+            {
+                // Use metadata if available (has poster)
+                return metaSeason;
+            }
+
+            // Fallback to show poster as season poster
+            string? fallbackPoster = null;
+            if (!string.IsNullOrEmpty(series.MetadataJson))
+            {
+                try
+                {
+                    var metadata = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(series.MetadataJson);
+                    if (metadata != null && metadata.TryGetValue("poster", out var posterObj))
+                    {
+                        fallbackPoster = $"/api/v1/image/proxy?url={Uri.EscapeDataString(posterObj.ToString() ?? "")}";
+                    }
+                }
+                catch { }
+            }
+
+            return (object)new { number = seasonNum, poster = fallbackPoster, episodeCount = episodeCount, premiereDate = (string?)null };
+        }).ToList();
+
+        return Ok(result);
     }
 
     [HttpGet("artists/{artistId}/albums")]

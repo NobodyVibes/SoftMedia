@@ -117,6 +117,8 @@ public class InteractionController : ControllerBase
         if (request.Watched)
         {
             interaction.LastPlayed = DateTime.UtcNow;
+            // Reset playback position when marked as watched so it starts from beginning next time
+            interaction.PlaybackPosition = 0;
         }
         
         await _context.SaveChangesAsync();
@@ -368,6 +370,121 @@ public class InteractionController : ControllerBase
             Language = preference?.PreferredSubtitleLanguage
         });
     }
+
+    /// <summary>
+    /// Get the next episode after a specific episode (for "play next" overlay).
+    /// Returns the next episode in sequence or IsSeriesComplete if at end.
+    /// </summary>
+    [HttpGet("/api/v1/episode/{episodeId}/next")]
+    public async Task<ActionResult<NextEpisodeResponse>> GetNextEpisodeFromCurrent(Guid episodeId)
+    {
+        _logger.LogInformation("[PlayNext] GetNextEpisodeFromCurrent called for episode {EpisodeId}", episodeId);
+        var userId = GetUserId();
+
+        // Get the current episode
+        var currentEpisode = await _context.MediaItems
+            .FirstOrDefaultAsync(m => m.Id == episodeId && m.Type == MediaType.Episode);
+
+        if (currentEpisode == null)
+        {
+            return NotFound(new { message = "Episode not found" });
+        }
+
+        if (currentEpisode.SeriesId == null)
+        {
+            return NotFound(new { message = "Episode is not part of a series" });
+        }
+
+        // Get all episodes for this series ordered by season/episode
+        var episodes = await _context.MediaItems
+            .Where(m => m.SeriesId == currentEpisode.SeriesId && m.Type == MediaType.Episode)
+            .OrderBy(m => m.SeasonNumber)
+            .ThenBy(m => m.EpisodeNumber)
+            .ToListAsync();
+
+        // Find current episode index and get next
+        var currentIndex = episodes.FindIndex(e => e.Id == episodeId);
+        if (currentIndex < 0 || currentIndex >= episodes.Count - 1)
+        {
+            // No next episode - at end of series
+            return Ok(new NextEpisodeResponse
+            {
+                EpisodeId = Guid.Empty,
+                SeriesId = currentEpisode.SeriesId.Value,
+                IsSeriesComplete = true
+            });
+        }
+
+        var nextEpisode = episodes[currentIndex + 1];
+        
+        // Get user interaction for resume position
+        var interaction = await _context.UserMediaInteractions
+            .FirstOrDefaultAsync(i => i.UserId == userId && i.MediaItemId == nextEpisode.Id);
+
+        // Extract poster/backdrop from metadata
+        string? posterPath = null;
+        string? backdropPath = null;
+        
+        // Try to get episode-specific thumbnail/poster
+        if (!string.IsNullOrEmpty(nextEpisode.MetadataJson))
+        {
+            try
+            {
+                var metadata = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(nextEpisode.MetadataJson);
+                if (metadata != null)
+                {
+                    // Check for episode thumbnail/still first (episodes typically use these)
+                    if (metadata.TryGetValue("thumbnail", out var thumbObj) && !string.IsNullOrEmpty(thumbObj?.ToString()))
+                        posterPath = $"/api/v1/image/proxy?url={Uri.EscapeDataString(thumbObj.ToString() ?? "")}";
+                    else if (metadata.TryGetValue("still", out var stillObj) && !string.IsNullOrEmpty(stillObj?.ToString()))
+                        posterPath = $"/api/v1/image/proxy?url={Uri.EscapeDataString(stillObj.ToString() ?? "")}";
+                    else if (metadata.TryGetValue("poster", out var posterObj) && !string.IsNullOrEmpty(posterObj?.ToString()))
+                        posterPath = $"/api/v1/image/proxy?url={Uri.EscapeDataString(posterObj.ToString() ?? "")}";
+                    
+                    if (metadata.TryGetValue("backdrop", out var backdropObj) && !string.IsNullOrEmpty(backdropObj?.ToString()))
+                        backdropPath = $"/api/v1/image/proxy?url={Uri.EscapeDataString(backdropObj.ToString() ?? "")}";
+                }
+            }
+            catch { /* Ignore JSON parse errors */ }
+        }
+        
+        // Fallback to series poster/backdrop if no episode-specific image found
+        if (string.IsNullOrEmpty(posterPath) || string.IsNullOrEmpty(backdropPath))
+        {
+            var series = await _context.MediaItems.FirstOrDefaultAsync(m => m.Id == currentEpisode.SeriesId);
+            if (series != null && !string.IsNullOrEmpty(series.MetadataJson))
+            {
+                try
+                {
+                    var seriesMetadata = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(series.MetadataJson);
+                    if (seriesMetadata != null)
+                    {
+                        if (string.IsNullOrEmpty(posterPath) && seriesMetadata.TryGetValue("poster", out var seriesPosterObj) && !string.IsNullOrEmpty(seriesPosterObj?.ToString()))
+                            posterPath = $"/api/v1/image/proxy?url={Uri.EscapeDataString(seriesPosterObj.ToString() ?? "")}";
+                        if (string.IsNullOrEmpty(backdropPath) && seriesMetadata.TryGetValue("backdrop", out var seriesBackdropObj) && !string.IsNullOrEmpty(seriesBackdropObj?.ToString()))
+                            backdropPath = $"/api/v1/image/proxy?url={Uri.EscapeDataString(seriesBackdropObj.ToString() ?? "")}";
+                    }
+                }
+                catch { /* Ignore JSON parse errors */ }
+            }
+        }
+
+        _logger.LogInformation("[PlayNext] Next episode: S{Season}E{Episode} - {Title}, PosterPath: {Poster}",
+            nextEpisode.SeasonNumber, nextEpisode.EpisodeNumber, nextEpisode.Title, posterPath ?? "none");
+
+        return Ok(new NextEpisodeResponse
+        {
+            EpisodeId = nextEpisode.Id,
+            SeriesId = currentEpisode.SeriesId.Value,
+            SeasonNumber = nextEpisode.SeasonNumber ?? 1,
+            EpisodeNumber = nextEpisode.EpisodeNumber ?? 1,
+            Title = nextEpisode.Title,
+            ResumePosition = interaction?.PlaybackPosition ?? 0,
+            PosterPath = posterPath,
+            BackdropPath = backdropPath,
+            IsSeriesComplete = false
+        });
+    }
 }
 
 public class RateRequest
@@ -405,6 +522,12 @@ public class NextEpisodeResponse
     public string Title { get; set; } = string.Empty;
     public double ResumePosition { get; set; }
     public bool IsSeriesComplete { get; set; }
+    
+    /// <summary>Poster image URL for the next episode</summary>
+    public string? PosterPath { get; set; }
+    
+    /// <summary>Backdrop image URL for the next episode</summary>
+    public string? BackdropPath { get; set; }
     
     // Debug fields
     public double DebugDuration { get; set; }

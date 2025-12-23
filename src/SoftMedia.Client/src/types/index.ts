@@ -21,6 +21,7 @@ export interface MediaItem {
     rating?: string; // "TV-MA", "PG-13", etc. Actually DTO uses this for External Rating now.
     communityRating?: number; // Internal Average Rating
     progress?: number; // 0-100 for continue watching
+    playbackPosition?: number; // Resume position in seconds
     description?: string;
     container?: string;
     videoCodec?: string;

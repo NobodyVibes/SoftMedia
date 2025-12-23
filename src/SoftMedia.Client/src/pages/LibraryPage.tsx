@@ -29,6 +29,7 @@ export default function LibraryPage() {
     const [year, setYear] = useState<number | null>(null);
     const [minRating, setMinRating] = useState<number | null>(null);
     const [isFavorite, setIsFavorite] = useState<boolean | null>(null);
+    const [watched, setWatched] = useState<boolean | null>(null);
     const [viewMode, setViewMode] = useState('artists'); // Default to artists for Music
 
     const {
@@ -39,7 +40,7 @@ export default function LibraryPage() {
         hasNextPage,
         isFetchingNextPage
     } = useInfiniteQuery({
-        queryKey: ['library', id, 'items', { search, sortBy, genre, year, minRating, isFavorite, viewMode }],
+        queryKey: ['library', id, 'items', { search, sortBy, genre, year, minRating, isFavorite, watched, viewMode }],
         queryFn: async ({ pageParam = 1 }) => {
             const params: Record<string, string | number | boolean | undefined | null> = {
                 page: pageParam,
@@ -50,6 +51,7 @@ export default function LibraryPage() {
                 year,
                 minRating,
                 isFavorite,
+                watched,
                 viewMode: library?.type === 'Music' ? viewMode : undefined
             };
             // Clean undefined/null params
@@ -86,6 +88,8 @@ export default function LibraryPage() {
                 onYear={setYear}
                 onRating={setMinRating}
                 onFavorite={setIsFavorite}
+                onWatched={setWatched}
+                showWatchedFilter={library?.type === 'TV' || library?.type === 'Movie'}
                 viewMode={library?.type === 'Music' ? viewMode : undefined}
                 onViewModeChange={library?.type === 'Music' ? setViewMode : undefined}
             />

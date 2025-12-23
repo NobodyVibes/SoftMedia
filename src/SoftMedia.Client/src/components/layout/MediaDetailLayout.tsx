@@ -61,7 +61,7 @@ export default function MediaDetailLayout({ item, children, onPlay }: MediaDetai
             </div>
 
             {/* Content */}
-            <div className="relative z-10 container mx-auto px-4 pt-24 pb-12">
+            <div className="relative z-10 w-full px-4 lg:px-6 pt-4 lg:pt-6 pb-12">
                 <button
                     onClick={() => navigate(-1)}
                     className="mb-8 flex items-center gap-2 text-gray-300 hover:text-white transition-colors group"
@@ -72,9 +72,9 @@ export default function MediaDetailLayout({ item, children, onPlay }: MediaDetai
                     <span className="font-medium">Back</span>
                 </button>
 
-                <div className="flex flex-col md:flex-row gap-8 lg:gap-12">
+                <div className="flex flex-col lg:flex-row gap-8 lg:gap-12">
                     {/* Poster Column */}
-                    <div className="flex-shrink-0 w-full md:w-72 lg:w-80 mx-auto md:mx-0">
+                    <div className="flex-shrink-0 w-full sm:w-64 md:w-72 lg:w-80 mx-auto lg:mx-0">
                         <motion.div
                             initial={{ opacity: 0, y: 20 }}
                             animate={{ opacity: 1, y: 0 }}
@@ -94,7 +94,7 @@ export default function MediaDetailLayout({ item, children, onPlay }: MediaDetai
                         </motion.div>
                     </div>
 
-                    {/* Info Column */}
+                    {/* Info Column - Title, Rating, Actions, Description */}
                     <div className="flex-grow">
                         <motion.div
                             initial={{ opacity: 0, y: 20 }}
@@ -192,19 +192,19 @@ export default function MediaDetailLayout({ item, children, onPlay }: MediaDetai
 
                             {/* Description */}
                             {item.description && (
-                                <div className="prose prose-invert max-w-3xl mb-12">
+                                <div className="prose prose-invert max-w-3xl">
                                     <p className="text-lg text-gray-300 leading-relaxed">
                                         {item.description}
                                     </p>
                                 </div>
                             )}
-
-                            {/* Type Specific Content */}
-                            <div className="mt-8">
-                                {children}
-                            </div>
                         </motion.div>
                     </div>
+                </div>
+
+                {/* Type Specific Content - Full Width Below */}
+                <div className="mt-12">
+                    {children}
                 </div>
             </div>
         </div>

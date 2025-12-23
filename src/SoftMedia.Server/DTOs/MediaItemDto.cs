@@ -41,6 +41,8 @@ public class MediaItemDto
     public int? UserRating { get; set; }
     public bool IsFavorite { get; set; }
     public bool Watched { get; set; }
+    public double? PlaybackPosition { get; set; } // Resume position in seconds
+    public double? Progress { get; set; } // Progress percentage 0-100
 
     public Guid? SeriesId { get; set; }
     public int? SeasonNumber { get; set; }

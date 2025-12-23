@@ -71,9 +71,16 @@ public class FileScannerService : IFileScannerService
 
         if (library.Type == LibraryType.TV)
         {
-            existingSeries = await context.MediaItems
+            var seriesList = await context.MediaItems
                 .Where(m => m.LibraryId == libraryId && m.Type == MediaType.Series)
-                .ToDictionaryAsync(m => m.Title, m => m);
+                .ToListAsync();
+            
+            // Use case-insensitive dictionary for series matching
+            existingSeries = new Dictionary<string, MediaItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var s in seriesList)
+            {
+                existingSeries[s.Title] = s;
+            }
         }
         else if (library.Type == LibraryType.Music)
         {
@@ -356,12 +363,19 @@ public class FileScannerService : IFileScannerService
                         }
                         
                         if (string.IsNullOrEmpty(showName)) showName = "Unknown Show";
+                        
+                        // Normalize show name: strip trailing year like "Show Name 2024"
+                        var yearMatch = Regex.Match(showName, @"^(.+?)\s+\d{4}$");
+                        if (yearMatch.Success)
+                        {
+                            showName = yearMatch.Groups[1].Value.Trim();
+                        }
 
                         // Ensure Series Exists
                         if (!existingSeries.TryGetValue(showName, out var seriesItem))
                         {
-                            // Check DB again just in case
-                            seriesItem = await context.MediaItems.FirstOrDefaultAsync(m => m.LibraryId == libraryId && m.Type == MediaType.Series && m.Title == showName);
+                            // Check DB again just in case (case-insensitive)
+                            seriesItem = await context.MediaItems.FirstOrDefaultAsync(m => m.LibraryId == libraryId && m.Type == MediaType.Series && m.Title.ToLower() == showName.ToLower());
                             
                             if (seriesItem == null)
                             {
@@ -429,6 +443,65 @@ public class FileScannerService : IFileScannerService
                             _logger.LogInformation($"Updating Episode Title: '{existingItem.Title}' -> '{newTitle}'");
                             existingItem.Title = newTitle;
                             changed = true;
+                        }
+                        
+                        // Match episode still from series metadata (for existing episodes that may be missing stills)
+                        if (seriesItem != null && !string.IsNullOrEmpty(seriesItem.MetadataJson))
+                        {
+                            bool needsStill = string.IsNullOrEmpty(existingItem.MetadataJson) || !existingItem.MetadataJson.Contains("\"still\"");
+                            
+                            if (needsStill)
+                            {
+                                try
+                                {
+                                    var seriesMeta = JsonSerializer.Deserialize<Dictionary<string, object>>(seriesItem.MetadataJson);
+                                    if (seriesMeta != null && seriesMeta.TryGetValue("episodes", out var episodesObj) && episodesObj is JsonElement episodesArray)
+                                    {
+                                        foreach (var epInfo in episodesArray.EnumerateArray())
+                                        {
+                                            int epSeason = epInfo.TryGetProperty("season", out var s) ? s.GetInt32() : 0;
+                                            int epEpisode = epInfo.TryGetProperty("episode", out var e) ? e.GetInt32() : 0;
+                                            
+                                            if (epSeason == season && epEpisode == episode)
+                                            {
+                                                // Match found! Get the still image and metadata
+                                                var epMeta = new Dictionary<string, object>();
+                                                if (!string.IsNullOrEmpty(existingItem.MetadataJson))
+                                                {
+                                                    try { epMeta = JsonSerializer.Deserialize<Dictionary<string, object>>(existingItem.MetadataJson) ?? new(); } catch {}
+                                                }
+                                                
+                                                if (epInfo.TryGetProperty("still", out var still) && still.ValueKind != JsonValueKind.Null)
+                                                {
+                                                    epMeta["still"] = still.GetString()!;
+                                                    changed = true;
+                                                }
+                                                if (epInfo.TryGetProperty("summary", out var summary) && summary.ValueKind != JsonValueKind.Null && !epMeta.ContainsKey("summary"))
+                                                {
+                                                    epMeta["summary"] = summary.GetString()!;
+                                                    changed = true;
+                                                }
+                                                if (epInfo.TryGetProperty("airdate", out var airdate) && airdate.ValueKind != JsonValueKind.Null && !epMeta.ContainsKey("airdate"))
+                                                {
+                                                    epMeta["airdate"] = airdate.GetString()!;
+                                                    changed = true;
+                                                }
+                                                
+                                                if (changed)
+                                                {
+                                                    existingItem.MetadataJson = JsonSerializer.Serialize(epMeta);
+                                                    _logger.LogInformation($"Updated TVMaze metadata for existing S{season}E{episode}");
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, $"Failed to match episode still for existing S{season}E{episode}");
+                                }
+                            }
                         }
                     }
 
@@ -671,10 +744,23 @@ public class FileScannerService : IFileScannerService
                         }
                         
                         if (string.IsNullOrEmpty(showName)) showName = "Unknown Show";
+                        
+                        // Normalize show name: strip trailing year like "Show Name 2024"
+                        var yearMatch = Regex.Match(showName, @"^(.+?)\s+\d{4}$");
+                        if (yearMatch.Success)
+                        {
+                            var normalizedName = yearMatch.Groups[1].Value.Trim();
+                            _logger.LogInformation($"Normalized show name: '{showName}' -> '{normalizedName}'");
+                            showName = normalizedName;
+                        }
+                        
+                        _logger.LogInformation($"Looking for series: '{showName}' (file: {Path.GetFileName(file)})");
 
                         if (!existingSeries.TryGetValue(showName, out var seriesItem))
                         {
-                            seriesItem = await context.MediaItems.FirstOrDefaultAsync(m => m.LibraryId == libraryId && m.Type == MediaType.Series && m.Title == showName);
+                            _logger.LogInformation($"Series not in cache, checking database for: '{showName}'");
+                            // Case-insensitive lookup in database
+                            seriesItem = await context.MediaItems.FirstOrDefaultAsync(m => m.LibraryId == libraryId && m.Type == MediaType.Series && m.Title.ToLower() == showName.ToLower());
                             if (seriesItem == null)
                             {
                                 seriesItem = new MediaItem
@@ -704,6 +790,63 @@ public class FileScannerService : IFileScannerService
                         else
                         {
                             mediaItem.Title = $"Episode {episode}";
+                        }
+                        
+                        // Match episode still from series metadata
+                        if (!string.IsNullOrEmpty(seriesItem.MetadataJson))
+                        {
+                            try
+                            {
+                                var seriesMeta = JsonSerializer.Deserialize<Dictionary<string, object>>(seriesItem.MetadataJson);
+                                if (seriesMeta != null && seriesMeta.TryGetValue("episodes", out var episodesObj) && episodesObj is JsonElement episodesArray)
+                                {
+                                    foreach (var epInfo in episodesArray.EnumerateArray())
+                                    {
+                                        int epSeason = epInfo.TryGetProperty("season", out var s) ? s.GetInt32() : 0;
+                                        int epEpisode = epInfo.TryGetProperty("episode", out var e) ? e.GetInt32() : 0;
+                                        
+                                        if (epSeason == season && epEpisode == episode)
+                                        {
+                                            // Match found! Get the still image
+                                            var epMeta = new Dictionary<string, object>();
+                                            if (!string.IsNullOrEmpty(mediaItem.MetadataJson))
+                                            {
+                                                try { epMeta = JsonSerializer.Deserialize<Dictionary<string, object>>(mediaItem.MetadataJson) ?? new(); } catch {}
+                                            }
+                                            
+                                            if (epInfo.TryGetProperty("still", out var still) && still.ValueKind != JsonValueKind.Null)
+                                            {
+                                                epMeta["still"] = still.GetString()!;
+                                            }
+                                            if (epInfo.TryGetProperty("title", out var tvmazeTitle) && tvmazeTitle.ValueKind != JsonValueKind.Null)
+                                            {
+                                                // Use TVMaze title if we don't have one from filename
+                                                if (mediaItem.Title == $"Episode {episode}")
+                                                {
+                                                    mediaItem.Title = tvmazeTitle.GetString()!;
+                                                }
+                                                epMeta["tvmazeTitle"] = tvmazeTitle.GetString()!;
+                                            }
+                                            if (epInfo.TryGetProperty("summary", out var summary) && summary.ValueKind != JsonValueKind.Null)
+                                            {
+                                                epMeta["summary"] = summary.GetString()!;
+                                            }
+                                            if (epInfo.TryGetProperty("airdate", out var airdate) && airdate.ValueKind != JsonValueKind.Null)
+                                            {
+                                                epMeta["airdate"] = airdate.GetString()!;
+                                            }
+                                            
+                                            mediaItem.MetadataJson = JsonSerializer.Serialize(epMeta);
+                                            _logger.LogInformation($"Matched TVMaze metadata for S{season}E{episode}");
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, $"Failed to match episode still for S{season}E{episode}");
+                            }
                         }
                     }
                     // Music Logic (Create)
@@ -898,6 +1041,89 @@ public class FileScannerService : IFileScannerService
                     context.MediaItems.Add(mediaItem);
                     _logger.LogInformation($"Added media: {mediaItem.Title}");
                 }
+            }
+        }
+
+        // ===== ORPHAN CLEANUP =====
+        // Remove database entries for files that no longer exist on disk
+        _logger.LogInformation($"Checking for orphaned entries in library: {library.Name}");
+        
+        var allItemsInLibrary = await context.MediaItems
+            .Where(m => m.LibraryId == libraryId && !string.IsNullOrEmpty(m.Path))
+            .ToListAsync();
+        
+        var orphanedItems = allItemsInLibrary
+            .Where(m => !File.Exists(m.Path))
+            .ToList();
+
+        if (orphanedItems.Count > 0)
+        {
+            _logger.LogInformation($"Found {orphanedItems.Count} orphaned items to remove from library {library.Name}");
+            
+            foreach (var orphan in orphanedItems)
+            {
+                _logger.LogInformation($"Removing orphaned item: {orphan.Title} (Path: {orphan.Path})");
+                
+                // Remove associated images
+                var images = await context.MediaImages
+                    .Where(i => i.MediaItemId == orphan.Id)
+                    .ToListAsync();
+                context.MediaImages.RemoveRange(images);
+                
+                // Remove associated user interactions
+                var interactions = await context.UserMediaInteractions
+                    .Where(i => i.MediaItemId == orphan.Id)
+                    .ToListAsync();
+                context.UserMediaInteractions.RemoveRange(interactions);
+            }
+            
+            // Remove the orphaned media items
+            context.MediaItems.RemoveRange(orphanedItems);
+            _logger.LogInformation($"Removed {orphanedItems.Count} orphaned items from library {library.Name}");
+        }
+        else
+        {
+            _logger.LogInformation($"No orphaned items found in library: {library.Name}");
+        }
+
+        // Also remove empty Series/Artists/Albums (containers with no children)
+        if (library.Type == LibraryType.TV)
+        {
+            var emptySeries = await context.MediaItems
+                .Where(m => m.LibraryId == libraryId && m.Type == MediaType.Series)
+                .Where(s => !context.MediaItems.Any(e => e.SeriesId == s.Id))
+                .ToListAsync();
+            
+            if (emptySeries.Count > 0)
+            {
+                _logger.LogInformation($"Removing {emptySeries.Count} empty series containers");
+                context.MediaItems.RemoveRange(emptySeries);
+            }
+        }
+        else if (library.Type == LibraryType.Music)
+        {
+            // Remove empty albums
+            var emptyAlbums = await context.MediaItems
+                .Where(m => m.LibraryId == libraryId && m.Type == MediaType.Album)
+                .Where(a => !context.MediaItems.Any(t => t.AlbumId == a.Id))
+                .ToListAsync();
+            
+            if (emptyAlbums.Count > 0)
+            {
+                _logger.LogInformation($"Removing {emptyAlbums.Count} empty album containers");
+                context.MediaItems.RemoveRange(emptyAlbums);
+            }
+            
+            // Remove empty artists
+            var emptyArtists = await context.MediaItems
+                .Where(m => m.LibraryId == libraryId && m.Type == MediaType.Artist)
+                .Where(a => !context.MediaItems.Any(t => t.ArtistId == a.Id))
+                .ToListAsync();
+            
+            if (emptyArtists.Count > 0)
+            {
+                _logger.LogInformation($"Removing {emptyArtists.Count} empty artist containers");
+                context.MediaItems.RemoveRange(emptyArtists);
             }
         }
 

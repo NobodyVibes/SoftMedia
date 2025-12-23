@@ -10,16 +10,19 @@ interface FilterBarProps {
     onYear: (year: number | null) => void;
     onRating: (rating: number | null) => void;
     onFavorite: (isFavorite: boolean | null) => void;
+    onWatched?: (watched: boolean | null) => void;
     viewMode?: string;
     onViewModeChange?: (mode: string) => void;
+    showWatchedFilter?: boolean;
 }
 
-export function FilterBar({ onSearch, onSort, onGenre, onYear, onRating, onFavorite, viewMode, onViewModeChange }: FilterBarProps) {
+export function FilterBar({ onSearch, onSort, onGenre, onYear, onRating, onFavorite, onWatched, viewMode, onViewModeChange, showWatchedFilter }: FilterBarProps) {
     const [search, setSearch] = useState('');
     const [genre, setGenre] = useState('');
     const [year, setYear] = useState('');
     const [rating, setRating] = useState('');
     const [isFavorite, setIsFavorite] = useState<boolean | null>(null);
+    const [watched, setWatched] = useState<string>('');
 
     const debouncedSearch = useDebounce(search, 500);
     const debouncedGenre = useDebounce(genre, 500);
@@ -120,6 +123,28 @@ export function FilterBar({ onSearch, onSort, onGenre, onYear, onRating, onFavor
                         <option value="4">4+ Stars</option>
                         <option value="5">5 Stars</option>
                     </select>
+
+                    {/* Watched Filter (for TV libraries) */}
+                    {showWatchedFilter && onWatched && (
+                        <select
+                            value={watched}
+                            onChange={(e) => {
+                                setWatched(e.target.value);
+                                if (e.target.value === 'watched') {
+                                    onWatched(true);
+                                } else if (e.target.value === 'unwatched') {
+                                    onWatched(false);
+                                } else {
+                                    onWatched(null);
+                                }
+                            }}
+                            className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/50"
+                        >
+                            <option value="">Status</option>
+                            <option value="watched">Watched</option>
+                            <option value="unwatched">Unwatched</option>
+                        </select>
+                    )}
 
                     {/* Sort */}
                     <select

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, Server, Users, Library as LibraryIcon, Save, RefreshCw, Database, Network, Play, Plus } from 'lucide-react';
+import { Settings, Server, Users, Library as LibraryIcon, Save, RefreshCw, Database, Network, Play, Plus, ShieldCheck, AlertTriangle, RotateCcw, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Combobox } from '../components/ui/Combobox';
 import { settingsService, type AppSetting } from '../services/settingsService';
@@ -13,9 +13,129 @@ import { InviteManager } from '../components/InviteManager';
 import { LibraryListTable } from '../components/LibraryListTable';
 import { LibraryForm } from '../components/LibraryForm';
 import { ConfirmationModal } from '../components/ConfirmationModal';
-import type { Library } from '../types';
+import { LibraryScanProgress } from '../components/LibraryScanProgress';
+import type { Library, LibraryScanJob, FileWatcherIssue } from '../types';
+import { adminService } from '../services/adminService';
 
-type Tab = 'server' | 'users' | 'libraries' | 'metadata' | 'playback' | 'network';
+type Tab = 'server' | 'users' | 'libraries' | 'metadata' | 'playback' | 'network' | 'admin';
+
+// Admin Dashboard Component
+function AdminDashboard() {
+    const queryClient = useQueryClient();
+    const { t } = useTranslation();
+
+    const { data: issues = [], isLoading } = useQuery<FileWatcherIssue[]>({
+        queryKey: ['fileWatcherIssues'],
+        queryFn: adminService.getFileWatcherIssues,
+        refetchInterval: 10000, // Poll every 10s
+    });
+
+    const retryMutation = useMutation({
+        mutationFn: adminService.retryFile,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['fileWatcherIssues'] });
+            toast.success(t('File retry scheduled'));
+        },
+        onError: () => toast.error(t('Failed to retry file')),
+    });
+
+    const dismissMutation = useMutation({
+        mutationFn: adminService.clearIssue,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['fileWatcherIssues'] });
+            toast.success(t('Issue dismissed'));
+        },
+        onError: () => toast.error(t('Failed to dismiss issue')),
+    });
+
+    const formatDate = (dateStr: string) => {
+        return new Date(dateStr).toLocaleString();
+    };
+
+    return (
+        <div className="space-y-8">
+            {/* File Watcher Issues */}
+            <div className="bg-white/5 rounded-xl p-6 border border-white/10">
+                <div className="flex items-center gap-3 mb-6">
+                    <AlertTriangle className="h-5 w-5 text-amber-400" />
+                    <h3 className="text-lg font-semibold text-white">{t('File Watcher Issues')}</h3>
+                    <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 rounded-full text-xs font-medium">
+                        {issues.length}
+                    </span>
+                </div>
+
+                {isLoading ? (
+                    <div className="text-center py-8">
+                        <RefreshCw className="animate-spin w-6 h-6 text-primary mx-auto" />
+                    </div>
+                ) : issues.length === 0 ? (
+                    <div className="text-center py-8 text-gray-400">
+                        <AlertTriangle className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                        <p>{t('No file watcher issues')}</p>
+                        <p className="text-sm text-gray-500 mt-1">{t('All files are processing normally')}</p>
+                    </div>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full">
+                            <thead>
+                                <tr className="text-left text-gray-400 text-sm border-b border-white/10">
+                                    <th className="pb-3 font-medium">{t('File')}</th>
+                                    <th className="pb-3 font-medium">{t('Status')}</th>
+                                    <th className="pb-3 font-medium">{t('First Seen')}</th>
+                                    <th className="pb-3 font-medium">{t('Last Checked')}</th>
+                                    <th className="pb-3 font-medium text-right">{t('Actions')}</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-white/5">
+                                {issues.map((issue) => (
+                                    <tr key={issue.path} className="text-gray-300">
+                                        <td className="py-3">
+                                            <div className="font-medium truncate max-w-xs" title={issue.path}>
+                                                {issue.fileName}
+                                            </div>
+                                            <div className="text-xs text-gray-500 truncate max-w-xs" title={issue.path}>
+                                                {issue.path}
+                                            </div>
+                                        </td>
+                                        <td className="py-3">
+                                            <span className="px-2 py-1 bg-red-500/20 text-red-300 rounded text-xs">
+                                                {issue.status}
+                                            </span>
+                                        </td>
+                                        <td className="py-3 text-sm">{formatDate(issue.firstSeen)}</td>
+                                        <td className="py-3 text-sm">{formatDate(issue.lastChecked)}</td>
+                                        <td className="py-3 text-right">
+                                            <div className="flex items-center justify-end gap-2">
+                                                {issue.canRetry && (
+                                                    <button
+                                                        onClick={() => retryMutation.mutate(issue.path)}
+                                                        disabled={retryMutation.isPending}
+                                                        className="p-1.5 hover:bg-primary/20 rounded transition-colors text-primary"
+                                                        title={t('Retry')}
+                                                    >
+                                                        <RotateCcw size={16} />
+                                                    </button>
+                                                )}
+                                                <button
+                                                    onClick={() => dismissMutation.mutate(issue.path)}
+                                                    disabled={dismissMutation.isPending}
+                                                    className="p-1.5 hover:bg-red-500/20 rounded transition-colors text-gray-400 hover:text-red-400"
+                                                    title={t('Dismiss')}
+                                                >
+                                                    <X size={16} />
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
 
 export default function SettingsPage() {
     const [activeTab, setActiveTab] = useState<Tab>('server');
@@ -38,6 +158,17 @@ export default function SettingsPage() {
     const { data: libraries, isLoading: isLoadingLibraries } = useQuery({
         queryKey: ['libraries'],
         queryFn: libraryService.getAll,
+    });
+
+    // Fetch Scan Queue with polling when scans are active
+    const { data: scanQueue = [] } = useQuery<LibraryScanJob[]>({
+        queryKey: ['scanQueue'],
+        queryFn: libraryService.getScanQueue,
+        refetchInterval: (query) => {
+            const jobs = query.state.data ?? [];
+            const hasActiveScans = jobs.some((j: LibraryScanJob) => j.status === 'Running' || j.status === 'Queued');
+            return hasActiveScans ? 2000 : false; // Poll every 2s when active, stop when idle
+        },
     });
 
     // Update local state when data is fetched
@@ -73,8 +204,11 @@ export default function SettingsPage() {
             toast.success(t('Library created successfully'));
             setIsLibraryFormOpen(false);
         },
-        onError: () => {
-            toast.error(t('Failed to create library'));
+        onError: (error: unknown) => {
+            const errorMessage = (error as { response?: { data?: string } })?.response?.data
+                || (error as Error)?.message
+                || 'Failed to create library';
+            toast.error(errorMessage);
         }
     });
 
@@ -114,8 +248,9 @@ export default function SettingsPage() {
 
     const scanLibraryMutation = useMutation({
         mutationFn: libraryService.scanLibrary,
-        onSuccess: () => {
-            toast.success('Library scan started');
+        onSuccess: (job: LibraryScanJob) => {
+            queryClient.invalidateQueries({ queryKey: ['scanQueue'] });
+            toast.success(`Scan queued for ${job.libraryName}`);
         },
         onError: () => toast.error('Failed to start library scan'),
     });
@@ -200,6 +335,7 @@ export default function SettingsPage() {
         { id: 'metadata', label: t('Metadata'), icon: Database },
         { id: 'users', label: t('Users'), icon: Users },
         { id: 'libraries', label: t('Libraries'), icon: LibraryIcon },
+        { id: 'admin', label: t('Admin Dashboard'), icon: ShieldCheck },
     ];
 
     // Helper to render settings by group
@@ -234,7 +370,7 @@ export default function SettingsPage() {
                                 placeholder="Select signup mode..."
                                 className="max-w-md"
                             />
-                        ) : (setting.value === 'true' || setting.value === 'false') && setting.key !== 'DisableTranscoding' ? (
+                        ) : (setting.value === 'true' || setting.value === 'false') && !['DisableTranscoding', 'HardwareAcceleration'].includes(setting.key) ? (
                             <div className="flex items-center gap-3">
                                 <button
                                     onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}
@@ -585,6 +721,51 @@ export default function SettingsPage() {
                                         </button>
                                     </div>
 
+                                    {/* Scan Status Panel - Always visible */}
+                                    <div className="mb-6 p-4 bg-white/5 rounded-xl border border-white/10">
+                                        <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-3">Scan Status</h3>
+
+                                        {/* Active/Queued Scans */}
+                                        {scanQueue.filter(j => j.status === 'Running' || j.status === 'Queued').length > 0 ? (
+                                            <div className="space-y-3 mb-4">
+                                                {scanQueue
+                                                    .filter(j => j.status === 'Running' || j.status === 'Queued')
+                                                    .map(job => (
+                                                        <LibraryScanProgress key={job.id} job={job} />
+                                                    ))
+                                                }
+                                            </div>
+                                        ) : (
+                                            <p className="text-sm text-gray-500 mb-4">No active scans. Click the refresh icon on a library to start a scan.</p>
+                                        )}
+
+                                        {/* Recent Completed/Failed Scans */}
+                                        {scanQueue.filter(j => j.status === 'Completed' || j.status === 'Failed').length > 0 && (
+                                            <div className="border-t border-white/10 pt-3 mt-3">
+                                                <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Recent Scans</h4>
+                                                <div className="space-y-2">
+                                                    {/* Show only the most recent completed/failed scan per library */}
+                                                    {Object.values(
+                                                        scanQueue
+                                                            .filter(j => j.status === 'Completed' || j.status === 'Failed')
+                                                            .reduce((acc, job) => {
+                                                                // Keep only the most recent scan per library
+                                                                const existing = acc[job.libraryId];
+                                                                if (!existing ||
+                                                                    (job.completedAt && (!existing.completedAt ||
+                                                                        job.completedAt > existing.completedAt))) {
+                                                                    acc[job.libraryId] = job;
+                                                                }
+                                                                return acc;
+                                                            }, {} as Record<string, typeof scanQueue[0]>)
+                                                    ).map(job => (
+                                                        <LibraryScanProgress key={job.id} job={job} compact />
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
                                     {isLoadingLibraries ? (
                                         <div className="text-center py-12">
                                             <RefreshCw className="animate-spin w-8 h-8 text-primary mx-auto" />
@@ -592,6 +773,7 @@ export default function SettingsPage() {
                                     ) : (
                                         <LibraryListTable
                                             libraries={libraries || []}
+                                            scanJobs={scanQueue}
                                             onEdit={(library) => {
                                                 setEditingLibrary(library);
                                                 setIsLibraryFormOpen(true);
@@ -604,6 +786,10 @@ export default function SettingsPage() {
                                 </div>
                             )}
                         </>
+                    )}
+
+                    {activeTab === 'admin' && (
+                        <AdminDashboard />
                     )}
                 </div>
             </div>

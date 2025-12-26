@@ -1,5 +1,5 @@
 import api from './api';
-import { type Library, type MediaItem, type PagedResult } from '../types';
+import { type Library, type MediaItem, type PagedResult, type LibraryScanJob } from '../types';
 
 export const libraryService = {
     getAll: async (): Promise<Library[]> => {
@@ -55,7 +55,19 @@ export const libraryService = {
         await api.put('/libraries/reorder', orderedIds);
     },
 
-    scanLibrary: async (id: string) => {
-        await api.post(`/libraries/${id}/scan`);
+    // Scan Queue API Methods
+    scanLibrary: async (id: string): Promise<LibraryScanJob> => {
+        const response = await api.post<LibraryScanJob>(`/libraries/${id}/scan`);
+        return response.data;
+    },
+
+    getScanQueue: async (): Promise<LibraryScanJob[]> => {
+        const response = await api.get<LibraryScanJob[]>('/libraries/scan-queue');
+        return response.data;
+    },
+
+    getScanJobStatus: async (jobId: string): Promise<LibraryScanJob> => {
+        const response = await api.get<LibraryScanJob>(`/libraries/scan-jobs/${jobId}`);
+        return response.data;
     },
 };

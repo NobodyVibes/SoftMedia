@@ -1,7 +1,8 @@
 import { Search, Heart } from 'lucide-react';
-import { useState, useEffect } from 'react';
-import { useDebounce } from '../../hooks/useDebounce'; // Assuming this exists or I'll implement it
+import { useState, useEffect, useCallback } from 'react';
+import { useDebounce } from '../../hooks/useDebounce';
 import { cn } from '../../lib/utils';
+import { GenreComboBox } from './GenreComboBox';
 
 interface FilterBarProps {
     onSearch: (query: string) => void;
@@ -14,35 +15,91 @@ interface FilterBarProps {
     viewMode?: string;
     onViewModeChange?: (mode: string) => void;
     showWatchedFilter?: boolean;
+    libraryType?: string;
+    libraryId?: string;
 }
 
-export function FilterBar({ onSearch, onSort, onGenre, onYear, onRating, onFavorite, onWatched, viewMode, onViewModeChange, showWatchedFilter }: FilterBarProps) {
+// Common styles for select elements
+const selectStyles = "bg-[#2a2a2a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/50 cursor-pointer";
+const optionStyles = "bg-[#2a2a2a] text-white";
+
+export function FilterBar({
+    onSearch,
+    onSort,
+    onGenre,
+    onYear,
+    onRating,
+    onFavorite,
+    onWatched,
+    viewMode,
+    onViewModeChange,
+    showWatchedFilter,
+    libraryType,
+    libraryId
+}: FilterBarProps) {
     const [search, setSearch] = useState('');
     const [genre, setGenre] = useState('');
     const [year, setYear] = useState('');
     const [rating, setRating] = useState('');
     const [isFavorite, setIsFavorite] = useState<boolean | null>(null);
     const [watched, setWatched] = useState<string>('');
+    const [sort, setSort] = useState('title');
 
     const debouncedSearch = useDebounce(search, 500);
     const debouncedGenre = useDebounce(genre, 500);
     const debouncedYear = useDebounce(year, 500);
 
+    // Use refs to store callbacks to avoid dependency issues
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         onSearch(debouncedSearch);
-    }, [debouncedSearch, onSearch]);
+    }, [debouncedSearch]); // Intentionally omitting onSearch - it's a stable setState dispatcher
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         onGenre(debouncedGenre);
-    }, [debouncedGenre, onGenre]);
+    }, [debouncedGenre, onGenre]); // Include onGenre since we need it for GenreComboBox
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         const y = parseInt(debouncedYear);
         onYear(isNaN(y) ? null : y);
-    }, [debouncedYear, onYear]);
+    }, [debouncedYear]); // Intentionally omitting onYear - it's a stable setState dispatcher
+
+    // Determine which filters to show based on library type
+    const isMusicLibrary = libraryType === 'Music';
+    const isPhotoLibrary = libraryType === 'Photo';
+
+    // Get sort options based on library type
+    const getSortOptions = useCallback(() => {
+        const common = [
+            { value: 'title', label: 'Title' },
+            { value: 'dateadded', label: 'Date Added' },
+            { value: 'rating', label: 'Rating' },
+        ];
+
+        if (isMusicLibrary) {
+            return [
+                ...common,
+                { value: 'artist', label: 'Artist' },
+            ];
+        }
+
+        if (isPhotoLibrary) {
+            return [
+                { value: 'dateadded', label: 'Date Added' },
+                { value: 'title', label: 'Title' },
+            ];
+        }
+
+        return [
+            ...common,
+            { value: 'year', label: 'Year' },
+        ];
+    }, [isMusicLibrary, isPhotoLibrary]);
 
     return (
-        <div className="bg-black/20 border-b border-white/10 p-4 sticky top-16 z-20 backdrop-blur-md">
+        <div className="bg-black/20 border-b border-white/10 p-4 z-20 backdrop-blur-md">
             <div className="container mx-auto flex flex-col md:flex-row gap-4 items-center justify-between">
 
                 {/* Search */}
@@ -60,8 +117,7 @@ export function FilterBar({ onSearch, onSort, onGenre, onYear, onRating, onFavor
                 {/* Filters */}
                 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
 
-                    {/* View Mode Toggle (Only if provided) */}
-                    {/* View Mode Toggle (Only if provided) */}
+                    {/* View Mode Toggle (Only for Music libraries) */}
                     {onViewModeChange && (
                         <div className="flex items-center bg-white/5 border border-white/10 rounded-lg p-1 h-[38px]">
                             {[
@@ -75,8 +131,8 @@ export function FilterBar({ onSearch, onSort, onGenre, onYear, onRating, onFavor
                                     className={cn(
                                         "px-3 py-1 text-sm font-medium rounded-md transition-all",
                                         (viewMode || 'artists') === option.id
-                                            ? "bg-primary text-white shadow-sm" // Active State
-                                            : "text-gray-400 hover:text-white hover:bg-white/5" // Inactive State
+                                            ? "bg-primary text-white shadow-sm"
+                                            : "text-gray-400 hover:text-white hover:bg-white/5"
                                     )}
                                 >
                                     {option.label}
@@ -85,46 +141,49 @@ export function FilterBar({ onSearch, onSort, onGenre, onYear, onRating, onFavor
                         </div>
                     )}
 
-                    {/* Genre */}
-                    <div className="relative w-32">
-                        <input
-                            type="text"
-                            value={genre}
-                            onChange={(e) => setGenre(e.target.value)}
-                            placeholder="Genre"
-                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/50"
-                        />
-                    </div>
+                    {/* Genre Filter - Combo box with autocomplete */}
+                    <GenreComboBox
+                        libraryId={libraryId}
+                        value={genre}
+                        onChange={setGenre}
+                    />
 
-                    {/* Year */}
+                    {/* Year Filter - always visible */}
                     <div className="relative w-24">
                         <input
                             type="number"
                             value={year}
                             onChange={(e) => setYear(e.target.value)}
                             placeholder="Year"
+                            min="1900"
+                            max={new Date().getFullYear() + 1}
                             className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/50"
                         />
                     </div>
 
-                    {/* Rating */}
+                    {/* Rating Filter - always visible (10-star system) */}
                     <select
                         value={rating}
                         onChange={(e) => {
                             setRating(e.target.value);
                             onRating(e.target.value ? parseInt(e.target.value) : null);
                         }}
-                        className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/50"
+                        className={selectStyles}
                     >
-                        <option value="">Rating</option>
-                        <option value="1">1+ Stars</option>
-                        <option value="2">2+ Stars</option>
-                        <option value="3">3+ Stars</option>
-                        <option value="4">4+ Stars</option>
-                        <option value="5">5 Stars</option>
+                        <option value="" className={optionStyles}>All Ratings</option>
+                        <option value="1" className={optionStyles}>1+ Stars</option>
+                        <option value="2" className={optionStyles}>2+ Stars</option>
+                        <option value="3" className={optionStyles}>3+ Stars</option>
+                        <option value="4" className={optionStyles}>4+ Stars</option>
+                        <option value="5" className={optionStyles}>5+ Stars</option>
+                        <option value="6" className={optionStyles}>6+ Stars</option>
+                        <option value="7" className={optionStyles}>7+ Stars</option>
+                        <option value="8" className={optionStyles}>8+ Stars</option>
+                        <option value="9" className={optionStyles}>9+ Stars</option>
+                        <option value="10" className={optionStyles}>10 Stars</option>
                     </select>
 
-                    {/* Watched Filter (for TV libraries) */}
+                    {/* Watched Filter (for TV/Movie libraries) */}
                     {showWatchedFilter && onWatched && (
                         <select
                             value={watched}
@@ -138,34 +197,34 @@ export function FilterBar({ onSearch, onSort, onGenre, onYear, onRating, onFavor
                                     onWatched(null);
                                 }
                             }}
-                            className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/50"
+                            className={selectStyles}
                         >
-                            <option value="">Status</option>
-                            <option value="watched">Watched</option>
-                            <option value="unwatched">Unwatched</option>
+                            <option value="" className={optionStyles}>All Status</option>
+                            <option value="watched" className={optionStyles}>Watched</option>
+                            <option value="unwatched" className={optionStyles}>Unwatched</option>
                         </select>
                     )}
 
-                    {/* Sort */}
+                    {/* Sort Dropdown */}
                     <select
-                        onChange={(e) => onSort(e.target.value)}
-                        className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/50"
+                        value={sort}
+                        onChange={(e) => {
+                            setSort(e.target.value);
+                            onSort(e.target.value);
+                        }}
+                        className={selectStyles}
                     >
-                        <option value="title">Title</option>
-                        <option value="dateadded">Date Added</option>
-                        <option value="year">Year</option>
-                        <option value="rating">Rating</option>
+                        {getSortOptions().map((option) => (
+                            <option key={option.value} value={option.value} className={optionStyles}>
+                                {option.label}
+                            </option>
+                        ))}
                     </select>
 
                     {/* Favorite Toggle */}
                     <button
                         onClick={() => {
-                            const newVal = isFavorite === true ? null : true; // Toggle between True and Null (All)
-                            // Or maybe True -> False -> Null?
-                            // Let's do: Null (All) -> True (Favs) -> False (Non-Favs) -> Null
-                            // Or just Toggle Favs vs All.
-                            // Requirement says "Favorites toggle works".
-                            // Let's do simple toggle: Show Favorites Only vs Show All.
+                            const newVal = isFavorite === true ? null : true;
                             setIsFavorite(newVal);
                             onFavorite(newVal);
                         }}
@@ -184,3 +243,6 @@ export function FilterBar({ onSearch, onSort, onGenre, onYear, onRating, onFavor
         </div>
     );
 }
+
+
+

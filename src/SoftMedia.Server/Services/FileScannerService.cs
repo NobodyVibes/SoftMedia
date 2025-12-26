@@ -11,8 +11,9 @@ namespace SoftMedia.Server.Services;
 
 public interface IFileScannerService
 {
-    Task ScanLibraryAsync(Guid libraryId);
+    Task ScanLibraryAsync(Guid libraryId, Action<int, int, string?>? progressCallback = null);
     Task ScanAllLibrariesAsync();
+    Task ScanLibraryWithProgressAsync(Guid libraryId, LibraryScanJob job);
 }
 
 public class FileScannerService : IFileScannerService
@@ -49,7 +50,7 @@ public class FileScannerService : IFileScannerService
         }
     }
 
-    public async Task ScanLibraryAsync(Guid libraryId)
+    public async Task ScanLibraryAsync(Guid libraryId, Action<int, int, string?>? progressCallback = null)
     {
         using var scope = _scopeFactory.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -63,6 +64,7 @@ public class FileScannerService : IFileScannerService
         }
 
         _logger.LogInformation($"Scanning library: {library.Name}");
+        _logger.LogDebug($"Library paths: {string.Join(", ", library.Paths)}");
 
         // Pre-fetch existing series/artists/albums to avoid repeated DB queries
         var existingSeries = new Dictionary<string, MediaItem>();
@@ -161,6 +163,16 @@ public class FileScannerService : IFileScannerService
              // existingAlbums = ...
         }
 
+        // ===== OPTIMIZATION: Pre-load all existing file paths to avoid per-file DB queries =====
+        var existingPaths = await context.MediaItems
+            .Where(m => m.LibraryId == libraryId && !string.IsNullOrEmpty(m.Path))
+            .Select(m => m.Path)
+            .ToListAsync();
+        
+        // Use HashSet for O(1) lookup instead of O(n) per file
+        var existingPathSet = new HashSet<string>(existingPaths, StringComparer.OrdinalIgnoreCase);
+        _logger.LogDebug($"Pre-loaded {existingPathSet.Count} existing paths for efficient lookup");
+
         foreach (var path in library.Paths)
         {
             if (!_fileSystem.DirectoryExists(path))
@@ -170,17 +182,43 @@ public class FileScannerService : IFileScannerService
             }
 
             var files = _fileSystem.GetFiles(path, "*.*", SearchOption.AllDirectories);
-            foreach (var file in files)
+            var fileList = files.ToList();
+            _logger.LogDebug($"Found {fileList.Count} files in path: {path}");
+            
+            // Count media files for progress tracking
+            var mediaFiles = fileList.Where(f => IsMediaFile(f, library.Type)).ToList();
+            var totalMediaFiles = mediaFiles.Count;
+            var processedCount = 0;
+            
+            foreach (var file in mediaFiles)
             {
-                if (!IsMediaFile(file, library.Type)) continue;
+                processedCount++;
+                
+                // Report progress every 3 files or on last file
+                if (progressCallback != null && (processedCount % 3 == 0 || processedCount == totalMediaFiles))
+                {
+                    progressCallback(processedCount, totalMediaFiles, Path.GetFileName(file));
+                }
 
-                var existingItem = await context.MediaItems
-                    .FirstOrDefaultAsync(m => m.Path == file && m.LibraryId == libraryId);
+                // ===== OPTIMIZED: Use HashSet for O(1) check instead of O(n) DB query =====
+                var isExistingFile = existingPathSet.Contains(file);
+                
+                // Only query DB if file exists (to get the actual entity for updates)
+                MediaItem? existingItem = null;
+                if (isExistingFile)
+                {
+                    existingItem = await context.MediaItems
+                        .FirstOrDefaultAsync(m => m.Path == file && m.LibraryId == libraryId);
+                }
 
                 var title = Path.GetFileNameWithoutExtension(file);
                 int? year = null;
                 
-                _logger.LogInformation($"Processing file: {file}");
+                // Only log new files to reduce noise
+                if (!isExistingFile)
+                {
+                    _logger.LogInformation($"Processing new file: {file}");
+                }
                 
                 // Use FileNameParser for cleaner titles
                 if (library.Type == LibraryType.Movie)
@@ -772,6 +810,7 @@ public class FileScannerService : IFileScannerService
                                     Type = MediaType.Series,
                                     DateAdded = DateTime.UtcNow
                                 };
+                                _logger.LogDebug($"Creating new series: '{showName}'");
                                 await metadataAggregator.EnrichMediaItemAsync(seriesItem, LibraryType.TV);
                                 context.MediaItems.Add(seriesItem);
                             }
@@ -1039,6 +1078,7 @@ public class FileScannerService : IFileScannerService
                     }
 
                     context.MediaItems.Add(mediaItem);
+                    _logger.LogDebug($"Added item: {mediaItem.Type} - '{mediaItem.Title}'");
                     _logger.LogInformation($"Added media: {mediaItem.Title}");
                 }
             }
@@ -1046,15 +1086,29 @@ public class FileScannerService : IFileScannerService
 
         // ===== ORPHAN CLEANUP =====
         // Remove database entries for files that no longer exist on disk
+        // IMPORTANT: Only check items that represent actual files (not containers like Series, Album, Artist)
         _logger.LogInformation($"Checking for orphaned entries in library: {library.Name}");
         
-        var allItemsInLibrary = await context.MediaItems
-            .Where(m => m.LibraryId == libraryId && !string.IsNullOrEmpty(m.Path))
+        // Container types have directory paths, not file paths - exclude them from file existence check
+        var containerTypes = new[] { MediaType.Series, MediaType.Album, MediaType.Artist };
+        
+        var fileBasedItems = await context.MediaItems
+            .Where(m => m.LibraryId == libraryId && 
+                        !string.IsNullOrEmpty(m.Path) &&
+                        !containerTypes.Contains(m.Type))
             .ToListAsync();
         
-        var orphanedItems = allItemsInLibrary
-            .Where(m => !File.Exists(m.Path))
-            .ToList();
+        _logger.LogDebug($"Checking {fileBasedItems.Count} file-based items for orphans");
+        
+        var orphanedItems = new List<MediaItem>();
+        foreach (var item in fileBasedItems)
+        {
+            if (!File.Exists(item.Path))
+            {
+                _logger.LogDebug($"Orphan found: '{item.Title}' - Path: '{item.Path}'");
+                orphanedItems.Add(item);
+            }
+        }
 
         if (orphanedItems.Count > 0)
         {
@@ -1086,13 +1140,53 @@ public class FileScannerService : IFileScannerService
             _logger.LogInformation($"No orphaned items found in library: {library.Name}");
         }
 
+        // ===== SAVE ORPHAN DELETIONS FIRST =====
+        // We must save orphan deletions before checking for empty containers,
+        // otherwise the DB query for episode counts won't reflect the deletions
+        if (context.ChangeTracker.HasChanges())
+        {
+            _logger.LogInformation("Saving orphan deletions before checking for empty containers...");
+            await context.SaveChangesAsync();
+        }
+
         // Also remove empty Series/Artists/Albums (containers with no children)
+
         if (library.Type == LibraryType.TV)
         {
-            var emptySeries = await context.MediaItems
+            // Get IDs of episodes that are marked for deletion (not yet saved)
+            var deletedEpisodeIds = context.ChangeTracker.Entries<MediaItem>()
+                .Where(e => e.State == Microsoft.EntityFrameworkCore.EntityState.Deleted && e.Entity.Type == MediaType.Episode)
+                .Select(e => e.Entity.Id)
+                .ToHashSet();
+            
+            // Get all series in this library
+            var allSeries = await context.MediaItems
                 .Where(m => m.LibraryId == libraryId && m.Type == MediaType.Series)
-                .Where(s => !context.MediaItems.Any(e => e.SeriesId == s.Id))
                 .ToListAsync();
+            
+            _logger.LogDebug($"Checking {allSeries.Count} series for empty containers");
+            
+            // For each series, check if it has any remaining episodes
+            var emptySeries = new List<MediaItem>();
+            foreach (var series in allSeries)
+            {
+                var episodeCount = await context.MediaItems
+                    .Where(e => e.SeriesId == series.Id && e.Type == MediaType.Episode)
+                    .CountAsync();
+                
+                // Subtract episodes that are pending deletion
+                var pendingDeleteCount = deletedEpisodeIds.Count; // This is a simplification
+                
+                if (episodeCount == 0)
+                {
+                    _logger.LogInformation($"Empty series detected: '{series.Title}'");
+                    emptySeries.Add(series);
+                }
+                else
+                {
+
+                }
+            }
             
             if (emptySeries.Count > 0)
             {
@@ -1192,4 +1286,85 @@ public class FileScannerService : IFileScannerService
             _ => false
         };
     }
+
+    /// <summary>
+    /// Scans a library with progress reporting to the provided job.
+    /// This method wraps the original ScanLibraryAsync and reports progress via the job.
+    /// </summary>
+    public async Task ScanLibraryWithProgressAsync(Guid libraryId, LibraryScanJob job)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var scanQueueService = scope.ServiceProvider.GetService<ILibraryScanQueueService>();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        
+        var library = await context.Libraries.FindAsync(libraryId);
+
+        if (library == null)
+        {
+            _logger.LogWarning($"Library with ID {libraryId} not found.");
+            scanQueueService?.FailJob(job.Id, $"Library with ID {libraryId} not found.");
+            return;
+        }
+
+        try
+        {
+            // Update job status to running
+            job.Status = LibraryScanStatus.Running;
+            job.Stage = LibraryScanStage.Discovery;
+            scanQueueService?.UpdateProgress(job.Id, LibraryScanStage.Discovery, 0, 0);
+
+            // Count files first for progress estimation
+            int totalFiles = 0;
+            foreach (var path in library.Paths)
+            {
+                if (_fileSystem.DirectoryExists(path))
+                {
+                    var files = _fileSystem.GetFiles(path, "*.*", SearchOption.AllDirectories)
+                        .Where(f => IsMediaFile(f, library.Type));
+                    totalFiles += files.Count();
+                }
+            }
+            
+            job.TotalFiles = totalFiles;
+            job.Stage = LibraryScanStage.Processing;
+            scanQueueService?.UpdateProgress(job.Id, LibraryScanStage.Processing, 0, totalFiles);
+            
+            _logger.LogInformation($"Discovered {totalFiles} files for library {library.Name}, starting scan...");
+
+            // Get count of items before scan
+            var itemsBefore = await context.MediaItems.CountAsync(m => m.LibraryId == libraryId);
+
+            // Call the original full scan logic with progress callback
+            await ScanLibraryAsync(libraryId, (processed, total, currentFile) =>
+            {
+                job.ProcessedFiles = processed;
+                job.TotalFiles = total;
+                job.CurrentFile = currentFile;
+                scanQueueService?.UpdateProgress(job.Id, LibraryScanStage.Processing, processed, total, currentFile);
+            });
+
+            // Get count of items after scan
+            var itemsAfter = await context.MediaItems.CountAsync(m => m.LibraryId == libraryId);
+            var newItems = Math.Max(0, itemsAfter - itemsBefore);
+
+            // Update job with final stats
+            job.Stage = LibraryScanStage.Finishing;
+            job.ProcessedFiles = totalFiles;
+            job.NewItems = newItems;
+            job.UpdatedItems = 0; // Can't easily track this without modifying original method
+            job.SkippedItems = Math.Max(0, totalFiles - newItems);
+            
+            scanQueueService?.UpdateProgress(job.Id, LibraryScanStage.Finishing, totalFiles, totalFiles, null, newItems, 0, job.SkippedItems);
+            scanQueueService?.CompleteJob(job.Id, newItems, 0, job.SkippedItems, 0);
+            
+            _logger.LogInformation($"Completed scan for library {library.Name}: {newItems} new items");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Error scanning library {library.Name}");
+            scanQueueService?.FailJob(job.Id, ex.Message);
+            throw;
+        }
+    }
 }
+

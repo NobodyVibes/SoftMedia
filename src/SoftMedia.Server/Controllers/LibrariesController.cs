@@ -17,11 +17,13 @@ public class LibrariesController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IFileScannerService _fileScanner;
+    private readonly ILibraryScanQueueService _scanQueueService;
 
-    public LibrariesController(AppDbContext context, IFileScannerService fileScanner)
+    public LibrariesController(AppDbContext context, IFileScannerService fileScanner, ILibraryScanQueueService scanQueueService)
     {
         _context = context;
         _fileScanner = fileScanner;
+        _scanQueueService = scanQueueService;
     }
 
     [HttpGet]
@@ -78,6 +80,10 @@ public class LibrariesController : ControllerBase
 
         _context.Libraries.Add(library);
         await _context.SaveChangesAsync();
+
+        // Automatically trigger an initial scan for the new library
+        _scanQueueService.EnqueueScan(library.Id, library.Name);
+
 
         return CreatedAtAction(nameof(GetLibrary), new { id = library.Id }, library);
     }
@@ -156,8 +162,11 @@ public class LibrariesController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Enqueue a library scan and return the job for progress tracking.
+    /// </summary>
     [HttpPost("{id}/scan")]
-    public async Task<IActionResult> ScanLibrary(Guid id)
+    public async Task<ActionResult<LibraryScanJob>> ScanLibrary(Guid id)
     {
         var library = await _context.Libraries.FindAsync(id);
         if (library == null)
@@ -165,30 +174,97 @@ public class LibrariesController : ControllerBase
             return NotFound();
         }
 
-        // Run in background? Or await? 
-        // For now, await to report errors, but ideally should be background job.
-        // Given it's a personal server, awaiting is okay for immediate feedback, 
-        // but might timeout for large libraries.
-        // Better: Fire and forget, or return Accepted.
-        // The requirement says "Trigger immediate library scan".
-        // I'll use fire-and-forget for the HTTP request but log it.
-        // Actually, FileScannerService.ScanLibraryAsync is async.
-        // If I await it, the UI hangs.
-        // I will run it in a background task.
-        _ = Task.Run(async () => 
+        // Check if already in queue
+        if (_scanQueueService.IsLibraryInQueue(id))
         {
-            try 
+            var existingJob = _scanQueueService.GetAllJobs()
+                .FirstOrDefault(j => j.LibraryId == id && 
+                    (j.Status == LibraryScanStatus.Queued || j.Status == LibraryScanStatus.Running));
+            
+            if (existingJob != null)
             {
-                await _fileScanner.ScanLibraryAsync(id);
+                return Ok(existingJob); // Return existing job instead of creating duplicate
             }
-            catch (Exception ex)
-            {
-                // Log error (logger not injected in controller, but FileScanner logs internally)
-                Console.WriteLine($"Error scanning library {id}: {ex.Message}");
-            }
-        });
+        }
 
-        return Accepted(new { message = "Scan started" });
+        // Enqueue the scan job
+        var job = _scanQueueService.EnqueueScan(id, library.Name);
+        
+        return Accepted(job);
+    }
+
+    /// <summary>
+    /// Get all active and queued scan jobs.
+    /// </summary>
+    [HttpGet("scan-queue")]
+    public ActionResult<IEnumerable<LibraryScanJob>> GetScanQueue()
+    {
+        var jobs = _scanQueueService.GetAllJobs();
+        return Ok(jobs);
+    }
+
+    /// <summary>
+    /// Get the status of a specific scan job.
+    /// </summary>
+    [HttpGet("scan-jobs/{jobId}")]
+    public ActionResult<LibraryScanJob> GetScanJobStatus(Guid jobId)
+    {
+        var job = _scanQueueService.GetJobStatus(jobId);
+        if (job == null)
+        {
+            return NotFound();
+        }
+        return Ok(job);
+    }
+
+    /// <summary>
+    /// Get all unique genres for a library.
+    /// </summary>
+    [HttpGet("{id}/genres")]
+    public async Task<ActionResult<IEnumerable<string>>> GetLibraryGenres(Guid id)
+    {
+        var library = await _context.Libraries.FindAsync(id);
+        if (library == null)
+        {
+            return NotFound("Library not found.");
+        }
+
+        // Get all MetadataJson values for items in this library
+        var metadataJsons = await _context.MediaItems
+            .AsNoTracking()
+            .Where(m => m.LibraryId == id && m.MetadataJson != null)
+            .Select(m => m.MetadataJson)
+            .ToListAsync();
+
+        var allGenres = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var json in metadataJsons)
+        {
+            if (string.IsNullOrEmpty(json)) continue;
+
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("genres", out var genresElement) &&
+                    genresElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var genre in genresElement.EnumerateArray())
+                    {
+                        var genreStr = genre.GetString();
+                        if (!string.IsNullOrWhiteSpace(genreStr))
+                        {
+                            allGenres.Add(genreStr.Trim());
+                        }
+                    }
+                }
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // Skip invalid JSON
+            }
+        }
+
+        return Ok(allGenres.OrderBy(g => g));
     }
 
     [HttpGet("{id}/items")]
@@ -275,18 +351,36 @@ public class LibrariesController : ControllerBase
 
         if (minRating.HasValue)
         {
-            // Filter by User Rating
-            joinedQuery = joinedQuery.Where(x => x.Interaction.Rating >= minRating.Value);
+            // Filter by User Rating - only items with an interaction that has a rating >= minRating
+            joinedQuery = joinedQuery.Where(x => x.Interaction != null && x.Interaction.Rating >= minRating.Value);
         }
 
         if (isFavorite.HasValue)
         {
-            joinedQuery = joinedQuery.Where(x => x.Interaction.IsFavorite == isFavorite.Value);
+            if (isFavorite.Value)
+            {
+                // Show only favorites - must have interaction and be favorited
+                joinedQuery = joinedQuery.Where(x => x.Interaction != null && x.Interaction.IsFavorite == true);
+            }
+            else
+            {
+                // Show non-favorites - no interaction or not favorited
+                joinedQuery = joinedQuery.Where(x => x.Interaction == null || x.Interaction.IsFavorite == false);
+            }
         }
 
         if (watched.HasValue)
         {
-            joinedQuery = joinedQuery.Where(x => x.Interaction.IsWatched == watched.Value);
+            if (watched.Value)
+            {
+                // Show only watched - must have interaction and be watched
+                joinedQuery = joinedQuery.Where(x => x.Interaction != null && x.Interaction.IsWatched == true);
+            }
+            else
+            {
+                // Show unwatched - no interaction or not watched
+                joinedQuery = joinedQuery.Where(x => x.Interaction == null || x.Interaction.IsWatched == false);
+            }
         }
 
         // Sorting

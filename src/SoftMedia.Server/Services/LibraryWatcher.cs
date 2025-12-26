@@ -1,13 +1,72 @@
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
+using SoftMedia.Server.Models;
 
 namespace SoftMedia.Server.Services;
 
-public class LibraryWatcher : IHostedService, IDisposable
+/// <summary>
+/// Smart file watcher that detects new files and waits for them to be fully downloaded
+/// before triggering library scans. Uses file stability detection to avoid scanning
+/// incomplete downloads.
+/// </summary>
+public class LibraryWatcher : BackgroundService, IDisposable
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<LibraryWatcher> _logger;
     private readonly List<FileSystemWatcher> _watchers = new();
+    
+    // Track pending files with their last known size and timestamp
+    private readonly ConcurrentDictionary<string, PendingFile> _pendingFiles = new();
+    
+    // Libraries that need scanning (deduplicated)
+    private readonly ConcurrentDictionary<Guid, DateTime> _librariesToScan = new();
+    
+    // Configuration
+    private const int StabilityCheckIntervalMs = 5000; // Check every 5 seconds
+    private const int FileStabilitySeconds = 10; // File must be stable for 10 seconds
+    private const int ScanDebounceSeconds = 15; // Wait 15 seconds of no new files before scanning
+    private const int LockedFileTimeoutMinutes = 15; // Give up on locked files after 15 minutes
+    private const int StalledFileTimeoutMinutes = 15; // Give up on stalled downloads after 15 minutes
+    private const int AbsoluteTimeoutHours = 2; // Absolute max wait time
+
+    // Track file watcher issues for admin visibility
+    private readonly ConcurrentDictionary<string, FileWatcherIssue> _fileIssues = new();
+    
+    /// <summary>Gets current file watcher issues for admin dashboard.</summary>
+    public IEnumerable<FileWatcherIssue> GetFileIssues() => _fileIssues.Values.ToList();
+    
+    /// <summary>Clears a specific file issue.</summary>
+    public bool ClearIssue(string path) => _fileIssues.TryRemove(path, out _);
+    
+    /// <summary>Retries a file by adding it back to pending queue.</summary>
+    public bool RetryFile(string path)
+    {
+        if (!_fileIssues.TryRemove(path, out var issue)) return false;
+        if (!File.Exists(path)) return false;
+        
+        _pendingFiles[path] = new PendingFile
+        {
+            Path = path,
+            LastSize = GetFileSizeSafe(path),
+            LastSizeChange = DateTime.UtcNow,
+            LibraryId = issue.LibraryId,
+            CheckCount = 0,
+            FirstSeen = DateTime.UtcNow
+        };
+        _logger.LogInformation("Retrying file: {Path}", path);
+        return true;
+    }
+
+    private class PendingFile
+    {
+        public string Path { get; set; } = string.Empty;
+        public long LastSize { get; set; }
+        public DateTime LastSizeChange { get; set; }
+        public DateTime FirstSeen { get; set; }
+        public Guid LibraryId { get; set; }
+        public int CheckCount { get; set; }
+    }
 
     public LibraryWatcher(IServiceScopeFactory scopeFactory, ILogger<LibraryWatcher> logger)
     {
@@ -15,22 +74,41 @@ public class LibraryWatcher : IHostedService, IDisposable
         _logger = logger;
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Starting Library Watcher...");
+        _logger.LogInformation("Library Watcher starting...");
+        
         await InitializeWatchersAsync();
+
+        // Main loop - periodically check pending files and trigger scans
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await ProcessPendingFilesAsync();
+                await TriggerPendingScansAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in file watcher processing loop");
+            }
+            
+            await Task.Delay(StabilityCheckIntervalMs, stoppingToken);
+        }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public override async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Stopping Library Watcher...");
+        
         foreach (var watcher in _watchers)
         {
             watcher.EnableRaisingEvents = false;
             watcher.Dispose();
         }
         _watchers.Clear();
-        return Task.CompletedTask;
+        
+        await base.StopAsync(cancellationToken);
     }
 
     private async Task InitializeWatchersAsync()
@@ -45,53 +123,312 @@ public class LibraryWatcher : IHostedService, IDisposable
             {
                 if (Directory.Exists(path))
                 {
-                    var watcher = new FileSystemWatcher(path);
-                    watcher.IncludeSubdirectories = true;
-                    watcher.NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite;
-                    
-                    // Add event handlers
-                    watcher.Created += OnChanged;
-                    watcher.Deleted += OnChanged;
-                    watcher.Renamed += OnRenamed;
-
-                    watcher.EnableRaisingEvents = true;
-                    _watchers.Add(watcher);
-                    _logger.LogInformation($"Watching directory: {path}");
+                    CreateWatcher(path, library.Id);
                 }
             }
         }
     }
 
-    private void OnChanged(object sender, FileSystemEventArgs e)
+    private void CreateWatcher(string path, Guid libraryId)
     {
-        _logger.LogInformation($"File changed: {e.ChangeType} - {e.FullPath}");
-        // In a real app, we would be more granular. For now, trigger a scan of the library containing this file.
-        // Optimization: Find which library this file belongs to and scan only that.
-        // For simplicity in this phase, we'll trigger a full scan (debouncing would be good here).
-        Task.Run(async () =>
+        try
         {
-            using var scope = _scopeFactory.CreateScope();
-            var scannerService = scope.ServiceProvider.GetRequiredService<IFileScannerService>();
-            await scannerService.ScanAllLibrariesAsync();
-        });
+            var watcher = new FileSystemWatcher(path)
+            {
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.Size | NotifyFilters.LastWrite
+            };
+
+            // Store libraryId in the watcher's context
+            watcher.Created += (sender, e) => OnFileCreated(e.FullPath, libraryId);
+            watcher.Changed += (sender, e) => OnFileChanged(e.FullPath, libraryId);
+            watcher.Deleted += (sender, e) => OnFileDeleted(e.FullPath, libraryId);
+            watcher.Renamed += (sender, e) => OnFileRenamed(e.OldFullPath, e.FullPath, libraryId);
+            watcher.Error += OnError;
+
+            watcher.EnableRaisingEvents = true;
+            _watchers.Add(watcher);
+            _logger.LogInformation("Watching directory: {Path} for library {LibraryId}", path, libraryId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create watcher for path: {Path}", path);
+        }
     }
 
-    private void OnRenamed(object sender, RenamedEventArgs e)
+    private void OnFileCreated(string fullPath, Guid libraryId)
     {
-        _logger.LogInformation($"File renamed: {e.OldFullPath} to {e.FullPath}");
-        Task.Run(async () =>
+        if (!IsMediaFile(fullPath)) return;
+        
+        _logger.LogDebug("File created: {Path}", fullPath);
+        
+        // Clear any previous issue for this file
+        _fileIssues.TryRemove(fullPath, out _);
+        
+        // Add to pending files - will be checked for stability
+        _pendingFiles[fullPath] = new PendingFile
         {
-            using var scope = _scopeFactory.CreateScope();
-            var scannerService = scope.ServiceProvider.GetRequiredService<IFileScannerService>();
-            await scannerService.ScanAllLibrariesAsync();
-        });
+            Path = fullPath,
+            LastSize = GetFileSizeSafe(fullPath),
+            LastSizeChange = DateTime.UtcNow,
+            FirstSeen = DateTime.UtcNow,
+            LibraryId = libraryId,
+            CheckCount = 0
+        };
     }
 
-    public void Dispose()
+    private void OnFileChanged(string fullPath, Guid libraryId)
+    {
+        if (!IsMediaFile(fullPath)) return;
+        
+        // Update the pending file's size and timestamp
+        if (_pendingFiles.TryGetValue(fullPath, out var pending))
+        {
+            var currentSize = GetFileSizeSafe(fullPath);
+            if (currentSize != pending.LastSize)
+            {
+                pending.LastSize = currentSize;
+                pending.LastSizeChange = DateTime.UtcNow;
+            }
+        }
+        else
+        {
+            // File changed but wasn't in pending - add it for checking
+            _pendingFiles[fullPath] = new PendingFile
+            {
+                Path = fullPath,
+                LastSize = GetFileSizeSafe(fullPath),
+                LastSizeChange = DateTime.UtcNow,
+                FirstSeen = DateTime.UtcNow,
+                LibraryId = libraryId,
+                CheckCount = 0
+            };
+        }
+    }
+
+    private void OnFileDeleted(string fullPath, Guid libraryId)
+    {
+        // Remove from pending if it was there
+        _pendingFiles.TryRemove(fullPath, out _);
+        
+        // Schedule library scan to clean up orphans
+        _librariesToScan[libraryId] = DateTime.UtcNow;
+        _logger.LogDebug("Detected file deletion: {Path}", fullPath);
+        _logger.LogInformation("File deleted: {Path}", fullPath);
+    }
+
+    private void OnFileRenamed(string oldPath, string newPath, Guid libraryId)
+    {
+        _pendingFiles.TryRemove(oldPath, out _);
+        
+        if (IsMediaFile(newPath))
+        {
+            _pendingFiles[newPath] = new PendingFile
+            {
+                Path = newPath,
+                LastSize = GetFileSizeSafe(newPath),
+                LastSizeChange = DateTime.UtcNow,
+                FirstSeen = DateTime.UtcNow,
+                LibraryId = libraryId,
+                CheckCount = 0
+            };
+        }
+        
+        _logger.LogDebug("File renamed: {OldPath} -> {NewPath}", oldPath, newPath);
+    }
+
+    private void OnError(object sender, ErrorEventArgs e)
+    {
+        _logger.LogError(e.GetException(), "FileSystemWatcher error");
+    }
+
+    private async Task ProcessPendingFilesAsync()
+    {
+        var now = DateTime.UtcNow;
+        var filesToRemove = new List<string>();
+        
+        foreach (var kvp in _pendingFiles)
+        {
+            var pending = kvp.Value;
+            pending.CheckCount++;
+            
+            // Check if file still exists
+            if (!File.Exists(pending.Path))
+            {
+                filesToRemove.Add(kvp.Key);
+                continue;
+            }
+            
+            // Check current size
+            var currentSize = GetFileSizeSafe(pending.Path);
+            var totalWaitMinutes = (now - pending.FirstSeen).TotalMinutes;
+            var stableMinutes = (now - pending.LastSizeChange).TotalMinutes;
+            
+            // If size changed, file is still growing - reset stable timer and keep waiting
+            if (currentSize != pending.LastSize)
+            {
+                pending.LastSize = currentSize;
+                pending.LastSizeChange = now;
+                continue; // Keep waiting as long as file is growing
+            }
+            
+            // Check if file has been stable long enough
+            var stableSeconds = (now - pending.LastSizeChange).TotalSeconds;
+            if (stableSeconds >= FileStabilitySeconds)
+            {
+                // File is stable - check if we can open it (not locked)
+                if (IsFileReady(pending.Path))
+                {
+                    _logger.LogInformation("File ready for scanning: {Path} (stable for {Seconds}s)", 
+                        pending.Path, stableSeconds);
+                    
+                    // Mark library for scanning
+                    _librariesToScan[pending.LibraryId] = now;
+                    filesToRemove.Add(kvp.Key);
+                    continue;
+                }
+                
+                // File stable but locked - check for locked file timeout (15 min)
+                if (stableMinutes >= LockedFileTimeoutMinutes)
+                {
+                    _logger.LogWarning("Giving up on locked file after {Minutes}min: {Path}", 
+                        stableMinutes, pending.Path);
+                    AddFileIssue(pending, FileWatcherIssueStatus.Locked);
+                    _librariesToScan[pending.LibraryId] = now; // Try scan anyway
+                    filesToRemove.Add(kvp.Key);
+                    continue;
+                }
+            }
+            
+            // Check for stalled download (no size change for 15 min)
+            if (stableMinutes >= StalledFileTimeoutMinutes && currentSize == pending.LastSize)
+            {
+                _logger.LogWarning("Giving up on stalled file after {Minutes}min: {Path}", 
+                    stableMinutes, pending.Path);
+                AddFileIssue(pending, FileWatcherIssueStatus.Stalled);
+                _librariesToScan[pending.LibraryId] = now;
+                filesToRemove.Add(kvp.Key);
+                continue;
+            }
+            
+            // Absolute timeout (2 hours)
+            if (totalWaitMinutes >= AbsoluteTimeoutHours * 60)
+            {
+                _logger.LogWarning("Absolute timeout ({Hours}h) for file: {Path}", 
+                    AbsoluteTimeoutHours, pending.Path);
+                AddFileIssue(pending, FileWatcherIssueStatus.Timeout);
+                _librariesToScan[pending.LibraryId] = now;
+                filesToRemove.Add(kvp.Key);
+            }
+        }
+        
+        // Remove processed files
+        foreach (var path in filesToRemove)
+        {
+            _pendingFiles.TryRemove(path, out _);
+        }
+        
+        await Task.CompletedTask;
+    }
+    
+    private void AddFileIssue(PendingFile pending, string status)
+    {
+        _fileIssues[pending.Path] = new FileWatcherIssue
+        {
+            Path = pending.Path,
+            Status = status,
+            FirstSeen = pending.FirstSeen,
+            LastChecked = DateTime.UtcNow,
+            LibraryId = pending.LibraryId,
+            CanRetry = true
+        };
+    }
+
+    private async Task TriggerPendingScansAsync()
+    {
+        var now = DateTime.UtcNow;
+        var librariesToScan = new List<Guid>();
+        
+        foreach (var kvp in _librariesToScan)
+        {
+            // Wait for debounce period before scanning
+            if ((now - kvp.Value).TotalSeconds >= ScanDebounceSeconds)
+            {
+                librariesToScan.Add(kvp.Key);
+            }
+        }
+        
+        if (librariesToScan.Count == 0) return;
+        
+        using var scope = _scopeFactory.CreateScope();
+        var scanQueueService = scope.ServiceProvider.GetRequiredService<ILibraryScanQueueService>();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        
+        foreach (var libraryId in librariesToScan)
+        {
+            _librariesToScan.TryRemove(libraryId, out _);
+            
+            var library = await context.Libraries.FindAsync(libraryId);
+            if (library != null)
+            {
+                // Check if library is already being scanned
+                if (!scanQueueService.IsLibraryInQueue(libraryId))
+                {
+                    _logger.LogInformation("Triggering scan for library: {Name} (file watcher)", library.Name);
+                    scanQueueService.EnqueueScan(libraryId, library.Name);
+                }
+            }
+        }
+    }
+
+    private static long GetFileSizeSafe(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    private static bool IsFileReady(string path)
+    {
+        try
+        {
+            // Try to open file with exclusive access
+            using var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.None);
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch
+        {
+            return true; // Other errors = file exists but can't be accessed for other reasons
+        }
+    }
+
+    private static bool IsMediaFile(string path)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext switch
+        {
+            ".mkv" or ".mp4" or ".avi" or ".mov" or ".wmv" or ".flv" or ".webm" or ".m4v" or ".mpg" or ".mpeg" => true,
+            ".mp3" or ".flac" or ".aac" or ".wav" or ".ogg" or ".m4a" or ".weba" or ".wma" or ".alac" or ".opus" => true,
+            ".jpg" or ".jpeg" or ".png" or ".webp" or ".heic" or ".bmp" or ".gif" or ".tiff" => true,
+            _ => false
+        };
+    }
+
+    public override void Dispose()
     {
         foreach (var watcher in _watchers)
         {
             watcher.Dispose();
         }
+        base.Dispose();
     }
 }

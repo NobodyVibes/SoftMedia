@@ -1,75 +1,105 @@
 # Library Scanning
 
-SoftMedia's library scanner extracts comprehensive metadata from your media files, including technical details and embedded chapter information.
+SoftMedia automatically manages your media library by intelligently scanning your folders, detecting file changes in real-time, and keeping your library organized and up-to-date.
 
-## What Gets Scanned
+## How It Works
 
-### Video Files (Movies & TV)
+### Auto-Refresh on Scan Completion
 
-| Field | Source | Notes |
-|:---|:---|:---|
-| Duration | FFprobe | Total runtime in seconds |
-| Video Codec | FFprobe | e.g., h264, hevc, av1 |
-| Audio Codec | FFprobe | e.g., aac, ac3, eac3 |
-| Resolution | FFprobe | e.g., 1920x1080 |
-| Chapters | FFprobe | All embedded chapter markers |
-| Credits Start | Chapters | Auto-detected from chapter titles |
+Library pages automatically refresh when scans complete - no manual browser refresh needed:
 
-### Audio Files (Music)
+1. **Background Polling** - The page polls the scan queue every 2 seconds
+2. **Completion Detection** - When a scan for the current library finishes
+3. **Cache Invalidation** - Automatically refreshes the media list
+4. **UI Update** - New, updated, or removed items appear instantly
 
-| Field | Source | Notes |
-|:---|:---|:---|
-| Duration | TagLib | Total runtime in seconds |
-| Title | TagLib | Track title |
-| Artist | TagLib | Artist name |
-| Album | TagLib | Album name |
-| Track Number | TagLib | Position on album |
-| Embedded Art | TagLib | Album artwork |
+This works for all scan speeds and library types, whether scans complete in seconds or minutes.
 
-## Rescanning Existing Items
+### Smart File Watcher
 
-When you rescan a library, SoftMedia now **fully updates existing items**:
+SoftMedia monitors your library folders and automatically detects when media files are added, changed, or removed:
 
-### What Updates on Rescan
+1. **File Stability Detection** - When a new file appears, SoftMedia waits for it to be fully written
+   - Monitors file size every 5 seconds for stability
+   - Requires the file to remain unchanged for 10 seconds
+   - Checks that the file isn't locked by another process
+2. **Scan Debouncing** - Groups multiple file changes together
+   - Waits 15 seconds after detecting changes
+   - Triggers a single scan instead of multiple rapid scans
+   - Targets only the specific library that changed
+3. **Orphan Cleanup** - Automatically removes entries when files are deleted
+   - Detects missing media files and removes database entries
+   - Removes empty TV series/albums when all episodes/tracks are gone
+   - Cleans up associated images and watch history
 
-- ✅ Duration (re-probed from file)
-- ✅ Video/Audio Codec
-- ✅ Resolution
-- ✅ All chapter markers
-- ✅ Credits start timecode
-- ✅ Episode/season numbers (if filename parsing changed)
-- ✅ Series associations
+### Auto-Scan on Library Creation
 
-### Previously (Now Fixed)
+When you create a new library, SoftMedia automatically:
+- Triggers an initial scan to discover all media
+- Indexes file metadata and fetches enrichment data
+- Updates the UI with real-time progress
 
-Before this update, rescanning only:
-- Added new files
-- Updated title and year
-- Re-enriched if metadata was completely missing
+### Optimized Scanning
 
-This meant you had to **delete and recreate libraries** to update technical metadata. **This is no longer necessary.**
+Library scans are highly optimized for performance:
 
-## Triggering a Scan
+**HashSet Lookup** - Instead of querying the database for every file:
+- Pre-loads all existing file paths into memory (1 database query)
+- Uses instant HashSet lookups to check if files are new
+- Only queries the database for files that need updates
 
-1. **Settings → Libraries**
-2. Click the **Scan** icon next to a library
-3. Watch console logs for progress:
-   - `"Updated X chapters for: Episode Title"`
-   - `"Found credits at Xs for: Title"`
+**Smart Skip** - Existing files that haven't changed are skipped entirely
 
-## Technical Details
+**Batch Processing** - Metadata enrichment and database updates are batched efficiently
 
-### FFprobe Command
+## Progress Tracking
 
-```bash
-ffprobe -v quiet -print_format json -show_format -show_streams -show_chapters "path/to/file"
+The scan progress UI shows:
+- **File Discovery**: "Discovering files..." while counting media
+- **Processing**: "X / Y files" with actual progress percentage
+- **Completion Stats**: New, updated, and skipped items when done
+
+## Progressive File Timeout
+
+When adding large files (downloading, copying, etc.), SoftMedia intelligently waits:
+
+- **Growing Files** - Waits indefinitely while file size is changing
+- **Locked Files** - Gives up after 15 minutes if file can't be accessed
+- **Stalled Downloads** - Gives up after 15 minutes with no progress
+- **Maximum Wait** - 2 hours absolute limit as a failsafe
+
+This ensures large 4K movies being downloaded can take as long as needed, while stuck files don't wait forever.
+
+## Admin Dashboard
+
+Admins can monitor file processing issues in **Settings → Admin Dashboard**:
+
+- **File Watcher Issues** - Shows files that timed out or couldn't be processed
+- **Status Display** - "File locked", "Download stalled", or "Timeout"
+- **Retry Button** - Re-queue a file for processing
+- **Dismiss Button** - Remove the issue from the list
+
+Issues are automatically cleared when the file is successfully processed on retry.
+
+## Requirements
+
+- Library folders must be accessible and not on network drives with high latency
+- Supported file formats depend on library type (video, audio, images, etc.)
+- FFprobe must be available for video/audio metadata extraction
+
+## API Endpoints
+
 ```
+POST /api/v1/libraries/{id}/scan
+```
+Manually trigger a scan for a specific library
 
-### Chapter Detection for Credits
+```
+GET /api/v1/libraries/{id}/scan-status
+```
+Get current scan progress and queue status
 
-Chapter titles matching these patterns are flagged as "credits":
-- Contains "credit"
-- Contains "end" 
-- Contains "outro"
-- Contains "ending"
-
+```
+GET /api/v1/admin/file-watcher-issues
+```
+Get list of file watcher issues (Admin only)

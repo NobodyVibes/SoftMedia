@@ -420,3 +420,67 @@ This section outlines the settings available to the Admin user via the Web UI. S
     *   *Default:* `False`
 *   **Default User Role:** Role assigned to new users.
     *   *Default:* `User` (Restricted)
+
+---
+
+## 8. Universal Client Architecture
+
+SoftMedia adopts a "Universal Client" approach: a single React codebase that adapts to Desktop Browsers, WebOS/TV, and Mobile devices through responsive design and platform-aware components.
+
+### 8.1 Platform Strategy
+
+| Platform | Layout Paradigm | Input Method | Priority |
+| :--- | :--- | :--- | :--- |
+| **Desktop Browser** | Sidebar + Content Area | Mouse/Keyboard | **Primary** (Build First) |
+| **WebOS / Android TV** | Sidebar + Content Area | D-Pad / Remote | **Simultaneous** with Desktop |
+| **Mobile (Android/iOS)** | Bottom Tab Bar + Compact Grid | Touch / Swipe | **Sequential** (After Desktop Stable) |
+
+### 8.2 Component Architecture
+
+```
+/src/components/
+    /layout/
+        MainLayout.tsx        # Desktop + WebOS (Sidebar)
+        MobileLayout.tsx      # Mobile (Bottom Nav) - Future
+    /shared/
+        MediaCard.tsx         # Universal (accepts 'size' prop)
+        VideoPlayer.tsx       # Universal (100% shared)
+        FilterBar.tsx         # Universal
+    /mobile/
+        MobileNavBar.tsx      # Mobile-specific - Future
+```
+
+### 8.3 Multi-Platform Readiness Rules
+
+When building components for Desktop, **always** apply these rules to ensure TV/Accessibility compatibility:
+
+1.  **Semantic Elements:** Use `<button>` for all clickable elements. Avoid `<div onClick>` without `role="button"` and `tabIndex`.
+2.  **Focus States:** Always pair hover and focus styles:
+    *   *Example:* `hover:bg-white/10 focus-visible:bg-white/10 focus-visible:ring-2 focus-visible:ring-white`
+3.  **Keyboard Navigation:** All interactive elements must be reachable via Tab key. Complex grids should support Arrow key navigation.
+4.  **Touch Targets (Mobile-Ready):** Ensure minimum touch target of 44x44px for buttons in responsive contexts.
+
+### 8.4 PWA & TV Deployment
+
+*   **PWA (Android/Mobile):**
+    *   Requires `vite-plugin-pwa` configuration.
+    *   Requires `manifest.json` with app icons and "standalone" display mode.
+    *   Enables "Add to Home Screen" functionality.
+*   **WebOS (LG TVs):**
+    *   Package the built SPA using WebOS CLI tools.
+    *   Requires spatial navigation library (e.g., `react-spatial-navigation`).
+    *   Map remote keys (Back, Play/Pause, Color buttons) to app actions.
+
+### 8.5 Implementation Sequence
+
+```mermaid
+gantt
+    title SoftMedia Client Roadmap
+    dateFormat  YYYY-MM-DD
+    section Phase 1: Desktop + WebOS
+    Core Features (Library, Player, Settings) :a1, 2025-01-01, 30d
+    Add Focus/Spatial Nav (TV Polish)        :a2, after a1, 5d
+    section Phase 2: Mobile
+    Mobile Layout Shell                      :b1, after a2, 3d
+    Mobile-Specific Features                 :b2, after b1, 7d
+```

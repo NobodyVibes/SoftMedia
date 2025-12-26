@@ -17,30 +17,41 @@ export default function HoverableMediaCardWrapper({
     hoveredId,
     setHoveredId,
     baseWidth = 180,
-    expandedWidth = 260,
     height = 380,
     libraryType
 }: HoverableMediaCardWrapperProps) {
+    const isHovered = hoveredId === item.id;
+
     return (
         <motion.div
-            className={`flex-none relative h-[${height}px] ${hoveredId === item.id ? 'z-50' : 'z-0'}`}
-            style={{ height: height }}
-            layout
-            initial={{ width: baseWidth }}
-            animate={{
-                width: hoveredId === item.id ? expandedWidth : baseWidth
-            }}
-            transition={{
-                type: "spring",
-                stiffness: 300,
-                damping: 25
+            className="relative"
+            style={{
+                width: baseWidth,
+                height: height,
+                // Maintain original position in grid
+                position: 'relative',
             }}
             onHoverStart={() => setHoveredId(item.id)}
             onHoverEnd={() => setHoveredId(null)}
         >
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full">
+            {/* Card container with transform-based scaling */}
+            <motion.div
+                className="absolute inset-0 origin-center"
+                style={{
+                    zIndex: isHovered ? 50 : 0,
+                }}
+                animate={{
+                    scale: isHovered ? 1.15 : 1,
+                }}
+                transition={{
+                    type: "spring",
+                    stiffness: 400,
+                    damping: 30
+                }}
+            >
                 <MediaCard item={item} enableHoverScale={false} libraryType={libraryType} />
-            </div>
+            </motion.div>
         </motion.div>
     );
 }
+

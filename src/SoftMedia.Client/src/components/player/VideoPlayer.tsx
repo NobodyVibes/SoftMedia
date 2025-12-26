@@ -96,6 +96,10 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const lastThresholdTimeRef = useRef<number>(0); // Last time we triggered the overlay
     const hasShownOverlayRef = useRef(false); // Whether overlay was shown for this threshold crossing
 
+    // Adjacent episode navigation state (for prev/next buttons)
+    const [previousEpisodeId, setPreviousEpisodeId] = useState<string | null>(null);
+    const [nextEpisodeId, setNextEpisodeId] = useState<string | null>(null);
+
     const token = useAuthStore((state) => state.token);
     const navigate = useNavigate();
     const location = useLocation();
@@ -250,6 +254,51 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             }
         };
     }, [token, item.id, currentTime, seekOffset, isPlaying]);
+
+    // Fetch adjacent episode IDs for navigation buttons (TV shows only)
+    useEffect(() => {
+        if (!item.seriesId || !token) {
+            setPreviousEpisodeId(null);
+            setNextEpisodeId(null);
+            return;
+        }
+
+        const fetchAdjacentEpisodes = async () => {
+            try {
+                // Fetch previous episode
+                const prevResponse = await fetch(`/api/v1/episode/${item.id}/previous`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                if (prevResponse.ok) {
+                    const prevData = await prevResponse.json();
+                    // Check if episodeId is not empty GUID
+                    if (prevData.episodeId && prevData.episodeId !== '00000000-0000-0000-0000-000000000000') {
+                        setPreviousEpisodeId(prevData.episodeId);
+                    } else {
+                        setPreviousEpisodeId(null);
+                    }
+                }
+
+                // Fetch next episode
+                const nextResponse = await fetch(`/api/v1/episode/${item.id}/next`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                if (nextResponse.ok) {
+                    const nextData = await nextResponse.json();
+                    // Check if episodeId is not empty GUID
+                    if (nextData.episodeId && nextData.episodeId !== '00000000-0000-0000-0000-000000000000') {
+                        setNextEpisodeId(nextData.episodeId);
+                    } else {
+                        setNextEpisodeId(null);
+                    }
+                }
+            } catch (error) {
+                console.error('[EpisodeNav] Error fetching adjacent episodes:', error);
+            }
+        };
+
+        fetchAdjacentEpisodes();
+    }, [item.id, item.seriesId, token]);
 
     // Use metadata duration, probed duration, or video element duration as fallback
     const displayDuration = actualDuration > 0 ? actualDuration : (probedDuration > 0 ? probedDuration : (videoRef.current?.duration || 0));
@@ -1097,11 +1146,23 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     };
 
     // Navigate to previous or next episode (for TV shows)
-    const navigateEpisode = (direction: 'prev' | 'next') => {
-        // This would need series/episode data from the backend
-        // For now, log and potentially navigate via URL
-        console.log(`Navigate to ${direction} episode - not yet implemented`);
-        // TODO: Implement episode navigation when series data is available
+    const navigateEpisode = async (direction: 'prev' | 'next') => {
+        const targetId = direction === 'prev' ? previousEpisodeId : nextEpisodeId;
+        if (!targetId) {
+            console.log(`[EpisodeNav] No ${direction} episode available`);
+            return;
+        }
+
+        console.log(`[EpisodeNav] Navigating to ${direction} episode: ${targetId}`);
+
+        // Clean up transcode session before navigating
+        if (isTranscoding && token && item.id) {
+            try {
+                await fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' });
+            } catch { /* Ignore cleanup errors */ }
+        }
+
+        navigate(`/play/${targetId}`);
     };
 
     // Progress bar mouse handlers for drag and hover
@@ -1486,16 +1547,19 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
                         {/* Center: Playback navigation controls */}
                         <div className="flex items-center gap-1">
-                            {/* Previous Episode */}
-                            <button
-                                onClick={() => navigateEpisode('prev')}
-                                className="text-white/50 hover:text-white transition-colors p-1.5"
-                                title="Previous Episode"
-                            >
-                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M5 6h2v12H5zm4 6l7 5V7l-7 5zm7 0l7 5V7l-7 5z" />
-                                </svg>
-                            </button>
+                            {/* Previous Episode - Only show for TV episodes */}
+                            {item.seriesId && (
+                                <button
+                                    onClick={() => navigateEpisode('prev')}
+                                    disabled={!previousEpisodeId}
+                                    className={`transition-colors p-1.5 ${previousEpisodeId ? 'text-white/70 hover:text-white' : 'text-white/20 cursor-not-allowed'}`}
+                                    title={previousEpisodeId ? 'Previous Episode' : 'No previous episode'}
+                                >
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M5 6h2v12H5zm4 6l7 5V7l-7 5zm7 0l7 5V7l-7 5z" />
+                                    </svg>
+                                </button>
+                            )}
 
                             {/* Previous Chapter - ◀| icon */}
                             {item.chapters && item.chapters.length > 0 && (
@@ -1564,16 +1628,19 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                 </button>
                             )}
 
-                            {/* Next Episode */}
-                            <button
-                                onClick={() => navigateEpisode('next')}
-                                className="text-white/50 hover:text-white transition-colors p-1.5"
-                                title="Next Episode"
-                            >
-                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M4 6l6 6-6 6V6zm6 0l6 6-6 6V6zM17 6h2v12h-2z" />
-                                </svg>
-                            </button>
+                            {/* Next Episode - Only show for TV episodes */}
+                            {item.seriesId && (
+                                <button
+                                    onClick={() => navigateEpisode('next')}
+                                    disabled={!nextEpisodeId}
+                                    className={`transition-colors p-1.5 ${nextEpisodeId ? 'text-white/70 hover:text-white' : 'text-white/20 cursor-not-allowed'}`}
+                                    title={nextEpisodeId ? 'Next Episode' : 'No next episode'}
+                                >
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M4 6l6 6-6 6V6zm6 0l6 6-6 6V6zM17 6h2v12h-2z" />
+                                    </svg>
+                                </button>
+                            )}
                         </div>
 
                         {/* Right: Settings controls */}

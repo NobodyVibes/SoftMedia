@@ -71,3 +71,38 @@ export interface PagedResult<T> {
     pageSize: number;
 }
 
+// Library Scan Types
+export type LibraryScanStatus = 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
+export type LibraryScanStage = 'Pending' | 'Discovery' | 'Processing' | 'Metadata' | 'Finishing';
+
+export interface LibraryScanJob {
+    id: string;
+    libraryId: string;
+    libraryName: string;
+    status: LibraryScanStatus;
+    stage: LibraryScanStage;
+    totalFiles: number;
+    processedFiles: number;
+    newItems: number;
+    updatedItems: number;
+    skippedItems: number;
+    errorCount: number;
+    currentFile: string | null;
+    errorMessage: string | null;
+    startedAt: string;
+    completedAt: string | null;
+    queuePosition: number;
+    progressPercent: number;
+}
+
+// File Watcher Issue Types
+export interface FileWatcherIssue {
+    path: string;
+    fileName: string;
+    status: string;
+    firstSeen: string;
+    lastChecked: string;
+    libraryId: string;
+    libraryName: string;
+    canRetry: boolean;
+}

@@ -223,6 +223,99 @@ public class TranscodingIntegrationTests : IDisposable
         Assert.True(isDisabled);
     }
 
+    [Fact]
+    public async Task Integration_NvidiaHardwareAccel_IncludesHwaccelCuda()
+    {
+        // Arrange
+        await _settingsService.InitializeDefaultsAsync();
+        await SaveSettingsViaService(new List<AppSetting>
+        {
+            new() { Key = "HardwareAcceleration", Value = "nvidia", Group = "Transcoding" }
+        });
+
+        // Act
+        var ffmpegService = CreateFFmpegService();
+        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+
+        // Assert - NVIDIA should use CUDA hardware decode + NVENC encode
+        Assert.Contains("-hwaccel cuda", processInfo.Arguments);
+        Assert.Contains("-hwaccel_output_format cuda", processInfo.Arguments);
+        Assert.Contains("-c:v h264_nvenc", processInfo.Arguments);
+        
+        // Verify hardware decode comes BEFORE -i (required by FFmpeg)
+        var hwaccelIndex = processInfo.Arguments.IndexOf("-hwaccel cuda");
+        var inputIndex = processInfo.Arguments.IndexOf("-i ");
+        Assert.True(hwaccelIndex < inputIndex, "Hardware decode flags must appear before -i input");
+    }
+
+    [Fact]
+    public async Task Integration_IntelHardwareAccel_IncludesHwaccelQsv()
+    {
+        // Arrange
+        await _settingsService.InitializeDefaultsAsync();
+        await SaveSettingsViaService(new List<AppSetting>
+        {
+            new() { Key = "HardwareAcceleration", Value = "intel", Group = "Transcoding" }
+        });
+
+        // Act
+        var ffmpegService = CreateFFmpegService();
+        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+
+        // Assert - Intel should use QSV hardware decode + QSV encode
+        Assert.Contains("-hwaccel qsv", processInfo.Arguments);
+        Assert.Contains("-init_hw_device qsv=hw", processInfo.Arguments);
+        Assert.Contains("-c:v h264_qsv", processInfo.Arguments);
+        
+        // Verify hardware decode comes BEFORE -i
+        var hwaccelIndex = processInfo.Arguments.IndexOf("-hwaccel qsv");
+        var inputIndex = processInfo.Arguments.IndexOf("-i ");
+        Assert.True(hwaccelIndex < inputIndex, "Hardware decode flags must appear before -i input");
+    }
+
+    [Fact]
+    public async Task Integration_AmdHardwareAccel_IncludesHwaccelD3d11va()
+    {
+        // Arrange
+        await _settingsService.InitializeDefaultsAsync();
+        await SaveSettingsViaService(new List<AppSetting>
+        {
+            new() { Key = "HardwareAcceleration", Value = "amd", Group = "Transcoding" }
+        });
+
+        // Act
+        var ffmpegService = CreateFFmpegService();
+        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+
+        // Assert - AMD should use D3D11VA hardware decode + AMF encode
+        Assert.Contains("-hwaccel d3d11va", processInfo.Arguments);
+        Assert.Contains("-c:v h264_amf", processInfo.Arguments);
+        
+        // Verify hardware decode comes BEFORE -i
+        var hwaccelIndex = processInfo.Arguments.IndexOf("-hwaccel d3d11va");
+        var inputIndex = processInfo.Arguments.IndexOf("-i ");
+        Assert.True(hwaccelIndex < inputIndex, "Hardware decode flags must appear before -i input");
+    }
+
+    [Fact]
+    public async Task Integration_NoHardwareAccel_NoHwaccelFlags()
+    {
+        // Arrange
+        await _settingsService.InitializeDefaultsAsync();
+        await SaveSettingsViaService(new List<AppSetting>
+        {
+            new() { Key = "HardwareAcceleration", Value = "none", Group = "Transcoding" }
+        });
+
+        // Act
+        var ffmpegService = CreateFFmpegService();
+        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+
+        // Assert - No hardware acceleration = no hwaccel flags
+        Assert.DoesNotContain("-hwaccel", processInfo.Arguments);
+        Assert.Contains("-c:v libx264", processInfo.Arguments);
+    }
+
     #endregion
 
     #region Multiple Settings Change Integration Tests

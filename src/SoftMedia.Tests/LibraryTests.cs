@@ -32,7 +32,8 @@ public class LibraryTests
         await context.SaveChangesAsync();
 
         var mockScanner = new Mock<IFileScannerService>();
-        var controller = new LibrariesController(context, mockScanner.Object);
+        var mockScanQueue = new Mock<ILibraryScanQueueService>();
+        var controller = new LibrariesController(context, mockScanner.Object, mockScanQueue.Object);
 
         // Act
         var result = await controller.GetLibraries();
@@ -50,7 +51,8 @@ public class LibraryTests
         // Arrange
         using var context = GetDbContext();
         var mockScanner = new Mock<IFileScannerService>();
-        var controller = new LibrariesController(context, mockScanner.Object);
+        var mockScanQueue = new Mock<ILibraryScanQueueService>();
+        var controller = new LibrariesController(context, mockScanner.Object, mockScanQueue.Object);
         var request = new CreateLibraryRequest
         {
             Name = "New Lib",
@@ -87,7 +89,8 @@ public class LibraryTests
         await context.SaveChangesAsync();
 
         var mockScanner = new Mock<IFileScannerService>();
-        var controller = new LibrariesController(context, mockScanner.Object);
+        var mockScanQueue = new Mock<ILibraryScanQueueService>();
+        var controller = new LibrariesController(context, mockScanner.Object, mockScanQueue.Object);
         var orderedIds = new List<Guid> { lib2.Id, lib1.Id };
 
         // Act

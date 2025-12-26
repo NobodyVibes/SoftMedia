@@ -132,6 +132,43 @@ public class FFmpegService : IFFmpegService
     }
 
     /// <summary>
+    /// Get hardware decode options to be placed BEFORE the input file.
+    /// This enables GPU-accelerated decoding for full hardware transcoding pipeline.
+    /// </summary>
+    /// <param name="hwAccel">Hardware acceleration setting (nvidia, amd, intel, none)</param>
+    /// <param name="hasSubtitleOverlay">Whether subtitle burn-in is needed (may require CPU processing)</param>
+    /// <returns>FFmpeg hardware decode arguments, or empty if software decode should be used</returns>
+    private string GetHardwareDecodeOptions(string hwAccel, bool hasSubtitleOverlay)
+    {
+        // Note: When subtitle burn-in is used, we may need to download frames to CPU
+        // for text rendering, reducing hardware acceleration benefits.
+        // However, we still use hardware decode as it's faster than software decode.
+        
+        return hwAccel.ToLower() switch
+        {
+            // NVIDIA: Use CUDA for decode, keep frames in GPU memory
+            // -hwaccel cuda: Use NVIDIA GPU for decoding
+            // -hwaccel_output_format cuda: Keep decoded frames in GPU memory (for h264_nvenc)
+            "nvidia" => "-hwaccel cuda -hwaccel_output_format cuda ",
+            
+            // Intel QuickSync: Use QSV for decode
+            // -hwaccel qsv: Use Intel GPU for decoding
+            // -init_hw_device qsv=hw: Initialize QSV hardware device
+            // -filter_hw_device hw: Use this device for hardware filters
+            "intel" => "-hwaccel qsv -init_hw_device qsv=hw -filter_hw_device hw ",
+            
+            // AMD: Use D3D11VA for decode on Windows
+            // -hwaccel d3d11va: Use DirectX 11 Video Acceleration
+            // Note: In multi-GPU systems (e.g., NVIDIA + AMD iGPU), D3D11VA may bind to wrong GPU.
+            // For most users with discrete AMD GPUs, this works correctly.
+            "amd" => "-hwaccel d3d11va ",
+            
+            // No hardware acceleration - use software decode
+            _ => ""
+        };
+    }
+
+    /// <summary>
     /// Get encoder-specific options based on hardware/software selection.
     /// </summary>
     private string GetEncoderOptions(TranscodeSettings settings)
@@ -147,6 +184,8 @@ public class FFmpegService : IFFmpegService
         else if (encoder == "h264_nvenc")
         {
             // NVIDIA NVENC - use p1-p7 presets and CQ (constant quality)
+            // Note: When using -hwaccel cuda -hwaccel_output_format cuda, frames stay in GPU memory
+            // NVENC accepts CUDA frames directly, so we don't specify -pix_fmt (would cause crash)
             var nvencPreset = settings.Preset switch
             {
                 "ultrafast" or "superfast" => "p1",
@@ -158,18 +197,20 @@ public class FFmpegService : IFFmpegService
                 "veryslow" => "p7",
                 _ => "p2"
             };
-            return $"-c:v h264_nvenc -preset {nvencPreset} -cq {settings.CRF} -pix_fmt yuv420p ";
+            return $"-c:v h264_nvenc -preset {nvencPreset} -cq {settings.CRF} ";
         }
         else if (encoder == "h264_amf")
         {
             // AMD AMF - use quality preset and qp_i/qp_p
+            // Note: When using -hwaccel d3d11va, frames are in D3D11 texture format
+            // We don't specify -pix_fmt to avoid conflicts (FFmpeg ticket #6990)
             var amfQuality = settings.Preset switch
             {
                 "ultrafast" or "superfast" or "veryfast" => "speed",
                 "faster" or "fast" or "medium" => "balanced",
                 _ => "quality"
             };
-            return $"-c:v h264_amf -quality {amfQuality} -rc cqp -qp_i {settings.CRF} -qp_p {settings.CRF} -pix_fmt yuv420p ";
+            return $"-c:v h264_amf -quality {amfQuality} -rc cqp -qp_i {settings.CRF} -qp_p {settings.CRF} ";
         }
         else if (encoder == "h264_qsv")
         {
@@ -469,6 +510,15 @@ public class FFmpegService : IFFmpegService
         if (readRate.HasValue && readRate.Value > 0)
         {
             argumentBuilder.Append($"-readrate {readRate.Value:F1} ");
+        }
+        
+        // HARDWARE DECODE: Add GPU decode options BEFORE the input file
+        // This enables full hardware transcoding: GPU decode -> GPU encode (zero-copy)
+        var hwDecodeOptions = GetHardwareDecodeOptions(settings.HardwareAcceleration, hasSubtitleOverlay);
+        if (!string.IsNullOrEmpty(hwDecodeOptions))
+        {
+            argumentBuilder.Append(hwDecodeOptions);
+            _logger.LogInformation("Using hardware decode: {HwDecode}", hwDecodeOptions.Trim());
         }
         
         // Input file

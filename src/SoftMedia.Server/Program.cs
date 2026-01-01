@@ -53,11 +53,23 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
-        policy.WithOrigins(origins)
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
+        var allowAnyOriginForLAN = builder.Configuration.GetValue<bool>("Cors:AllowAnyOriginForLAN");
+        if (allowAnyOriginForLAN)
+        {
+            // Allow any origin for LAN access - required since we can't know all possible local IPs
+            policy.SetIsOriginAllowed(_ => true)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
+        else
+        {
+            var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+            policy.WithOrigins(origins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
     });
 });
 

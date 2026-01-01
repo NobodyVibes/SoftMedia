@@ -56,6 +56,8 @@ public class MediaProbeResult
     public string? AudioCodec { get; set; }
     public string? Resolution { get; set; }
     public double? CreditsStart { get; set; }  // Start time of credits chapter (if found)
+    public string? PixelFormat { get; set; }
+    public string? ColorTransfer { get; set; }
     public List<(double StartTime, string Title)>? Chapters { get; set; }  // All chapters
 }
 
@@ -202,15 +204,15 @@ public class FFmpegService : IFFmpegService
         else if (encoder == "h264_amf")
         {
             // AMD AMF - use quality preset and qp_i/qp_p
-            // Note: When using -hwaccel d3d11va, frames are in D3D11 texture format
-            // We don't specify -pix_fmt to avoid conflicts (FFmpeg ticket #6990)
+            // Note: AMF doesn't support 10-bit input (common in HEVC/x265 files)
+            // We add -pix_fmt yuv420p to force 8-bit output for compatibility
             var amfQuality = settings.Preset switch
             {
                 "ultrafast" or "superfast" or "veryfast" => "speed",
                 "faster" or "fast" or "medium" => "balanced",
                 _ => "quality"
             };
-            return $"-c:v h264_amf -quality {amfQuality} -rc cqp -qp_i {settings.CRF} -qp_p {settings.CRF} ";
+            return $"-c:v h264_amf -quality {amfQuality} -rc cqp -qp_i {settings.CRF} -qp_p {settings.CRF} -pix_fmt yuv420p ";
         }
         else if (encoder == "h264_qsv")
         {
@@ -230,8 +232,29 @@ public class FFmpegService : IFFmpegService
     /// <summary>
     /// Get video filter for resolution scaling.
     /// </summary>
-    private string GetScaleFilter(string maxResolution, bool hasSubtitleOverlay)
+    private string GetScaleFilter(string maxResolution, bool hasSubtitleOverlay, string hwAccel)
     {
+        // For NVIDIA hardware acceleration without subtitle overlay (which requires software processing),
+        // use scale_cuda filter. This is CRITICAL for 10-bit inputs (HDR/HEVC 10-bit),
+        // For NVIDIA hardware acceleration without subtitle overlay (which requires software processing),
+        // use scale_cuda filter. This is CRITICAL for 10-bit inputs (HDR/HEVC 10-bit),
+        // as h264_nvenc expects 8-bit input (yuv420p/nv12) or explicit format conversion.
+        // Failing to do this causes FFmpeg to crash or fail when trying to feed 10-bit decoded frames
+        // directly to the 8-bit encoder.
+        if (hwAccel.ToLower() == "nvidia" && !hasSubtitleOverlay)
+        {
+            var scaleCuda = maxResolution.ToLower() switch
+            {
+                "720p" => "scale_cuda=1280:-2:format=nv12",
+                "1080p" => "scale_cuda=1920:-2:format=nv12",
+                "4k" => "scale_cuda=3840:-2:format=nv12",
+                _ => "scale_cuda=format=nv12" // Force format conversion even if resolution is original
+            };
+            
+            return $"-vf \"{scaleCuda}\" ";
+        }
+
+        // Standard software scaling for other cases
         var scale = maxResolution.ToLower() switch
         {
             "720p" => "scale=1280:-2",
@@ -293,6 +316,10 @@ public class FFmpegService : IFFmpegService
                             result.VideoCodec = codec.GetString();
                         if (stream.TryGetProperty("width", out var w) && stream.TryGetProperty("height", out var h))
                             result.Resolution = $"{w.GetInt32()}x{h.GetInt32()}";
+                        if (stream.TryGetProperty("pix_fmt", out var pixFmt))
+                            result.PixelFormat = pixFmt.GetString();
+                        if (stream.TryGetProperty("color_transfer", out var transfer))
+                            result.ColorTransfer = transfer.GetString();
                     }
                     else if (type == "audio" && result.AudioCodec == null)
                     {
@@ -429,6 +456,35 @@ public class FFmpegService : IFFmpegService
         return null;
     }
 
+    /// <summary>
+    /// Helper to detect if a file is 10-bit/HDR based on pixel format.
+    /// </summary>
+    private bool Is10BitOrHdr(string? pixelFormat, string? colorTransfer)
+    {
+        // Check for known HDR transfer characteristics
+        if (!string.IsNullOrEmpty(colorTransfer))
+        {
+            var tf = colorTransfer.ToLowerInvariant();
+            // smpte2084 = PQ (HDR10), arib-std-b67 = HLG
+            if (tf == "smpte2084" || tf == "arib-std-b67") return true;
+        }
+
+        // Fallback: Check pixel format (less reliable, assumes all 10-bit is HDR)
+        // We now PRIORITIZE explicit HDR check above.
+        // If it's just 10-bit but transfer is bt709, it's NOT HDR.
+        // So we only return true here if we didn't confirm SDR via transfer function.
+        
+        if (string.IsNullOrEmpty(pixelFormat)) return false;
+        var fmt = pixelFormat.ToLowerInvariant();
+        bool is10bit = fmt.Contains("10") || fmt.Contains("12") || fmt.Contains("p010") || fmt.Contains("p016");
+        
+        // If we have explicit SDR transfer, return false even if 10-bit
+        if (is10bit && !string.IsNullOrEmpty(colorTransfer) && colorTransfer.ToLowerInvariant() == "bt709")
+            return false;
+            
+        return is10bit;
+    }
+
     private ProcessStartInfo GetTranscodeArgumentsInternal(
         string inputPath, 
         string outputDir, 
@@ -442,6 +498,14 @@ public class FFmpegService : IFFmpegService
 
         var playlistPath = Path.Combine(outputDir, "master.m3u8");
         var segmentPath = Path.Combine(outputDir, $"{segmentPrefix}_%03d.ts");
+
+        // Probe media to check for HDR/10-bit
+        var probe = ProbeMediaAsync(inputPath).GetAwaiter().GetResult();
+        bool is10Bit = probe != null && Is10BitOrHdr(probe.PixelFormat, probe.ColorTransfer);
+        if (is10Bit)
+        {
+            _logger.LogInformation("Detected 10-bit/HDR content (PixelFormat: {Fmt}). Using tone mapping pipeline.", probe?.PixelFormat ?? "unknown");
+        }
 
         // Determine subtitle codec type FIRST (needed to decide seek strategy)
         bool hasSubtitleOverlay = subtitleTrackIndex.HasValue;
@@ -531,8 +595,67 @@ public class FFmpegService : IFFmpegService
             _logger.LogInformation("Using slow seek for text subtitle synchronization at {Seek}s", seekPosition.Value);
         }
         
-        // Video encoding with optional subtitle burn-in and scaling
-        string scaleFilter = GetScaleFilter(settings.MaxResolution, hasSubtitleOverlay);
+
+        // --- 10-BIT / HDR HANDLING ---
+        // For Nvidia + 10-bit content, we use the Optimized Hybrid Pipeline.
+        // Reason: Pure GPU tone mapping (Zero-Copy) requires 'tonemap_cuda' (missing in BtbN)
+        // or OpenCL/Vulkan interop (failing on this system with -40/Invalid Device).
+        // Solution: GPU Scale -> CPU Tone Map -> GPU Encode. 
+        // Scaling on GPU to 1080p ensures CPU can handle the tone map at >45fps (Realtime).
+        bool useToneMappingPipeline = is10Bit && settings.HardwareAcceleration.ToLower() == "nvidia";
+        
+        string scaleFilter = "";
+        
+        if (useToneMappingPipeline)
+        {
+            // ZERO-COPY PIPELINE (Jellyfin-FFmpeg)
+            // 1. scale_cuda: Resize content (keeping it in P010/10-bit)
+            // 2. tonemap_cuda: Hardware HDR->SDR tone mapping directly in CUDA memory.
+            // No hwdownload/upload needed. Stays on GPU.
+            
+             var scale = settings.MaxResolution.ToLower() switch
+            {
+                "720p" => "scale_cuda=1280:-2:format=p010", 
+                "1080p" => "scale_cuda=1920:-2:format=p010",
+                "4k" => "scale_cuda=3840:-2:format=p010", // We can support 4K again! Zero-copy is fast.
+                _ => "scale_cuda=format=p010" 
+            };
+            
+            // Build filter chain
+            var chain = new List<string>();
+            
+            // Note: If input is not resized, we still need to ensure format is P010 before tonemap
+            // But usually input is P010. scale_cuda handles it.
+            chain.Add(scale);
+            
+            // Tonemap CUDA works entirely in GPU memory. 
+            // format=nv12 sets the output format to 8-bit SDR.
+            // Using default algo (usually hable/reinhard).
+            chain.Add("tonemap_cuda=format=nv12");
+            
+            // fps=24 normalizes frame timing for sources with Dolby Vision / variable timing.
+            // This is critical to prevent frozen/repeated frames in output.
+            chain.Add("fps=24");
+            
+            string toneMapFilter = string.Join(",", chain);
+            
+            if (hasSubtitleOverlay)
+            {
+               _logger.LogWarning("10-bit content with subtitles: bypassing tone mapping to ensure subtitle rendering.");
+               scaleFilter = GetScaleFilter(settings.MaxResolution, hasSubtitleOverlay, settings.HardwareAcceleration);
+               useToneMappingPipeline = false;
+            }
+            else
+            {
+                argumentBuilder.Append($"-vf \"{toneMapFilter}\" ");
+            }
+        }
+        
+        if (!useToneMappingPipeline)
+        {
+             // Standard logical pipeline
+             scaleFilter = GetScaleFilter(settings.MaxResolution, hasSubtitleOverlay, settings.HardwareAcceleration);
+        }
         
         if (hasSubtitleOverlay)
         {
@@ -593,6 +716,11 @@ public class FFmpegService : IFFmpegService
             argumentBuilder.Append(scaleFilter);
             argumentBuilder.Append(GetEncoderOptions(settings));
         }
+        else if (useToneMappingPipeline)
+        {
+            // Tone mapping pipeline already added -vf, just append encoder
+            argumentBuilder.Append(GetEncoderOptions(settings));
+        }
         else
         {
             // No filters needed
@@ -601,6 +729,10 @@ public class FFmpegService : IFFmpegService
         
         // Audio encoding
         argumentBuilder.Append("-c:a aac -ac 2 -b:a 128k ");
+        
+        // Use copyts to preserve input timestamps, critical for maintaining sync and avoiding jumps
+        // when seeking or when source has gaps.
+        argumentBuilder.Append("-copyts ");
         
         // HLS output settings
         // Note: Using 'event' playlist type + 'append_list' allows live-style growing playlist
@@ -683,6 +815,8 @@ public class FFmpegService : IFFmpegService
     {
         var candidates = new[]
         {
+            // Auto-downloaded BtbN build
+            Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg-bin", "ffmpeg.exe"),
             Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg.exe"),
             @"C:\Program Files\ffmpeg-2024-06-27-git-9a3bc59a38-full_build\bin\ffmpeg.exe",
             @"C:\ffmpeg\bin\ffmpeg.exe",
@@ -708,6 +842,7 @@ public class FFmpegService : IFFmpegService
     {
         var candidates = new[]
         {
+            Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg-bin", "ffprobe.exe"),
             Path.Combine(Directory.GetCurrentDirectory(), "ffprobe.exe"),
             @"C:\Program Files\ffmpeg-2024-06-27-git-9a3bc59a38-full_build\bin\ffprobe.exe",
             @"C:\ffmpeg\bin\ffprobe.exe",

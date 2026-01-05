@@ -4,6 +4,9 @@ import Hls from 'hls.js';
 import { type MediaItem } from '../../types';
 import { useAuthStore } from '../../store/authStore';
 import { NextEpisodeOverlay, type NextEpisodeInfo } from './NextEpisodeOverlay';
+import { useMediaCapabilities, createCapabilitiesWithOverrides } from '../../hooks/useMediaCapabilities';
+
+
 
 interface VideoPlayerProps {
     item: MediaItem;
@@ -24,6 +27,20 @@ interface TracksResponse {
     subtitleTracks: TrackInfo[];
 }
 
+interface StreamPlan {
+    method: 'DirectPlay' | 'Remux' | 'Transcode';
+    url: string;
+    displayProfile: string;
+    videoCodec: string;
+    audioCodec: string;
+    container: string;
+    isHdr: boolean;
+    resolution: string;
+    audioChannels: number;
+    reason: string;
+}
+
+
 const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
 /**
@@ -40,6 +57,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const progressSaveIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const lastSavedPositionRef = useRef<number>(0); // Track last saved position to avoid redundant saves
     const effectivePlaybackPositionRef = useRef<number>(0); // Track actual playback position for subtitle switching
+    const pendingSeekPositionRef = useRef<number | null>(null); // Capture position at moment of subtitle/quality change
     const isInsideMenuRef = useRef<boolean>(false); // Track if mouse is inside a menu (for auto-hide logic)
     const lastLoadedItemIdRef = useRef<string>(''); // Track last loaded item ID to detect fresh episode loads
 
@@ -66,7 +84,10 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const [showControls, setShowControls] = useState(true);
     const [playbackSpeed, setPlaybackSpeed] = useState(1);
     const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+    const [showQualityMenu, setShowQualityMenu] = useState(false);
+    const [selectedQuality, setSelectedQuality] = useState<string>('auto');
     const [isPiP, setIsPiP] = useState(false);
+
 
     // Track selection state
     const [audioTracks, setAudioTracks] = useState<TrackInfo[]>([]);
@@ -106,6 +127,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     // Check for ?start=0 query param to force starting from beginning
     const forceStartFromBeginning = new URLSearchParams(location.search).get('start') === '0';
+
+    // Detect browser media capabilities for stream negotiation
+    const { capabilities: mediaCapabilities, isDetecting: isDetectingCapabilities } = useMediaCapabilities();
 
     // Get actual duration from media item metadata (in seconds)
     const getActualDuration = useCallback((): number => {
@@ -414,95 +438,132 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [resetControlsTimeout]);
 
-    // Determine playback strategy based on container/codec
-    // Wait for progress AND subtitle preference to be loaded before starting transcode
+    // Determine playback strategy based on container/codec and detected capabilities
+    // Wait for progress, subtitle preference, AND capability detection to be loaded before starting transcode
+    // Determine playback strategy based on backend plan
+    // Wait for progress, subtitle preference, AND capability detection to be loaded before starting
     useEffect(() => {
-        if (!token || !hasLoadedProgress || !hasLoadedSubtitlePref) return;
+        if (!token || !hasLoadedProgress || !hasLoadedSubtitlePref || isDetectingCapabilities) return;
 
-        const container = item.container?.toLowerCase() || '';
-        const videoCodec = item.videoCodec?.toLowerCase() || '';
+        let isMounted = true;
 
-        const directPlayContainers = ['mp4', 'webm', 'ogg', 'mov', 'm4v'];
-        const directPlayCodecs = ['h264', 'avc', 'avc1', 'vp8', 'vp9', 'av1'];
+        const fetchStreamPlan = async () => {
+            // Create capabilities with quality override
+            const capabilitiesToSend = createCapabilitiesWithOverrides(mediaCapabilities, {
+                requestedQuality: selectedQuality
+            });
 
-        const isContainerSupported = directPlayContainers.includes(container);
-        const isCodecSupported = !videoCodec || directPlayCodecs.some(c => videoCodec.includes(c));
-        const needsTranscode = !isContainerSupported || !isCodecSupported;
+            console.log('[StreamPlan] Requesting stream plan with quality:', selectedQuality, capabilitiesToSend);
 
-        // Detect if this is a FRESH episode load (different from last loaded item)
-        // If so, we should NOT use videoRef.current.currentTime as it contains stale data from the previous video
-        const isFreshEpisodeLoad = lastLoadedItemIdRef.current !== item.id;
+            try {
+                const response = await fetch(`/api/transcode/${item.id}/plan`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(capabilitiesToSend)
+                });
 
-        if (needsTranscode) {
-            console.log(`Format ${container}/${videoCodec} not supported, switching to HLS transcoding.`);
+                if (!response.ok || !isMounted) return;
 
-            // Determine starting position
-            // IMPORTANT: Only use video element's currentTime if this is NOT a fresh episode load
-            const currentPosition = isFreshEpisodeLoad ? 0 : (videoRef.current?.currentTime || 0);
-            let startPosition = 0;
+                const plan: StreamPlan = await response.json();
+                console.log('[StreamPlan] Received plan:', plan);
 
-            // Check if we should force start from beginning (from ?start=0 query param)
-            if (forceStartFromBeginning) {
-                startPosition = 0;
-                console.log(`Forced start from beginning via query param`);
+                const needsTranscode = plan.method !== 'DirectPlay';
+                const isFreshEpisodeLoad = lastLoadedItemIdRef.current !== item.id;
+
+                // Determine starting position
+                // IMPORTANT: For non-fresh loads, always prioritize the effective playback position
+                // which tracks where the user actually is in the video (includes seekOffset)
+                let startPosition = 0;
+
+                // Check if we should force start from beginning (from ?start=0 query param)
+                if (forceStartFromBeginning) {
+                    startPosition = 0;
+                    console.log(`Forced start from beginning via query param`);
+                }
+                // Priority 1: For non-fresh loads (subtitle change, quality change, etc)
+                // Use pendingSeekPositionRef if set (captured at click time), otherwise use tracked position
+                else if (!isFreshEpisodeLoad) {
+                    if (pendingSeekPositionRef.current !== null && pendingSeekPositionRef.current > 0) {
+                        // Use position captured at click time (most reliable)
+                        startPosition = Math.floor(pendingSeekPositionRef.current);
+                        console.log(`Using captured click position: ${startPosition}s`);
+                        pendingSeekPositionRef.current = null; // Clear after use
+                    } else if (effectivePlaybackPositionRef.current > 1) {
+                        // Fallback to tracked position
+                        startPosition = Math.floor(effectivePlaybackPositionRef.current);
+                        console.log(`Using tracked position: ${startPosition}s`);
+                    }
+
+                    // Delete previous transcode session to start fresh
+                    if (isSubtitleChange && startPosition > 0) {
+                        setIsSubtitleChange(false);
+                        fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' }).catch(() => { });
+                    }
+                }
+                // Priority 2: Resume position for fresh loads
+                else if (isFreshEpisodeLoad && resumePosition > 0) {
+                    startPosition = resumePosition;
+                    console.log(`Using saved resume position: ${resumePosition}s`);
+                }
+                // Priority 3: Fallback for fresh loads with minimal progress
+                else if (!isFreshEpisodeLoad && (seekOffset > 0 || (videoRef.current?.currentTime || 0) > 1)) {
+                    const currentPosition = videoRef.current?.currentTime || 0;
+                    startPosition = seekOffset > 0 ? (currentPosition + seekOffset) : currentPosition;
+                    console.log(`Continuing from fallback position: ${startPosition}s`);
+                }
+
+                // Set offset for time display
+                // IMPORTANT: Reset currentTime to 0 FIRST to prevent flicker (displayedTime = currentTime + seekOffset)
+                if (startPosition > 0) {
+                    setCurrentTime(0); // Reset video time to prevent momentary incorrect display
+                    seekAfterLoadRef.current = startPosition;
+                    setSeekOffset(Math.floor(startPosition));
+                } else {
+                    seekAfterLoadRef.current = 0;
+                    setSeekOffset(0);
+                }
+
+                // Build Final URL
+                let finalUrl = plan.url;
+
+                // Append params for Transcode/Remux (HLS)
+                if (needsTranscode) {
+                    if (selectedSubtitleTrack !== null) {
+                        finalUrl += `&sub=${selectedSubtitleTrack}`;
+                    }
+                    if (startPosition > 0) {
+                        finalUrl += `&seek=${Math.floor(startPosition)}`;
+                    }
+                } else {
+                    setSeekOffset(0); // Reset offset for direct play
+                }
+
+                if (isMounted) {
+                    setSrc(finalUrl);
+                    setIsTranscoding(needsTranscode);
+                    lastLoadedItemIdRef.current = item.id;
+                }
+            } catch (err) {
+                console.error("Error fetching stream plan", err);
+                // Fallback to direct play if plan negotiation fails
+                if (isMounted) {
+                    const directUrl = `${initialSrc}${initialSrc.includes('?') ? '&' : '?'}token=${token}`;
+                    setSrc(directUrl);
+                    setIsTranscoding(false);
+                }
             }
-            // Priority 1: If this is a subtitle change mid-playback, use the tracked effective position (only if not fresh load)
-            else if (!isFreshEpisodeLoad && isSubtitleChange && effectivePlaybackPositionRef.current > 1) {
-                startPosition = Math.floor(effectivePlaybackPositionRef.current);
-                console.log(`Subtitle change: continuing from tracked position: ${startPosition}s`);
-                setIsSubtitleChange(false); // Reset the flag
+        };
 
-                // Stop the previous transcode session before starting new one with subtitles
-                // This prevents duplicate FFmpeg instances
-                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' })
-                    .catch(() => { /* Ignore cleanup errors */ });
-            }
-            // Priority 2: If we have a resume position from API, use it (for fresh episode loads)
-            else if (resumePosition > 0) {
-                startPosition = resumePosition;
-                console.log(`Using saved resume position: ${resumePosition}s`);
-            }
-            // Priority 3: If user has been seeking (seekOffset > 0), calculate from current position (only if not fresh load)
-            else if (!isFreshEpisodeLoad && seekOffset > 0) {
-                startPosition = currentPosition + seekOffset;
-                console.log(`Continuing from current position: ${startPosition}s`);
-            }
-            // Priority 4: Current position in direct play being switched to transcode (only if not fresh load)
-            else if (!isFreshEpisodeLoad && currentPosition > 1) {
-                startPosition = currentPosition;
-                console.log(`Switching to transcode at position: ${startPosition}s`);
-            }
+        fetchStreamPlan();
 
-            // Set offset for time display
-            if (startPosition > 0) {
-                seekAfterLoadRef.current = startPosition;
-                setSeekOffset(Math.floor(startPosition));
-            } else {
-                seekAfterLoadRef.current = 0;
-                setSeekOffset(0);
-            }
+        return () => { isMounted = false; };
 
-            // Build HLS URL with seek position for transcode
-            let hlsUrl = `/api/transcode/${item.id}/master.m3u8?token=${token}`;
-            if (selectedSubtitleTrack !== null) {
-                hlsUrl += `&sub=${selectedSubtitleTrack}`;
-            }
-            if (startPosition > 0) {
-                hlsUrl += `&seek=${Math.floor(startPosition)}`;
-            }
-            setSrc(hlsUrl);
-            setIsTranscoding(true);
-        } else {
-            console.log(`Direct play supported for ${container}/${videoCodec}`);
-            const directUrl = `${initialSrc}${initialSrc.includes('?') ? '&' : '?'}token=${token}`;
-            setSrc(directUrl);
-            setIsTranscoding(false);
-            setSeekOffset(0); // Reset offset for direct play
-        }
+    }, [item, token, selectedSubtitleTrack, resumePosition, hasLoadedProgress, hasLoadedSubtitlePref, isSubtitleChange, forceStartFromBeginning, isDetectingCapabilities, mediaCapabilities, selectedQuality]);
 
-        // Update the last loaded item ID so subsequent runs know this is not a fresh load
-        lastLoadedItemIdRef.current = item.id;
-    }, [item, initialSrc, token, selectedSubtitleTrack, resumePosition, hasLoadedProgress, hasLoadedSubtitlePref, isSubtitleChange, forceStartFromBeginning]); // Wait for progress & subtitle pref load
+
 
     // Fetch audio and subtitle tracks, and apply saved subtitle preference for TV episodes
     useEffect(() => {
@@ -1702,6 +1763,12 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                                     <div className="px-3 py-1 text-xs text-white/50 uppercase font-semibold">Subtitles</div>
                                                     <button
                                                         onClick={() => {
+                                                            // Capture position BEFORE state changes
+                                                            const capturedPosition = effectivePlaybackPositionRef.current;
+                                                            pendingSeekPositionRef.current = capturedPosition;
+                                                            // Update display IMMEDIATELY to prevent flicker during async fetch
+                                                            setCurrentTime(0);
+                                                            setSeekOffset(Math.floor(capturedPosition));
                                                             setIsSubtitleChange(true);
                                                             setSelectedSubtitleTrack(null);
                                                             setShowTrackMenu(false);
@@ -1715,6 +1782,12 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                                         <button
                                                             key={track.index}
                                                             onClick={() => {
+                                                                // Capture position BEFORE state changes
+                                                                const capturedPosition = effectivePlaybackPositionRef.current;
+                                                                pendingSeekPositionRef.current = capturedPosition;
+                                                                // Update display IMMEDIATELY to prevent flicker during async fetch
+                                                                setCurrentTime(0);
+                                                                setSeekOffset(Math.floor(capturedPosition));
                                                                 setIsSubtitleChange(true);
                                                                 setSelectedSubtitleTrack(track.index);
                                                                 setShowTrackMenu(false);
@@ -1781,8 +1854,43 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                 )}
                             </div>
 
+                            {/* Quality Selector */}
+                            <div className="relative">
+                                <button
+                                    onClick={() => setShowQualityMenu(!showQualityMenu)}
+                                    className="text-white/70 hover:text-white transition-colors"
+                                    title="Video Quality"
+                                >
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.44.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+                                    </svg>
+                                </button>
+                                {showQualityMenu && (
+                                    <div
+                                        className="absolute bottom-full right-0 mb-2 bg-black/95 rounded-lg py-2 min-w-[140px] shadow-xl"
+                                        onMouseEnter={() => handleMenuInteraction(true)}
+                                        onMouseLeave={() => handleMenuInteraction(false)}
+                                    >
+                                        <div className="px-3 py-1 text-xs text-white/50 uppercase font-semibold">Quality</div>
+                                        {['auto', '720p', '1080p', '4k', 'original'].map(quality => (
+                                            <button
+                                                key={quality}
+                                                onClick={() => {
+                                                    setSelectedQuality(quality);
+                                                    setShowQualityMenu(false);
+                                                }}
+                                                className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedQuality === quality ? 'text-blue-400' : 'text-white'}`}
+                                            >
+                                                {quality === 'auto' ? 'Auto' : quality === 'original' ? 'Original' : quality.toUpperCase()}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
                             {/* Picture-in-Picture */}
                             {document.pictureInPictureEnabled && (
+
                                 <button
                                     onClick={togglePiP}
                                     className={`transition-colors ${isPiP ? 'text-blue-400' : 'text-white/70 hover:text-white'}`}

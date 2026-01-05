@@ -70,16 +70,17 @@ public class ThrottleMonitorService : BackgroundService
     }
 
     /// <summary>
-    /// Process state transitions for all active sessions
+    /// Process state transitions for all active sessions.
+    /// Simplified model: FFmpeg is either actively transcoding or suspended (throttled).
     /// </summary>
-    private async Task ProcessStateTransitionsAsync()
+    private Task ProcessStateTransitionsAsync()
     {
         foreach (var session in _transcodeService.GetAllSessions().ToList())
         {
             try
             {
                 // Skip completed/dormant sessions
-                if (session.State == TranscodeState.Completed)
+                if (session.State == TranscodeState.Completed || session.State == TranscodeState.Dormant)
                     continue;
 
                 // Update latest segment from disk
@@ -88,139 +89,60 @@ public class ThrottleMonitorService : BackgroundService
                 // Calculate buffer
                 int bufferSeconds = _transcodeService.CalculateBufferSeconds(session);
 
-                // Check for crash (process exited unexpectedly)
-                if (session.State != TranscodeState.Dormant && 
-                    session.Process != null && 
-                    session.Process.HasExited)
+                // Check for process completion (not crash - just finished transcoding)
+                if (session.Process != null && session.Process.HasExited && !session.IsSuspended)
                 {
-                    await HandleCrashAsync(session);
+                    // FFmpeg exited on its own - likely finished the file
+                    session.State = TranscodeState.Completed;
+                    _logger.LogInformation("Session {MediaId} completed (FFmpeg exited normally)", session.Key.MediaId);
                     continue;
                 }
 
-                // Check for client inactivity (no segment requests = user navigated away or closed browser)
-                // Only enter DORMANT if:
-                // 1. No segment requests for ClientInactivityTimeoutSeconds
-                // 2. We have enough buffer so user can still watch (if they're still there)
+                // Check for client inactivity (user navigated away or closed browser)
                 var inactiveSeconds = (DateTime.UtcNow - session.LastClientRequestTime).TotalSeconds;
-                if (session.State != TranscodeState.Dormant && 
-                    inactiveSeconds > ClientInactivityTimeoutSeconds &&
-                    bufferSeconds >= TranscodeService.ThrottleThresholdSeconds)
+                if (inactiveSeconds > ClientInactivityTimeoutSeconds && 
+                    bufferSeconds >= TranscodeService.ThrottleBufferMaxSeconds)
                 {
-                    _logger.LogInformation("Session {MediaId} entering DORMANT due to client inactivity ({Inactive}s, buffer={Buffer}s)", 
-                        session.Key.MediaId, (int)inactiveSeconds, bufferSeconds);
+                    _logger.LogInformation("Session {MediaId} entering DORMANT due to client inactivity ({Inactive}s)", 
+                        session.Key.MediaId, (int)inactiveSeconds);
                     _transcodeService.EnterDormantState(session.Key);
                     continue;
                 }
 
-                // Handle pause request with low buffer (continue until buffer is full)
+                // Handle pause request - fill buffer then enter dormant
                 if (session.IsPaused && session.State != TranscodeState.Dormant)
                 {
-                    if (bufferSeconds >= TranscodeService.ThrottleThresholdSeconds)
+                    if (bufferSeconds >= TranscodeService.ThrottleBufferMaxSeconds)
                     {
-                        // Buffer is full, enter DORMANT
                         _transcodeService.EnterDormantState(session.Key);
                         _logger.LogInformation("Session {MediaId} entered DORMANT (paused with full buffer)", session.Key.MediaId);
                         continue;
                     }
-                    // Otherwise, continue transcoding to fill buffer
+                    // Otherwise, keep transcoding to fill buffer before pausing
                 }
 
-                // State machine transitions
+                // SIMPLIFIED STATE MACHINE: Only 2 active states
                 switch (session.State)
                 {
-                    case TranscodeState.Burst:
-                        if (bufferSeconds >= TranscodeService.BurstThresholdSeconds)
+                    case TranscodeState.Transcoding:
+                        // FFmpeg is running - check if we should suspend
+                        if (bufferSeconds >= TranscodeService.ThrottleBufferMaxSeconds)
                         {
-                            // Transition to CATCHING (2.0x)
-                            await _transcodeService.RestartWithReadRateAsync(session.Key, 2.0, TranscodeState.Catching);
-                            _logger.LogInformation("Session {MediaId}: BURST → CATCHING (buffer={Buffer}s)", 
+                            // Buffer is full, suspend FFmpeg to save resources
+                            _transcodeService.SuspendSession(session.Key);
+                            _logger.LogInformation("Session {MediaId}: TRANSCODING → THROTTLED (buffer={Buffer}s)", 
                                 session.Key.MediaId, bufferSeconds);
                         }
                         break;
 
-                    case TranscodeState.Catching:
-                        if (bufferSeconds >= TranscodeService.ThrottleThresholdSeconds)
+                    case TranscodeState.Throttled:
+                        // FFmpeg is suspended - check if we should resume
+                        if (bufferSeconds <= TranscodeService.ThrottleBufferResumeSeconds)
                         {
-                            // Transition to CRUISING (1.0x)
-                            await _transcodeService.RestartWithReadRateAsync(session.Key, 1.0, TranscodeState.Cruising);
-                            _logger.LogInformation("Session {MediaId}: CATCHING → CRUISING (buffer={Buffer}s)", 
+                            // Buffer is running low, resume FFmpeg
+                            _transcodeService.ResumeSession(session.Key);
+                            _logger.LogInformation("Session {MediaId}: THROTTLED → TRANSCODING (buffer={Buffer}s)", 
                                 session.Key.MediaId, bufferSeconds);
-                        }
-                        else if (bufferSeconds < TranscodeService.BurstThresholdSeconds)
-                        {
-                            // Buffer critically low, boost to BURST (max speed)
-                            await _transcodeService.RestartWithReadRateAsync(session.Key, null, TranscodeState.Burst);
-                            _logger.LogInformation("Session {MediaId}: CATCHING → BURST (buffer critically low={Buffer}s)", 
-                                session.Key.MediaId, bufferSeconds);
-                        }
-                        break;
-
-                    case TranscodeState.Cruising:
-                        // If no process is running, we're using existing buffer
-                        // Only restart FFmpeg when buffer actually runs low
-                        if (session.Process == null || session.Process.HasExited)
-                        {
-                            if (bufferSeconds < TranscodeService.BurstThresholdSeconds)
-                            {
-                                // Buffer critically low, need to restart at max speed
-                                await _transcodeService.RestartWithReadRateAsync(session.Key, null, TranscodeState.Burst);
-                                _logger.LogInformation("Session {MediaId}: CRUISING (no process) → BURST (buffer={Buffer}s)", 
-                                    session.Key.MediaId, bufferSeconds);
-                            }
-                            else if (bufferSeconds < TranscodeService.ResumeBoostThresholdSeconds)
-                            {
-                                // Buffer getting low, restart at 2x
-                                await _transcodeService.RestartWithReadRateAsync(session.Key, 2.0, TranscodeState.Catching);
-                                _logger.LogInformation("Session {MediaId}: CRUISING (no process) → CATCHING (buffer={Buffer}s)", 
-                                    session.Key.MediaId, bufferSeconds);
-                            }
-                            // else: buffer is fine, keep using existing segments
-                        }
-                        else
-                        {
-                            // FFmpeg is running, normal state transitions
-                            if (bufferSeconds < TranscodeService.BurstThresholdSeconds)
-                            {
-                                await _transcodeService.RestartWithReadRateAsync(session.Key, null, TranscodeState.Burst);
-                                _logger.LogInformation("Session {MediaId}: CRUISING → BURST (buffer critically low={Buffer}s)", 
-                                    session.Key.MediaId, bufferSeconds);
-                            }
-                            else if (bufferSeconds < TranscodeService.ResumeBoostThresholdSeconds)
-                            {
-                                await _transcodeService.RestartWithReadRateAsync(session.Key, 2.0, TranscodeState.Catching);
-                                _logger.LogInformation("Session {MediaId}: CRUISING → CATCHING (buffer dropped to {Buffer}s)", 
-                                    session.Key.MediaId, bufferSeconds);
-                            }
-                        }
-                        break;
-
-                    case TranscodeState.Dormant:
-                        // Check if user resumed
-                        if (!session.IsPaused)
-                        {
-                            // Determine target state based on buffer
-                            if (bufferSeconds >= TranscodeService.ThrottleThresholdSeconds)
-                            {
-                                // Buffer is full - don't restart FFmpeg, just change state
-                                // Let existing segments serve playback until buffer drops
-                                session.State = TranscodeState.Cruising;
-                                _logger.LogInformation("Session {MediaId}: DORMANT → CRUISING (using existing buffer={Buffer}s, no FFmpeg restart)", 
-                                    session.Key.MediaId, bufferSeconds);
-                            }
-                            else if (bufferSeconds < TranscodeService.BurstThresholdSeconds)
-                            {
-                                // Critically low buffer, go to BURST
-                                await _transcodeService.RestartWithReadRateAsync(session.Key, null, TranscodeState.Burst);
-                                _logger.LogInformation("Session {MediaId}: DORMANT → BURST (buffer critically low={Buffer}s)", 
-                                    session.Key.MediaId, bufferSeconds);
-                            }
-                            else
-                            {
-                                // Moderate buffer - restart at 2x to build up
-                                await _transcodeService.RestartWithReadRateAsync(session.Key, 2.0, TranscodeState.Catching);
-                                _logger.LogInformation("Session {MediaId}: DORMANT → CATCHING (buffer={Buffer}s)", 
-                                    session.Key.MediaId, bufferSeconds);
-                            }
                         }
                         break;
                 }
@@ -230,27 +152,20 @@ public class ThrottleMonitorService : BackgroundService
                 _logger.LogError(ex, "Error processing session {MediaId}", session.Key.MediaId);
             }
         }
+        
+        return Task.CompletedTask;
     }
 
     /// <summary>
-    /// Handle FFmpeg crash with retry logic
+    /// Handle FFmpeg crash/exit - mark session as completed and log
     /// </summary>
-    private async Task HandleCrashAsync(TranscodeSession session)
+    private void HandleProcessExited(TranscodeSession session)
     {
-        session.CrashRetryCount++;
-        _logger.LogWarning("FFmpeg crashed for {MediaId}, attempt {Count}/{Max}", 
-            session.Key.MediaId, session.CrashRetryCount, TranscodeService.MaxCrashRetries);
-
-        if (session.CrashRetryCount >= TranscodeService.MaxCrashRetries)
-        {
-            _logger.LogError("Max crash retries exceeded for {MediaId}, cleaning up", session.Key.MediaId);
-            _transcodeService.StopTranscode(session.Key.MediaId, session.Key.UserId, session.Key.SubtitleTrackIndex, deleteFiles: true);
-            return;
-        }
-
-        // Restart from last segment
-        double seekSeconds = session.LatestSegmentIndex * TranscodeService.HlsSegmentDurationSeconds;
-        await _transcodeService.RestartWithReadRateAsync(session.Key, session.CurrentReadRate, session.State);
+        // With suspension-based throttling, if FFmpeg exits unexpectedly,
+        // we just mark the session as needing attention - UI can show error
+        session.State = TranscodeState.Completed;
+        _logger.LogWarning("FFmpeg exited unexpectedly for {MediaId}, marking session complete", 
+            session.Key.MediaId);
     }
 
     /// <summary>

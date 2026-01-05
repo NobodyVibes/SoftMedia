@@ -13,9 +13,9 @@ public interface IFFmpegService
     /// </summary>
     ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition);
     /// <summary>
-    /// Get transcode arguments with subtitle, seek, and read rate for throttling.
+    /// Get transcode arguments with subtitle, seek, read rate, and target resolution.
     /// </summary>
-    ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate);
+    ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null);
     
     /// <summary>
     /// Extract a subtitle track to WebVTT format for HLS sidecar delivery.
@@ -58,6 +58,7 @@ public class MediaProbeResult
     public double? CreditsStart { get; set; }  // Start time of credits chapter (if found)
     public string? PixelFormat { get; set; }
     public string? ColorTransfer { get; set; }
+    public double FrameRate { get; set; }
     public List<(double StartTime, string Title)>? Chapters { get; set; }  // All chapters
 }
 
@@ -320,6 +321,27 @@ public class FFmpegService : IFFmpegService
                             result.PixelFormat = pixFmt.GetString();
                         if (stream.TryGetProperty("color_transfer", out var transfer))
                             result.ColorTransfer = transfer.GetString();
+                        
+                        // Parse frame rate (e.g., "24000/1001" or "24/1")
+                        if (stream.TryGetProperty("avg_frame_rate", out var avgFr))
+                        {
+                            var frStr = avgFr.GetString();
+                            if (!string.IsNullOrEmpty(frStr))
+                            {
+                                var parts = frStr.Split('/');
+                                if (parts.Length == 2 && 
+                                    double.TryParse(parts[0], out var num) && 
+                                    double.TryParse(parts[1], out var den) && 
+                                    den > 0)
+                                {
+                                    result.FrameRate = num / den;
+                                }
+                                else if (double.TryParse(frStr, out var fps))
+                                {
+                                    result.FrameRate = fps;
+                                }
+                            }
+                        }
                     }
                     else if (type == "audio" && result.AudioCodec == null)
                     {
@@ -390,9 +412,14 @@ public class FFmpegService : IFFmpegService
         return GetTranscodeArgumentsInternal(inputPath, outputDir, segmentPrefix, subtitleTrackIndex, seekPosition, null, settings);
     }
 
-    public ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate)
+    public ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null)
     {
         var settings = LoadSettingsAsync().GetAwaiter().GetResult();
+        // Override settings resolution if explicitly specified
+        if (!string.IsNullOrEmpty(targetResolution))
+        {
+            settings.MaxResolution = targetResolution;
+        }
         return GetTranscodeArgumentsInternal(inputPath, outputDir, segmentPrefix, subtitleTrackIndex, seekPosition, readRate, settings);
     }
 
@@ -597,11 +624,9 @@ public class FFmpegService : IFFmpegService
         
 
         // --- 10-BIT / HDR HANDLING ---
-        // For Nvidia + 10-bit content, we use the Optimized Hybrid Pipeline.
-        // Reason: Pure GPU tone mapping (Zero-Copy) requires 'tonemap_cuda' (missing in BtbN)
-        // or OpenCL/Vulkan interop (failing on this system with -40/Invalid Device).
-        // Solution: GPU Scale -> CPU Tone Map -> GPU Encode. 
-        // Scaling on GPU to 1080p ensures CPU can handle the tone map at >45fps (Realtime).
+        // For Nvidia + 10-bit/HDR content, we use the Jellyfin-FFmpeg Zero-Copy Pipeline.
+        // This requires 'tonemap_cuda' (included in Jellyfin-FFmpeg builds).
+        // It provides extremely high performance (>200 FPS) by keeping frames in GPU memory.
         bool useToneMappingPipeline = is10Bit && settings.HardwareAcceleration.ToLower() == "nvidia";
         
         string scaleFilter = "";
@@ -611,7 +636,7 @@ public class FFmpegService : IFFmpegService
             // ZERO-COPY PIPELINE (Jellyfin-FFmpeg)
             // 1. scale_cuda: Resize content (keeping it in P010/10-bit)
             // 2. tonemap_cuda: Hardware HDR->SDR tone mapping directly in CUDA memory.
-            // No hwdownload/upload needed. Stays on GPU.
+            // 3. fps: Normalize frame rate
             
              var scale = settings.MaxResolution.ToLower() switch
             {
@@ -633,9 +658,12 @@ public class FFmpegService : IFFmpegService
             // Using default algo (usually hable/reinhard).
             chain.Add("tonemap_cuda=format=nv12");
             
-            // fps=24 normalizes frame timing for sources with Dolby Vision / variable timing.
-            // This is critical to prevent frozen/repeated frames in output.
-            chain.Add("fps=24");
+            // fps filter normalizes frame timing.
+            // Critical for Dolby Vision sources which can have variable timing or repeated metadata.
+            // We use the source frame rate if available, defaulting to 24 if unknown.
+            // This prevents the "frozen frame" issue where the encoder receives timestamps it can't handle.
+            double fps = probe?.FrameRate > 0 ? probe.FrameRate : 24.0;
+            chain.Add($"fps={fps}");
             
             string toneMapFilter = string.Join(",", chain);
             
@@ -730,9 +758,10 @@ public class FFmpegService : IFFmpegService
         // Audio encoding
         argumentBuilder.Append("-c:a aac -ac 2 -b:a 128k ");
         
-        // Use copyts to preserve input timestamps, critical for maintaining sync and avoiding jumps
-        // when seeking or when source has gaps.
-        argumentBuilder.Append("-copyts ");
+        // Use start_at_zero to reset output timestamps to 0 after seeking.
+        // This ensures HLS segments have monotonic timestamps starting from 0,
+        // which fixes elapsed time desync, frame hiccups, and random jumps.
+        argumentBuilder.Append("-start_at_zero ");
         
         // HLS output settings
         // Note: Using 'event' playlist type + 'append_list' allows live-style growing playlist

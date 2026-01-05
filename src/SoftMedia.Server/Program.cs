@@ -45,9 +45,12 @@ builder.Services.AddScoped<IMetadataProvider, ExifMetadataProvider>();
 builder.Services.AddScoped<IMetadataRouter, MetadataRouter>();
 builder.Services.AddScoped<MetadataAggregator>();
 builder.Services.AddScoped<IFFmpegService, FFmpegService>();
+builder.Services.AddScoped<IStreamPlanService, StreamPlanService>();
+builder.Services.AddSingleton<IProcessController, ProcessController>(); // Cross-platform process suspend/resume
 builder.Services.AddSingleton<TranscodeService>(); // Singleton to maintain process tracking across requests
 builder.Services.AddHostedService<ThrottleMonitorService>(); // Background service for throttling
 builder.Services.AddScoped<ISettingsService, SettingsService>();
+
 
 builder.Services.AddCors(options =>
 {

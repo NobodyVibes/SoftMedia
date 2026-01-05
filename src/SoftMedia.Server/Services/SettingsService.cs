@@ -85,7 +85,15 @@ public class SettingsService : ISettingsService
             new() { Key = "TranscodeCRF", Value = "23", Group = "Transcoding", Description = "Quality level 0-51 (lower = better, 23 = good default)." },
             new() { Key = "DisableTranscoding", Value = "false", Group = "Transcoding", Description = "Force direct play only, no video conversion." },
             
+            // Streaming (Jellyfin/Plex-inspired)
+            new() { Key = "MaxStreamingBitrate", Value = "20000", Group = "Streaming", Description = "Maximum bitrate (kbps) for remote streaming. 0 = unlimited." },
+            new() { Key = "MaxSimultaneousTranscodes", Value = "0", Group = "Streaming", Description = "Maximum concurrent transcode sessions. 0 = unlimited." },
+            new() { Key = "DefaultStreamingQuality", Value = "auto", Group = "Streaming", Description = "Default quality for new streams (auto, 720p, 1080p, 4k, original)." },
+            new() { Key = "ForceDirectPlayWhenPossible", Value = "true", Group = "Streaming", Description = "Prefer direct play over transcoding when client supports the format." },
+            new() { Key = "DefaultAudioChannels", Value = "auto", Group = "Streaming", Description = "Default audio channel preference (auto, stereo, 5.1, 7.1)." },
+            
             // Subtitles
+
             new() { Key = "AutoSelectSubtitle", Value = "true", Group = "Subtitles", Description = "Automatically select tracks based on user language." },
             
             // Metadata

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
+using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Services;
 
 namespace SoftMedia.Server.Controllers;
@@ -18,12 +19,18 @@ namespace SoftMedia.Server.Controllers;
 public class TranscodeController : ControllerBase
 {
     private readonly TranscodeService _transcodeService;
+    private readonly IStreamPlanService _streamPlanService;
     private readonly AppDbContext _context;
     private readonly ILogger<TranscodeController> _logger;
 
-    public TranscodeController(TranscodeService transcodeService, AppDbContext context, ILogger<TranscodeController> logger)
+    public TranscodeController(
+        TranscodeService transcodeService, 
+        IStreamPlanService streamPlanService,
+        AppDbContext context, 
+        ILogger<TranscodeController> logger)
     {
         _transcodeService = transcodeService;
+        _streamPlanService = streamPlanService;
         _context = context;
         _logger = logger;
     }
@@ -42,15 +49,88 @@ public class TranscodeController : ControllerBase
     }
 
     /// <summary>
+    /// Compute the optimal stream plan based on client capabilities.
+    /// Returns a StreamPlan with the playback method (DirectPlay, Remux, Transcode) and URL.
+    /// </summary>
+    [HttpPost("{id}/plan")]
+    public async Task<ActionResult<StreamPlan>> GetStreamPlan(Guid id, [FromBody] ClientCapabilities capabilities)
+    {
+        try
+        {
+            var userId = GetUserId();
+
+            // Fetch media item with library for validation
+            var mediaItem = await _context.MediaItems
+                .Include(m => m.Library)
+                .FirstOrDefaultAsync(m => m.Id == id);
+
+            if (mediaItem?.Library == null)
+            {
+                _logger.LogWarning("Media item {Id} not found for stream plan", id);
+                return NotFound("Media item not found");
+            }
+
+            // Security: Verify file exists
+            if (!System.IO.File.Exists(mediaItem.Path))
+            {
+                _logger.LogWarning("Stream plan requested for missing file: {Path}", mediaItem.Path);
+                return NotFound("File not found on disk.");
+            }
+
+            // Security: LFI Protection - verify path is within authorized library directories
+            var canonicalPath = Path.GetFullPath(mediaItem.Path);
+            var isAuthorized = mediaItem.Library.Paths.Any(p =>
+                canonicalPath.StartsWith(Path.GetFullPath(p), StringComparison.OrdinalIgnoreCase));
+
+            if (!isAuthorized)
+            {
+                _logger.LogWarning("LFI attempt blocked in stream plan: {Path}", mediaItem.Path);
+                return Forbid();
+            }
+
+            // Get token from query or authorization header
+            var token = Request.Query["token"].ToString();
+            if (string.IsNullOrEmpty(token))
+            {
+                var authHeader = Request.Headers["Authorization"].ToString();
+                if (authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                {
+                    token = authHeader.Substring(7);
+                }
+            }
+
+            // Compute optimal stream plan
+            var plan = await _streamPlanService.ComputeStreamPlanAsync(id, mediaItem, capabilities, token);
+
+            _logger.LogInformation(
+                "Stream plan for {Id}: Method={Method}, Profile={Profile}, Reason={Reason}",
+                id, plan.Method, plan.DisplayProfile, plan.Reason);
+
+            return Ok(plan);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Unauthorized();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error computing stream plan for {Id}", id);
+            return StatusCode(500, "Failed to compute stream plan");
+        }
+    }
+
+    /// <summary>
     /// Get the HLS master playlist for a media item.
     /// Optional query parameters:
     /// - token: JWT for authentication
     /// - sub: Subtitle track index to burn into the video
     /// - seek: Position in seconds to start from
+    /// - resolution: Target resolution (e.g., "720p", "1080p", "4k", "original")
     /// </summary>
     [HttpGet("{id}/master.m3u8")]
-    public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null)
+    public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null, [FromQuery] string? resolution = null)
     {
+
         try
         {
             var userId = GetUserId();
@@ -85,9 +165,9 @@ public class TranscodeController : ControllerBase
             }
 
             // Start transcoding with user ID for session ownership
-            _logger.LogInformation("Starting transcode for media {Id} (user={UserId}, sub={Sub}, seek={Seek})", 
-                id, userId, sub, seek);
-            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek);
+            _logger.LogInformation("Starting transcode for media {Id} (user={UserId}, sub={Sub}, seek={Seek}, resolution={Res})", 
+                id, userId, sub, seek, resolution);
+            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution);
 
             var stream = _transcodeService.GetPlaylist(id, userId, sub);
             if (stream == null)

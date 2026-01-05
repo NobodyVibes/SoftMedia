@@ -409,15 +409,21 @@ public class FFmpegServiceTests
     }
 
     [Fact]
-    public void GetTranscodeArguments_WithSubtitleTrack_AddsOverlayFilter()
+    public void GetTranscodeArguments_WithBitmapSubtitleTrack_AddsOverlayFilter()
     {
         // Arrange
+        // Mock FFprobe response for subtitle codec detection - return PGS (bitmap subtitle)
+        var probeJsonForSubtitle = @"{""streams"": [{""codec_name"": ""hdmv_pgs_subtitle"", ""codec_type"": ""subtitle""}]}";
+        _processRunnerMock
+            .Setup(pr => pr.RunProcessAsync(It.Is<ProcessStartInfo>(psi => psi.Arguments.Contains("-select_streams"))))
+            .ReturnsAsync(probeJsonForSubtitle);
+        
         var service = CreateService();
 
         // Act
         var processInfo = service.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix, 2, null);
 
-        // Assert
+        // Assert - PGS subtitles should use overlay filter (bitmap burn-in)
         Assert.Contains("overlay", processInfo.Arguments);
         Assert.Contains("[0:2]", processInfo.Arguments);
     }
@@ -459,6 +465,20 @@ public class FFmpegServiceTests
         Assert.Contains("-f hls", processInfo.Arguments);
         Assert.Contains("-hls_time 6", processInfo.Arguments);
         Assert.Contains("master.m3u8", processInfo.Arguments);
+    }
+
+    [Fact]
+    public void GetTranscodeArguments_AlwaysIncludesStartAtZero_NotCopyTs()
+    {
+        // Arrange
+        var service = CreateService();
+
+        // Act
+        var processInfo = service.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+
+        // Assert - should use -start_at_zero for proper HLS timestamp handling, not -copyts
+        Assert.Contains("-start_at_zero", processInfo.Arguments);
+        Assert.DoesNotContain("-copyts", processInfo.Arguments);
     }
 
     [Fact]

@@ -1,37 +1,32 @@
 # Smart Transcoding
 
-SoftMedia automatically transcodes video files that your browser can't play directly (like MKV or HEVC/AV1 content) into a compatible format on-the-fly.
+SoftMedia automatically converts video files that your browser can't play directly (like MKV or HEVC content) into a compatible format on-the-fly.
 
 ## How It Works
 
-When you play a video that requires transcoding, SoftMedia intelligently manages the transcoding speed to balance **responsiveness** with **system resource usage**.
+When you play a video that requires transcoding, SoftMedia streams the converted content to your browser in small segments. To save system resources, SoftMedia intelligently **pauses** and **resumes** the transcoding process based on how far ahead it has buffered.
 
-### Adaptive Speed Control
+### Buffer-Based Throttling
 
-| Buffer Status | Transcoding Speed | What's Happening |
-|:---|:---|:---|
-| **< 30 seconds** | Maximum | Rapidly building buffer for smooth playback |
-| **30 - 90 seconds** | 2x playback speed | Steadily growing buffer |
-| **90 - 120 seconds** | 2x playback speed | Approaching target buffer |
-| **≥ 120 seconds** | 1x playback speed | Cruising - minimal CPU usage |
+| Your Buffer | What SoftMedia Does |
+|:------------|:--------------------|
+| **Building up** | Transcodes at full speed until ~2 minutes of buffer |
+| **Buffer full** (≥2 min) | **Pauses** transcoding to save CPU |
+| **Buffer running low** (≤1 min) | **Resumes** transcoding automatically |
 
-### When You Pause
+Think of it like filling a glass of water: SoftMedia fills it quickly at first, then stops the tap when it's full enough, and turns it back on only when you've drunk some.
 
-- If buffer ≥ 120 seconds: Transcoding stops completely while paused
-- If buffer < 120 seconds: Transcoding continues until buffer reaches 120 seconds, then stops
+### When You Pause Playback
 
-This means pausing a video also pauses the transcoding work, saving CPU when you're not watching.
+When you pause a video, SoftMedia will finish buffering to ~2 minutes ahead, then stop transcoding entirely. Your CPU gets a break while you're away.
 
-### When You Resume
+### Seamless Resumption
 
-Resume behavior depends on your buffer:
-- **< 30 seconds buffer**: Maximum speed transcoding resumes
-- **30 - 119 seconds buffer**: 2x speed transcoding resumes  
-- **≥ 120 seconds buffer**: 1x speed transcoding (or no restart needed)
+When you resume, or when buffer runs low during normal playback, transcoding picks up **exactly where it left off** — no gaps, no repeated frames, just smooth video.
 
 ## Benefits
 
-- **Lower CPU usage** during steady playback (1x speed instead of max)
-- **No wasted work** when you pause or stop watching
-- **Instant responsiveness** when buffer is low
-- **Automatic adaptation** to your viewing behavior
+- **Lower CPU usage** — transcoding pauses when buffer is full
+- **No wasted work** — stops when you pause or navigate away
+- **Smooth playback** — automatic resumption prevents buffering
+- **Works across platforms** — Windows, Linux, and macOS

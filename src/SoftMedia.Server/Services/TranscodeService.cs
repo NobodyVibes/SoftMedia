@@ -2,8 +2,10 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using SoftMedia.Server.Services.Abstractions;
 
 namespace SoftMedia.Server.Services;
+
 
 /// <summary>
 /// Key for tracking unique transcode sessions (mediaId + userId + subtitle track combination)
@@ -11,17 +13,16 @@ namespace SoftMedia.Server.Services;
 public record TranscodeSessionKey(Guid MediaId, Guid UserId, int? SubtitleTrackIndex);
 
 /// <summary>
-/// Transcode state for throttling state machine
+/// Transcode state for throttling state machine.
+/// Simplified model: FFmpeg is either actively transcoding or suspended.
 /// </summary>
 public enum TranscodeState
 {
-    /// <summary>Full speed transcoding at start</summary>
-    Burst,
-    /// <summary>2.0x speed to build buffer</summary>
-    Catching,
-    /// <summary>1.0x speed steady state</summary>
-    Cruising,
-    /// <summary>Paused, FFmpeg stopped, segments retained</summary>
+    /// <summary>FFmpeg is actively transcoding segments</summary>
+    Transcoding,
+    /// <summary>FFmpeg is suspended (paused) because buffer is full</summary>
+    Throttled,
+    /// <summary>User paused playback, FFmpeg stopped, segments retained</summary>
     Dormant,
     /// <summary>Session ended, cleanup complete</summary>
     Completed
@@ -36,8 +37,8 @@ public class TranscodeSession
     public Guid UserId { get; init; }
     public string InputPath { get; init; } = string.Empty;
     public Process? Process { get; set; }
-    public TranscodeState State { get; set; } = TranscodeState.Burst;
-    public double? CurrentReadRate { get; set; } = null;  // null = BURST (full speed)
+    public TranscodeState State { get; set; } = TranscodeState.Transcoding;
+    public bool IsSuspended { get; set; } = false;  // Tracks if FFmpeg process is currently suspended
     public double? SeekPosition { get; set; }  // Starting seek position for this session
     public int LatestSegmentIndex { get; set; } = 0;
     public int ClientSegmentIndex { get; set; } = 0;
@@ -61,6 +62,11 @@ public class TranscodeSession
     /// True if the selected subtitle is bitmap-based (PGS, VOBSUB) and requires burn-in
     /// </summary>
     public bool IsBitmapSubtitle { get; set; } = false;
+    
+    /// <summary>
+    /// Target resolution for transcoding (e.g., "720p", "1080p", "4k", "original")
+    /// </summary>
+    public string? TargetResolution { get; set; }
 }
 
 /// <summary>
@@ -71,23 +77,28 @@ public class TranscodeService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TranscodeService> _logger;
+    private readonly IProcessController _processController;
     private readonly ConcurrentDictionary<TranscodeSessionKey, TranscodeSession> _activeSessions = new();
     private readonly ConcurrentDictionary<TranscodeSessionKey, SemaphoreSlim> _sessionLocks = new();
     private readonly string _tempDir;
 
-    // Throttling constants (from plan v1.5)
-    public const int BurstThresholdSeconds = 30;
-    public const int ThrottleThresholdSeconds = 120;
-    public const int ResumeBoostThresholdSeconds = 90;
-    public const int HlsSegmentDurationSeconds = 6;
+    // Throttling thresholds (in seconds of buffer)
+    public const int ThrottleBufferMaxSeconds = 120;     // Suspend FFmpeg when buffer exceeds this
+    public const int ThrottleBufferResumeSeconds = 60;   // Resume FFmpeg when buffer drops below this
+    public const int HlsSegmentDurationSeconds = 6;      // Target segment duration (actual varies)
     public const int MaxCrashRetries = 3;
 
     private static readonly Regex SegmentPattern = new(@"^seg_(\d+)\.ts$", RegexOptions.Compiled);
 
-    public TranscodeService(IServiceScopeFactory scopeFactory, ILogger<TranscodeService> logger, IConfiguration config)
+    public TranscodeService(
+        IServiceScopeFactory scopeFactory, 
+        ILogger<TranscodeService> logger, 
+        IProcessController processController,
+        IConfiguration config)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _processController = processController;
         _tempDir = Path.Combine(Directory.GetCurrentDirectory(), "transcode-temp");
         if (!Directory.Exists(_tempDir))
         {
@@ -157,6 +168,57 @@ public class TranscodeService
     }
 
     /// <summary>
+    /// Parse the HLS playlist to get actual cumulative duration up to segmentCount segments.
+    /// This is more accurate than assuming fixed 6s segments since actual durations vary (4-10s).
+    /// </summary>
+    public double GetActualPlaylistDuration(string sessionDir, int segmentCount)
+    {
+        var playlistPath = Path.Combine(sessionDir, "master.m3u8");
+        if (!File.Exists(playlistPath))
+        {
+            // Fallback to fixed estimate
+            _logger.LogWarning("Playlist not found, using estimated duration for {Count} segments", segmentCount);
+            return segmentCount * HlsSegmentDurationSeconds;
+        }
+
+        try
+        {
+            var lines = File.ReadAllLines(playlistPath);
+            double totalDuration = 0;
+            int currentSegmentIndex = 0;
+            
+            foreach (var line in lines)
+            {
+                // Parse #EXTINF:duration, lines
+                if (line.StartsWith("#EXTINF:"))
+                {
+                    var durationStr = line.Substring(8).Split(',')[0];
+                    if (double.TryParse(durationStr, System.Globalization.NumberStyles.Float, 
+                        System.Globalization.CultureInfo.InvariantCulture, out var duration))
+                    {
+                        // Only count segments up to the requested count
+                        if (currentSegmentIndex < segmentCount)
+                        {
+                            totalDuration += duration;
+                        }
+                        currentSegmentIndex++;
+                    }
+                }
+            }
+            
+            _logger.LogDebug("Parsed playlist: {Count} segments, total duration {Duration}s", 
+                segmentCount, totalDuration);
+            
+            return totalDuration > 0 ? totalDuration : segmentCount * HlsSegmentDurationSeconds;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse playlist for duration, using estimate");
+            return segmentCount * HlsSegmentDurationSeconds;
+        }
+    }
+
+    /// <summary>
     /// Calculate buffer in seconds
     /// </summary>
     public int CalculateBufferSeconds(TranscodeSession session)
@@ -203,7 +265,7 @@ public class TranscodeService
     }
 
     /// <summary>
-    /// Start transcoding with optional subtitle burn-in, seek position, and read rate.
+    /// Start transcoding with optional subtitle burn-in, seek position, resolution, and read rate.
     /// </summary>
     public async Task<TranscodeSession?> StartTranscodeAsync(
         Guid mediaId, 
@@ -211,8 +273,27 @@ public class TranscodeService
         string inputPath, 
         int? subtitleTrackIndex = null, 
         double? seekPosition = null,
+        string? resolution = null,
         double? readRate = null)
     {
+        // Check concurrent transcode limit from settings
+        using (var scope = _scopeFactory.CreateScope())
+        {
+            var settingsService = scope.ServiceProvider.GetRequiredService<ISettingsService>();
+            var maxConcurrent = await settingsService.GetSettingAsync("MaxSimultaneousTranscodes", 0);
+            
+            if (maxConcurrent > 0)
+            {
+                var activeCount = _activeSessions.Count(s => s.Value.State != TranscodeState.Dormant && s.Value.State != TranscodeState.Completed);
+                if (activeCount >= maxConcurrent)
+                {
+                    _logger.LogWarning("Max concurrent transcodes ({Max}) reached, rejecting new session for {MediaId}", 
+                        maxConcurrent, mediaId);
+                    return null; // Caller should handle HTTP 503
+                }
+            }
+        }
+        
         var sessionKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex);
         var sessionLock = _sessionLocks.GetOrAdd(sessionKey, _ => new SemaphoreSlim(1, 1));
         
@@ -222,6 +303,7 @@ public class TranscodeService
             // Check if session already exists
             if (_activeSessions.TryGetValue(sessionKey, out var existingSession))
             {
+
                 // Verify the session directory still exists (could have been cleaned up)
                 if (Directory.Exists(existingSession.SessionDirectory))
                 {
@@ -303,9 +385,9 @@ public class TranscodeService
                 Key = sessionKey,
                 UserId = userId,
                 InputPath = inputPath,
-                State = TranscodeState.Burst,
-                CurrentReadRate = readRate,
+                State = TranscodeState.Transcoding,
                 SeekPosition = seekPosition,  // Store seek position to detect changes
+                TargetResolution = resolution ?? "original",  // Store resolution for FFmpeg
                 SessionDirectory = sessionDir,
                 SessionStartTime = DateTime.UtcNow,
                 LastClientRequestTime = DateTime.UtcNow
@@ -386,59 +468,81 @@ public class TranscodeService
     }
 
     /// <summary>
-    /// Restart FFmpeg with a new read rate (for state transitions)
+    /// Suspend the FFmpeg process for a session (throttle when buffer is full).
+    /// Does NOT kill the process - uses OS-level suspension so it can resume exactly where it left off.
     /// </summary>
-    public async Task<bool> RestartWithReadRateAsync(TranscodeSessionKey key, double? newReadRate, TranscodeState newState)
+    public bool SuspendSession(TranscodeSessionKey key)
     {
         if (!_activeSessions.TryGetValue(key, out var session))
         {
             return false;
         }
 
-        var sessionLock = _sessionLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
-        await sessionLock.WaitAsync();
-        try
+        if (session.Process == null || session.Process.HasExited)
         {
-            // Stop current process
-            if (session.Process != null && !session.Process.HasExited)
-            {
-                try
-                {
-                    session.Process.Kill();
-                    session.Process.Dispose();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Error stopping FFmpeg during restart");
-                }
-            }
+            _logger.LogDebug("Cannot suspend session {MediaId}: process is null or exited", key.MediaId);
+            return false;
+        }
 
-            // Update session state
-            session.CurrentReadRate = newReadRate;
-            session.State = newState;
-
-            // Calculate seek position from latest segment
-            double seekSeconds = session.LatestSegmentIndex * HlsSegmentDurationSeconds;
-
-            // Start new process
-            var process = await StartFFmpegProcessAsync(session, seekSeconds);
-            if (process == null)
-            {
-                _logger.LogError("Failed to restart FFmpeg for {MediaId}", key.MediaId);
-                return false;
-            }
-
-            session.Process = process;
-            _logger.LogInformation("FFmpeg restarted for {MediaId}: state={State}, readRate={Rate}", 
-                key.MediaId, newState, newReadRate?.ToString() ?? "BURST");
-            
+        if (session.IsSuspended)
+        {
+            _logger.LogDebug("Session {MediaId} is already suspended", key.MediaId);
             return true;
         }
-        finally
+
+        var success = _processController.Suspend(session.Process);
+        if (success)
         {
-            sessionLock.Release();
+            session.IsSuspended = true;
+            session.State = TranscodeState.Throttled;
+            _logger.LogInformation("Suspended FFmpeg for {MediaId} (buffer full)", key.MediaId);
         }
+        else
+        {
+            _logger.LogWarning("Failed to suspend FFmpeg for {MediaId}", key.MediaId);
+        }
+        
+        return success;
     }
+
+    /// <summary>
+    /// Resume a suspended FFmpeg process (when buffer runs low).
+    /// The process continues exactly where it left off - no segment overlap.
+    /// </summary>
+    public bool ResumeSession(TranscodeSessionKey key)
+    {
+        if (!_activeSessions.TryGetValue(key, out var session))
+        {
+            return false;
+        }
+
+        if (session.Process == null || session.Process.HasExited)
+        {
+            _logger.LogDebug("Cannot resume session {MediaId}: process is null or exited", key.MediaId);
+            return false;
+        }
+
+        if (!session.IsSuspended)
+        {
+            _logger.LogDebug("Session {MediaId} is not suspended", key.MediaId);
+            return true;
+        }
+
+        var success = _processController.Resume(session.Process);
+        if (success)
+        {
+            session.IsSuspended = false;
+            session.State = TranscodeState.Transcoding;
+            _logger.LogInformation("Resumed FFmpeg for {MediaId} (buffer low)", key.MediaId);
+        }
+        else
+        {
+            _logger.LogWarning("Failed to resume FFmpeg for {MediaId}", key.MediaId);
+        }
+        
+        return success;
+    }
+
 
     /// <summary>
     /// Start FFmpeg process with current session settings
@@ -463,10 +567,11 @@ public class TranscodeService
             "seg", 
             subtitleBurnInIndex,  // Pass subtitle for burn-in if bitmap, null otherwise (sidecar WebVTT)
             seekPosition,
-            session.CurrentReadRate);
+            null,  // No read rate - FFmpeg runs at full speed, throttled via suspend/resume
+            session.TargetResolution);  // Pass resolution from session
 
-        _logger.LogInformation("Starting FFmpeg for {MediaId} (readRate={Rate}, seek={Seek}): {Args}", 
-            session.Key.MediaId, session.CurrentReadRate, seekPosition, startInfo.Arguments);
+        _logger.LogInformation("Starting FFmpeg for {MediaId} (seek={Seek}): {Args}", 
+            session.Key.MediaId, seekPosition, startInfo.Arguments);
 
         var process = new Process { StartInfo = startInfo };
         
@@ -619,7 +724,7 @@ public class TranscodeService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error stopping transcode session");
+            _logger.LogError(ex, "Error stopping transcode session for {Key}", session.Key);
         }
     }
 }

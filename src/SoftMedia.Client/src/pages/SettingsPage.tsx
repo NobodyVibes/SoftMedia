@@ -571,6 +571,67 @@ export default function SettingsPage() {
                                     Skip video conversion and serve files directly. May cause playback issues in browsers that don't support the original video format.
                                 </p>
                             </div>
+                        ) : setting.key === 'MaxStreamingBitrate' ? (
+                            <div className="flex items-center gap-3 max-w-md">
+                                <input
+                                    type="number"
+                                    min="0"
+                                    max="100000"
+                                    step="1000"
+                                    value={setting.value}
+                                    onChange={(e) => handleChange(setting.key, e.target.value)}
+                                    className="w-32 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
+                                />
+                                <span className="text-sm text-gray-400">
+                                    {parseInt(setting.value) === 0 ? 'Unlimited' : `${(parseInt(setting.value) / 1000).toFixed(0)} Mbps`}
+                                </span>
+                            </div>
+                        ) : setting.key === 'MaxSimultaneousTranscodes' ? (
+                            <div className="flex items-center gap-3 max-w-md">
+                                <input
+                                    type="number"
+                                    min="0"
+                                    max="20"
+                                    value={setting.value}
+                                    onChange={(e) => handleChange(setting.key, e.target.value)}
+                                    className="w-24 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
+                                />
+                                <span className="text-sm text-gray-400">
+                                    {parseInt(setting.value) === 0 ? 'Unlimited' : 'concurrent sessions'}
+                                </span>
+                            </div>
+                        ) : setting.key === 'DefaultStreamingQuality' ? (
+                            <Combobox
+                                value={setting.value}
+                                onChange={(val) => handleChange(setting.key, val)}
+                                options={['auto', '720p', '1080p', '4k', 'original']}
+                                placeholder="Select default quality..."
+                                className="max-w-md"
+                            />
+                        ) : setting.key === 'DefaultAudioChannels' ? (
+                            <Combobox
+                                value={setting.value}
+                                onChange={(val) => handleChange(setting.key, val)}
+                                options={['auto', 'stereo', '5.1', '7.1']}
+                                placeholder="Select audio preference..."
+                                className="max-w-md"
+                            />
+                        ) : setting.key === 'ForceDirectPlayWhenPossible' ? (
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}
+                                    className={cn(
+                                        "w-12 h-6 rounded-full transition-colors relative",
+                                        setting.value === 'true' ? "bg-primary" : "bg-white/10"
+                                    )}
+                                >
+                                    <div className={cn(
+                                        "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
+                                        setting.value === 'true' ? "left-7" : "left-1"
+                                    )} />
+                                </button>
+                                <span className="text-sm text-gray-400">{setting.value === 'true' ? 'Enabled' : 'Disabled'}</span>
+                            </div>
                         ) : (
                             <input
                                 type="text"
@@ -579,6 +640,7 @@ export default function SettingsPage() {
                                 className="w-full max-w-md bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
                             />
                         )}
+
 
                         {setting.description && !['MusicProviderPrimary', 'MusicProviderFallback', 'DisableTranscoding'].includes(setting.key) && (
                             <p className="text-xs text-gray-500">{setting.description}</p>
@@ -667,12 +729,18 @@ export default function SettingsPage() {
                                             {renderSettingsGroup('Transcoding')}
                                         </div>
                                         <div className="border-t border-white/5 pt-6">
+                                            <h3 className="text-lg font-semibold text-white mb-4">Streaming Quality</h3>
+                                            <p className="text-sm text-gray-400 mb-4">Configure bandwidth and quality limits for remote streaming.</p>
+                                            {renderSettingsGroup('Streaming')}
+                                        </div>
+                                        <div className="border-t border-white/5 pt-6">
                                             <h3 className="text-lg font-semibold text-white mb-4">Subtitles</h3>
                                             {renderSettingsGroup('Subtitles')}
                                         </div>
                                     </div>
                                 </div>
                             )}
+
 
                             {activeTab === 'metadata' && (
                                 <div>

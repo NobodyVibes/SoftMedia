@@ -13,9 +13,9 @@ public interface IFFmpegService
     /// </summary>
     ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition);
     /// <summary>
-    /// Get transcode arguments with subtitle, seek, read rate, and target resolution.
+    /// Get transcode arguments with subtitle, seek, read rate, target resolution, codec, and HDR settings.
     /// </summary>
-    ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null);
+    ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false);
     
     /// <summary>
     /// Extract a subtitle track to WebVTT format for HLS sidecar delivery.
@@ -73,6 +73,9 @@ public class TranscodeSettings
     public int ThreadCount { get; set; } = 0;
     public string MaxResolution { get; set; } = "original";
     public int CRF { get; set; } = 23;
+    public string OutputVideoCodec { get; set; } = "auto";
+    public string ToneMappingAlgorithm { get; set; } = "hable";
+    public bool PreserveHDR { get; set; } = false;
 }
 
 public class FFmpegService : IFFmpegService
@@ -99,6 +102,9 @@ public class FFmpegService : IFFmpegService
         var threadCountStr = await _settingsService.GetSettingAsync("TranscodeThreadCount", "0");
         var maxRes = await _settingsService.GetSettingAsync("MaxTranscodeResolution", "original");
         var crfStr = await _settingsService.GetSettingAsync("TranscodeCRF", "23");
+        var outputCodec = await _settingsService.GetSettingAsync("OutputVideoCodec", "auto");
+        var toneMapAlgo = await _settingsService.GetSettingAsync("ToneMappingAlgorithm", "hable");
+        var preserveHdrStr = await _settingsService.GetSettingAsync("PreserveHDR", "false");
         
         return new TranscodeSettings
         {
@@ -107,7 +113,10 @@ public class FFmpegService : IFFmpegService
             Preset = preset,
             ThreadCount = int.TryParse(threadCountStr, out var tc) ? tc : 0,
             MaxResolution = maxRes,
-            CRF = int.TryParse(crfStr, out var crf) ? crf : 23
+            CRF = int.TryParse(crfStr, out var crf) ? crf : 23,
+            OutputVideoCodec = outputCodec,
+            ToneMappingAlgorithm = toneMapAlgo,
+            PreserveHDR = bool.TryParse(preserveHdrStr, out var pHdr) && pHdr
         };
     }
 
@@ -121,15 +130,42 @@ public class FFmpegService : IFFmpegService
     }
 
     /// <summary>
-    /// Get the video encoder based on hardware acceleration setting.
+    /// Get the video encoder based on hardware acceleration and target codec.
+    /// Implements fallback chain: av1 → hevc → h264 (software always available for h264/hevc)
     /// </summary>
-    private string GetVideoEncoder(string hwAccel)
+    /// <param name="hwAccel">Hardware acceleration setting (nvidia, amd, intel, none)</param>
+    /// <param name="targetCodec">Target codec (auto, h264, hevc, av1). AV1 is hardware-only.</param>
+    /// <returns>FFmpeg encoder name</returns>
+    private string GetVideoEncoder(string hwAccel, string targetCodec = "h264")
     {
-        return hwAccel.ToLower() switch
+        var hw = hwAccel.ToLower();
+        var codec = targetCodec.ToLower();
+        
+        // For "auto", default to h264 for maximum compatibility
+        if (codec == "auto") codec = "h264";
+        
+        return (codec, hw) switch
         {
-            "nvidia" => "h264_nvenc",
-            "amd" => "h264_amf",
-            "intel" => "h264_qsv",
+            // AV1: Hardware only (no software fallback - too slow)
+            ("av1", "nvidia") => "av1_nvenc",
+            ("av1", "amd") => "av1_amf",
+            ("av1", "intel") => "av1_qsv",
+            // AV1 fallback to HEVC
+            ("av1", _) => GetVideoEncoder(hwAccel, "hevc"),
+            
+            // HEVC: Hardware preferred, software fallback available
+            ("hevc", "nvidia") => "hevc_nvenc",
+            ("hevc", "amd") => "hevc_amf",
+            ("hevc", "intel") => "hevc_qsv",
+            ("hevc", _) => "libx265",
+            
+            // H264: Universal support
+            ("h264", "nvidia") => "h264_nvenc",
+            ("h264", "amd") => "h264_amf",
+            ("h264", "intel") => "h264_qsv",
+            ("h264", _) => "libx264",
+            
+            // Default fallback
             _ => "libx264"
         };
     }
@@ -172,63 +208,108 @@ public class FFmpegService : IFFmpegService
     }
 
     /// <summary>
-    /// Get encoder-specific options based on hardware/software selection.
+    /// Get encoder-specific options based on hardware/software selection and target codec.
     /// </summary>
     private string GetEncoderOptions(TranscodeSettings settings)
     {
-        var encoder = GetVideoEncoder(settings.HardwareAcceleration);
+        var encoder = GetVideoEncoder(settings.HardwareAcceleration, settings.OutputVideoCodec);
+        _logger.LogDebug("Selected encoder: {Encoder} for codec: {Codec}, hw: {HW}", 
+            encoder, settings.OutputVideoCodec, settings.HardwareAcceleration);
         
+        // H.264 encoders
         if (encoder == "libx264")
         {
-            // Software encoding - use preset and CRF
             return $"-c:v libx264 -profile:v baseline -level 3.1 -pix_fmt yuv420p " +
                    $"-preset {settings.Preset} -crf {settings.CRF} ";
         }
         else if (encoder == "h264_nvenc")
         {
-            // NVIDIA NVENC - use p1-p7 presets and CQ (constant quality)
-            // Note: When using -hwaccel cuda -hwaccel_output_format cuda, frames stay in GPU memory
-            // NVENC accepts CUDA frames directly, so we don't specify -pix_fmt (would cause crash)
-            var nvencPreset = settings.Preset switch
-            {
-                "ultrafast" or "superfast" => "p1",
-                "veryfast" or "faster" => "p2",
-                "fast" => "p3",
-                "medium" => "p4",
-                "slow" => "p5",
-                "slower" => "p6",
-                "veryslow" => "p7",
-                _ => "p2"
-            };
+            var nvencPreset = MapToNvencPreset(settings.Preset);
             return $"-c:v h264_nvenc -preset {nvencPreset} -cq {settings.CRF} ";
         }
         else if (encoder == "h264_amf")
         {
-            // AMD AMF - use quality preset and qp_i/qp_p
-            // Note: AMF doesn't support 10-bit input (common in HEVC/x265 files)
-            // We add -pix_fmt yuv420p to force 8-bit output for compatibility
-            var amfQuality = settings.Preset switch
-            {
-                "ultrafast" or "superfast" or "veryfast" => "speed",
-                "faster" or "fast" or "medium" => "balanced",
-                _ => "quality"
-            };
+            var amfQuality = MapToAmfQuality(settings.Preset);
             return $"-c:v h264_amf -quality {amfQuality} -rc cqp -qp_i {settings.CRF} -qp_p {settings.CRF} -pix_fmt yuv420p ";
         }
         else if (encoder == "h264_qsv")
         {
-            // Intel QuickSync - use preset and global_quality
-            var qsvPreset = settings.Preset switch
-            {
-                "ultrafast" or "superfast" => "veryfast",
-                "veryslow" => "veryslow",
-                _ => settings.Preset
-            };
+            var qsvPreset = MapToQsvPreset(settings.Preset);
             return $"-c:v h264_qsv -preset {qsvPreset} -global_quality {settings.CRF} -pix_fmt nv12 ";
         }
+        // HEVC encoders
+        else if (encoder == "libx265")
+        {
+            // HEVC typically achieves same quality at ~30% lower bitrate, so use CRF+2
+            var adjustedCrf = Math.Min(settings.CRF + 2, 51);
+            return $"-c:v libx265 -preset {settings.Preset} -crf {adjustedCrf} -pix_fmt yuv420p ";
+        }
+        else if (encoder == "hevc_nvenc")
+        {
+            var nvencPreset = MapToNvencPreset(settings.Preset);
+            return $"-c:v hevc_nvenc -preset {nvencPreset} -cq {settings.CRF} ";
+        }
+        else if (encoder == "hevc_amf")
+        {
+            var amfQuality = MapToAmfQuality(settings.Preset);
+            return $"-c:v hevc_amf -quality {amfQuality} -rc cqp -qp_i {settings.CRF} -qp_p {settings.CRF} ";
+        }
+        else if (encoder == "hevc_qsv")
+        {
+            var qsvPreset = MapToQsvPreset(settings.Preset);
+            return $"-c:v hevc_qsv -preset {qsvPreset} -global_quality {settings.CRF} ";
+        }
+        // AV1 encoders (hardware only)
+        else if (encoder == "av1_nvenc")
+        {
+            var nvencPreset = MapToNvencPreset(settings.Preset);
+            // AV1 achieves same quality at even lower bitrate, use CRF+4
+            var adjustedCrf = Math.Min(settings.CRF + 4, 63);
+            return $"-c:v av1_nvenc -preset {nvencPreset} -cq {adjustedCrf} ";
+        }
+        else if (encoder == "av1_amf")
+        {
+            var amfQuality = MapToAmfQuality(settings.Preset);
+            return $"-c:v av1_amf -quality {amfQuality} -rc cqp -qp_i {settings.CRF} -qp_p {settings.CRF} ";
+        }
+        else if (encoder == "av1_qsv")
+        {
+            var qsvPreset = MapToQsvPreset(settings.Preset);
+            return $"-c:v av1_qsv -preset {qsvPreset} -global_quality {settings.CRF} ";
+        }
         
+        // Fallback
         return $"-c:v libx264 -preset {settings.Preset} -crf {settings.CRF} -pix_fmt yuv420p ";
     }
+    
+    /// <summary>Map x264 preset to NVENC p1-p7 presets.</summary>
+    private static string MapToNvencPreset(string preset) => preset switch
+    {
+        "ultrafast" or "superfast" => "p1",
+        "veryfast" or "faster" => "p2",
+        "fast" => "p3",
+        "medium" => "p4",
+        "slow" => "p5",
+        "slower" => "p6",
+        "veryslow" => "p7",
+        _ => "p2"
+    };
+    
+    /// <summary>Map x264 preset to AMD AMF quality settings.</summary>
+    private static string MapToAmfQuality(string preset) => preset switch
+    {
+        "ultrafast" or "superfast" or "veryfast" => "speed",
+        "faster" or "fast" or "medium" => "balanced",
+        _ => "quality"
+    };
+    
+    /// <summary>Map x264 preset to Intel QSV preset.</summary>
+    private static string MapToQsvPreset(string preset) => preset switch
+    {
+        "ultrafast" or "superfast" => "veryfast",
+        "veryslow" => "veryslow",
+        _ => preset
+    };
 
     /// <summary>
     /// Get video filter for resolution scaling.
@@ -412,14 +493,23 @@ public class FFmpegService : IFFmpegService
         return GetTranscodeArgumentsInternal(inputPath, outputDir, segmentPrefix, subtitleTrackIndex, seekPosition, null, settings);
     }
 
-    public ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null)
+    public ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false)
     {
         var settings = LoadSettingsAsync().GetAwaiter().GetResult();
-        // Override settings resolution if explicitly specified
+        // Override settings with URL parameters if explicitly specified
         if (!string.IsNullOrEmpty(targetResolution))
         {
             settings.MaxResolution = targetResolution;
         }
+        // Override codec from URL (server already validated/selected optimal codec)
+        if (!string.IsNullOrEmpty(targetCodec))
+        {
+            settings.OutputVideoCodec = targetCodec;
+            _logger.LogDebug("Using URL-specified codec: {Codec}", targetCodec);
+        }
+        // Override HDR setting from URL
+        settings.PreserveHDR = preserveHdr;
+        
         return GetTranscodeArgumentsInternal(inputPath, outputDir, segmentPrefix, subtitleTrackIndex, seekPosition, readRate, settings);
     }
 
@@ -524,7 +614,7 @@ public class FFmpegService : IFFmpegService
         Directory.CreateDirectory(outputDir);
 
         var playlistPath = Path.Combine(outputDir, "master.m3u8");
-        var segmentPath = Path.Combine(outputDir, $"{segmentPrefix}_%03d.ts");
+        // Note: segmentPath is defined later based on container type (fmp4 vs ts)
 
         // Probe media to check for HDR/10-bit
         var probe = ProbeMediaAsync(inputPath).GetAwaiter().GetResult();
@@ -627,7 +717,15 @@ public class FFmpegService : IFFmpegService
         // For Nvidia + 10-bit/HDR content, we use the Jellyfin-FFmpeg Zero-Copy Pipeline.
         // This requires 'tonemap_cuda' (included in Jellyfin-FFmpeg builds).
         // It provides extremely high performance (>200 FPS) by keeping frames in GPU memory.
-        bool useToneMappingPipeline = is10Bit && settings.HardwareAcceleration.ToLower() == "nvidia";
+        
+        // If PreserveHDR is enabled, skip tonemapping and keep HDR output
+        bool skipTonemapping = settings.PreserveHDR && is10Bit;
+        bool useToneMappingPipeline = is10Bit && settings.HardwareAcceleration.ToLower() == "nvidia" && !skipTonemapping;
+        
+        if (skipTonemapping)
+        {
+            _logger.LogInformation("PreserveHDR enabled: skipping tonemapping for 10-bit/HDR content");
+        }
         
         string scaleFilter = "";
         
@@ -642,26 +740,25 @@ public class FFmpegService : IFFmpegService
             {
                 "720p" => "scale_cuda=1280:-2:format=p010", 
                 "1080p" => "scale_cuda=1920:-2:format=p010",
-                "4k" => "scale_cuda=3840:-2:format=p010", // We can support 4K again! Zero-copy is fast.
+                "4k" => "scale_cuda=3840:-2:format=p010",
                 _ => "scale_cuda=format=p010" 
             };
             
             // Build filter chain
             var chain = new List<string>();
-            
-            // Note: If input is not resized, we still need to ensure format is P010 before tonemap
-            // But usually input is P010. scale_cuda handles it.
             chain.Add(scale);
             
-            // Tonemap CUDA works entirely in GPU memory. 
-            // format=nv12 sets the output format to 8-bit SDR.
-            // Using default algo (usually hable/reinhard).
-            chain.Add("tonemap_cuda=format=nv12");
+            // Tonemap CUDA with configurable algorithm
+            // Valid algorithms: hable, reinhard, mobius
+            var toneAlgo = settings.ToneMappingAlgorithm.ToLower();
+            if (toneAlgo != "hable" && toneAlgo != "reinhard" && toneAlgo != "mobius")
+            {
+                toneAlgo = "hable"; // Default fallback
+            }
+            chain.Add($"tonemap_cuda=tonemap={toneAlgo}:format=nv12");
+            _logger.LogDebug("Using tonemap algorithm: {Algorithm}", toneAlgo);
             
             // fps filter normalizes frame timing.
-            // Critical for Dolby Vision sources which can have variable timing or repeated metadata.
-            // We use the source frame rate if available, defaulting to 24 if unknown.
-            // This prevents the "frozen frame" issue where the encoder receives timestamps it can't handle.
             double fps = probe?.FrameRate > 0 ? probe.FrameRate : 24.0;
             chain.Add($"fps={fps}");
             
@@ -766,8 +863,42 @@ public class FFmpegService : IFFmpegService
         // HLS output settings
         // Note: Using 'event' playlist type + 'append_list' allows live-style growing playlist
         // Do NOT use 'omit_endlist' - FFmpeg needs to write #EXT-X-ENDLIST when done
+        
+        // Use fMP4 segments when preserving HDR (TS doesn't support HDR metadata properly)
+        // For regular transcoding, use MPEG-TS which works with append_list
+        var codecLower = settings.OutputVideoCodec.ToLower();
+        bool useFmp4 = skipTonemapping;  // HDR passthrough requires fMP4 for proper metadata
+        
+        // Determine segment extension based on container type
+        var segmentExt = useFmp4 ? "m4s" : "ts";
+        var segmentPath = Path.Combine(outputDir, $"{segmentPrefix}_%03d.{segmentExt}");
+        
+        // HLS output configuration
+        // - hls_time 6: Target segment duration
+        // - hls_list_size 0: Keep all segments in playlist (VOD-like for seeking)
+        // - hls_playlist_type event: Growing playlist (live transcoding)
         argumentBuilder.Append("-f hls -hls_time 6 -hls_list_size 0 -hls_playlist_type event ");
-        argumentBuilder.Append("-hls_flags append_list ");
+        
+        if (useFmp4)
+        {
+            // fMP4 mode: Required for HDR metadata preservation
+            // - hls_segment_type fmp4: Use fragmented MP4 segments
+            // - hls_fmp4_init_filename: Create init segment for codec configuration
+            // - hls_flags independent_segments: Each segment starts with keyframe (required for fMP4)
+            // NOTE: Do NOT use append_list with fMP4 - it prevents init.mp4 creation
+            // NOTE: init.mp4 is relative - FFmpeg WorkingDirectory must be set to outputDir!
+            argumentBuilder.Append("-hls_segment_type fmp4 ");
+            argumentBuilder.Append("-hls_fmp4_init_filename init.mp4 ");
+            argumentBuilder.Append("-hls_flags independent_segments ");
+            _logger.LogInformation("Using fMP4 segments for HDR passthrough (codec={Codec})", codecLower);
+        }
+        else
+        {
+            // MPEG-TS mode: Standard container, wide compatibility
+            // - append_list: Append new segments to playlist (works for live transcoding)
+            argumentBuilder.Append("-hls_flags append_list ");
+        }
+        
         argumentBuilder.Append($"-start_number 0 -hls_segment_filename \"{segmentPath}\" ");
         argumentBuilder.Append($"\"{playlistPath}\"");
 
@@ -775,8 +906,8 @@ public class FFmpegService : IFFmpegService
         
         var ffmpegPath = ResolveFFmpegPath();
         _logger.LogInformation("FFmpeg command: {Path} {Args}", ffmpegPath, arguments);
-        _logger.LogInformation("Transcode settings: HW={HW}, Preset={Preset}, CRF={CRF}, Threads={Threads}, Resolution={Res}", 
-            settings.HardwareAcceleration, settings.Preset, settings.CRF, settings.ThreadCount, settings.MaxResolution);
+        _logger.LogInformation("Transcode settings: HW={HW}, Preset={Preset}, CRF={CRF}, Threads={Threads}, Resolution={Res}, Codec={Codec}", 
+            settings.HardwareAcceleration, settings.Preset, settings.CRF, settings.ThreadCount, settings.MaxResolution, settings.OutputVideoCodec);
 
         return new ProcessStartInfo
         {
@@ -784,7 +915,8 @@ public class FFmpegService : IFFmpegService
             Arguments = arguments,
             UseShellExecute = false,
             CreateNoWindow = true,
-            RedirectStandardError = true
+            RedirectStandardError = true,
+            WorkingDirectory = outputDir  // Ensure init.mp4 is created in the output directory
         };
     }
 

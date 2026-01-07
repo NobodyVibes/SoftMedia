@@ -126,9 +126,11 @@ public class TranscodeController : ControllerBase
     /// - sub: Subtitle track index to burn into the video
     /// - seek: Position in seconds to start from
     /// - resolution: Target resolution (e.g., "720p", "1080p", "4k", "original")
+    /// - codec: Target video codec (e.g., "h264", "hevc", "av1")
+    /// - hdr: Whether to preserve HDR (e.g., "true", "false")
     /// </summary>
     [HttpGet("{id}/master.m3u8")]
-    public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null, [FromQuery] string? resolution = null)
+    public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null, [FromQuery] string? resolution = null, [FromQuery] string? codec = null, [FromQuery] bool? hdr = null)
     {
 
         try
@@ -165,9 +167,9 @@ public class TranscodeController : ControllerBase
             }
 
             // Start transcoding with user ID for session ownership
-            _logger.LogInformation("Starting transcode for media {Id} (user={UserId}, sub={Sub}, seek={Seek}, resolution={Res})", 
-                id, userId, sub, seek, resolution);
-            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution);
+            _logger.LogInformation("Starting transcode for media {Id} (user={UserId}, sub={Sub}, seek={Seek}, resolution={Res}, codec={Codec}, hdr={HDR})", 
+                id, userId, sub, seek, resolution, codec, hdr);
+            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr);
 
             var stream = _transcodeService.GetPlaylist(id, userId, sub);
             if (stream == null)
@@ -225,8 +227,12 @@ public class TranscodeController : ControllerBase
                     rewrittenContent.Append(content);
                 }
                 
-                // Append query string to all .ts (segment) files
-                var finalContent = rewrittenContent.ToString().Replace(".ts", $".ts?{queryString}");
+                // Append query string to all segment files (both .ts and .m4s)
+                // Also handle init.mp4 for fMP4 initialization segment
+                var finalContent = rewrittenContent.ToString()
+                    .Replace(".ts", $".ts?{queryString}")
+                    .Replace(".m4s", $".m4s?{queryString}")
+                    .Replace("init.mp4", $"init.mp4?{queryString}");
                 
                 // Return modified playlist as bytes
                 var bytes = System.Text.Encoding.UTF8.GetBytes(finalContent);
@@ -246,6 +252,7 @@ public class TranscodeController : ControllerBase
 
     /// <summary>
     /// Get an HLS segment. Updates client position for throttling.
+    /// Supports both MPEG-TS (.ts) and fMP4 (.m4s) segments.
     /// </summary>
     [HttpGet("{id}/{segment}")]
     public IActionResult GetSegment(Guid id, string segment, [FromQuery] int? sub = null)
@@ -265,13 +272,46 @@ public class TranscodeController : ControllerBase
             var stream = _transcodeService.GetSegment(id, userId, segment, sub);
             if (stream == null) return NotFound();
 
-            return File(stream, "video/MP2T");
+            // Return correct MIME type based on segment extension
+            var mimeType = segment.EndsWith(".m4s", StringComparison.OrdinalIgnoreCase) 
+                ? "video/mp4" 
+                : "video/MP2T";
+            return File(stream, mimeType);
         }
         catch (UnauthorizedAccessException)
         {
             return Unauthorized();
         }
 
+    }
+
+    /// <summary>
+    /// Get the fMP4 initialization segment (init.mp4).
+    /// Required for fMP4/CMAF HLS playback with HEVC/AV1/HDR content.
+    /// </summary>
+    [HttpGet("{id}/init.mp4")]
+    public IActionResult GetInitSegment(Guid id, [FromQuery] int? sub = null)
+    {
+        try
+        {
+            var userId = GetUserId();
+            var stream = _transcodeService.GetInitSegment(id, userId, sub);
+            if (stream == null) 
+            {
+                _logger.LogWarning("Init segment not found for {Id}", id);
+                return NotFound("Initialization segment not available");
+            }
+            return File(stream, "video/mp4");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Unauthorized();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error serving init segment for {Id}", id);
+            return StatusCode(500, "Error reading initialization segment");
+        }
     }
 
     /// <summary>

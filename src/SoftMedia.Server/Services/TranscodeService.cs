@@ -67,6 +67,16 @@ public class TranscodeSession
     /// Target resolution for transcoding (e.g., "720p", "1080p", "4k", "original")
     /// </summary>
     public string? TargetResolution { get; set; }
+    
+    /// <summary>
+    /// Target video codec for transcoding (e.g., "h264", "hevc", "av1")
+    /// </summary>
+    public string? TargetCodec { get; set; }
+    
+    /// <summary>
+    /// Whether to preserve HDR (skip tone mapping)
+    /// </summary>
+    public bool PreserveHdr { get; set; }
 }
 
 /// <summary>
@@ -88,7 +98,8 @@ public class TranscodeService
     public const int HlsSegmentDurationSeconds = 6;      // Target segment duration (actual varies)
     public const int MaxCrashRetries = 3;
 
-    private static readonly Regex SegmentPattern = new(@"^seg_(\d+)\.ts$", RegexOptions.Compiled);
+    // Support both .ts (MPEG-TS) and .m4s (fMP4) segment extensions
+    private static readonly Regex SegmentPattern = new(@"^seg_(\d+)\.(ts|m4s)$", RegexOptions.Compiled);
 
     public TranscodeService(
         IServiceScopeFactory scopeFactory, 
@@ -145,7 +156,7 @@ public class TranscodeService
     }
 
     /// <summary>
-    /// Extract segment index from filename like "seg_042.ts"
+    /// Extract segment index from filename like "seg_042.ts" or "seg_042.m4s"
     /// </summary>
     public static int ExtractSegmentIndex(string segmentName)
     {
@@ -159,7 +170,10 @@ public class TranscodeService
     public int GetLatestSegmentIndex(string sessionDir)
     {
         if (!Directory.Exists(sessionDir)) return 0;
-        var files = Directory.GetFiles(sessionDir, "seg_*.ts");
+        // Check for both .ts and .m4s segments (fMP4 uses .m4s)
+        var tsFiles = Directory.GetFiles(sessionDir, "seg_*.ts");
+        var m4sFiles = Directory.GetFiles(sessionDir, "seg_*.m4s");
+        var files = tsFiles.Concat(m4sFiles).ToArray();
         return files
             .Select(f => ExtractSegmentIndex(Path.GetFileName(f)))
             .Where(i => i >= 0)
@@ -274,7 +288,9 @@ public class TranscodeService
         int? subtitleTrackIndex = null, 
         double? seekPosition = null,
         string? resolution = null,
-        double? readRate = null)
+        double? readRate = null,
+        string? codec = null,
+        bool? preserveHdr = null)
     {
         // Check concurrent transcode limit from settings
         using (var scope = _scopeFactory.CreateScope())
@@ -388,6 +404,8 @@ public class TranscodeService
                 State = TranscodeState.Transcoding,
                 SeekPosition = seekPosition,  // Store seek position to detect changes
                 TargetResolution = resolution ?? "original",  // Store resolution for FFmpeg
+                TargetCodec = codec,  // Store codec from URL (may be null)
+                PreserveHdr = preserveHdr ?? false,  // Store HDR preference
                 SessionDirectory = sessionDir,
                 SessionStartTime = DateTime.UtcNow,
                 LastClientRequestTime = DateTime.UtcNow
@@ -568,7 +586,9 @@ public class TranscodeService
             subtitleBurnInIndex,  // Pass subtitle for burn-in if bitmap, null otherwise (sidecar WebVTT)
             seekPosition,
             null,  // No read rate - FFmpeg runs at full speed, throttled via suspend/resume
-            session.TargetResolution);  // Pass resolution from session
+            session.TargetResolution,  // Pass resolution from session
+            session.TargetCodec,       // Pass codec from session
+            session.PreserveHdr);      // Pass HDR preference from session
 
         _logger.LogInformation("Starting FFmpeg for {MediaId} (seek={Seek}): {Args}", 
             session.Key.MediaId, seekPosition, startInfo.Arguments);
@@ -624,6 +644,22 @@ public class TranscodeService
         {
             return new FileStream(segmentPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         }
+        return null;
+    }
+
+    /// <summary>
+    /// Get the fMP4 initialization segment (init.mp4) for a transcode session.
+    /// This is required for fMP4/CMAF HLS playback.
+    /// </summary>
+    public Stream? GetInitSegment(Guid mediaId, Guid userId, int? subtitleTrackIndex = null)
+    {
+        var sessionDir = GetSessionDir(mediaId, userId, subtitleTrackIndex);
+        var initPath = Path.Combine(sessionDir, "init.mp4");
+        if (File.Exists(initPath))
+        {
+            return new FileStream(initPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        }
+        _logger.LogWarning("Init segment not found at {Path}", initPath);
         return null;
     }
 

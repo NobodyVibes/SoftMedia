@@ -158,6 +158,33 @@ function detectHdrSupport(): boolean {
 }
 
 /**
+ * Detect specific HDR formats supported by the client.
+ * Returns an array of supported formats like ["hdr10", "hlg"].
+ */
+function detectHdrFormats(): string[] {
+    const formats: string[] = [];
+
+    // HDR10 via HEVC Main 10
+    if (checkMediaSourceSupport('video/mp4; codecs="hvc1.2.4.L153.B0"')) {
+        formats.push('hdr10');
+    }
+
+    // HLG via HEVC
+    if (checkMediaSourceSupport('video/mp4; codecs="hvc1.2.4.L150.B0"')) {
+        formats.push('hlg');
+    }
+
+    // HDR10 via AV1
+    if (checkMediaSourceSupport('video/mp4; codecs="av01.0.09M.10"')) {
+        if (!formats.includes('hdr10')) {
+            formats.push('hdr10');
+        }
+    }
+
+    return formats;
+}
+
+/**
  * Detect maximum audio channels.
  * Most browsers support stereo (2), some support surround.
  */
@@ -233,7 +260,10 @@ export function useMediaCapabilities(): {
                 supportedContainers: detectContainers(),
             };
 
+            // Log detected HDR formats for debugging
+            const hdrFormats = detectHdrFormats();
             console.log('[MediaCapabilities] Detected:', detected);
+            console.log('[MediaCapabilities] HDR formats:', hdrFormats.length > 0 ? hdrFormats : 'none');
             setCapabilities(detected);
             setIsDetecting(false);
         };

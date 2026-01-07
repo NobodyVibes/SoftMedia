@@ -84,6 +84,8 @@ public class SettingsService : ISettingsService
             new() { Key = "MaxTranscodeResolution", Value = "original", Group = "Transcoding", Description = "Maximum output resolution (720p, 1080p, 4k, original)." },
             new() { Key = "TranscodeCRF", Value = "23", Group = "Transcoding", Description = "Quality level 0-51 (lower = better, 23 = good default)." },
             new() { Key = "DisableTranscoding", Value = "false", Group = "Transcoding", Description = "Force direct play only, no video conversion." },
+            new() { Key = "ToneMappingAlgorithm", Value = "hable", Group = "Transcoding", Description = "HDR to SDR conversion: hable, reinhard, mobius." },
+            new() { Key = "EnableAV1Encoding", Value = "false", Group = "Transcoding", Description = "Enable AV1 encoding (requires RTX 40+, RX 7000+, or Intel Arc GPU)." },
             
             // Streaming (Jellyfin/Plex-inspired)
             new() { Key = "MaxStreamingBitrate", Value = "20000", Group = "Streaming", Description = "Maximum bitrate (kbps) for remote streaming. 0 = unlimited." },
@@ -91,6 +93,8 @@ public class SettingsService : ISettingsService
             new() { Key = "DefaultStreamingQuality", Value = "auto", Group = "Streaming", Description = "Default quality for new streams (auto, 720p, 1080p, 4k, original)." },
             new() { Key = "ForceDirectPlayWhenPossible", Value = "true", Group = "Streaming", Description = "Prefer direct play over transcoding when client supports the format." },
             new() { Key = "DefaultAudioChannels", Value = "auto", Group = "Streaming", Description = "Default audio channel preference (auto, stereo, 5.1, 7.1)." },
+            new() { Key = "PreserveHDR", Value = "true", Group = "Streaming", Description = "Pass through HDR to compatible clients (skips tone mapping)." },
+            new() { Key = "OutputVideoCodec", Value = "auto", Group = "Streaming", Description = "Preferred output codec: auto, h264, hevc, av1. AV1 requires hardware." },
             
             // Subtitles
 

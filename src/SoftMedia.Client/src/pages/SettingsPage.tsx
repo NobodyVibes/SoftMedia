@@ -313,6 +313,18 @@ export default function SettingsPage() {
         { value: "720p", label: "720p HD - 3-5 Mbps" },
     ];
 
+    const toneMappingOptions = [
+        { value: "hable", label: "Hable (Filmic)" },
+        { value: "reinhard", label: "Reinhard (Photographic)" },
+        { value: "mobius", label: "Mobius (Smooth)" },
+    ];
+
+    const outputCodecOptions = [
+        { value: "auto", label: "Auto (Server picks most efficient client-supported codec)" },
+        { value: "h264", label: "H.264 (Most compatible)" },
+        { value: "hevc", label: "HEVC/H.265 (More efficient)" },
+    ];
+
     // CRF quality label helper
     const getCRFLabel = (crf: number): string => {
         if (crf <= 0) return "Lossless";
@@ -338,13 +350,23 @@ export default function SettingsPage() {
         { id: 'admin', label: t('Admin Dashboard'), icon: ShieldCheck },
     ];
 
+    // Format setting key to human-readable label, preserving acronyms like HDR, CRF, etc.
+    const formatSettingLabel = (key: string): string => {
+        // Split on transitions from lowercase to uppercase, or before an uppercase followed by lowercase
+        // This handles: "PreserveHDR" -> "Preserve HDR", "TranscodeCRF" -> "Transcode CRF"
+        return key
+            .replace(/([a-z])([A-Z])/g, '$1 $2')  // lowercase -> uppercase: add space
+            .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')  // consecutive uppercase before lowercase: add space
+            .trim();
+    };
+
     // Helper to render settings by group
     const renderSettingsGroup = (groupName: string) => {
         let groupSettings = localSettings.filter(s => s.group === groupName);
 
         // Explicit ordering for Transcoding group
         if (groupName === 'Transcoding') {
-            const transcodingOrder = ['HardwareAcceleration', 'TranscodePreset', 'TranscodeThreadCount', 'MaxTranscodeResolution', 'TranscodeCRF', 'DisableTranscoding'];
+            const transcodingOrder = ['HardwareAcceleration', 'TranscodePreset', 'TranscodeThreadCount', 'MaxTranscodeResolution', 'TranscodeCRF', 'ToneMappingAlgorithm', 'EnableAV1Encoding', 'DisableTranscoding'];
             groupSettings = groupSettings.sort((a, b) => {
                 const aIndex = transcodingOrder.indexOf(a.key);
                 const bIndex = transcodingOrder.indexOf(b.key);
@@ -359,7 +381,7 @@ export default function SettingsPage() {
                 {groupSettings.map(setting => (
                     <div key={setting.key} className="flex flex-col gap-2">
                         {!['MusicProviderPrimary', 'MusicProviderFallback', 'DisableTranscoding'].includes(setting.key) && (
-                            <label className="text-sm font-medium text-gray-300">{t(setting.key.replace(/([A-Z])/g, ' $1').trim())}</label>
+                            <label className="text-sm font-medium text-gray-300">{t(formatSettingLabel(setting.key))}</label>
                         )}
 
                         {setting.key === 'AllowUserSignup' ? (
@@ -370,7 +392,7 @@ export default function SettingsPage() {
                                 placeholder="Select signup mode..."
                                 className="max-w-md"
                             />
-                        ) : (setting.value === 'true' || setting.value === 'false') && !['DisableTranscoding', 'HardwareAcceleration'].includes(setting.key) ? (
+                        ) : (setting.value === 'true' || setting.value === 'false') && !['DisableTranscoding', 'HardwareAcceleration', 'PreserveHDR'].includes(setting.key) ? (
                             <div className="flex items-center gap-3">
                                 <button
                                     onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}
@@ -617,6 +639,44 @@ export default function SettingsPage() {
                                 className="max-w-md"
                             />
                         ) : setting.key === 'ForceDirectPlayWhenPossible' ? (
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}
+                                    className={cn(
+                                        "w-12 h-6 rounded-full transition-colors relative",
+                                        setting.value === 'true' ? "bg-primary" : "bg-white/10"
+                                    )}
+                                >
+                                    <div className={cn(
+                                        "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
+                                        setting.value === 'true' ? "left-7" : "left-1"
+                                    )} />
+                                </button>
+                                <span className="text-sm text-gray-400">{setting.value === 'true' ? 'Enabled' : 'Disabled'}</span>
+                            </div>
+                        ) : setting.key === 'ToneMappingAlgorithm' ? (
+                            <Combobox
+                                value={toneMappingOptions.find(o => o.value === setting.value)?.label || setting.value}
+                                onChange={(val) => {
+                                    const option = toneMappingOptions.find(o => o.label === val);
+                                    handleChange(setting.key, option?.value || 'hable');
+                                }}
+                                options={toneMappingOptions.map(o => o.label)}
+                                placeholder="Select tone mapping..."
+                                className="max-w-md"
+                            />
+                        ) : setting.key === 'OutputVideoCodec' ? (
+                            <Combobox
+                                value={outputCodecOptions.find(o => o.value === setting.value)?.label || setting.value}
+                                onChange={(val) => {
+                                    const option = outputCodecOptions.find(o => o.label === val);
+                                    handleChange(setting.key, option?.value || 'auto');
+                                }}
+                                options={outputCodecOptions.map(o => o.label)}
+                                placeholder="Select output codec..."
+                                className="max-w-md"
+                            />
+                        ) : setting.key === 'PreserveHDR' ? (
                             <div className="flex items-center gap-3">
                                 <button
                                     onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}

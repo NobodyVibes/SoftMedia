@@ -30,6 +30,12 @@ public class StreamPlanServiceTests
             .ReturnsAsync("auto");
         _settingsMock.Setup(s => s.GetSettingAsync("DefaultAudioChannels", "auto"))
             .ReturnsAsync("auto");
+        _settingsMock.Setup(s => s.GetSettingAsync("OutputVideoCodec", "auto"))
+            .ReturnsAsync("auto");
+        _settingsMock.Setup(s => s.GetSettingAsync("PreserveHDR", false))
+            .ReturnsAsync(false);
+        _settingsMock.Setup(s => s.GetSettingAsync("EnableAV1Encoding", false))
+            .ReturnsAsync(false);
     }
 
     [Fact]
@@ -74,7 +80,7 @@ public class StreamPlanServiceTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal(PlaybackMethod.DirectPlay, result.Method);
-        Assert.Contains("/direct/", result.Url);
+        Assert.Contains("/stream/", result.Url);
         Assert.Contains("h264", result.VideoCodec.ToLower());
         Assert.Contains("aac", result.AudioCodec.ToLower());
     }
@@ -123,7 +129,7 @@ public class StreamPlanServiceTests
         Assert.Equal(PlaybackMethod.Remux, result.Method);
         Assert.Contains("/transcode/", result.Url);
         Assert.Contains("hevc", result.VideoCodec.ToLower());
-        Assert.Contains("Remux", result.Reason);
+        Assert.Contains("remux", result.Reason.ToLowerInvariant());
     }
 
     [Fact]

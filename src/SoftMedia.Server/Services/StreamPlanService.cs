@@ -37,6 +37,12 @@ public class StreamPlanService : IStreamPlanService
         "mp4", "webm", "mkv", "avi", "mov", "m4v", "ogg", "ts", "hls"
     };
 
+    // Valid output codecs for transcoding (security: prevents arbitrary encoder injection)
+    private static readonly HashSet<string> ValidOutputCodecs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "auto", "h264", "hevc", "av1"
+    };
+
     // Browser-compatible formats for Direct Play (no transcoding)
     private static readonly HashSet<string> DirectPlayContainers = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -71,9 +77,29 @@ public class StreamPlanService : IStreamPlanService
         var forceDirectPlay = await _settingsService.GetSettingAsync("ForceDirectPlayWhenPossible", true);
         var defaultQuality = await _settingsService.GetSettingAsync("DefaultStreamingQuality", "auto");
         var defaultAudioChannels = await _settingsService.GetSettingAsync("DefaultAudioChannels", "auto");
+        var outputCodecSetting = await _settingsService.GetSettingAsync("OutputVideoCodec", "auto");
+        var preserveHdrSetting = await _settingsService.GetSettingAsync("PreserveHDR", false);
+        var enableAV1 = await _settingsService.GetSettingAsync("EnableAV1Encoding", false);
         
-        _logger.LogDebug("Streaming settings: MaxBitrate={Bitrate}kbps, ForceDirectPlay={FDP}, Quality={Q}, Audio={A}",
-            maxServerBitrate, forceDirectPlay, defaultQuality, defaultAudioChannels);
+        // Validate output codec against allowlist (security)
+        if (!ValidOutputCodecs.Contains(outputCodecSetting))
+        {
+            _logger.LogWarning("Invalid OutputVideoCodec setting '{Codec}', defaulting to auto", outputCodecSetting);
+            outputCodecSetting = "auto";
+        }
+        
+        // PreserveHDR is only effective when:
+        // 1. Server setting is enabled
+        // 2. Client reports HDR support
+        // This prevents sending HDR content to non-HDR displays (which looks washed out)
+        var effectivePreserveHdr = preserveHdrSetting && clientCaps.SupportsHdr;
+        if (preserveHdrSetting && !clientCaps.SupportsHdr)
+        {
+            _logger.LogInformation("PreserveHDR requested but client doesn't support HDR - will tonemap to SDR");
+        }
+        
+        _logger.LogDebug("Streaming settings: MaxBitrate={Bitrate}kbps, ForceDirectPlay={FDP}, Quality={Q}, Audio={A}, Codec={Codec}, PreserveHDR={HDR} (effective={EffHDR}), AV1={AV1}",
+            maxServerBitrate, forceDirectPlay, defaultQuality, defaultAudioChannels, outputCodecSetting, preserveHdrSetting, effectivePreserveHdr, enableAV1);
 
         // Sanitize client capabilities
         var sanitizedCaps = SanitizeCapabilities(clientCaps);
@@ -117,7 +143,7 @@ public class StreamPlanService : IStreamPlanService
         if (probe == null)
         {
             _logger.LogWarning("Could not probe media {Id}, defaulting to transcode", mediaId);
-            return CreateTranscodePlan(mediaId, mediaItem, sanitizedCaps, token, "Unable to probe source file");
+            return CreateTranscodePlan(mediaId, mediaItem, sanitizedCaps, token, "Unable to probe source file", outputCodecSetting, effectivePreserveHdr, false, enableAV1);
         }
 
         var sourceVideoCodec = NormalizeCodecName(mediaItem.VideoCodec ?? probe.VideoCodec ?? "");
@@ -144,7 +170,9 @@ public class StreamPlanService : IStreamPlanService
         }
 
         // Fallback: Full Transcode
-        return CreateTranscodePlan(mediaId, mediaItem, sanitizedCaps, token, DetermineTranscodeReason(sourceVideoCodec, sourceAudioCodec, sourceContainer, sourceIsHdr, sourceResolution, sanitizedCaps));
+        return CreateTranscodePlan(mediaId, mediaItem, sanitizedCaps, token, 
+            DetermineTranscodeReason(sourceVideoCodec, sourceAudioCodec, sourceContainer, sourceIsHdr, sourceResolution, sanitizedCaps),
+            outputCodecSetting, effectivePreserveHdr, sourceIsHdr, enableAV1);
     }
     
     /// <summary>
@@ -289,20 +317,44 @@ public class StreamPlanService : IStreamPlanService
         };
     }
 
-    private StreamPlan CreateTranscodePlan(Guid mediaId, MediaItem item, ClientCapabilities caps, string token, string reason)
+    private StreamPlan CreateTranscodePlan(Guid mediaId, MediaItem item, ClientCapabilities caps, string token, string reason, string outputCodecSetting, bool preserveHdr, bool sourceIsHdr, bool enableAV1)
     {
         // Determine output resolution based on client's max or keep original
         var targetResolution = caps.MaxResolution > 0 ? $"{caps.MaxResolution}p" : "1080p";
 
-        // Use H.264 as universal fallback, prefer HEVC/AV1 if client supports
-        var targetVideoCodec = "h264";
-        if (caps.VideoCodecs.Any(c => NormalizeCodecName(c) == "hevc"))
+        // Determine target video codec based on setting and client support
+        var targetVideoCodec = "h264"; // Universal fallback
+        
+        if (outputCodecSetting == "auto")
         {
-            targetVideoCodec = "hevc";
+            // Auto: prefer more efficient codec if client supports
+            // Only consider AV1 if explicitly enabled (due to high hardware requirements)
+            if (enableAV1 && caps.VideoCodecs.Any(c => NormalizeCodecName(c) == "av1"))
+            {
+                targetVideoCodec = "av1";
+            }
+            else if (caps.VideoCodecs.Any(c => NormalizeCodecName(c) == "hevc"))
+            {
+                targetVideoCodec = "hevc";
+            }
         }
-        else if (caps.VideoCodecs.Any(c => NormalizeCodecName(c) == "av1"))
+        else if (outputCodecSetting != "auto")
         {
-            targetVideoCodec = "av1";
+            // Specific codec requested - use if client supports, else fallback
+            // AV1 still requires the EnableAV1 setting even when explicitly requested
+            if (outputCodecSetting == "av1" && enableAV1 && caps.VideoCodecs.Any(c => NormalizeCodecName(c) == "av1"))
+            {
+                targetVideoCodec = "av1";
+            }
+            else if (outputCodecSetting == "hevc" && caps.VideoCodecs.Any(c => NormalizeCodecName(c) == "hevc"))
+            {
+                targetVideoCodec = "hevc";
+            }
+            else if (outputCodecSetting == "h264")
+            {
+                targetVideoCodec = "h264";
+            }
+            // else fallback to h264
         }
 
         // Audio: use AAC stereo as default, or AC3 for surround
@@ -314,17 +366,25 @@ public class StreamPlanService : IStreamPlanService
             targetChannels = 6;
         }
 
-        var url = $"/api/transcode/{mediaId}/master.m3u8?token={token}&resolution={targetResolution}";
+        // Build URL with codec and HDR parameters
+        var url = $"/api/transcode/{mediaId}/master.m3u8?token={token}&resolution={targetResolution}&codec={targetVideoCodec}";
+        
+        // Determine if output will be HDR
+        var outputIsHdr = preserveHdr && sourceIsHdr && caps.SupportsHdr;
+        if (outputIsHdr)
+        {
+            url += "&hdr=true";
+        }
 
         return new StreamPlan
         {
             Method = PlaybackMethod.Transcode,
             Url = url,
-            DisplayProfile = $"{targetResolution} {targetVideoCodec.ToUpperInvariant()} (Transcode)",
+            DisplayProfile = $"{targetResolution} {targetVideoCodec.ToUpperInvariant()}{(outputIsHdr ? " HDR" : "")} (Transcode)",
             VideoCodec = targetVideoCodec,
             AudioCodec = targetAudioCodec,
             Container = "hls",
-            IsHdr = false, // Transcoding always outputs SDR (tonemapping)
+            IsHdr = outputIsHdr,
             Resolution = targetResolution,
             AudioChannels = targetChannels,
             Reason = reason

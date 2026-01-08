@@ -23,4 +23,11 @@ public class UserSeriesPreference
     /// </summary>
     [MaxLength(10)]
     public string? PreferredSubtitleLanguage { get; set; }
+    
+    /// <summary>
+    /// Preferred audio language code (e.g., "eng", "spa", "jpn").
+    /// Null means use default audio track.
+    /// </summary>
+    [MaxLength(10)]
+    public string? PreferredAudioLanguage { get; set; }
 }

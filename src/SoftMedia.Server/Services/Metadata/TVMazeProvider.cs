@@ -20,35 +20,83 @@ public class TVMazeProvider : IMetadataProvider
     {
         var title = item.Title;
         var path = item.Path;
+        var targetYear = item.Year;
+        
         try
         {
-            // Fetch show with cast and episodes
-            var url = $"https://api.tvmaze.com/singlesearch/shows?q={Uri.EscapeDataString(title)}&embed[]=cast";
-            _logger.LogInformation($"Fetching TVMaze for {title}: {url}");
-            string response;
+            // Use /search/shows endpoint to get multiple results for year-based disambiguation
+            // Per TVMaze API: https://www.tvmaze.com/api#show-search
+            var searchUrl = $"https://api.tvmaze.com/search/shows?q={Uri.EscapeDataString(title)}";
+            _logger.LogInformation($"Fetching TVMaze search for '{title}' (year: {targetYear}): {searchUrl}");
+            
+            string searchResponse;
             try 
             {
-                response = await _httpClient.GetStringAsync(url);
+                searchResponse = await _httpClient.GetStringAsync(searchUrl);
             }
             catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
-                // Fallback: If title ends with year (e.g. "Fallout 2024"), strip it and retry
-                var match = System.Text.RegularExpressions.Regex.Match(title, @"^(.*?) \d{4}$");
-                if (match.Success)
+                _logger.LogWarning($"TVMaze search returned 404 for '{title}'");
+                return null;
+            }
+            
+            using var searchDoc = System.Text.Json.JsonDocument.Parse(searchResponse);
+            var searchResults = searchDoc.RootElement;
+            
+            if (searchResults.GetArrayLength() == 0)
+            {
+                _logger.LogWarning($"No TVMaze results found for '{title}'");
+                return null;
+            }
+            
+            // Find the best matching show - prefer year match if targetYear is provided
+            System.Text.Json.JsonElement? bestMatch = null;
+            int bestScore = 0;
+            
+            foreach (var result in searchResults.EnumerateArray())
+            {
+                if (!result.TryGetProperty("show", out var show)) continue;
+                
+                var score = result.TryGetProperty("score", out var scoreVal) ? (int)(scoreVal.GetDouble() * 100) : 0;
+                
+                // Extract year from premiered date
+                int? showYear = null;
+                if (show.TryGetProperty("premiered", out var premiered) && premiered.ValueKind != System.Text.Json.JsonValueKind.Null)
                 {
-                    var newTitle = match.Groups[1].Value;
-                    _logger.LogInformation($"TVMaze 404 for '{title}'. Retrying with '{newTitle}'");
-                    url = $"https://api.tvmaze.com/singlesearch/shows?q={Uri.EscapeDataString(newTitle)}&embed[]=cast";
-                    response = await _httpClient.GetStringAsync(url);
+                    var dateStr = premiered.GetString();
+                    if (!string.IsNullOrEmpty(dateStr) && DateTime.TryParse(dateStr, out var date))
+                    {
+                        showYear = date.Year;
+                    }
                 }
-                else
+                
+                // If we have a target year, prioritize exact year matches
+                if (targetYear.HasValue && showYear.HasValue)
                 {
-                    throw;
+                    if (showYear.Value == targetYear.Value)
+                    {
+                        // Exact year match - use this show
+                        _logger.LogInformation($"Found exact year match for '{title}' ({targetYear}): {show.GetProperty("name").GetString()}");
+                        bestMatch = show;
+                        break;
+                    }
+                }
+                
+                // Use highest relevancy score as fallback
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestMatch = show;
                 }
             }
             
-            using var doc = System.Text.Json.JsonDocument.Parse(response);
-            var root = doc.RootElement;
+            if (!bestMatch.HasValue)
+            {
+                _logger.LogWarning($"No suitable TVMaze match found for '{title}'");
+                return null;
+            }
+            
+            var root = bestMatch.Value;
             
             var metadata = new Dictionary<string, object>();
             

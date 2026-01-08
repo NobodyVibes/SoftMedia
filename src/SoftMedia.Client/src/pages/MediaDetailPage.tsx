@@ -75,11 +75,35 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
 
     const type = library?.type;
 
-    const handlePlay = () => {
+    const handlePlay = async () => {
         if (type === 'Music') {
             playTrack(item);
         } else if (type === 'Book') {
             navigate(`/read/${item.id}`);
+        } else if (type === 'TV') {
+            // For TV shows, fetch the next episode to watch based on watch history
+            try {
+                const response = await api.get<{
+                    episodeId: string;
+                    resumePosition: number;
+                    isSeriesComplete: boolean;
+                }>(`/series/${item.id}/next-episode`);
+
+                const { episodeId, resumePosition } = response.data;
+
+                // Navigate to the episode with resume position
+                // If resumePosition is 0, no need to add query param
+                if (resumePosition > 0) {
+                    navigate(`/play/${episodeId}?start=${resumePosition}`);
+                } else {
+                    navigate(`/play/${episodeId}`);
+                }
+            } catch (error) {
+                console.error('Failed to fetch next episode:', error);
+                // Fallback: just navigate to the series page (though this won't work)
+                // In a production app, we'd show a toast notification
+                navigate(`/play/${item.id}`);
+            }
         } else {
             navigate(`/play/${item.id}`);
         }

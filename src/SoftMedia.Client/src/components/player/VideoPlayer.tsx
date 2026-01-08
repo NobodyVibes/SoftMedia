@@ -4,6 +4,7 @@ import Hls from 'hls.js';
 import { type MediaItem } from '../../types';
 import { useAuthStore } from '../../store/authStore';
 import { NextEpisodeOverlay, type NextEpisodeInfo } from './NextEpisodeOverlay';
+import { PlayerDebugPanel } from './PlayerDebugPanel';
 import { useMediaCapabilities, createCapabilitiesWithOverrides } from '../../hooks/useMediaCapabilities';
 
 
@@ -120,6 +121,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     // Adjacent episode navigation state (for prev/next buttons)
     const [previousEpisodeId, setPreviousEpisodeId] = useState<string | null>(null);
     const [nextEpisodeId, setNextEpisodeId] = useState<string | null>(null);
+
+    // Debug panel state
+    const [showDebugPanel, setShowDebugPanel] = useState(false);
 
     const token = useAuthStore((state) => state.token);
     const navigate = useNavigate();
@@ -382,6 +386,25 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         }
     };
 
+    // Save audio preference for TV episodes
+    const saveAudioPreference = async (language: string | null) => {
+        if (!item.seriesId || !token) return; // Only save for TV episodes
+
+        try {
+            await fetch(`/api/v1/series/${item.seriesId}/audio-preference`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({ language })
+            });
+            console.log(`Saved audio preference: ${language ?? 'default'} for series ${item.seriesId}`);
+        } catch {
+            // Silently fail - preference save is not critical
+        }
+    };
+
     // Keyboard shortcuts
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -429,6 +452,11 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     break;
                 case 'escape':
                     setShowSpeedMenu(false);
+                    setShowDebugPanel(false);
+                    break;
+                case 'd':
+                    // Toggle debug panel (don't prevent default for 'd' as it might be used elsewhere)
+                    setShowDebugPanel(prev => !prev);
                     break;
             }
             resetControlsTimeout();
@@ -534,6 +562,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     if (selectedSubtitleTrack !== null) {
                         finalUrl += `&sub=${selectedSubtitleTrack}`;
                     }
+                    if (selectedAudioTrack !== null) {
+                        finalUrl += `&audio=${selectedAudioTrack}`;
+                    }
                     if (startPosition > 0) {
                         finalUrl += `&seek=${Math.floor(startPosition)}`;
                     }
@@ -561,7 +592,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
         return () => { isMounted = false; };
 
-    }, [item, token, selectedSubtitleTrack, resumePosition, hasLoadedProgress, hasLoadedSubtitlePref, isSubtitleChange, forceStartFromBeginning, isDetectingCapabilities, mediaCapabilities, selectedQuality]);
+    }, [item, token, selectedSubtitleTrack, selectedAudioTrack, resumePosition, hasLoadedProgress, hasLoadedSubtitlePref, isSubtitleChange, forceStartFromBeginning, isDetectingCapabilities, mediaCapabilities, selectedQuality]);
 
 
 
@@ -599,18 +630,41 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                     if (matchingTrack) {
                                         console.log(`Applying saved subtitle preference: ${prefData.language}`);
                                         setSelectedSubtitleTrack(matchingTrack.index);
-                                        return; // Skip default selection
                                     }
                                 }
                             }
                         } catch {
                             // Ignore preference load errors - fall back to default
                         }
+
+                        // Also load saved audio preference for TV episodes
+                        try {
+                            const audioPrefResponse = await fetch(`/api/v1/series/${item.seriesId}/audio-preference`, {
+                                headers: { Authorization: `Bearer ${token}` }
+                            });
+                            if (audioPrefResponse.ok) {
+                                const audioPrefData = await audioPrefResponse.json();
+                                if (audioPrefData.language) {
+                                    // Find an audio track matching the saved language
+                                    const matchingAudioTrack = data.audioTracks?.find(
+                                        t => t.language?.toLowerCase() === audioPrefData.language.toLowerCase()
+                                    );
+                                    if (matchingAudioTrack) {
+                                        console.log(`Applying saved audio preference: ${audioPrefData.language}`);
+                                        setSelectedAudioTrack(matchingAudioTrack.index);
+                                    }
+                                }
+                            }
+                        } catch {
+                            // Ignore audio preference load errors - fall back to default
+                        }
                     }
 
-                    // Fall back to default subtitle if no saved preference
-                    const defaultSub = data.subtitleTracks?.find(t => t.isDefault);
-                    if (defaultSub) setSelectedSubtitleTrack(defaultSub.index);
+                    // Fall back to default subtitle if no saved preference matched
+                    if (selectedSubtitleTrack === null) {
+                        const defaultSub = data.subtitleTracks?.find(t => t.isDefault);
+                        if (defaultSub) setSelectedSubtitleTrack(defaultSub.index);
+                    }
                 }
             } catch (err) {
                 console.error('Failed to fetch tracks:', err);
@@ -1811,6 +1865,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                                             key={track.index}
                                                             onClick={() => {
                                                                 setSelectedAudioTrack(track.index);
+                                                                saveAudioPreference(track.language ?? null);
                                                                 setShowTrackMenu(false);
                                                             }}
                                                             className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedAudioTrack === track.index ? 'text-blue-400' : 'text-white'}`}
@@ -1927,6 +1982,17 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     <span>F: Fullscreen</span>
                 </div>
             </div>
+
+            {/* Debug Panel Overlay */}
+            {showDebugPanel && token && (
+                <PlayerDebugPanel
+                    mediaId={item.id}
+                    token={token}
+                    subtitleTrack={selectedSubtitleTrack}
+                    clientCapabilities={mediaCapabilities}
+                    onClose={() => setShowDebugPanel(false)}
+                />
+            )}
         </div>
     );
 }

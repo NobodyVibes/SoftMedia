@@ -13,9 +13,9 @@ public interface IFFmpegService
     /// </summary>
     ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition);
     /// <summary>
-    /// Get transcode arguments with subtitle, seek, read rate, target resolution, codec, and HDR settings.
+    /// Get transcode arguments with subtitle, seek, read rate, target resolution, codec, HDR, and audio track settings.
     /// </summary>
-    ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false);
+    ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false, int? audioTrackIndex = null);
     
     /// <summary>
     /// Extract a subtitle track to WebVTT format for HLS sidecar delivery.
@@ -43,6 +43,11 @@ public interface IFFmpegService
     /// </summary>
     Task<string?> ProbeSubtitleCodecAsync(string inputPath, int subtitleTrackIndex);
     
+    /// <summary>
+    /// Probe a file to get the subtitle language for a specific track.
+    /// </summary>
+    Task<string?> ProbeSubtitleLanguageAsync(string inputPath, int subtitleTrackIndex);
+
     /// <summary>
     /// Check if transcoding is disabled in settings.
     /// </summary>
@@ -493,7 +498,7 @@ public class FFmpegService : IFFmpegService
         return GetTranscodeArgumentsInternal(inputPath, outputDir, segmentPrefix, subtitleTrackIndex, seekPosition, null, settings);
     }
 
-    public ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false)
+    public ProcessStartInfo GetTranscodeArguments(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false, int? audioTrackIndex = null)
     {
         var settings = LoadSettingsAsync().GetAwaiter().GetResult();
         // Override settings with URL parameters if explicitly specified
@@ -510,7 +515,7 @@ public class FFmpegService : IFFmpegService
         // Override HDR setting from URL
         settings.PreserveHDR = preserveHdr;
         
-        return GetTranscodeArgumentsInternal(inputPath, outputDir, segmentPrefix, subtitleTrackIndex, seekPosition, readRate, settings);
+        return GetTranscodeArgumentsInternal(inputPath, outputDir, segmentPrefix, subtitleTrackIndex, seekPosition, readRate, settings, audioTrackIndex);
     }
 
     /// <summary>
@@ -573,6 +578,44 @@ public class FFmpegService : IFFmpegService
         return null;
     }
 
+    public async Task<string?> ProbeSubtitleLanguageAsync(string inputPath, int subtitleTrackIndex)
+    {
+        try
+        {
+            var ffprobePath = ResolveFFprobePath();
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = ffprobePath,
+                Arguments = $"-v quiet -print_format json -show_streams -select_streams {subtitleTrackIndex} \"{inputPath}\"",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            var output = await _processRunner.RunProcessAsync(startInfo);
+            if (string.IsNullOrEmpty(output)) return null;
+
+            using var doc = JsonDocument.Parse(output);
+            if (doc.RootElement.TryGetProperty("streams", out var streams))
+            {
+                foreach (var stream in streams.EnumerateArray())
+                {
+                    if (stream.TryGetProperty("tags", out var tags) &&
+                        tags.TryGetProperty("language", out var lang))
+                    {
+                        return lang.GetString();
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to probe subtitle language for track {Index} in {Path}", subtitleTrackIndex, inputPath);
+        }
+        
+        return null;
+    }
+
     /// <summary>
     /// Helper to detect if a file is 10-bit/HDR based on pixel format.
     /// </summary>
@@ -609,7 +652,8 @@ public class FFmpegService : IFFmpegService
         int? subtitleTrackIndex, 
         double? seekPosition,
         double? readRate,
-        TranscodeSettings settings)
+        TranscodeSettings settings,
+        int? audioTrackIndex = null)
     {
         Directory.CreateDirectory(outputDir);
 
@@ -852,6 +896,17 @@ public class FFmpegService : IFFmpegService
             argumentBuilder.Append(GetEncoderOptions(settings));
         }
         
+        // Audio stream mapping (select specific audio track if specified)
+        // Note: audioTrackIndex is the absolute FFprobe stream index, not audio-relative
+        // IMPORTANT: When using -map, FFmpeg ONLY includes explicitly mapped streams.
+        // So if we map audio, we MUST also map video, otherwise video is excluded!
+        if (audioTrackIndex.HasValue)
+        {
+            argumentBuilder.Append("-map 0:v:0 ");  // Map first video stream
+            argumentBuilder.Append($"-map 0:{audioTrackIndex.Value} ");  // Map selected audio stream
+            _logger.LogInformation("Mapping video stream 0:v:0 and audio stream 0:{Index}", audioTrackIndex.Value);
+        }
+        
         // Audio encoding
         argumentBuilder.Append("-c:a aac -ac 2 -b:a 128k ");
         
@@ -864,10 +919,13 @@ public class FFmpegService : IFFmpegService
         // Note: Using 'event' playlist type + 'append_list' allows live-style growing playlist
         // Do NOT use 'omit_endlist' - FFmpeg needs to write #EXT-X-ENDLIST when done
         
-        // Use fMP4 segments when preserving HDR (TS doesn't support HDR metadata properly)
-        // For regular transcoding, use MPEG-TS which works with append_list
+        // Use fMP4 segments when:
+        // 1. Preserving HDR (TS doesn't support HDR metadata properly)
+        // 2. Using AV1 codec (MPEG-TS doesn't support AV1, browsers require fMP4 for AV1)
+        // For regular transcoding with H.264/HEVC, use MPEG-TS which works with append_list
         var codecLower = settings.OutputVideoCodec.ToLower();
-        bool useFmp4 = skipTonemapping;  // HDR passthrough requires fMP4 for proper metadata
+        bool useAv1 = codecLower == "av1" || codecLower.Contains("av1");
+        bool useFmp4 = skipTonemapping || useAv1;  // HDR passthrough or AV1 requires fMP4
         
         // Determine segment extension based on container type
         var segmentExt = useFmp4 ? "m4s" : "ts";
@@ -890,7 +948,8 @@ public class FFmpegService : IFFmpegService
             argumentBuilder.Append("-hls_segment_type fmp4 ");
             argumentBuilder.Append("-hls_fmp4_init_filename init.mp4 ");
             argumentBuilder.Append("-hls_flags independent_segments ");
-            _logger.LogInformation("Using fMP4 segments for HDR passthrough (codec={Codec})", codecLower);
+            _logger.LogInformation("Using fMP4 segments (reason: {Reason}, codec={Codec})", 
+                useAv1 ? "AV1 requires fMP4" : "HDR passthrough", codecLower);
         }
         else
         {

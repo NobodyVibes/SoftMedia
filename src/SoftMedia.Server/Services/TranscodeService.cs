@@ -77,6 +77,11 @@ public class TranscodeSession
     /// Whether to preserve HDR (skip tone mapping)
     /// </summary>
     public bool PreserveHdr { get; set; }
+    
+    /// <summary>
+    /// Selected audio track index (null = use default audio track)
+    /// </summary>
+    public int? AudioTrackIndex { get; set; }
 }
 
 /// <summary>
@@ -290,7 +295,8 @@ public class TranscodeService
         string? resolution = null,
         double? readRate = null,
         string? codec = null,
-        bool? preserveHdr = null)
+        bool? preserveHdr = null,
+        int? audioTrack = null)
     {
         // Check concurrent transcode limit from settings
         using (var scope = _scopeFactory.CreateScope())
@@ -406,6 +412,7 @@ public class TranscodeService
                 TargetResolution = resolution ?? "original",  // Store resolution for FFmpeg
                 TargetCodec = codec,  // Store codec from URL (may be null)
                 PreserveHdr = preserveHdr ?? false,  // Store HDR preference
+                AudioTrackIndex = audioTrack,  // Store selected audio track
                 SessionDirectory = sessionDir,
                 SessionStartTime = DateTime.UtcNow,
                 LastClientRequestTime = DateTime.UtcNow
@@ -425,6 +432,14 @@ public class TranscodeService
                 
                 // Check if subtitle is bitmap-based (PGS, VOBSUB) - these need burn-in
                 var subtitleCodec = await ffmpegService.ProbeSubtitleCodecAsync(inputPath, subtitleTrackIndex.Value);
+                
+                // Probe subtitle language from FFprobe tags
+                session.SubtitleLanguage = await ffmpegService.ProbeSubtitleLanguageAsync(inputPath, subtitleTrackIndex.Value);
+                if (session.SubtitleLanguage != null)
+                {
+                    _logger.LogInformation("Detected subtitle language: {Lang}", session.SubtitleLanguage);
+                }
+                
                 if (FFmpegService.IsBitmapSubtitleCodec(subtitleCodec))
                 {
                     _logger.LogInformation("Subtitle track {Index} is bitmap-based ({Codec}) - will use burn-in overlay.", 
@@ -588,7 +603,8 @@ public class TranscodeService
             null,  // No read rate - FFmpeg runs at full speed, throttled via suspend/resume
             session.TargetResolution,  // Pass resolution from session
             session.TargetCodec,       // Pass codec from session
-            session.PreserveHdr);      // Pass HDR preference from session
+            session.PreserveHdr,       // Pass HDR preference from session
+            session.AudioTrackIndex);  // Pass audio track from session
 
         _logger.LogInformation("Starting FFmpeg for {MediaId} (seek={Seek}): {Args}", 
             session.Key.MediaId, seekPosition, startInfo.Arguments);

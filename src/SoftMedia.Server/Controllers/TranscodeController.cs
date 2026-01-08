@@ -20,17 +20,20 @@ public class TranscodeController : ControllerBase
 {
     private readonly TranscodeService _transcodeService;
     private readonly IStreamPlanService _streamPlanService;
+    private readonly ISettingsService _settingsService;
     private readonly AppDbContext _context;
     private readonly ILogger<TranscodeController> _logger;
 
     public TranscodeController(
         TranscodeService transcodeService, 
         IStreamPlanService streamPlanService,
+        ISettingsService settingsService,
         AppDbContext context, 
         ILogger<TranscodeController> logger)
     {
         _transcodeService = transcodeService;
         _streamPlanService = streamPlanService;
+        _settingsService = settingsService;
         _context = context;
         _logger = logger;
     }
@@ -128,9 +131,10 @@ public class TranscodeController : ControllerBase
     /// - resolution: Target resolution (e.g., "720p", "1080p", "4k", "original")
     /// - codec: Target video codec (e.g., "h264", "hevc", "av1")
     /// - hdr: Whether to preserve HDR (e.g., "true", "false")
+    /// - audio: Audio track index to select
     /// </summary>
     [HttpGet("{id}/master.m3u8")]
-    public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null, [FromQuery] string? resolution = null, [FromQuery] string? codec = null, [FromQuery] bool? hdr = null)
+    public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null, [FromQuery] string? resolution = null, [FromQuery] string? codec = null, [FromQuery] bool? hdr = null, [FromQuery] int? audio = null)
     {
 
         try
@@ -167,9 +171,9 @@ public class TranscodeController : ControllerBase
             }
 
             // Start transcoding with user ID for session ownership
-            _logger.LogInformation("Starting transcode for media {Id} (user={UserId}, sub={Sub}, seek={Seek}, resolution={Res}, codec={Codec}, hdr={HDR})", 
-                id, userId, sub, seek, resolution, codec, hdr);
-            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr);
+            _logger.LogInformation("Starting transcode for media {Id} (user={UserId}, sub={Sub}, seek={Seek}, resolution={Res}, codec={Codec}, hdr={HDR}, audio={Audio})", 
+                id, userId, sub, seek, resolution, codec, hdr, audio);
+            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr, audioTrack: audio);
 
             var stream = _transcodeService.GetPlaylist(id, userId, sub);
             if (stream == null)
@@ -452,6 +456,262 @@ public class TranscodeController : ControllerBase
     public IActionResult StopTranscodePost(Guid id, [FromQuery] int? sub = null, [FromQuery] bool all = false)
     {
         return StopTranscode(id, sub, all);
+    }
+
+    /// <summary>
+    /// Get playback debug information for a transcode session.
+    /// Returns the full decision pipeline: client capabilities → server settings → decision → actual output.
+    /// Requires authentication to protect server configuration details.
+    /// </summary>
+    [HttpPost("{id}/debug")]
+    public async Task<IActionResult> GetPlaybackDebug(Guid id, [FromBody] ClientCapabilities? clientCaps, [FromQuery] int? sub = null)
+    {
+        try
+        {
+            var userId = GetUserId();
+            var session = _transcodeService.GetSession(id, userId, sub);
+            
+            // Fetch individual server settings
+            var outputVideoCodec = await _settingsService.GetSettingAsync("OutputVideoCodec", "auto");
+            var maxResolution = await _settingsService.GetSettingAsync("MaxTranscodeResolution", "original");
+            var preserveHdr = await _settingsService.GetSettingAsync("PreserveHDR", "true") == "true";
+            var enableAv1 = await _settingsService.GetSettingAsync("EnableAV1Encoding", "false") == "true";
+            var hwAccel = await _settingsService.GetSettingAsync("HardwareAcceleration", "none");
+            var preset = await _settingsService.GetSettingAsync("TranscodePreset", "veryfast");
+            var crf = await _settingsService.GetSettingAsync("TranscodeCRF", "23");
+            var audioChannels = await _settingsService.GetSettingAsync("DefaultAudioChannels", "auto");
+            
+            // Get source media info
+            using var scope = HttpContext.RequestServices.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var mediaItem = await dbContext.MediaItems.FindAsync(id);
+            
+            if (session == null)
+            {
+                return Ok(new
+                {
+                    playbackMode = "DirectPlay",
+                    isTranscoding = false,
+                    message = "No active transcode session - likely direct play",
+                    clientCapabilities = clientCaps != null ? new
+                    {
+                        videoCodecs = clientCaps.VideoCodecs,
+                        audioCodecs = clientCaps.AudioCodecs,
+                        supportsHdr = clientCaps.SupportsHdr,
+                        maxAudioChannels = clientCaps.MaxAudioChannels,
+                        requestedQuality = clientCaps.RequestedQuality,
+                        supportedSubtitleFormats = clientCaps.SupportedSubtitleFormats
+                    } : null,
+                    serverSettings = new
+                    {
+                        outputVideoCodec,
+                        maxResolution,
+                        preserveHdr,
+                        enableAv1,
+                        hardwareAcceleration = hwAccel,
+                        targetAudioChannels = audioChannels
+                    },
+                    selectedSubtitleTrack = sub
+                });
+            }
+            
+            
+            bool isAdmin = User.IsInRole("Admin");
+            
+            // Get probe info from transcoded output
+            var probeInfo = await ProbeTranscodedOutput(session, isAdmin);
+            
+            // Build comprehensive debug response
+            var debugResponse = new
+            {
+                playbackMode = "Transcode",
+                isTranscoding = true,
+                
+                // 1. Client Capabilities - what the browser/client sent
+                clientCapabilities = clientCaps != null ? new
+                {
+                    videoCodecs = clientCaps.VideoCodecs,
+                    audioCodecs = clientCaps.AudioCodecs,
+                    supportsHdr = clientCaps.SupportsHdr,
+                    maxAudioChannels = clientCaps.MaxAudioChannels,
+                    maxResolution = clientCaps.MaxResolution,
+                    maxBitrate = clientCaps.MaxBitrate,
+                    requestedQuality = clientCaps.RequestedQuality,
+                    supportedContainers = clientCaps.SupportedContainers,
+                    supportedSubtitleFormats = clientCaps.SupportedSubtitleFormats
+                } : null,
+                
+                // 2. Server Settings - admin-configured transcode settings
+                serverSettings = new
+                {
+                    outputVideoCodec,
+                    maxResolution,
+                    preserveHdr,
+                    enableAv1,
+                    hardwareAcceleration = hwAccel,
+                    preset,
+                    crf,
+                    targetAudioChannels = audioChannels
+                },
+                
+                // 3. Source Media Info - what was detected from the source file
+                sourceMedia = mediaItem != null ? new
+                {
+                    videoCodec = mediaItem.VideoCodec,
+                    audioCodec = mediaItem.AudioCodec,
+                    resolution = mediaItem.Resolution,
+                    container = mediaItem.Container,
+                    duration = mediaItem.Duration
+                } : null,
+                
+                // 4. Final Decision - what the backend ultimately decided to do
+                decision = new
+                {
+                    targetCodec = session.TargetCodec ?? "h264",
+                    targetResolution = session.TargetResolution ?? "original",
+                    preserveHdr = session.PreserveHdr,
+                    toneMapped = !session.PreserveHdr,
+                    subtitleBurnIn = session.IsBitmapSubtitle,
+                    subtitleTrack = session.Key.SubtitleTrackIndex,
+                    subtitleLanguage = session.SubtitleLanguage
+                },
+                
+                // 5. Actual Output - FFprobe data from the transcoded file
+                probe = probeInfo,
+                
+                // Metadata
+                sessionDirectory = isAdmin ? session.SessionDirectory : "<redacted>",
+                probedAt = DateTime.UtcNow
+            };
+            
+            return Ok(debugResponse);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Unauthorized();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting debug info for {Id}", id);
+            return StatusCode(500, $"Error getting debug info: {ex.Message}");
+        }
+    }
+    
+    /// <summary>
+    /// Probe the transcoded output file to get actual codec/HDR info
+    /// </summary>
+    private async Task<object?> ProbeTranscodedOutput(TranscodeSession session, bool includeSensitiveData)
+    {
+        try
+        {
+            // Try init.mp4 first (fMP4 mode), then fall back to first segment
+            var initPath = Path.Combine(session.SessionDirectory, "init.mp4");
+            var probeFile = System.IO.File.Exists(initPath) 
+                ? initPath 
+                : Directory.GetFiles(session.SessionDirectory, "seg_000.*").FirstOrDefault();
+                
+            if (probeFile == null)
+            {
+                return new { error = "No transcode output files found yet" };
+            }
+            
+            var ffprobePath = ResolveFFprobePath();
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = ffprobePath,
+                Arguments = $"-v quiet -print_format json -show_streams \"{probeFile}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            };
+            
+            using var process = System.Diagnostics.Process.Start(startInfo);
+            if (process == null) return new { error = "Failed to start FFprobe" };
+            
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            
+            // Parse JSON and extract video and audio stream info
+            var probeData = System.Text.Json.JsonDocument.Parse(output);
+            var streams = probeData.RootElement.GetProperty("streams");
+            
+            // Find video and audio streams
+            string? videoCodec = null, pixelFormat = null, colorSpace = null, colorTransfer = null, colorPrimaries = null, resolution = null;
+            bool hasHdrMetadata = false, isHdr = false;
+            string? audioCodec = null;
+            int? audioChannels = null;
+            
+            foreach (var stream in streams.EnumerateArray())
+            {
+                if (stream.TryGetProperty("codec_type", out var codecType))
+                {
+                    var type = codecType.GetString();
+                    
+                    if (type == "video" && videoCodec == null)
+                    {
+                        videoCodec = stream.TryGetProperty("codec_name", out var cn) ? cn.GetString() : null;
+                        pixelFormat = stream.TryGetProperty("pix_fmt", out var pf) ? pf.GetString() : null;
+                        colorSpace = stream.TryGetProperty("color_space", out var cs) ? cs.GetString() : null;
+                        colorTransfer = stream.TryGetProperty("color_transfer", out var ct) ? ct.GetString() : null;
+                        colorPrimaries = stream.TryGetProperty("color_primaries", out var cp) ? cp.GetString() : null;
+                        var width = stream.TryGetProperty("width", out var w) ? w.GetInt32() : 0;
+                        var height = stream.TryGetProperty("height", out var h) ? h.GetInt32() : 0;
+                        resolution = $"{width}x{height}";
+                        
+                        hasHdrMetadata = stream.TryGetProperty("side_data_list", out var sideData) &&
+                            sideData.EnumerateArray().Any(sd => 
+                                sd.TryGetProperty("side_data_type", out var sdType) &&
+                                (sdType.GetString()?.Contains("Mastering") == true || 
+                                 sdType.GetString()?.Contains("Content light") == true));
+                                 
+                        isHdr = colorTransfer == "smpte2084" || colorSpace == "bt2020nc";
+                    }
+                    else if (type == "audio" && audioCodec == null)
+                    {
+                        audioCodec = stream.TryGetProperty("codec_name", out var acn) ? acn.GetString() : null;
+                        audioChannels = stream.TryGetProperty("channels", out var ch) ? ch.GetInt32() : null;
+                    }
+                }
+            }
+            
+            if (videoCodec == null)
+            {
+                return new { error = "No video stream found in probe data" };
+            }
+            
+            return new
+            {
+                filePath = includeSensitiveData ? probeFile : Path.GetFileName(probeFile),
+                videoCodec,
+                pixelFormat,
+                colorSpace,
+                colorTransfer,
+                colorPrimaries,
+                resolution,
+                hasHdrMetadata,
+                isHdr,
+                audioCodec,
+                audioChannels
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to probe transcoded output");
+            return new { error = ex.Message };
+        }
+    }
+    
+    private string ResolveFFprobePath()
+    {
+        var paths = new[]
+        {
+            Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg-bin", "ffprobe.exe"),
+            Path.Combine(Directory.GetCurrentDirectory(), "ffprobe.exe"),
+            @"C:\Program Files\ffmpeg\bin\ffprobe.exe",
+            @"C:\ffmpeg\bin\ffprobe.exe",
+            "ffprobe"
+        };
+        return paths.FirstOrDefault(System.IO.File.Exists) ?? "ffprobe";
     }
 
     /// <summary>

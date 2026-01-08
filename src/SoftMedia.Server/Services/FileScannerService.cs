@@ -402,11 +402,11 @@ public class FileScannerService : IFileScannerService
                         
                         if (string.IsNullOrEmpty(showName)) showName = "Unknown Show";
                         
-                        // Normalize show name: strip trailing year like "Show Name 2024"
-                        var yearMatch = Regex.Match(showName, @"^(.+?)\s+\d{4}$");
-                        if (yearMatch.Success)
+                        // Clean show name: strip release info (Remastered, Mini Series, etc.), years, quality tags
+                        var cleanedShowName = FileNameParser.CleanShowName(showName);
+                        if (!string.IsNullOrEmpty(cleanedShowName))
                         {
-                            showName = yearMatch.Groups[1].Value.Trim();
+                            showName = cleanedShowName;
                         }
 
                         // Ensure Series Exists
@@ -443,7 +443,8 @@ public class FileScannerService : IFileScannerService
                                  {
                                      // Check for specific keys we know we want
                                      if (!seriesItem.MetadataJson.Contains("\"cast\"") || 
-                                         !seriesItem.MetadataJson.Contains("\"network\"") && !seriesItem.MetadataJson.Contains("\"studio\""))
+                                         !seriesItem.MetadataJson.Contains("\"poster\"") ||
+                                         (!seriesItem.MetadataJson.Contains("\"network\"") && !seriesItem.MetadataJson.Contains("\"studio\"")))
                                      {
                                          needsEnrichment = true;
                                      }
@@ -474,8 +475,46 @@ public class FileScannerService : IFileScannerService
                             changed = true;
                         }
                         
-                        // Update Episode Title
+                        // Update Episode Title - prefer TVMaze title over filename-parsed title
+                        // Default: use filename-parsed title, or fallback to "Episode {N}"
                         var newTitle = !string.IsNullOrEmpty(episodeTitle) ? episodeTitle : $"Episode {episode}";
+                        
+                        // Check for authoritative TVMaze title from series metadata (via /shows/:id/episodes API)
+                        if (seriesItem != null && !string.IsNullOrEmpty(seriesItem.MetadataJson))
+                        {
+                            try
+                            {
+                                var seriesMeta = JsonSerializer.Deserialize<Dictionary<string, object>>(seriesItem.MetadataJson);
+                                if (seriesMeta != null && seriesMeta.TryGetValue("episodes", out var episodesObj) && episodesObj is JsonElement episodesArray)
+                                {
+                                    foreach (var epInfo in episodesArray.EnumerateArray())
+                                    {
+                                        int epSeason = epInfo.TryGetProperty("season", out var s) ? s.GetInt32() : 0;
+                                        int epEpisode = epInfo.TryGetProperty("episode", out var e) ? e.GetInt32() : 0;
+                                        
+                                        if (epSeason == season && epEpisode == episode)
+                                        {
+                                            // Found matching episode - prefer TVMaze title ("name" field in API response)
+                                            if (epInfo.TryGetProperty("title", out var tvmazeTitle) && tvmazeTitle.ValueKind != JsonValueKind.Null)
+                                            {
+                                                var providerTitle = tvmazeTitle.GetString();
+                                                if (!string.IsNullOrEmpty(providerTitle))
+                                                {
+                                                    newTitle = providerTitle;
+                                                    _logger.LogDebug($"Using TVMaze title for S{season}E{episode}: '{providerTitle}'");
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, $"Failed to lookup TVMaze title for S{season}E{episode}");
+                            }
+                        }
+                        
                         if (existingItem.Title != newTitle)
                         {
                             _logger.LogInformation($"Updating Episode Title: '{existingItem.Title}' -> '{newTitle}'");
@@ -783,16 +822,21 @@ public class FileScannerService : IFileScannerService
                         
                         if (string.IsNullOrEmpty(showName)) showName = "Unknown Show";
                         
-                        // Normalize show name: strip trailing year like "Show Name 2024"
-                        var yearMatch = Regex.Match(showName, @"^(.+?)\s+\d{4}$");
-                        if (yearMatch.Success)
+                        // Extract year from folder name BEFORE cleaning (for TVMaze disambiguation)
+                        // e.g., "The Hitchhikers Guide To The Galaxy - Remastered Mini Series 1981 1080p" -> 1981
+                        var showYear = FileNameParser.ExtractYear(showName);
+                        
+                        // Clean show name: strip release info (Remastered, Mini Series, etc.), years, quality tags
+                        // e.g., "The Hitchhikers Guide To The Galaxy - Remastered Mini Series 1981 1080p" 
+                        //    -> "The Hitchhikers Guide To The Galaxy"
+                        var cleanedShowName = FileNameParser.CleanShowName(showName);
+                        if (!string.IsNullOrEmpty(cleanedShowName) && cleanedShowName != showName)
                         {
-                            var normalizedName = yearMatch.Groups[1].Value.Trim();
-                            _logger.LogInformation($"Normalized show name: '{showName}' -> '{normalizedName}'");
-                            showName = normalizedName;
+                            _logger.LogInformation($"Cleaned show name: '{showName}' -> '{cleanedShowName}'");
+                            showName = cleanedShowName;
                         }
                         
-                        _logger.LogInformation($"Looking for series: '{showName}' (file: {Path.GetFileName(file)})");
+                        _logger.LogInformation($"Looking for series: '{showName}' (year: {showYear}, file: {Path.GetFileName(file)})");
 
                         if (!existingSeries.TryGetValue(showName, out var seriesItem))
                         {
@@ -808,9 +852,10 @@ public class FileScannerService : IFileScannerService
                                     Title = showName,
                                     Path = Path.GetDirectoryName(file) ?? path,
                                     Type = MediaType.Series,
-                                    DateAdded = DateTime.UtcNow
+                                    DateAdded = DateTime.UtcNow,
+                                    Year = showYear // Set year for TVMaze disambiguation
                                 };
-                                _logger.LogDebug($"Creating new series: '{showName}'");
+                                _logger.LogDebug($"Creating new series: '{showName}' (year: {showYear})");
                                 await metadataAggregator.EnrichMediaItemAsync(seriesItem, LibraryType.TV);
                                 context.MediaItems.Add(seriesItem);
                             }
@@ -859,12 +904,14 @@ public class FileScannerService : IFileScannerService
                                             }
                                             if (epInfo.TryGetProperty("title", out var tvmazeTitle) && tvmazeTitle.ValueKind != JsonValueKind.Null)
                                             {
-                                                // Use TVMaze title if we don't have one from filename
-                                                if (mediaItem.Title == $"Episode {episode}")
+                                                // Always prefer TVMaze title as the authoritative source
+                                                // (TVMaze "name" field from /shows/:id/episodes API)
+                                                var providerTitle = tvmazeTitle.GetString();
+                                                if (!string.IsNullOrEmpty(providerTitle))
                                                 {
-                                                    mediaItem.Title = tvmazeTitle.GetString()!;
+                                                    mediaItem.Title = providerTitle;
                                                 }
-                                                epMeta["tvmazeTitle"] = tvmazeTitle.GetString()!;
+                                                epMeta["tvmazeTitle"] = providerTitle!;
                                             }
                                             if (epInfo.TryGetProperty("summary", out var summary) && summary.ValueKind != JsonValueKind.Null)
                                             {

@@ -372,6 +372,54 @@ public class InteractionController : ControllerBase
     }
 
     /// <summary>
+    /// Save audio preference for a TV series.
+    /// This preference will apply to all episodes in the series.
+    /// </summary>
+    [HttpPost("/api/v1/series/{seriesId}/audio-preference")]
+    public async Task<IActionResult> SaveAudioPreference(Guid seriesId, [FromBody] AudioPreferenceRequest request)
+    {
+        var userId = GetUserId();
+        
+        var preference = await _context.UserSeriesPreferences
+            .FirstOrDefaultAsync(p => p.UserId == userId && p.SeriesId == seriesId);
+
+        if (preference == null)
+        {
+            preference = new UserSeriesPreference
+            {
+                UserId = userId,
+                SeriesId = seriesId
+            };
+            _context.UserSeriesPreferences.Add(preference);
+        }
+
+        preference.PreferredAudioLanguage = request.Language;
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Saved audio preference '{Language}' for series {SeriesId} by user {UserId}", 
+            request.Language ?? "default", seriesId, userId);
+
+        return Ok();
+    }
+
+    /// <summary>
+    /// Get audio preference for a TV series.
+    /// </summary>
+    [HttpGet("/api/v1/series/{seriesId}/audio-preference")]
+    public async Task<ActionResult<AudioPreferenceResponse>> GetAudioPreference(Guid seriesId)
+    {
+        var userId = GetUserId();
+        
+        var preference = await _context.UserSeriesPreferences
+            .FirstOrDefaultAsync(p => p.UserId == userId && p.SeriesId == seriesId);
+
+        return Ok(new AudioPreferenceResponse
+        {
+            Language = preference?.PreferredAudioLanguage
+        });
+    }
+
+    /// <summary>
     /// Get the next episode after a specific episode (for "play next" overlay).
     /// Returns the next episode in sequence or IsSeriesComplete if at end.
     /// </summary>
@@ -654,6 +702,16 @@ public class SubtitlePreferenceRequest
 }
 
 public class SubtitlePreferenceResponse
+{
+    public string? Language { get; set; }
+}
+
+public class AudioPreferenceRequest
+{
+    public string? Language { get; set; }
+}
+
+public class AudioPreferenceResponse
 {
     public string? Language { get; set; }
 }

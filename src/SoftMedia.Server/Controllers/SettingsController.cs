@@ -11,10 +11,12 @@ namespace SoftMedia.Server.Controllers;
 public class SettingsController : ControllerBase
 {
     private readonly ISettingsService _settingsService;
+    private readonly MetadataRefreshService _metadataRefreshService;
 
-    public SettingsController(ISettingsService settingsService)
+    public SettingsController(ISettingsService settingsService, MetadataRefreshService metadataRefreshService)
     {
         _settingsService = settingsService;
+        _metadataRefreshService = metadataRefreshService;
     }
 
     [HttpGet]
@@ -28,5 +30,15 @@ public class SettingsController : ControllerBase
     {
         await _settingsService.UpdateSettingsAsync(settings);
         return Ok();
+    }
+    
+    /// <summary>
+    /// Manually trigger metadata refresh for ongoing (Running) TV series.
+    /// </summary>
+    [HttpPost("refresh-metadata")]
+    public IActionResult TriggerMetadataRefresh()
+    {
+        _metadataRefreshService.TriggerRefreshNow();
+        return Ok(new { message = "Metadata refresh triggered" });
     }
 }

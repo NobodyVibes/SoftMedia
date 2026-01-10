@@ -18,6 +18,11 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/cache': {
+        target: 'http://localhost:5011',
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
 })

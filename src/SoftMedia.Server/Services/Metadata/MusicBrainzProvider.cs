@@ -1,7 +1,9 @@
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Helpers;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Net;
+using System.Threading.RateLimiting;
 
 namespace SoftMedia.Server.Services.Metadata;
 
@@ -9,19 +11,16 @@ public class MusicBrainzProvider : IMetadataProvider
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<MusicBrainzProvider> _logger;
-    
-    // MusicBrainz requires 1 request per second.
-    // Using a static semaphore to enforce this across all scoped instances.
-    private static readonly SemaphoreSlim _rateLimitLock = new(1, 1);
-    private static DateTimeOffset _lastRequestTime = DateTimeOffset.MinValue;
+    private readonly RateLimiter _rateLimiter;
 
     public LibraryType SupportedType => LibraryType.Music;
     public string ProviderName => "MusicBrainz";
 
-    public MusicBrainzProvider(HttpClient httpClient, ILogger<MusicBrainzProvider> logger)
+    public MusicBrainzProvider(HttpClient httpClient, ILogger<MusicBrainzProvider> logger, RateLimiterFactory rateLimiterFactory)
     {
         _httpClient = httpClient;
         _logger = logger;
+        _rateLimiter = rateLimiterFactory.GetLimiter("MusicBrainz");
         // User-Agent is MANDATORY for MusicBrainz
         if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
         {
@@ -137,150 +136,141 @@ public class MusicBrainzProvider : IMetadataProvider
             var query = string.Join(" AND ", queryParts);
             var url = $"https://musicbrainz.org/ws/2/recording?query={WebUtility.UrlEncode(query)}&fmt=json&limit=5";
 
-            // 3. Rate Limit
-            await _rateLimitLock.WaitAsync();
-            try
+            // Acquire rate limit lease before making API call
+            using var lease = await _rateLimiter.AcquireAsync(1);
+            if (!lease.IsAcquired)
             {
-                var timeSinceLast = DateTimeOffset.UtcNow - _lastRequestTime;
-                if (timeSinceLast.TotalMilliseconds < 1100)
-                {
-                    await Task.Delay(1100 - (int)timeSinceLast.TotalMilliseconds);
-                }
-                
-                // 4. Execute
-                _logger.LogInformation("MusicBrainz Query (UseAlbum={UseAlbum}): {Query}", useAlbum, query);
-                var response = await _httpClient.GetAsync(url);
-                _lastRequestTime = DateTimeOffset.UtcNow;
-                
-                if (!response.IsSuccessStatusCode)
-                {
-                    _logger.LogWarning("MusicBrainz returned {Status}", response.StatusCode);
-                    continue; 
-                }
-
-                var json = await response.Content.ReadAsStringAsync();
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-                
-                if (root.TryGetProperty("recordings", out var recordingsArray) && recordingsArray.GetArrayLength() > 0)
-                {
-                    // Find BEST match across all recordings and their releases
-                    JsonElement? bestRelease = null;
-                    JsonElement bestRecording = recordingsArray[0];
-                    int bestScore = -1;
-                    string bestMatchInfo = "First Result"; 
-
-                    foreach (var rec in recordingsArray.EnumerateArray())
-                    {
-                        if (rec.TryGetProperty("releases", out var releases))
-                        {
-                            foreach (var rel in releases.EnumerateArray())
-                            {
-                                int score = 0;
-                                string relTitle = rel.TryGetProperty("title", out var rt) ? rt.GetString() ?? "" : "";
-                                
-                                // Score 1: Album Name Match
-                                if (!string.IsNullOrEmpty(album))
-                                {
-                                    if (relTitle.Equals(album, StringComparison.OrdinalIgnoreCase)) 
-                                    {
-                                        score += 100;
-                                    }
-                                    else if (relTitle.Contains(album, StringComparison.OrdinalIgnoreCase) || 
-                                             album.Contains(relTitle, StringComparison.OrdinalIgnoreCase)) 
-                                    {
-                                        score += 50;
-                                    }
-                                }
-
-                                // Score 2: Release Group Type (Prefer Album over Single)
-                                // We can't easily check Type here without parsing "secondary-types" or "primary-type" which might be in release-group
-                                // But simply matching name is usually enough.
-                                
-                                if (score > bestScore)
-                                {
-                                    bestScore = score;
-                                    bestRelease = rel;
-                                    bestRecording = rec;
-                                    bestMatchInfo = $"{relTitle} (Score: {score})";
-                                }
-                            }
-                        }
-                        else
-                        {
-                            // Recording without release info. Score low.
-                            if (bestScore == -1) 
-                            { 
-                                bestScore = 0; 
-                                bestRecording = rec; 
-                            }
-                        }
-                    }
-
-                    if (bestScore > -1)
-                    {
-                        var result = new Dictionary<string, object>();
-                        // Extract from bestRecording + bestRelease
-                        
-                        if (bestRecording.TryGetProperty("title", out var t)) result["title"] = t.GetString() ?? trackTitle;
-                        if (bestRecording.TryGetProperty("length", out var l) && l.TryGetInt32(out var ms)) result["duration"] = ms / 1000.0;
-                        if (bestRecording.TryGetProperty("artist-credit", out var credits) && credits.GetArrayLength() > 0)
-                        {
-                             if (credits[0].TryGetProperty("name", out var an)) result["artist"] = an.GetString() ?? artist ?? "Unknown";
-                        }
-                        
-                        if (bestRelease.HasValue)
-                        {
-                            var rel = bestRelease.Value;
-                            if (rel.TryGetProperty("title", out var rt)) result["album"] = rt.GetString() ?? album ?? "Unknown";
-                            
-                            // Try Release Group Image first (Most reliable)
-                            string? releaseGroupId = null;
-                            if (rel.TryGetProperty("release-group", out var rg) && rg.TryGetProperty("id", out var rgid))
-                            {
-                                releaseGroupId = rgid.GetString();
-                            }
-
-                            if (!string.IsNullOrEmpty(releaseGroupId))
-                            {
-                                result["poster"] = $"https://coverartarchive.org/release-group/{releaseGroupId}/front";
-                            }
-                            else if (rel.TryGetProperty("id", out var rid)) // Fallback to Release ID
-                            {
-                                var rId = rid.GetString();
-                                if (!string.IsNullOrEmpty(rId))
-                                {
-                                    result["poster"] = $"https://coverartarchive.org/release/{rId}/front";
-                                }
-                            }
-
-                            if (rel.TryGetProperty("date", out var rd)) 
-                            {
-                                var dateStr = rd.GetString();
-                                if (!string.IsNullOrEmpty(dateStr) && DateTime.TryParse(dateStr.Substring(0, Math.Min(4, dateStr.Length)), out var d))
-                                    result["year"] = d.Year;
-                            }
-                        }
-                        
-                        // Tags from recording
-                        if (bestRecording.TryGetProperty("tags", out var tags) && tags.GetArrayLength() > 0)
-                        {
-                             var genreList = new List<string>();
-                             foreach(var tag in tags.EnumerateArray())
-                             {
-                                 if (tag.TryGetProperty("name", out var tn)) genreList.Add(tn.GetString()!);
-                             }
-                             if (genreList.Count > 0) result["genres"] = genreList.ToArray();
-                        }
-
-                        _logger.LogInformation("Selected Match: {Match} for '{Track}'", bestMatchInfo, trackTitle);
-                        return JsonSerializer.Serialize(result);
-                    }
-                }
+                _logger.LogWarning("MusicBrainz rate limit exceeded for '{Track}', request was queued too long", trackTitle);
+                continue;
             }
-            finally
+            
+            _logger.LogInformation("MusicBrainz Query (UseAlbum={UseAlbum}): {Query}", useAlbum, query);
+            var response = await _httpClient.GetAsync(url);
+            
+            if (!response.IsSuccessStatusCode)
             {
-                _rateLimitLock.Release();
+                _logger.LogWarning("MusicBrainz returned {Status}", response.StatusCode);
+                continue; 
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            
+            if (root.TryGetProperty("recordings", out var recordingsArray) && recordingsArray.GetArrayLength() > 0)
+            {
+                // Find BEST match across all recordings and their releases
+                JsonElement? bestRelease = null;
+                JsonElement bestRecording = recordingsArray[0];
+                int bestScore = -1;
+                string bestMatchInfo = "First Result"; 
+
+                foreach (var rec in recordingsArray.EnumerateArray())
+                {
+                    if (rec.TryGetProperty("releases", out var releases))
+                    {
+                        foreach (var rel in releases.EnumerateArray())
+                        {
+                            int score = 0;
+                            string relTitle = rel.TryGetProperty("title", out var rt) ? rt.GetString() ?? "" : "";
+                            
+                            // Score 1: Album Name Match
+                            if (!string.IsNullOrEmpty(album))
+                            {
+                                if (relTitle.Equals(album, StringComparison.OrdinalIgnoreCase)) 
+                                {
+                                    score += 100;
+                                }
+                                else if (relTitle.Contains(album, StringComparison.OrdinalIgnoreCase) || 
+                                         album.Contains(relTitle, StringComparison.OrdinalIgnoreCase)) 
+                                {
+                                    score += 50;
+                                }
+                            }
+
+                            // Score 2: Release Group Type (Prefer Album over Single)
+                            // We can't easily check Type here without parsing "secondary-types" or "primary-type" which might be in release-group
+                            // But simply matching name is usually enough.
+                            
+                            if (score > bestScore)
+                            {
+                                bestScore = score;
+                                bestRelease = rel;
+                                bestRecording = rec;
+                                bestMatchInfo = $"{relTitle} (Score: {score})";
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Recording without release info. Score low.
+                        if (bestScore == -1) 
+                        { 
+                            bestScore = 0; 
+                            bestRecording = rec; 
+                        }
+                    }
+                }
+
+                if (bestScore > -1)
+                {
+                    var result = new Dictionary<string, object>();
+                    // Extract from bestRecording + bestRelease
+                    
+                    if (bestRecording.TryGetProperty("title", out var t)) result["title"] = t.GetString() ?? trackTitle;
+                    if (bestRecording.TryGetProperty("length", out var l) && l.TryGetInt32(out var ms)) result["duration"] = ms / 1000.0;
+                    if (bestRecording.TryGetProperty("artist-credit", out var credits) && credits.GetArrayLength() > 0)
+                    {
+                         if (credits[0].TryGetProperty("name", out var an)) result["artist"] = an.GetString() ?? artist ?? "Unknown";
+                    }
+                    
+                    if (bestRelease.HasValue)
+                    {
+                        var rel = bestRelease.Value;
+                        if (rel.TryGetProperty("title", out var rt)) result["album"] = rt.GetString() ?? album ?? "Unknown";
+                        
+                        // Try Release Group Image first (Most reliable)
+                        string? releaseGroupId = null;
+                        if (rel.TryGetProperty("release-group", out var rg) && rg.TryGetProperty("id", out var rgid))
+                        {
+                            releaseGroupId = rgid.GetString();
+                        }
+
+                        if (!string.IsNullOrEmpty(releaseGroupId))
+                        {
+                            result["poster"] = $"https://coverartarchive.org/release-group/{releaseGroupId}/front";
+                        }
+                        else if (rel.TryGetProperty("id", out var rid)) // Fallback to Release ID
+                        {
+                            var rId = rid.GetString();
+                            if (!string.IsNullOrEmpty(rId))
+                            {
+                                result["poster"] = $"https://coverartarchive.org/release/{rId}/front";
+                            }
+                        }
+
+                        if (rel.TryGetProperty("date", out var rd)) 
+                        {
+                            var dateStr = rd.GetString();
+                            if (!string.IsNullOrEmpty(dateStr) && DateTime.TryParse(dateStr.Substring(0, Math.Min(4, dateStr.Length)), out var d))
+                                result["year"] = d.Year;
+                        }
+                    }
+                    
+                    // Tags from recording
+                    if (bestRecording.TryGetProperty("tags", out var tags) && tags.GetArrayLength() > 0)
+                    {
+                         var genreList = new List<string>();
+                         foreach(var tag in tags.EnumerateArray())
+                         {
+                             if (tag.TryGetProperty("name", out var tn)) genreList.Add(tn.GetString()!);
+                         }
+                         if (genreList.Count > 0) result["genres"] = genreList.ToArray();
+                    }
+
+                    _logger.LogInformation("Selected Match: {Match} for '{Track}'", bestMatchInfo, trackTitle);
+                    return JsonSerializer.Serialize(result);
+                }
             }
         }
 

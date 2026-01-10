@@ -1,4 +1,6 @@
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Helpers;
+using System.Threading.RateLimiting;
 
 namespace SoftMedia.Server.Services.Metadata;
 
@@ -6,14 +8,16 @@ public class TVMazeProvider : IMetadataProvider
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<TVMazeProvider> _logger;
+    private readonly RateLimiter _rateLimiter;
 
     public LibraryType SupportedType => LibraryType.TV;
     public string ProviderName => "TVMaze";
 
-    public TVMazeProvider(HttpClient httpClient, ILogger<TVMazeProvider> logger)
+    public TVMazeProvider(HttpClient httpClient, ILogger<TVMazeProvider> logger, RateLimiterFactory rateLimiterFactory)
     {
         _httpClient = httpClient;
         _logger = logger;
+        _rateLimiter = rateLimiterFactory.GetLimiter("TVMaze");
     }
 
     public async Task<string?> FetchMetadataAsync(MediaItem item)
@@ -24,6 +28,14 @@ public class TVMazeProvider : IMetadataProvider
         
         try
         {
+            // Acquire rate limit lease before making API call
+            using var lease = await _rateLimiter.AcquireAsync(1);
+            if (!lease.IsAcquired)
+            {
+                _logger.LogWarning($"TVMaze rate limit exceeded for '{title}', request was queued too long");
+                return null;
+            }
+            
             // Use /search/shows endpoint to get multiple results for year-based disambiguation
             // Per TVMaze API: https://www.tvmaze.com/api#show-search
             var searchUrl = $"https://api.tvmaze.com/search/shows?q={Uri.EscapeDataString(title)}";
@@ -50,8 +62,11 @@ public class TVMazeProvider : IMetadataProvider
             }
             
             // Find the best matching show - prefer year match if targetYear is provided
+            // Priority: 1) Exact year match, 2) Adjacent year (±1), 3) Best relevancy score
             System.Text.Json.JsonElement? bestMatch = null;
+            System.Text.Json.JsonElement? adjacentYearMatch = null;
             int bestScore = 0;
+            int adjacentYearScore = 0;
             
             foreach (var result in searchResults.EnumerateArray())
             {
@@ -70,23 +85,43 @@ public class TVMazeProvider : IMetadataProvider
                     }
                 }
                 
-                // If we have a target year, prioritize exact year matches
+                // If we have a target year, prioritize year matches
                 if (targetYear.HasValue && showYear.HasValue)
                 {
+                    // Priority 1: Exact year match - use this show immediately
                     if (showYear.Value == targetYear.Value)
                     {
-                        // Exact year match - use this show
                         _logger.LogInformation($"Found exact year match for '{title}' ({targetYear}): {show.GetProperty("name").GetString()}");
                         bestMatch = show;
                         break;
                     }
+                    
+                    // Priority 2: Adjacent year match (±1) - store best one found
+                    if (Math.Abs(showYear.Value - targetYear.Value) == 1)
+                    {
+                        if (score > adjacentYearScore)
+                        {
+                            adjacentYearMatch = show;
+                            adjacentYearScore = score;
+                        }
+                    }
                 }
                 
-                // Use highest relevancy score as fallback
+                // Priority 3: Use highest relevancy score as fallback
                 if (score > bestScore)
                 {
                     bestScore = score;
                     bestMatch = show;
+                }
+            }
+            
+            // Use adjacent year match if no exact match found and adjacent is available
+            if (!bestMatch.HasValue || (bestScore < adjacentYearScore + 50 && adjacentYearMatch.HasValue))
+            {
+                if (adjacentYearMatch.HasValue)
+                {
+                    _logger.LogInformation($"Using adjacent year match (±1) for '{title}': {adjacentYearMatch.Value.GetProperty("name").GetString()}");
+                    bestMatch = adjacentYearMatch;
                 }
             }
             
@@ -242,6 +277,9 @@ public class TVMazeProvider : IMetadataProvider
                         
                         seasonsList.Add(seasonData);
                     }
+                    
+                    // Note: Season 0 (Specials) will be added after we process episodes
+                    // to count how many specials exist
                     metadata["seasons"] = seasonsList;
                     _logger.LogInformation($"Fetched {seasonsList.Count} seasons for {title}");
                 }
@@ -253,7 +291,7 @@ public class TVMazeProvider : IMetadataProvider
                 // Fetch episodes with still images
                 try
                 {
-                    var episodesUrl = $"https://api.tvmaze.com/shows/{tvmazeId}/episodes";
+                    var episodesUrl = $"https://api.tvmaze.com/shows/{tvmazeId}/episodes?specials=1";
                     var episodesResponse = await _httpClient.GetStringAsync(episodesUrl);
                     using var episodesDoc = System.Text.Json.JsonDocument.Parse(episodesResponse);
                     
@@ -264,10 +302,20 @@ public class TVMazeProvider : IMetadataProvider
                         
                         if (episode.TryGetProperty("id", out var epId))
                             epData["id"] = epId.GetInt32();
-                        if (episode.TryGetProperty("season", out var epSeason))
-                            epData["season"] = epSeason.GetInt32();
                         if (episode.TryGetProperty("number", out var epNum) && epNum.ValueKind != System.Text.Json.JsonValueKind.Null)
+                        {
+                            // Regular episode with episode number
+                            if (episode.TryGetProperty("season", out var epSeason))
+                                epData["season"] = epSeason.GetInt32();
                             epData["episode"] = epNum.GetInt32();
+                        }
+                        else
+                        {
+                            // Special episode (number is null) - map to Season 0
+                            // This matches the S00E01 naming convention used by media organizers
+                            epData["season"] = 0;
+                            // Episode number will be sequential among specials, assigned below
+                        }
                         if (episode.TryGetProperty("name", out var epName))
                             epData["title"] = epName.GetString();
                         if (episode.TryGetProperty("airdate", out var airdate) && airdate.ValueKind != System.Text.Json.JsonValueKind.Null)
@@ -289,8 +337,41 @@ public class TVMazeProvider : IMetadataProvider
                         
                         episodesList.Add(epData);
                     }
+                    
+                    // Assign sequential episode numbers to Season 0 (specials)
+                    // This allows matching S00E01, S00E02, etc. from filenames
+                    int specialEpisodeNumber = 1;
+                    foreach (var ep in episodesList)
+                    {
+                        var epDict = ep as Dictionary<string, object?>;
+                        if (epDict != null && epDict.TryGetValue("season", out var seasonObj) && 
+                            seasonObj is int season && season == 0 && !epDict.ContainsKey("episode"))
+                        {
+                            epDict["episode"] = specialEpisodeNumber++;
+                        }
+                    }
+                    
                     metadata["episodes"] = episodesList;
-                    _logger.LogInformation($"Fetched {episodesList.Count} episodes for {title}");
+                    var specialCount = episodesList.Cast<Dictionary<string, object?>>().Count(e => e.TryGetValue("season", out var s) && s is int si && si == 0);
+                    _logger.LogInformation($"Fetched {episodesList.Count} episodes ({specialCount} specials as Season 0) for {title}");
+                    
+                    // Add Season 0 (Specials) to seasons list if we have any specials
+                    if (specialCount > 0 && metadata.TryGetValue("seasons", out var seasonsObj) && seasonsObj is List<object> seasonsList2)
+                    {
+                        // Create Season 0 entry
+                        var season0 = new Dictionary<string, object?>
+                        {
+                            ["id"] = 0,
+                            ["number"] = 0,
+                            ["episodeCount"] = specialCount,
+                            // Use show poster as fallback for Season 0
+                            ["poster"] = metadata.TryGetValue("poster", out var showPoster) ? showPoster : null
+                        };
+                        
+                        // Insert at the beginning of the list
+                        seasonsList2.Insert(0, season0);
+                        _logger.LogInformation($"Added Season 0 (Specials) with {specialCount} episodes for {title}");
+                    }
                 }
                 catch (Exception ex)
                 {

@@ -1,9 +1,54 @@
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Play, ListMusic, Heart, Check, Clock, Star } from 'lucide-react';
 import { type MediaItem } from '../../types';
 import QualityBadge from '../ui/QualityBadge';
 import { useAudioStore } from '../../store/audioStore';
 import api from '../../services/api';
+
+// Loading image component with skeleton placeholder and fade-in transition
+function LoadingImage({
+    src,
+    alt,
+    className = '',
+    fallback
+}: {
+    src: string | null | undefined;
+    alt: string;
+    className?: string;
+    fallback?: React.ReactNode;
+}) {
+    const [loaded, setLoaded] = useState(false);
+    const [error, setError] = useState(false);
+
+    // Reset state when src changes
+    useEffect(() => {
+        setLoaded(false);
+        setError(false);
+    }, [src]);
+
+    if (!src || error) {
+        return fallback ? <>{fallback}</> : null;
+    }
+
+    return (
+        <div className="relative w-full h-full">
+            {/* Skeleton placeholder - visible while loading */}
+            {!loaded && (
+                <div className="absolute inset-0 bg-gradient-to-br from-gray-800 via-gray-700 to-gray-800 animate-pulse" />
+            )}
+            {/* Actual image with fade-in */}
+            <img
+                src={src}
+                alt={alt}
+                className={`${className} transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+                onLoad={() => setLoaded(true)}
+                onError={() => setError(true)}
+                loading="lazy"
+            />
+        </div>
+    );
+}
 
 interface MediaCardProps {
     item: MediaItem;
@@ -80,7 +125,7 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
         addToQueue(item);
     };
 
-    const subtitle = item.seasonNumber && item.episodeNumber
+    const subtitle = (item.seasonNumber !== undefined && item.seasonNumber !== null && item.episodeNumber)
         ? `S${item.seasonNumber} • E${item.episodeNumber}`
         : (item.year ? String(item.year) : '');
 
@@ -97,18 +142,16 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
                 {/* Poster Section relative wrapper */}
                 <div className="relative aspect-[2/3] w-full bg-gray-900 overflow-hidden">
                     {/* Poster Image */}
-                    {item.posterPath ? (
-                        <img
-                            src={item.posterPath}
-                            alt={item.title}
-                            className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover/card:scale-105"
-                            loading="lazy"
-                        />
-                    ) : (
-                        <div className="flex h-full w-full items-center justify-center bg-slate-800 text-slate-500">
-                            <span className="text-4xl font-thin opacity-50">?</span>
-                        </div>
-                    )}
+                    <LoadingImage
+                        src={item.posterPath}
+                        alt={item.title}
+                        className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover/card:scale-105"
+                        fallback={
+                            <div className="flex h-full w-full items-center justify-center bg-slate-800 text-slate-500">
+                                <span className="text-4xl font-thin opacity-50">?</span>
+                            </div>
+                        }
+                    />
 
                     {/* Top Indicators Row */}
                     <div className="absolute top-2 left-2 right-2 flex justify-between items-start z-10 pointer-events-none">

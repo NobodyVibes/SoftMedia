@@ -18,12 +18,18 @@ public class LibrariesController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IFileScannerService _fileScanner;
     private readonly ILibraryScanQueueService _scanQueueService;
+    private readonly ImageCacheService _imageCacheService;
 
-    public LibrariesController(AppDbContext context, IFileScannerService fileScanner, ILibraryScanQueueService scanQueueService)
+    public LibrariesController(
+        AppDbContext context, 
+        IFileScannerService fileScanner, 
+        ILibraryScanQueueService scanQueueService,
+        ImageCacheService imageCacheService)
     {
         _context = context;
         _fileScanner = fileScanner;
         _scanQueueService = scanQueueService;
+        _imageCacheService = imageCacheService;
     }
 
     [HttpGet]
@@ -137,6 +143,16 @@ public class LibrariesController : ControllerBase
         {
             return NotFound();
         }
+
+        // Get all media items with their types for image cleanup
+        var mediaItemsToCleanup = await _context.MediaItems
+            .Where(m => m.LibraryId == id)
+            .Select(m => new { m.Id, m.Type })
+            .ToListAsync();
+
+        // Clean up cached images for all media items in this library
+        _imageCacheService.DeleteImagesForLibrary(
+            mediaItemsToCleanup.Select(m => (m.Id, m.Type)));
 
         _context.Libraries.Remove(library);
         await _context.SaveChangesAsync();
@@ -479,13 +495,74 @@ public class LibrariesController : ControllerBase
             .OrderBy(s => s)
             .ToListAsync();
 
+        // Helper to get cached or proxied season poster
+        string? GetSeasonPoster(int seasonNum, string? remotePosterUrl)
+        {
+            // Check for cached image first
+            var cacheBasePath = Path.Combine("wwwroot", "cache", "images", "tv");
+            var cachedFileName = $"{seriesId}_season{seasonNum:D2}_poster";
+            
+            if (Directory.Exists(cacheBasePath))
+            {
+                var cachedFiles = Directory.GetFiles(cacheBasePath, $"{cachedFileName}.*");
+                if (cachedFiles.Length > 0)
+                {
+                    var extension = Path.GetExtension(cachedFiles[0]);
+                    return $"/cache/images/tv/{cachedFileName}{extension}";
+                }
+            }
+            
+            // Fallback to proxy
+            if (!string.IsNullOrEmpty(remotePosterUrl))
+            {
+                return $"/api/v1/image/proxy?url={Uri.EscapeDataString(remotePosterUrl)}";
+            }
+            
+            return null;
+        }
+
         // Parse seasons from series metadata
         var seasonsFromMetadata = new Dictionary<int, object?>();
+        string? showPoster = null;
+        
         if (!string.IsNullOrEmpty(series.MetadataJson))
         {
             try
             {
                 var metadata = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(series.MetadataJson);
+                
+                // Get show poster for fallback
+                if (metadata != null && metadata.TryGetValue("poster", out var showPosterObj))
+                {
+                    var showPosterUrl = showPosterObj.ToString();
+                    // Use cached path directly if available, otherwise proxy
+                    if (!string.IsNullOrEmpty(showPosterUrl))
+                    {
+                        if (showPosterUrl.StartsWith("/cache/"))
+                        {
+                            showPoster = showPosterUrl;
+                        }
+                        else if (showPosterUrl.StartsWith("http"))
+                        {
+                            // Check for cached show poster on disk as fallback
+                            var showCacheBasePath = Path.Combine("wwwroot", "cache", "images", "tv");
+                            var showCachedFileName = $"{seriesId}_poster";
+                            if (Directory.Exists(showCacheBasePath))
+                            {
+                                var cachedFiles = Directory.GetFiles(showCacheBasePath, $"{showCachedFileName}.*");
+                                if (cachedFiles.Length > 0)
+                                {
+                                    showPoster = $"/cache/images/tv/{showCachedFileName}{Path.GetExtension(cachedFiles[0])}";
+                                }
+                            }
+                            if (string.IsNullOrEmpty(showPoster))
+                            {
+                                showPoster = $"/api/v1/image/proxy?url={Uri.EscapeDataString(showPosterUrl)}";
+                            }
+                        }
+                    }
+                }
+                
                 if (metadata != null && metadata.TryGetValue("seasons", out var seasonsObj) && seasonsObj is System.Text.Json.JsonElement seasonsArray)
                 {
                     foreach (var season in seasonsArray.EnumerateArray())
@@ -496,9 +573,23 @@ public class LibrariesController : ControllerBase
                         
                         if (num.HasValue)
                         {
-                            string? poster = season.TryGetProperty("poster", out var posterProp) && posterProp.ValueKind != System.Text.Json.JsonValueKind.Null
-                                ? $"/api/v1/image/proxy?url={Uri.EscapeDataString(posterProp.GetString() ?? "")}"
+                            string? posterUrl = season.TryGetProperty("poster", out var posterProp) && posterProp.ValueKind != System.Text.Json.JsonValueKind.Null
+                                ? posterProp.GetString()
                                 : null;
+                            
+                            // Use poster URL directly if it's a local cache path, otherwise proxy remote URLs
+                            string? poster = null;
+                            if (!string.IsNullOrEmpty(posterUrl))
+                            {
+                                if (posterUrl.StartsWith("/cache/"))
+                                {
+                                    poster = posterUrl;
+                                }
+                                else if (posterUrl.StartsWith("http"))
+                                {
+                                    poster = GetSeasonPoster(num.Value, posterUrl);
+                                }
+                            }
                             
                             int? episodeCount = season.TryGetProperty("episodeCount", out var epCountProp) && epCountProp.ValueKind != System.Text.Json.JsonValueKind.Null
                                 ? epCountProp.GetInt32()
@@ -529,21 +620,7 @@ public class LibrariesController : ControllerBase
             }
 
             // Fallback to show poster as season poster
-            string? fallbackPoster = null;
-            if (!string.IsNullOrEmpty(series.MetadataJson))
-            {
-                try
-                {
-                    var metadata = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(series.MetadataJson);
-                    if (metadata != null && metadata.TryGetValue("poster", out var posterObj))
-                    {
-                        fallbackPoster = $"/api/v1/image/proxy?url={Uri.EscapeDataString(posterObj.ToString() ?? "")}";
-                    }
-                }
-                catch { }
-            }
-
-            return (object)new { number = seasonNum, poster = fallbackPoster, episodeCount = episodeCount, premiereDate = (string?)null };
+            return (object)new { number = seasonNum, poster = showPoster, episodeCount = episodeCount, premiereDate = (string?)null };
         }).ToList();
 
         return Ok(result);

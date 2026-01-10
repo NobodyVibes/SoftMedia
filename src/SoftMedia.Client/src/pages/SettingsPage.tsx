@@ -255,6 +255,15 @@ export default function SettingsPage() {
         onError: () => toast.error('Failed to start library scan'),
     });
 
+    // Metadata Refresh Mutation
+    const refreshMetadataMutation = useMutation({
+        mutationFn: settingsService.triggerMetadataRefresh,
+        onSuccess: (data) => {
+            toast.success(data.message || 'Metadata refresh triggered');
+        },
+        onError: () => toast.error('Failed to trigger metadata refresh'),
+    });
+
     const handleSave = () => {
         updateMutation.mutate(localSettings);
     };
@@ -692,6 +701,20 @@ export default function SettingsPage() {
                                 </button>
                                 <span className="text-sm text-gray-400">{setting.value === 'true' ? 'Enabled' : 'Disabled'}</span>
                             </div>
+                        ) : setting.key === 'MetadataRefreshIntervalHours' ? (
+                            <div className="flex items-center gap-3 max-w-md">
+                                <input
+                                    type="number"
+                                    min="0"
+                                    max="720"
+                                    value={setting.value}
+                                    onChange={(e) => handleChange(setting.key, e.target.value)}
+                                    className="w-24 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
+                                />
+                                <span className="text-sm text-gray-400">
+                                    {parseInt(setting.value) === 0 ? '(Disabled)' : 'hours'}
+                                </span>
+                            </div>
                         ) : (
                             <input
                                 type="text"
@@ -808,6 +831,27 @@ export default function SettingsPage() {
                                         <Database className="text-primary" /> Metadata Providers
                                     </h2>
                                     {renderSettingsGroup('Metadata')}
+
+                                    {/* Metadata Refresh Section */}
+                                    <div className="mt-8 p-6 bg-white/5 rounded-xl border border-white/10">
+                                        <h3 className="text-lg font-semibold text-white mb-3">Metadata Refresh</h3>
+                                        <p className="text-white/60 text-sm mb-4">
+                                            Manually refresh metadata for all ongoing (Running) TV series. This respects rate limits and may take some time.
+                                        </p>
+                                        <button
+                                            onClick={() => refreshMetadataMutation.mutate()}
+                                            disabled={refreshMetadataMutation.isPending}
+                                            className={cn(
+                                                "flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all",
+                                                refreshMetadataMutation.isPending
+                                                    ? "bg-white/10 text-white/50 cursor-not-allowed"
+                                                    : "bg-primary hover:bg-primary/80 text-white"
+                                            )}
+                                        >
+                                            <RefreshCw className={cn("w-4 h-4", refreshMetadataMutation.isPending && "animate-spin")} />
+                                            {refreshMetadataMutation.isPending ? 'Refreshing...' : 'Refresh Now'}
+                                        </button>
+                                    </div>
                                 </div>
                             )}
 

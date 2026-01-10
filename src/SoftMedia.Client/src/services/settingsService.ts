@@ -15,5 +15,13 @@ export const settingsService = {
 
     update: async (settings: AppSetting[]): Promise<void> => {
         await api.put('/settings', settings);
+    },
+
+    /**
+     * Trigger immediate metadata refresh for ongoing (Running) TV series
+     */
+    triggerMetadataRefresh: async (): Promise<{ message: string }> => {
+        const response = await api.post<{ message: string }>('/settings/refresh-metadata');
+        return response.data;
     }
 };

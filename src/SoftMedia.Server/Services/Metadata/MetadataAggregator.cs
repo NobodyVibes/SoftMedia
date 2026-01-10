@@ -7,12 +7,18 @@ public class MetadataAggregator
 {
     private readonly IEnumerable<IMetadataProvider> _providers;
     private readonly ISettingsService _settingsService;
+    private readonly ImageCacheService _imageCacheService;
     private readonly ILogger<MetadataAggregator> _logger;
 
-    public MetadataAggregator(IEnumerable<IMetadataProvider> providers, ISettingsService settingsService, ILogger<MetadataAggregator> logger)
+    public MetadataAggregator(
+        IEnumerable<IMetadataProvider> providers, 
+        ISettingsService settingsService, 
+        ImageCacheService imageCacheService,
+        ILogger<MetadataAggregator> logger)
     {
         _providers = providers;
         _settingsService = settingsService;
+        _imageCacheService = imageCacheService;
         _logger = logger;
     }
 
@@ -34,7 +40,7 @@ public class MetadataAggregator
 
             item.MetadataJson = json;
 
-            ProcessMetadataJson(item, json);
+            await ProcessMetadataJsonAsync(item, json);
         }
         catch (Exception ex)
         {
@@ -96,7 +102,7 @@ public class MetadataAggregator
             {
                 var finalJson = JsonSerializer.Serialize(primaryData);
                 item.MetadataJson = finalJson;
-                ProcessMetadataJson(item, finalJson);
+                await ProcessMetadataJsonAsync(item, finalJson);
             }
             return;
         }
@@ -145,7 +151,7 @@ public class MetadataAggregator
         {
             var finalJson = JsonSerializer.Serialize(mergedData);
             item.MetadataJson = finalJson;
-            ProcessMetadataJson(item, finalJson);
+            await ProcessMetadataJsonAsync(item, finalJson);
         }
     }
 
@@ -159,7 +165,7 @@ public class MetadataAggregator
             if (string.IsNullOrEmpty(json)) return false;
 
             item.MetadataJson = json;
-            ProcessMetadataJson(item, json);
+            await ProcessMetadataJsonAsync(item, json);
 
             var metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
             if (metadata != null)
@@ -180,7 +186,7 @@ public class MetadataAggregator
         }
     }
 
-    private void ProcessMetadataJson(MediaItem item, string json)
+    private async Task ProcessMetadataJsonAsync(MediaItem item, string json)
     {
         // Parse and promote fields
         var metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
@@ -196,20 +202,148 @@ public class MetadataAggregator
                 item.Overview = descObj.ToString();
             }
             
-            // Removed CommunityRating population from external metadata to separate internal/external ratings
-            // if (metadata.TryGetValue("rating", out var ratingObj) && double.TryParse(ratingObj.ToString(), out var rating))
-            // {
-            //     item.CommunityRating = rating;
-            // }
-            
-                if (metadata.TryGetValue("contentRating", out var contentRatingObj))
+            if (metadata.TryGetValue("contentRating", out var contentRatingObj))
             {
                 item.ContentRating = contentRatingObj.ToString();
             }
                 
-                if (metadata.TryGetValue("releaseDate", out var releaseDateObj) && DateTime.TryParse(releaseDateObj.ToString(), out var releaseDate))
+            if (metadata.TryGetValue("releaseDate", out var releaseDateObj) && DateTime.TryParse(releaseDateObj.ToString(), out var releaseDate))
             {
                 item.ReleaseDate = releaseDate;
+            }
+            
+            // Cache poster image locally if available
+            if (metadata.TryGetValue("poster", out var posterObj))
+            {
+                var posterUrl = posterObj.ToString();
+                if (!string.IsNullOrEmpty(posterUrl) && posterUrl.StartsWith("http"))
+                {
+                    try
+                    {
+                        string cachedUrl = item.Type switch
+                        {
+                            MediaType.Series => await _imageCacheService.CacheSeriesPosterAsync(item.Id, posterUrl),
+                            MediaType.Movie => await _imageCacheService.CacheMoviePosterAsync(item.Id, posterUrl),
+                            MediaType.Audio => await _imageCacheService.CacheAlbumCoverAsync(item.Id, posterUrl),
+                            _ => posterUrl
+                        };
+                        
+                        if (cachedUrl != posterUrl)
+                        {
+                            // Update metadata with cached URL
+                            metadata["poster"] = cachedUrl;
+                            item.MetadataJson = JsonSerializer.Serialize(metadata);
+                            _logger.LogDebug("Cached poster for {Title}: {Url}", item.Title, cachedUrl);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to cache poster for {Title}", item.Title);
+                    }
+                }
+            }
+            
+            // For Series: Cache season posters and episode stills, update metadata with cached URLs
+            if (item.Type == MediaType.Series)
+            {
+                bool metadataModified = false;
+                
+                // Cache season posters and update URLs
+                if (metadata.TryGetValue("seasons", out var seasonsObj) && seasonsObj is JsonElement seasonsArray)
+                {
+                    // Convert to mutable list of dictionaries
+                    var seasonsList = new List<Dictionary<string, object?>>();
+                    foreach (var season in seasonsArray.EnumerateArray())
+                    {
+                        var seasonDict = JsonSerializer.Deserialize<Dictionary<string, object?>>(season.GetRawText()) ?? new();
+                        
+                        try
+                        {
+                            if (seasonDict.TryGetValue("number", out var numObj) && numObj != null &&
+                                seasonDict.TryGetValue("poster", out var seasonPosterObj) && seasonPosterObj != null)
+                            {
+                                var seasonNum = Convert.ToInt32(numObj.ToString());
+                                var seasonPosterUrl = seasonPosterObj.ToString();
+                                
+                                if (!string.IsNullOrEmpty(seasonPosterUrl) && seasonPosterUrl.StartsWith("http"))
+                                {
+                                    var cachedUrl = await _imageCacheService.CacheSeasonPosterAsync(item.Id, seasonNum, seasonPosterUrl);
+                                    if (cachedUrl != seasonPosterUrl)
+                                    {
+                                        seasonDict["poster"] = cachedUrl;
+                                        metadataModified = true;
+                                        _logger.LogDebug("Cached season {Season} poster for {Title}: {Url}", seasonNum, item.Title, cachedUrl);
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to cache season poster for {Title}", item.Title);
+                        }
+                        
+                        seasonsList.Add(seasonDict);
+                    }
+                    
+                    if (metadataModified)
+                    {
+                        metadata["seasons"] = seasonsList;
+                    }
+                }
+                
+                // Cache episode stills and update URLs
+                if (metadata.TryGetValue("episodes", out var episodesObj) && episodesObj is JsonElement episodesArray)
+                {
+                    var episodesList = new List<Dictionary<string, object?>>();
+                    bool episodesModified = false;
+                    
+                    foreach (var episode in episodesArray.EnumerateArray())
+                    {
+                        var epDict = JsonSerializer.Deserialize<Dictionary<string, object?>>(episode.GetRawText()) ?? new();
+                        
+                        try
+                        {
+                            if (epDict.TryGetValue("season", out var seasonObj) &&
+                                epDict.TryGetValue("episode", out var epNumObj) &&
+                                epDict.TryGetValue("still", out var stillObj) && stillObj != null)
+                            {
+                                var epSeason = seasonObj != null ? Convert.ToInt32(seasonObj.ToString()) : 0;
+                                var epNum = epNumObj != null ? Convert.ToInt32(epNumObj.ToString()) : 0;
+                                var stillUrl = stillObj.ToString();
+                                
+                                if (epNum > 0 && !string.IsNullOrEmpty(stillUrl) && stillUrl.StartsWith("http"))
+                                {
+                                    var cachedUrl = await _imageCacheService.CacheEpisodeStillAsync(item.Id, epSeason, epNum, stillUrl);
+                                    if (cachedUrl != stillUrl)
+                                    {
+                                        epDict["still"] = cachedUrl;
+                                        episodesModified = true;
+                                        _logger.LogDebug("Cached S{Season}E{Episode} still for {Title}: {Url}", epSeason, epNum, item.Title, cachedUrl);
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to cache episode still for {Title}", item.Title);
+                        }
+                        
+                        episodesList.Add(epDict);
+                    }
+                    
+                    if (episodesModified)
+                    {
+                        metadata["episodes"] = episodesList;
+                        metadataModified = true;
+                    }
+                }
+                
+                // Save updated metadata back to item
+                if (metadataModified)
+                {
+                    item.MetadataJson = JsonSerializer.Serialize(metadata);
+                    _logger.LogInformation("Updated metadata with cached image URLs for {Title}", item.Title);
+                }
             }
         }
     }

@@ -8,6 +8,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.Services;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Metadata;
+using SoftMedia.Server.Helpers;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -49,6 +50,14 @@ builder.Services.AddScoped<IStreamPlanService, StreamPlanService>();
 builder.Services.AddSingleton<IProcessController, ProcessController>(); // Cross-platform process suspend/resume
 builder.Services.AddSingleton<TranscodeService>(); // Singleton to maintain process tracking across requests
 builder.Services.AddHostedService<ThrottleMonitorService>(); // Background service for throttling
+builder.Services.AddSingleton<RateLimiterFactory>(); // Rate limiting for external metadata APIs
+builder.Services.AddSingleton<MetadataRefreshService>(); // Metadata refresh for ongoing series
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MetadataRefreshService>());
+builder.Services.AddHttpClient<ImageCacheService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
+});
 builder.Services.AddScoped<ISettingsService, SettingsService>();
 
 
@@ -175,6 +184,9 @@ app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Serve static files (cached images, etc.) from wwwroot
+app.UseStaticFiles();
 
 app.MapControllers();
 

@@ -17,6 +17,50 @@ interface TVDetailViewProps {
     item: MediaItem;
 }
 
+// Loading image component with skeleton placeholder and fade-in transition
+function LoadingImage({
+    src,
+    alt,
+    className = '',
+    fallback
+}: {
+    src: string | null | undefined;
+    alt: string;
+    className?: string;
+    fallback?: React.ReactNode;
+}) {
+    const [loaded, setLoaded] = useState(false);
+    const [error, setError] = useState(false);
+
+    // Reset state when src changes
+    useEffect(() => {
+        setLoaded(false);
+        setError(false);
+    }, [src]);
+
+    if (!src || error) {
+        return fallback ? <>{fallback}</> : null;
+    }
+
+    return (
+        <div className="relative w-full h-full">
+            {/* Skeleton placeholder - visible while loading */}
+            {!loaded && (
+                <div className="absolute inset-0 bg-gradient-to-br from-gray-800 via-gray-700 to-gray-800 animate-pulse" />
+            )}
+            {/* Actual image with fade-in */}
+            <img
+                src={src}
+                alt={alt}
+                className={`${className} transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+                onLoad={() => setLoaded(true)}
+                onError={() => setError(true)}
+                loading="lazy"
+            />
+        </div>
+    );
+}
+
 // Reusable horizontal scroll container with arrows and slider
 function HorizontalScrollList({
     children,
@@ -190,7 +234,7 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
     const seasons = useMemo(() => {
         if (!episodes) return {};
         const grouped = episodes.reduce((acc, ep) => {
-            const season = ep.seasonNumber || 1;
+            const season = ep.seasonNumber ?? 1;
             if (!acc[season]) acc[season] = [];
             acc[season].push(ep);
             return acc;
@@ -217,12 +261,46 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
 
     const currentEpisodes = selectedSeason !== null ? seasons[selectedSeason] || [] : [];
 
+    // Prefetch episode images when season changes
+    useEffect(() => {
+        if (currentEpisodes.length === 0) return;
+
+        // Prefetch images in the background by creating Image objects
+        currentEpisodes.forEach((ep) => {
+            const epMeta = ep.metadata || {};
+            const stillUrl = epMeta.still;
+
+            let imgUrl: string | null = null;
+            if (stillUrl && stillUrl.startsWith('/cache/')) {
+                imgUrl = stillUrl;
+            } else if (stillUrl && stillUrl.startsWith('http')) {
+                imgUrl = `/api/v1/image/proxy?url=${encodeURIComponent(stillUrl)}`;
+            } else {
+                imgUrl = epMeta.thumbnail || ep.posterPath || item.posterPath || null;
+            }
+
+            if (imgUrl) {
+                const img = new Image();
+                img.src = imgUrl;
+            }
+        });
+    }, [currentEpisodes, item.posterPath]);
+
     const getEpisodePoster = (ep: MediaItem) => {
         const epMeta = ep.metadata || {};
         const stillUrl = epMeta.still;
-        if (stillUrl) {
+
+        // If still URL is already a local cache path, use it directly
+        if (stillUrl && stillUrl.startsWith('/cache/')) {
+            return stillUrl;
+        }
+
+        // Use image proxy for remote stills (proxy will serve cached version if available)
+        if (stillUrl && stillUrl.startsWith('http')) {
             return `/api/v1/image/proxy?url=${encodeURIComponent(stillUrl)}`;
         }
+
+        // Fallback to thumbnail or poster
         return epMeta.thumbnail || ep.posterPath || item.posterPath;
     };
 
@@ -282,13 +360,16 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
             <Link to={`/play/${ep.id}`} className="group flex-shrink-0 w-72">
                 <div className="relative rounded-xl overflow-hidden bg-white/5 border border-white/10 hover:border-violet-500/50 transition-all hover:shadow-lg hover:shadow-violet-500/10">
                     <div className="relative aspect-video bg-gradient-to-br from-gray-800 to-gray-900">
-                        {getEpisodePoster(ep) ? (
-                            <img src={getEpisodePoster(ep) || ''} alt={ep.title} className="w-full h-full object-cover" />
-                        ) : (
-                            <div className="w-full h-full flex items-center justify-center">
-                                <span className="text-4xl text-gray-600">{ep.episodeNumber}</span>
-                            </div>
-                        )}
+                        <LoadingImage
+                            src={getEpisodePoster(ep)}
+                            alt={ep.title}
+                            className="w-full h-full object-cover"
+                            fallback={
+                                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
+                                    <span className="text-4xl text-gray-600">{ep.episodeNumber}</span>
+                                </div>
+                            }
+                        />
                         <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                             <div className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
                                 <Play className="w-7 h-7 text-white fill-current" />
@@ -347,13 +428,16 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
             <Link to={`/play/${ep.id}`} className="group flex items-center gap-4 p-3 rounded-xl bg-white/5 border border-white/10 hover:border-violet-500/50 hover:bg-white/10 transition-all">
                 {/* Thumbnail */}
                 <div className="relative w-40 aspect-video rounded-lg overflow-hidden flex-shrink-0">
-                    {getEpisodePoster(ep) ? (
-                        <img src={getEpisodePoster(ep) || ''} alt={ep.title} className="w-full h-full object-cover" />
-                    ) : (
-                        <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-                            <span className="text-2xl text-gray-600">{ep.episodeNumber}</span>
-                        </div>
-                    )}
+                    <LoadingImage
+                        src={getEpisodePoster(ep)}
+                        alt={ep.title}
+                        className="w-full h-full object-cover"
+                        fallback={
+                            <div className="w-full h-full bg-gray-800 flex items-center justify-center">
+                                <span className="text-2xl text-gray-600">{ep.episodeNumber}</span>
+                            </div>
+                        }
+                    />
                     {hasProgress && (
                         <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
                             <div className="h-full bg-gradient-to-r from-violet-500 to-blue-500" style={{ width: `${progressPercent}%` }} />

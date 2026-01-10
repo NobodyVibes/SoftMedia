@@ -397,7 +397,12 @@ public class FileScannerService : IFileScannerService
                         {
                              var dirResult = ParseTvInfoFromDirectory(file);
                              showName = dirResult.ShowName;
-                             season = dirResult.Season;
+                             // Only use directory season if filename parsing completely failed
+                             // (both season=0 AND episode=0). This preserves S00E01 (specials).
+                             if (season == 0 && episode == 0)
+                             {
+                                 season = dirResult.Season;
+                             }
                         }
                         
                         if (string.IsNullOrEmpty(showName)) showName = "Unknown Show";
@@ -817,7 +822,12 @@ public class FileScannerService : IFileScannerService
                         {
                              var dirResult = ParseTvInfoFromDirectory(file);
                              showName = dirResult.ShowName;
-                             season = dirResult.Season;
+                             // Only use directory season if filename parsing completely failed
+                             // (both season=0 AND episode=0). This preserves S00E01 (specials).
+                             if (season == 0 && episode == 0)
+                             {
+                                 season = dirResult.Season;
+                             }
                         }
                         
                         if (string.IsNullOrEmpty(showName)) showName = "Unknown Show";
@@ -860,6 +870,16 @@ public class FileScannerService : IFileScannerService
                                 context.MediaItems.Add(seriesItem);
                             }
                             existingSeries[showName] = seriesItem;
+                        }
+                        
+                        // Auto-update existing series that don't have a year set
+                        // This improves TVMaze disambiguation for existing series
+                        if (seriesItem.Year == null && showYear.HasValue)
+                        {
+                            _logger.LogInformation($"Updating series year: '{seriesItem.Title}' -> {showYear}");
+                            seriesItem.Year = showYear;
+                            // Mark for re-enrichment to get correct metadata with year disambiguation
+                            await metadataAggregator.EnrichMediaItemAsync(seriesItem, LibraryType.TV);
                         }
 
                         mediaItem.SeriesId = seriesItem.Id;

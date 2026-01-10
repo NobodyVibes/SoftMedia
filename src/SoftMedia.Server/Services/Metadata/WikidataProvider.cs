@@ -1,5 +1,7 @@
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Helpers;
 using System.Text.Json;
+using System.Threading.RateLimiting;
 
 namespace SoftMedia.Server.Services.Metadata;
 
@@ -7,14 +9,16 @@ public class WikidataProvider : IMetadataProvider
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<WikidataProvider> _logger;
+    private readonly RateLimiter _rateLimiter;
 
     public LibraryType SupportedType => LibraryType.Movie;
     public string ProviderName => "Wikidata";
 
-    public WikidataProvider(HttpClient httpClient, ILogger<WikidataProvider> logger)
+    public WikidataProvider(HttpClient httpClient, ILogger<WikidataProvider> logger, RateLimiterFactory rateLimiterFactory)
     {
         _httpClient = httpClient;
         _logger = logger;
+        _rateLimiter = rateLimiterFactory.GetLimiter("Wikidata");
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
     }
 
@@ -24,6 +28,14 @@ public class WikidataProvider : IMetadataProvider
         var path = item.Path;
         try
         {
+            // Acquire rate limit lease before making API call
+            using var lease = await _rateLimiter.AcquireAsync(1);
+            if (!lease.IsAcquired)
+            {
+                _logger.LogWarning($"Wikidata rate limit exceeded for '{title}', request was queued too long");
+                return null;
+            }
+            
             // SPARQL Query to find movie by title and get details
             // Filters: instance of (P31) film (Q11424) or subclass
             // Optional: Director (P57), Cast (P161), Pub Date (P577), Genre (P136), MPAA (P1657)

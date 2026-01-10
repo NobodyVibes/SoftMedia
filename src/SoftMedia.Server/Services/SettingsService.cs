@@ -9,6 +9,7 @@ public interface ISettingsService
     Task<List<AppSetting>> GetAllSettingsAsync();
     Task UpdateSettingsAsync(List<AppSetting> settings);
     Task<T> GetSettingAsync<T>(string key, T defaultValue);
+    Task<AppSetting?> GetSettingAsync(string key);
     Task InitializeDefaultsAsync();
 }
 
@@ -58,6 +59,11 @@ public class SettingsService : ISettingsService
         {
             return defaultValue;
         }
+    }
+    
+    public async Task<AppSetting?> GetSettingAsync(string key)
+    {
+        return await _context.Settings.FindAsync(key);
     }
 
     public async Task InitializeDefaultsAsync()
@@ -109,6 +115,7 @@ public class SettingsService : ISettingsService
             new() { Key = "GameProvider", Value = "Wikidata", Group = "Metadata", Description = "Primary API for Game metadata." },
             new() { Key = "PhotoProvider", Value = "Exif", Group = "Metadata", Description = "Primary API for Photo metadata." },
             new() { Key = "AutoRefreshMetadata", Value = "true", Group = "Metadata", Description = "Fetch new data when files are updated." },
+            new() { Key = "MetadataRefreshIntervalHours", Value = "24", Group = "Metadata", Description = "Hours between automatic refresh of ongoing series metadata. 0 = disabled." },
             
             // Users
             new() { Key = "AllowUserSignup", Value = "Disabled", Group = "Users", Description = "Control public registration (Disabled, InviteOnly, Enabled)." },

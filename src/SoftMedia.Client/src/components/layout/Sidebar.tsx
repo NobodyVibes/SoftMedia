@@ -87,15 +87,14 @@ export default function Sidebar() {
                                 )}
 
                                 {/* Icon */}
-                                <div className={cn(
-                                    "relative flex-shrink-0",
-                                    isActive && "text-transparent bg-clip-text bg-brand-gradient"
-                                )}>
+                                <div className="relative flex-shrink-0">
                                     <Icon
                                         size={24}
                                         className={cn(
                                             "transition-all",
-                                            isActive ? "drop-shadow-[0_0_8px_rgba(99,102,241,0.6)]" : ""
+                                            isActive
+                                                ? "text-primary drop-shadow-[0_0_8px_rgba(99,102,241,0.6)]"
+                                                : ""
                                         )}
                                     />
                                 </div>

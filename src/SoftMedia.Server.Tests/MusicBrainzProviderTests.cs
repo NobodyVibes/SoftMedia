@@ -3,6 +3,8 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using Moq.Protected;
 using SoftMedia.Server.Services.Metadata;
+using SoftMedia.Server.Services;
+using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
 using Xunit;
 
@@ -13,6 +15,7 @@ public class MusicBrainzProviderTests
     private readonly Mock<HttpMessageHandler> _httpHandlerMock;
     private readonly HttpClient _httpClient;
     private readonly Mock<ILogger<MusicBrainzProvider>> _loggerMock;
+    private readonly RateLimiterFactory _rateLimiterFactory;
     private readonly MusicBrainzProvider _provider;
 
     public MusicBrainzProviderTests()
@@ -20,7 +23,8 @@ public class MusicBrainzProviderTests
         _httpHandlerMock = new Mock<HttpMessageHandler>();
         _httpClient = new HttpClient(_httpHandlerMock.Object);
         _loggerMock = new Mock<ILogger<MusicBrainzProvider>>();
-        _provider = new MusicBrainzProvider(_httpClient, _loggerMock.Object);
+        _rateLimiterFactory = new RateLimiterFactory();
+        _provider = new MusicBrainzProvider(_httpClient, _loggerMock.Object, _rateLimiterFactory);
     }
 
     [Fact]

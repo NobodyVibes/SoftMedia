@@ -3,13 +3,49 @@ import { Search, Bell, Menu, ChevronDown, User as UserIcon, Settings, AlertCircl
 import { useAuthStore } from '../../store/authStore';
 import { useUIStore } from '../../store/uiStore';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useDebounce } from '../../hooks/useDebounce';
+import { searchService } from '../../services/searchService';
+import GlobalSearchResults from './GlobalSearchResults';
 
 export default function TopBar() {
     const user = useAuthStore((state) => state.user);
     const logout = useAuthStore((state) => state.logout);
     const { toggleSidebar } = useUIStore();
     const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+
+    // Search state
+    const [searchQuery, setSearchQuery] = useState('');
+    const [isSearchFocused, setIsSearchFocused] = useState(false);
+    const searchContainerRef = useRef<HTMLDivElement>(null);
+    const debouncedQuery = useDebounce(searchQuery, 300);
+
+    // Search query
+    const { data: searchResults = [], isLoading: isSearching } = useQuery({
+        queryKey: ['globalSearch', debouncedQuery],
+        queryFn: () => searchService.globalSearch(debouncedQuery),
+        enabled: debouncedQuery.length >= 2,
+        staleTime: 30000, // Cache results for 30 seconds
+    });
+
+    // Close search results when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
+                setIsSearchFocused(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const handleSearchClose = () => {
+        setIsSearchFocused(false);
+        setSearchQuery('');
+    };
+
+    const showSearchResults = isSearchFocused && debouncedQuery.length >= 2;
 
     return (
         <div className="h-16 bg-[#1a1a1a]/95 backdrop-blur-md border-b border-white/5 flex items-center px-6 fixed top-0 left-0 right-0 z-50">
@@ -28,14 +64,29 @@ export default function TopBar() {
             </div>
 
             {/* Search Bar */}
-            <div className="flex-1 max-w-2xl">
+            <div className="flex-1 max-w-2xl" ref={searchContainerRef}>
                 <div className="relative group">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-primary transition-colors" size={18} />
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-primary transition-colors z-10" size={18} />
                     <input
                         type="text"
-                        placeholder="Search for movies, TV shows, actors..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onFocus={() => setIsSearchFocused(true)}
+                        onKeyDown={(e) => e.key === 'Escape' && handleSearchClose()}
+                        placeholder="Search for movies, TV shows..."
                         className="w-full bg-white/5 border border-white/10 rounded-full py-2.5 pl-11 pr-4 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-primary/50 focus:bg-white/10 focus:ring-2 focus:ring-primary/20 transition-all"
                     />
+
+                    {/* Search Results Dropdown */}
+                    <AnimatePresence>
+                        {showSearchResults && (
+                            <GlobalSearchResults
+                                results={searchResults}
+                                isLoading={isSearching}
+                                onClose={handleSearchClose}
+                            />
+                        )}
+                    </AnimatePresence>
                 </div>
             </div>
 

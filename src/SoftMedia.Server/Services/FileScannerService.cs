@@ -23,19 +23,30 @@ public class FileScannerService : IFileScannerService
     private readonly IFileSystem _fileSystem;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IFFmpegService _ffmpegService;
+    private readonly IBackgroundImageCacheService _backgroundImageCache;
+    private readonly IMediaNotificationService _notificationService;
     private readonly string[] _videoExtensions = { ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg" };
     private readonly string[] _audioExtensions = { ".mp3", ".flac", ".aac", ".wav", ".ogg", ".m4a", ".weba", ".wma", ".alac", ".opus" };
     private readonly string[] _photoExtensions = { ".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp", ".gif", ".tiff" };
     private readonly string[] _gameExtensions = { ".iso", ".bin", ".cue", ".rom", ".nes", ".sfc", ".smc", ".n64", ".z64", ".gba", ".gbc", ".gb", ".nds", ".3ds", ".cia" };
 
 
-    public FileScannerService(IServiceScopeFactory scopeFactory, ILogger<FileScannerService> logger, IFileSystem fileSystem, IHttpClientFactory httpClientFactory, IFFmpegService ffmpegService)
+    public FileScannerService(
+        IServiceScopeFactory scopeFactory, 
+        ILogger<FileScannerService> logger, 
+        IFileSystem fileSystem, 
+        IHttpClientFactory httpClientFactory, 
+        IFFmpegService ffmpegService,
+        IBackgroundImageCacheService backgroundImageCache,
+        IMediaNotificationService notificationService)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _fileSystem = fileSystem;
         _httpClientFactory = httpClientFactory;
         _ffmpegService = ffmpegService;
+        _backgroundImageCache = backgroundImageCache;
+        _notificationService = notificationService;
     }
 
     public async Task ScanAllLibrariesAsync()
@@ -866,8 +877,11 @@ public class FileScannerService : IFileScannerService
                                     Year = showYear // Set year for TVMaze disambiguation
                                 };
                                 _logger.LogDebug($"Creating new series: '{showName}' (year: {showYear})");
-                                await metadataAggregator.EnrichMediaItemAsync(seriesItem, LibraryType.TV);
+                                await metadataAggregator.EnrichMediaItemAsync(seriesItem, LibraryType.TV, deferImageCaching: true);
                                 context.MediaItems.Add(seriesItem);
+                                await context.SaveChangesAsync(); // Make series visible immediately
+                                _backgroundImageCache.QueueImageCaching(seriesItem.Id);
+                                _notificationService.NotifyItemAdded(libraryId, seriesItem.Id, seriesItem.Type.ToString(), seriesItem.Title);
                             }
                             existingSeries[showName] = seriesItem;
                         }
@@ -879,7 +893,8 @@ public class FileScannerService : IFileScannerService
                             _logger.LogInformation($"Updating series year: '{seriesItem.Title}' -> {showYear}");
                             seriesItem.Year = showYear;
                             // Mark for re-enrichment to get correct metadata with year disambiguation
-                            await metadataAggregator.EnrichMediaItemAsync(seriesItem, LibraryType.TV);
+                            await metadataAggregator.EnrichMediaItemAsync(seriesItem, LibraryType.TV, deferImageCaching: true);
+                            _backgroundImageCache.QueueImageCaching(seriesItem.Id);
                         }
 
                         mediaItem.SeriesId = seriesItem.Id;
@@ -976,7 +991,8 @@ public class FileScannerService : IFileScannerService
                         } catch {}
 
                         // Enrich via Aggregator (uses Settings: Primary -> Fallback)
-                        await metadataAggregator.EnrichMediaItemAsync(mediaItem, library.Type);
+                        // Defer image caching to background service for faster scanning
+                        await metadataAggregator.EnrichMediaItemAsync(mediaItem, library.Type, deferImageCaching: true);
 
                         // Extract Resulting Metadata to populate Artist/Album
                         if (!string.IsNullOrEmpty(mediaItem.MetadataJson))
@@ -1136,17 +1152,30 @@ public class FileScannerService : IFileScannerService
                             }
                         }
                         
-                        // For Movies, enrich normally
-                        await metadataAggregator.EnrichMediaItemAsync(mediaItem, library.Type);
+                        // For Movies, enrich with deferred image caching
+                        await metadataAggregator.EnrichMediaItemAsync(mediaItem, library.Type, deferImageCaching: true);
                     }
                     else
                     {
-                        await metadataAggregator.EnrichMediaItemAsync(mediaItem, library.Type);
+                        await metadataAggregator.EnrichMediaItemAsync(mediaItem, library.Type, deferImageCaching: true);
                     }
 
                     context.MediaItems.Add(mediaItem);
                     _logger.LogDebug($"Added item: {mediaItem.Type} - '{mediaItem.Title}'");
                     _logger.LogInformation($"Added media: {mediaItem.Title}");
+                    
+                    // Queue for background image caching (Movies and other types with remote images)
+                    if (library.Type == LibraryType.Movie || 
+                        (library.Type == LibraryType.Music && !string.IsNullOrEmpty(mediaItem.MetadataJson) && mediaItem.MetadataJson.Contains("\"poster\"")))
+                    {
+                        _backgroundImageCache.QueueImageCaching(mediaItem.Id);
+                    }
+                    
+                    // Save immediately so item is in DB before pushing notification
+                    await context.SaveChangesAsync();
+                    
+                    // Push real-time notification for new item
+                    _notificationService.NotifyItemAdded(libraryId, mediaItem.Id, mediaItem.Type.ToString(), mediaItem.Title);
                 }
             }
         }

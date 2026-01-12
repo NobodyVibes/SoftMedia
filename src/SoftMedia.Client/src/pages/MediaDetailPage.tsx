@@ -13,9 +13,13 @@ import GameDetailView from '../components/details/GameDetailView';
 import PhotoDetailView from '../components/details/PhotoDetailView';
 import { useAudioStore } from '../store/audioStore';
 import { MediaType } from '../types';
+import { useMediaHub } from '../hooks/useMediaHub';
 
 export default function MediaDetailPage() {
     const { id } = useParams<{ id: string }>();
+
+    // SignalR real-time updates - refreshes when images are cached
+    useMediaHub({ mediaId: id });
 
     const { data: item, isLoading, error } = useQuery({
         queryKey: ['media', id],

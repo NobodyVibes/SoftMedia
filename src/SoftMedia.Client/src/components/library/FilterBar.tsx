@@ -99,8 +99,8 @@ export function FilterBar({
     }, [isMusicLibrary, isPhotoLibrary]);
 
     return (
-        <div className="bg-black/20 border-b border-white/10 p-4 z-20 backdrop-blur-md">
-            <div className="container mx-auto flex flex-col md:flex-row gap-4 items-center justify-between">
+        <div className="sticky top-0 z-30 bg-black/40 border-b border-white/10 px-8 py-4 backdrop-blur-md">
+            <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
 
                 {/* Search */}
                 <div className="relative w-full md:w-64">

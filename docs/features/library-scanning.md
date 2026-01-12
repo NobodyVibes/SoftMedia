@@ -52,6 +52,24 @@ Library scans are highly optimized for performance:
 
 **Batch Processing** - Metadata enrichment and database updates are batched efficiently
 
+### Progressive Scanning
+
+Library scans use a 3-phase approach for instant content visibility:
+
+1. **File Indexing (Fast)** - Discovers files, creates database entries, establishes relationships
+2. **Text Metadata (Fast)** - Fetches ratings, descriptions, and genres from providers
+3. **Image Caching (Background)** - Downloads posters and artwork asynchronously
+
+Media items appear in the library within seconds. Images load progressively as background caching completes.
+
+### Real-Time Updates
+
+Library pages automatically update during scans via SignalR push notifications:
+
+- **Instant Visibility** - New media items appear as they're indexed, not after the scan completes
+- **Multi-Client** - All connected browsers receive updates simultaneously
+- **Efficient** - No polling; updates only when changes occur
+
 ## Progress Tracking
 
 The scan progress UI shows:

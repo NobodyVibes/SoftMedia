@@ -1,19 +1,20 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useInView } from 'react-intersection-observer';
 import api from '../services/api';
 import HoverableMediaCardWrapper from '../components/items/HoverableMediaCardWrapper';
 import { FilterBar } from '../components/library/FilterBar';
-import { type MediaItem, type PagedResult, type Library, type LibraryScanJob } from '../types';
-import { libraryService } from '../services/libraryService';
+import { type MediaItem, type PagedResult, type Library } from '../types';
+import { useMediaHub } from '../hooks/useMediaHub';
 
 export default function LibraryPage() {
     const { ref, inView } = useInView();
     const { id } = useParams<{ id: string }>();
     const [hoveredId, setHoveredId] = useState<string | null>(null);
-    const queryClient = useQueryClient();
-    const prevScanStatusRef = useRef<Map<string, string>>(new Map());
+
+    // SignalR real-time updates - replaces polling
+    useMediaHub({ libraryId: id });
 
     // Fetch Library Details
     const { data: library } = useQuery({
@@ -25,43 +26,6 @@ export default function LibraryPage() {
         enabled: !!id
     });
 
-    // Poll scan queue to detect when this library's scan completes
-    const { data: scanQueue = [] } = useQuery<LibraryScanJob[]>({
-        queryKey: ['scanQueue'],
-        queryFn: libraryService.getScanQueue,
-        refetchInterval: 2000, // Poll every 2s to catch scans of all speeds
-    });
-
-    // Detect scan completion and invalidate library items cache
-    useEffect(() => {
-        if (!id) return;
-
-        scanQueue.forEach((job) => {
-            if (job.libraryId === id) {
-                const alreadyProcessed = prevScanStatusRef.current.has(job.id);
-                const prevStatus = prevScanStatusRef.current.get(job.id);
-
-                // If this is a new completed job we haven't seen before
-                if (!alreadyProcessed && job.status === 'Completed') {
-                    queryClient.invalidateQueries({ queryKey: ['library', id, 'items'] });
-                    prevScanStatusRef.current.set(job.id, 'processed');
-                }
-                // If scan transitioned to Completed (was Running or Queued)
-                else if (alreadyProcessed && prevStatus !== 'Completed' && prevStatus !== 'processed' && job.status === 'Completed') {
-                    queryClient.invalidateQueries({ queryKey: ['library', id, 'items'] });
-                    prevScanStatusRef.current.set(job.id, 'processed');
-                }
-                // First time seeing this job in any status
-                else if (!alreadyProcessed) {
-                    prevScanStatusRef.current.set(job.id, job.status);
-                }
-                // Status changed but not to Completed
-                else if (prevStatus !== job.status && prevStatus !== 'processed') {
-                    prevScanStatusRef.current.set(job.id, job.status);
-                }
-            }
-        });
-    }, [scanQueue, id, queryClient]);
 
     // Filter State
     const [search, setSearch] = useState('');
@@ -150,13 +114,12 @@ export default function LibraryPage() {
         }
 
         return (
-            <div className="flex-1 px-6 pt-6 pb-8">
+            <div className="flex-1 px-8 pt-8 pb-10">
                 {/* CSS Grid for fixed positions - prevents reflow on hover */}
                 <div
-                    className="grid gap-6 justify-center"
+                    className="grid gap-8"
                     style={{
-                        gridTemplateColumns: 'repeat(auto-fill, 180px)',
-                        justifyContent: 'center'
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))'
                     }}
                 >
                     {allItems.map((item: MediaItem) => (
@@ -180,7 +143,7 @@ export default function LibraryPage() {
     };
 
     return (
-        <div className="min-h-screen bg-background -m-6 flex flex-col">
+        <div className="min-h-screen bg-background flex flex-col">
             {/* FilterBar - ALWAYS rendered to preserve state */}
             <FilterBar
                 onSearch={setSearch}

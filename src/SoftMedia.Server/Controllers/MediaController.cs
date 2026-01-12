@@ -156,4 +156,51 @@ public class MediaController : ControllerBase
             return MediaItemDto.FromMediaItem(i, "/api/v1/image/proxy", interaction);
         }).ToList();
     }
+
+    /// <summary>
+    /// Global search across all libraries. Returns results grouped by library.
+    /// Only returns top-level items (Movies, Series, Albums, etc.) - not episodes or tracks.
+    /// </summary>
+    [HttpGet("search")]
+    public async Task<ActionResult<List<GlobalSearchResultDto>>> GlobalSearch(
+        [FromQuery] string query,
+        [FromQuery] int limit = 5)
+    {
+        if (string.IsNullOrWhiteSpace(query) || query.Length < 2)
+        {
+            return Ok(new List<GlobalSearchResultDto>());
+        }
+
+        var searchTerm = query.ToLower();
+        var libraries = await _context.Libraries.OrderBy(l => l.Order).ToListAsync();
+        var results = new List<GlobalSearchResultDto>();
+
+        // Types to exclude from search results (child items)
+        var excludedTypes = new[] { MediaType.Episode, MediaType.Audio };
+
+        foreach (var library in libraries)
+        {
+            var libraryItems = await _context.MediaItems
+                .AsNoTracking()
+                .Where(m => m.LibraryId == library.Id)
+                .Where(m => !excludedTypes.Contains(m.Type))
+                .Where(m => m.Title.ToLower().Contains(searchTerm))
+                .OrderBy(m => m.Title)
+                .Take(limit)
+                .ToListAsync();
+
+            if (libraryItems.Count > 0)
+            {
+                results.Add(new GlobalSearchResultDto
+                {
+                    LibraryId = library.Id,
+                    LibraryName = library.Name,
+                    LibraryType = library.Type.ToString(),
+                    Items = libraryItems.Select(i => MediaItemDto.FromMediaItem(i, "/api/v1/image/proxy")).ToList()
+                });
+            }
+        }
+
+        return Ok(results);
+    }
 }

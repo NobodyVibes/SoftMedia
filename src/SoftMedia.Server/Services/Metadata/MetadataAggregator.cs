@@ -22,11 +22,11 @@ public class MetadataAggregator
         _logger = logger;
     }
 
-    public async Task EnrichMediaItemAsync(MediaItem item, LibraryType type)
+    public async Task EnrichMediaItemAsync(MediaItem item, LibraryType type, bool deferImageCaching = false)
     {
         if (type == LibraryType.Music)
         {
-             await EnrichMusicItemAsync(item);
+             await EnrichMusicItemAsync(item, deferImageCaching);
              return;
         }
 
@@ -40,7 +40,7 @@ public class MetadataAggregator
 
             item.MetadataJson = json;
 
-            await ProcessMetadataJsonAsync(item, json);
+            await ProcessMetadataJsonAsync(item, json, deferImageCaching);
         }
         catch (Exception ex)
         {
@@ -48,7 +48,7 @@ public class MetadataAggregator
         }
     }
 
-    private async Task EnrichMusicItemAsync(MediaItem item)
+    private async Task EnrichMusicItemAsync(MediaItem item, bool deferImageCaching = false)
     {
         var primaryName = await _settingsService.GetSettingAsync("MusicProviderPrimary", "Embedded");
         var fallbackName = await _settingsService.GetSettingAsync("MusicProviderFallback", "MusicBrainz");
@@ -102,7 +102,7 @@ public class MetadataAggregator
             {
                 var finalJson = JsonSerializer.Serialize(primaryData);
                 item.MetadataJson = finalJson;
-                await ProcessMetadataJsonAsync(item, finalJson);
+                await ProcessMetadataJsonAsync(item, finalJson, deferImageCaching);
             }
             return;
         }
@@ -151,7 +151,7 @@ public class MetadataAggregator
         {
             var finalJson = JsonSerializer.Serialize(mergedData);
             item.MetadataJson = finalJson;
-            await ProcessMetadataJsonAsync(item, finalJson);
+            await ProcessMetadataJsonAsync(item, finalJson, deferImageCaching);
         }
     }
 
@@ -186,7 +186,7 @@ public class MetadataAggregator
         }
     }
 
-    private async Task ProcessMetadataJsonAsync(MediaItem item, string json)
+    private async Task ProcessMetadataJsonAsync(MediaItem item, string json, bool deferImageCaching = false)
     {
         // Parse and promote fields
         var metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
@@ -210,6 +210,13 @@ public class MetadataAggregator
             if (metadata.TryGetValue("releaseDate", out var releaseDateObj) && DateTime.TryParse(releaseDateObj.ToString(), out var releaseDate))
             {
                 item.ReleaseDate = releaseDate;
+            }
+            
+            // If deferring image caching, skip all image download operations
+            // Background service will handle image caching later
+            if (deferImageCaching)
+            {
+                return;
             }
             
             // Cache poster image locally if available

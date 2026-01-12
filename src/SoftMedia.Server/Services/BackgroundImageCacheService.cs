@@ -1,0 +1,300 @@
+using System.Text.Json;
+using System.Threading.Channels;
+using Microsoft.EntityFrameworkCore;
+using SoftMedia.Server.Data;
+using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Abstractions;
+
+namespace SoftMedia.Server.Services;
+
+/// <summary>
+/// Background service that processes a queue of media items to cache their images.
+/// Runs asynchronously to avoid blocking library scans.
+/// </summary>
+public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCacheService
+{
+    private readonly Channel<Guid> _queue;
+    private readonly HashSet<Guid> _queuedIds = new();
+    private readonly object _lock = new();
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<BackgroundImageCacheService> _logger;
+    private readonly IMediaNotificationService _notificationService;
+    
+    private const int MaxQueueSize = 1000;
+    private static readonly TimeSpan DelayBetweenItems = TimeSpan.FromMilliseconds(100);
+
+    public BackgroundImageCacheService(
+        IServiceScopeFactory scopeFactory,
+        ILogger<BackgroundImageCacheService> logger,
+        IMediaNotificationService notificationService)
+    {
+        _scopeFactory = scopeFactory;
+        _logger = logger;
+        _notificationService = notificationService;
+        _queue = Channel.CreateBounded<Guid>(new BoundedChannelOptions(MaxQueueSize)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest
+        });
+    }
+
+    public void QueueImageCaching(Guid mediaItemId)
+    {
+        lock (_lock)
+        {
+            if (_queuedIds.Contains(mediaItemId))
+            {
+                _logger.LogDebug("Skipping duplicate queue entry for {Id}", mediaItemId);
+                return;
+            }
+            
+            if (_queue.Writer.TryWrite(mediaItemId))
+            {
+                _queuedIds.Add(mediaItemId);
+                _logger.LogDebug("Queued image caching for {Id}", mediaItemId);
+            }
+            else
+            {
+                _logger.LogWarning("Failed to queue image caching for {Id} - queue may be full", mediaItemId);
+            }
+        }
+    }
+
+    public int GetQueueDepth() => _queue.Reader.Count;
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _logger.LogInformation("BackgroundImageCacheService started");
+        
+        try
+        {
+            await foreach (var itemId in _queue.Reader.ReadAllAsync(stoppingToken))
+            {
+                try
+                {
+                    await ProcessItemAsync(itemId, stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    _logger.LogInformation("BackgroundImageCacheService stopping");
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error caching images for {Id}", itemId);
+                }
+                finally
+                {
+                    lock (_lock) { _queuedIds.Remove(itemId); }
+                }
+                
+                // Rate limiting to avoid hammering image servers
+                if (!stoppingToken.IsCancellationRequested)
+                {
+                    await Task.Delay(DelayBetweenItems, stoppingToken);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Expected during shutdown
+        }
+        
+        _logger.LogInformation("BackgroundImageCacheService stopped");
+    }
+
+    private async Task ProcessItemAsync(Guid itemId, CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var imageCache = scope.ServiceProvider.GetRequiredService<ImageCacheService>();
+        
+        var item = await context.MediaItems.FindAsync(new object[] { itemId }, ct);
+        if (item == null)
+        {
+            _logger.LogDebug("Media item {Id} not found, skipping image cache", itemId);
+            return;
+        }
+        
+        if (string.IsNullOrEmpty(item.MetadataJson))
+        {
+            _logger.LogDebug("Media item {Id} has no metadata, skipping image cache", itemId);
+            return;
+        }
+        
+        Dictionary<string, object>? metadata;
+        try
+        {
+            metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(item.MetadataJson);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse metadata for {Id}", itemId);
+            return;
+        }
+        
+        if (metadata == null) return;
+        
+        bool modified = false;
+        
+        // Cache poster for all media types
+        modified |= await CachePosterAsync(item, metadata, imageCache);
+        
+        // For Series: also cache season posters and episode stills
+        if (item.Type == MediaType.Series)
+        {
+            modified |= await CacheSeasonPostersAsync(item.Id, metadata, imageCache);
+            modified |= await CacheEpisodeStillsAsync(item.Id, metadata, imageCache);
+        }
+        
+        if (modified)
+        {
+            item.MetadataJson = JsonSerializer.Serialize(metadata);
+            await context.SaveChangesAsync(ct);
+            _logger.LogInformation("Background cached images for {Type}: {Title}", item.Type, item.Title);
+            
+            // Push real-time update to any clients viewing this item
+            _notificationService.NotifyItemUpdated(itemId);
+        }
+    }
+
+    private async Task<bool> CachePosterAsync(MediaItem item, Dictionary<string, object> metadata, ImageCacheService imageCache)
+    {
+        if (!metadata.TryGetValue("poster", out var posterObj))
+            return false;
+        
+        var posterUrl = posterObj.ToString();
+        if (string.IsNullOrEmpty(posterUrl) || !posterUrl.StartsWith("http"))
+            return false;
+        
+        // Already cached locally
+        if (posterUrl.StartsWith("/cache/"))
+            return false;
+        
+        try
+        {
+            string cachedUrl = item.Type switch
+            {
+                MediaType.Series => await imageCache.CacheSeriesPosterAsync(item.Id, posterUrl),
+                MediaType.Movie => await imageCache.CacheMoviePosterAsync(item.Id, posterUrl),
+                MediaType.Audio or MediaType.Album => await imageCache.CacheAlbumCoverAsync(item.Id, posterUrl),
+                _ => posterUrl
+            };
+            
+            if (cachedUrl != posterUrl)
+            {
+                metadata["poster"] = cachedUrl;
+                _logger.LogDebug("Cached poster for {Title}: {Url}", item.Title, cachedUrl);
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to cache poster for {Title}", item.Title);
+        }
+        
+        return false;
+    }
+
+    private async Task<bool> CacheSeasonPostersAsync(Guid seriesId, Dictionary<string, object> metadata, ImageCacheService imageCache)
+    {
+        if (!metadata.TryGetValue("seasons", out var seasonsObj) || seasonsObj is not JsonElement seasonsArray)
+            return false;
+        
+        var seasonsList = new List<Dictionary<string, object?>>();
+        bool modified = false;
+        
+        foreach (var season in seasonsArray.EnumerateArray())
+        {
+            var seasonDict = JsonSerializer.Deserialize<Dictionary<string, object?>>(season.GetRawText()) ?? new();
+            
+            try
+            {
+                if (seasonDict.TryGetValue("number", out var numObj) && numObj != null &&
+                    seasonDict.TryGetValue("poster", out var seasonPosterObj) && seasonPosterObj != null)
+                {
+                    var seasonNum = Convert.ToInt32(numObj.ToString());
+                    var seasonPosterUrl = seasonPosterObj.ToString();
+                    
+                    if (!string.IsNullOrEmpty(seasonPosterUrl) && 
+                        seasonPosterUrl.StartsWith("http") && 
+                        !seasonPosterUrl.StartsWith("/cache/"))
+                    {
+                        var cachedUrl = await imageCache.CacheSeasonPosterAsync(seriesId, seasonNum, seasonPosterUrl);
+                        if (cachedUrl != seasonPosterUrl)
+                        {
+                            seasonDict["poster"] = cachedUrl;
+                            modified = true;
+                            _logger.LogDebug("Cached season {Season} poster", seasonNum);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to cache season poster");
+            }
+            
+            seasonsList.Add(seasonDict);
+        }
+        
+        if (modified)
+        {
+            metadata["seasons"] = seasonsList;
+        }
+        
+        return modified;
+    }
+
+    private async Task<bool> CacheEpisodeStillsAsync(Guid seriesId, Dictionary<string, object> metadata, ImageCacheService imageCache)
+    {
+        if (!metadata.TryGetValue("episodes", out var episodesObj) || episodesObj is not JsonElement episodesArray)
+            return false;
+        
+        var episodesList = new List<Dictionary<string, object?>>();
+        bool modified = false;
+        
+        foreach (var episode in episodesArray.EnumerateArray())
+        {
+            var epDict = JsonSerializer.Deserialize<Dictionary<string, object?>>(episode.GetRawText()) ?? new();
+            
+            try
+            {
+                if (epDict.TryGetValue("season", out var seasonObj) &&
+                    epDict.TryGetValue("episode", out var epNumObj) &&
+                    epDict.TryGetValue("still", out var stillObj) && stillObj != null)
+                {
+                    var epSeason = seasonObj != null ? Convert.ToInt32(seasonObj.ToString()) : 0;
+                    var epNum = epNumObj != null ? Convert.ToInt32(epNumObj.ToString()) : 0;
+                    var stillUrl = stillObj.ToString();
+                    
+                    if (epNum > 0 && 
+                        !string.IsNullOrEmpty(stillUrl) && 
+                        stillUrl.StartsWith("http") && 
+                        !stillUrl.StartsWith("/cache/"))
+                    {
+                        var cachedUrl = await imageCache.CacheEpisodeStillAsync(seriesId, epSeason, epNum, stillUrl);
+                        if (cachedUrl != stillUrl)
+                        {
+                            epDict["still"] = cachedUrl;
+                            modified = true;
+                            _logger.LogDebug("Cached S{Season}E{Episode} still", epSeason, epNum);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to cache episode still");
+            }
+            
+            episodesList.Add(epDict);
+        }
+        
+        if (modified)
+        {
+            metadata["episodes"] = episodesList;
+        }
+        
+        return modified;
+    }
+}

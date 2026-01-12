@@ -736,7 +736,7 @@ export default function SettingsPage() {
     };
 
     return (
-        <div className="p-8 max-w-6xl mx-auto pb-24" >
+        <div className="max-w-4xl mx-auto p-6 pb-24" >
             <div className="flex items-center justify-between mb-8">
                 <div className="flex items-center gap-4">
                     <Settings className="w-8 h-8 text-primary" />

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Hosting;
 using Moq;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services;
@@ -14,6 +15,7 @@ public class MetadataAggregatorTests
     private readonly Mock<ILogger<MetadataAggregator>> _loggerMock;
     private readonly Mock<IMetadataProvider> _embeddedProviderMock;
     private readonly Mock<IMetadataProvider> _mbProviderMock;
+    private readonly Mock<ImageCacheService> _imageCacheMock;
     private readonly List<IMetadataProvider> _providers;
     private readonly MetadataAggregator _aggregator;
 
@@ -21,6 +23,13 @@ public class MetadataAggregatorTests
     {
         _settingsMock = new Mock<ISettingsService>();
         _loggerMock = new Mock<ILogger<MetadataAggregator>>();
+        
+        // Mock ImageCacheService - requires HttpClient, ILogger, and IWebHostEnvironment
+        var mockHttpClient = new HttpClient();
+        var mockImageLogger = new Mock<ILogger<ImageCacheService>>();
+        var mockWebHostEnv = new Mock<IWebHostEnvironment>();
+        mockWebHostEnv.Setup(e => e.WebRootPath).Returns(Path.GetTempPath());
+        _imageCacheMock = new Mock<ImageCacheService>(mockHttpClient, mockImageLogger.Object, mockWebHostEnv.Object);
         
         _embeddedProviderMock = new Mock<IMetadataProvider>();
         _embeddedProviderMock.Setup(p => p.SupportedType).Returns(LibraryType.Music);
@@ -32,7 +41,7 @@ public class MetadataAggregatorTests
 
         _providers = new List<IMetadataProvider> { _embeddedProviderMock.Object, _mbProviderMock.Object };
         
-        _aggregator = new MetadataAggregator(_providers, _settingsMock.Object, _loggerMock.Object);
+        _aggregator = new MetadataAggregator(_providers, _settingsMock.Object, _imageCacheMock.Object, _loggerMock.Object);
 
         // Default settings
         _settingsMock.Setup(s => s.GetSettingAsync("MusicProviderPrimary", "Embedded"))

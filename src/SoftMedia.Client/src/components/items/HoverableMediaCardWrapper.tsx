@@ -16,7 +16,10 @@ export default function HoverableMediaCardWrapper({
     item,
     hoveredId,
     setHoveredId,
-    baseWidth = 180,
+    // baseWidth and expandedWidth are available but not currently used
+    // They are part of the prop interface for future flexibility
+    baseWidth: _baseWidth = 180,
+    expandedWidth: _expandedWidth,
     height = 380,
     libraryType
 }: HoverableMediaCardWrapperProps) {
@@ -26,7 +29,7 @@ export default function HoverableMediaCardWrapper({
         <motion.div
             className="relative"
             style={{
-                width: baseWidth,
+                width: '100%',
                 height: height,
                 // Maintain original position in grid
                 position: 'relative',

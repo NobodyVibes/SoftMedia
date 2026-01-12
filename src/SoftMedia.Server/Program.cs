@@ -9,6 +9,7 @@ using SoftMedia.Server.Services;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Metadata;
 using SoftMedia.Server.Helpers;
+using SoftMedia.Server.Hubs;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -30,6 +31,11 @@ builder.Services.AddSingleton<ILibraryScanQueueService>(sp => sp.GetRequiredServ
 builder.Services.AddHostedService(sp => sp.GetRequiredService<LibraryScanQueueService>());
 builder.Services.AddSingleton<LibraryWatcher>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<LibraryWatcher>());
+
+// Background image caching service for progressive library scanning
+builder.Services.AddSingleton<BackgroundImageCacheService>();
+builder.Services.AddSingleton<IBackgroundImageCacheService>(sp => sp.GetRequiredService<BackgroundImageCacheService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<BackgroundImageCacheService>());
 builder.Services.AddHttpClient<WikidataProvider>();
 builder.Services.AddHttpClient<TVMazeProvider>();
 builder.Services.AddScoped<IMetadataProvider, WikidataProvider>();
@@ -59,6 +65,10 @@ builder.Services.AddHttpClient<ImageCacheService>(client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
 });
 builder.Services.AddScoped<ISettingsService, SettingsService>();
+
+// SignalR for real-time updates
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<IMediaNotificationService, MediaNotificationService>();
 
 
 builder.Services.AddCors(options =>
@@ -122,7 +132,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 // This is required because browser media elements can't set Authorization headers
                 if (path.StartsWithSegments("/api/transcode") || 
                     path.StartsWithSegments("/api/v1/stream") ||
-                    path.StartsWithSegments("/api/media"))
+                    path.StartsWithSegments("/api/media") ||
+                    path.StartsWithSegments("/hubs/media"))
                 {
                     var token = context.Request.Query["token"];
                     if (!string.IsNullOrEmpty(token))
@@ -189,6 +200,9 @@ app.UseAuthorization();
 app.UseStaticFiles();
 
 app.MapControllers();
+
+// SignalR hub for real-time updates
+app.MapHub<MediaHub>("/hubs/media");
 
 // Seed the database
 using (var scope = app.Services.CreateScope())

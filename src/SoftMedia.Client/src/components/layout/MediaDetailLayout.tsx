@@ -8,6 +8,7 @@ import { type MediaItem } from '../../types';
 import QualityBadge from '../ui/QualityBadge';
 import { StarRating } from '../ui/StarRating';
 import { cn } from '../../lib/utils';
+import { getGenreColors } from '../../lib/genreColors';
 
 interface MediaDetailLayoutProps {
     item: MediaItem;
@@ -139,14 +140,17 @@ export default function MediaDetailLayout({ item, children, onPlay }: MediaDetai
                             {/* Genres */}
                             {item.genres && item.genres.length > 0 && (
                                 <div className="flex flex-wrap gap-2 mb-8">
-                                    {item.genres.map(genre => (
-                                        <span
-                                            key={genre}
-                                            className="px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-sm text-gray-200 transition-colors cursor-default"
-                                        >
-                                            {genre}
-                                        </span>
-                                    ))}
+                                    {item.genres.map(genre => {
+                                        const colors = getGenreColors(genre);
+                                        return (
+                                            <span
+                                                key={genre}
+                                                className={`px-3 py-1 rounded-full text-sm font-medium transition-colors cursor-default border ${colors.bg} ${colors.text} ${colors.hoverBg} ${colors.border || 'border-transparent'}`}
+                                            >
+                                                {genre}
+                                            </span>
+                                        );
+                                    })}
                                 </div>
                             )}
 

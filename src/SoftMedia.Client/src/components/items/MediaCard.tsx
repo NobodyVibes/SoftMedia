@@ -5,6 +5,7 @@ import { type MediaItem } from '../../types';
 import QualityBadge from '../ui/QualityBadge';
 import { useAudioStore } from '../../store/audioStore';
 import api from '../../services/api';
+import { getGenreGradient, getGenreColors } from '../../lib/genreColors';
 
 // Loading image component with skeleton placeholder and fade-in transition
 function LoadingImage({
@@ -56,27 +57,12 @@ interface MediaCardProps {
     enableHoverScale?: boolean;
 }
 
-const genreColors: Record<string, string> = {
-    'Fantasy': 'from-purple-600 to-pink-600',
-    'Action': 'from-red-600 to-orange-600',
-    'Horror': 'from-red-900 to-black',
-    'Comedy': 'from-yellow-400 to-orange-500',
-    'Drama': 'from-blue-600 to-indigo-600',
-    'Sci-Fi': 'from-cyan-500 to-blue-600',
-    'Thriller': 'from-emerald-600 to-teal-700',
-    'Animation': 'from-pink-500 to-rose-500',
-    'Mystery': 'from-violet-600 to-indigo-700',
-    'Adventure': 'from-green-500 to-teal-500',
-    'Crime': 'from-slate-700 to-red-800',
-    'Romance': 'from-rose-400 to-pink-500',
-};
-
 export default function MediaCard({ item, libraryType }: MediaCardProps) {
     const navigate = useNavigate();
     const { playTrack, addToQueue } = useAudioStore();
     const primaryGenre = item.genres?.[0] || 'Drama';
-    // Use the genre color or a default pleasing gradient
-    const glowGradient = genreColors[primaryGenre] || 'from-blue-600 to-violet-600';
+    // Use the shared genre gradient or a default pleasing gradient
+    const glowGradient = getGenreGradient(primaryGenre);
 
     const isAudio = libraryType === 'Music';
     const isMovie = libraryType === 'Movie';
@@ -270,8 +256,18 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
                     </div>
 
                     {item.genres && item.genres.length > 0 && (
-                        <div className="mt-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider truncate opacity-70 group-hover/card:opacity-100 transition-opacity">
-                            {item.genres.slice(0, 2).join(' / ')}
+                        <div className="mt-2 flex flex-wrap gap-1 opacity-70 group-hover/card:opacity-100 transition-opacity">
+                            {item.genres.slice(0, 2).map(genre => {
+                                const colors = getGenreColors(genre);
+                                return (
+                                    <span
+                                        key={genre}
+                                        className={`px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${colors.bg} ${colors.text}`}
+                                    >
+                                        {genre}
+                                    </span>
+                                );
+                            })}
                         </div>
                     )}
                 </div>

@@ -200,7 +200,7 @@ function HorizontalScrollList({
             >
                 <div
                     ref={thumbRef}
-                    className="h-full bg-gradient-to-r from-violet-500 to-blue-500 rounded-full"
+                    className="h-full bg-gradient-to-r from-blue-500 to-violet-500 rounded-full"
                     style={{ width: '20%', cursor: 'grab' }}
                     onMouseDown={handleThumbDrag}
                 />
@@ -377,7 +377,7 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
                         </div>
                         {hasProgress && (
                             <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
-                                <div className="h-full bg-gradient-to-r from-violet-500 to-blue-500" style={{ width: `${progressPercent}%` }} />
+                                <div className="h-full bg-gradient-to-r from-blue-500 to-violet-500" style={{ width: `${progressPercent}%` }} />
                             </div>
                         )}
                     </div>
@@ -440,7 +440,7 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
                     />
                     {hasProgress && (
                         <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
-                            <div className="h-full bg-gradient-to-r from-violet-500 to-blue-500" style={{ width: `${progressPercent}%` }} />
+                            <div className="h-full bg-gradient-to-r from-blue-500 to-violet-500" style={{ width: `${progressPercent}%` }} />
                         </div>
                     )}
                 </div>
@@ -611,7 +611,7 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
                         <HorizontalScrollList>
                             {metadata.cast.slice(0, 15).map((actor: { name?: string; character?: string; image?: string }, i: number) => (
                                 <div key={i} className="flex-shrink-0 w-28 text-center group">
-                                    <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-violet-600/30 to-blue-600/30 border-2 border-white/10 group-hover:border-violet-500/50 transition-all overflow-hidden flex items-center justify-center">
+                                    <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-blue-600/30 to-violet-600/30 border-2 border-white/10 group-hover:border-violet-500/50 transition-all overflow-hidden flex items-center justify-center">
                                         {actor.image ? (
                                             <img
                                                 src={`/api/v1/image/proxy?url=${encodeURIComponent(actor.image)}`}

@@ -15,7 +15,7 @@ export default function MainLayout() {
                 <Sidebar />
 
                 <main className={cn(
-                    "flex-1 p-6 overflow-y-auto transition-all duration-300 ease-in-out",
+                    "flex-1 overflow-y-auto h-[calc(100vh-4rem)] transition-all duration-300 ease-in-out",
                     isSidebarCollapsed ? "ml-20" : "ml-64"
                 )}>
                     <Outlet />

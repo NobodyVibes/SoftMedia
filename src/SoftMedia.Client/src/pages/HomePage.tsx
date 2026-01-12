@@ -52,7 +52,7 @@ export default function HomePage() {
 
             {/* Libraries Section */}
             {libraries && libraries.length > 0 && (
-                <div className="px-6 mt-12">
+                <div className="max-w-7xl mx-auto space-y-12 p-6">
                     <h2 className="text-2xl font-bold text-white mb-4">Your Libraries</h2>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
                         {libraries.map((lib) => (

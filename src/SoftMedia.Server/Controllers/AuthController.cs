@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
@@ -15,13 +16,15 @@ public class AuthController : ControllerBase
     private readonly IPasswordHasher _passwordHasher;
     private readonly ITokenService _tokenService;
     private readonly ISettingsService _settingsService;
+    private readonly IUserPreferencesService _userPreferencesService;
 
-    public AuthController(AppDbContext context, IPasswordHasher passwordHasher, ITokenService tokenService, ISettingsService settingsService)
+    public AuthController(AppDbContext context, IPasswordHasher passwordHasher, ITokenService tokenService, ISettingsService settingsService, IUserPreferencesService userPreferencesService)
     {
         _context = context;
         _passwordHasher = passwordHasher;
         _tokenService = tokenService;
         _settingsService = settingsService;
+        _userPreferencesService = userPreferencesService;
     }
 
     [HttpPost("signup")]
@@ -121,6 +124,9 @@ public class AuthController : ControllerBase
 
         await _context.SaveChangesAsync();
 
+        // Initialize default preferences for the new user
+        await _userPreferencesService.InitializeDefaultsAsync(user.Id);
+
         var accessToken = _tokenService.GenerateAccessToken(user);
         var refreshToken = _tokenService.GenerateRefreshToken();
 
@@ -166,6 +172,7 @@ public class AuthController : ControllerBase
         return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned, user.IsApproved, user.IsRejected, string.IsNullOrEmpty(user.ContentRatings) ? new Dictionary<string, string>() : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(user.ContentRatings, (System.Text.Json.JsonSerializerOptions?)null) ?? new Dictionary<string, string>(), user.FirstName, user.LastName, user.CreatedByAdmin, usedInviteCode, user.MustChangePassword)));
     }
 
+    [Authorize]
     [HttpPost("change-password")]
     public async Task<IActionResult> ChangePassword(ChangePasswordRequest request)
     {

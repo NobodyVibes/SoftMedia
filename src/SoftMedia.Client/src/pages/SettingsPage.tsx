@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Settings, Server, Users, Library as LibraryIcon, Save, RefreshCw, Database, Network, Play, Plus, ShieldCheck, AlertTriangle, RotateCcw, X } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import { Settings, Users, Library as LibraryIcon, Save, RefreshCw, Database, Play, Plus, AlertTriangle, RotateCcw, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Combobox } from '../components/ui/Combobox';
 import { settingsService, type AppSetting } from '../services/settingsService';
@@ -16,8 +17,6 @@ import { ConfirmationModal } from '../components/ConfirmationModal';
 import { LibraryScanProgress } from '../components/LibraryScanProgress';
 import type { Library, LibraryScanJob, FileWatcherIssue } from '../types';
 import { adminService } from '../services/adminService';
-
-type Tab = 'server' | 'users' | 'libraries' | 'metadata' | 'playback' | 'network' | 'admin';
 
 // Admin Dashboard Component
 function AdminDashboard() {
@@ -138,7 +137,13 @@ function AdminDashboard() {
 }
 
 export default function SettingsPage() {
-    const [activeTab, setActiveTab] = useState<Tab>('server');
+    const { section, subsection } = useParams<{ section?: string; subsection?: string }>();
+
+    // Build activeTab from URL params
+    const activeTab = subsection
+        ? `${section}-${subsection}`
+        : section || 'server';
+
     const queryClient = useQueryClient();
     const [localSettings, setLocalSettings] = useState<AppSetting[]>([]);
     const { t, i18n } = useTranslation();
@@ -255,15 +260,6 @@ export default function SettingsPage() {
         onError: () => toast.error('Failed to start library scan'),
     });
 
-    // Metadata Refresh Mutation
-    const refreshMetadataMutation = useMutation({
-        mutationFn: settingsService.triggerMetadataRefresh,
-        onSuccess: (data) => {
-            toast.success(data.message || 'Metadata refresh triggered');
-        },
-        onError: () => toast.error('Failed to trigger metadata refresh'),
-    });
-
     const handleSave = () => {
         updateMutation.mutate(localSettings);
     };
@@ -288,7 +284,7 @@ export default function SettingsPage() {
         "Trace", "Debug", "Info", "Warning", "Error", "Critical"
     ];
 
-    const movieProviders = ["Wikidata"];
+    const movieProviders = ["Wikidata", "OMDb"];
     const tvProviders = ["TVMaze"];
     const musicProviders = ["MusicBrainz", "Embedded"];
     const bookProviders = ["Open Library"];
@@ -349,16 +345,6 @@ export default function SettingsPage() {
         return (crf / 51) * 100;
     };
 
-    const tabs = [
-        { id: 'server', label: t('Server'), icon: Server },
-        { id: 'network', label: t('Network'), icon: Network },
-        { id: 'playback', label: t('Playback'), icon: Play },
-        { id: 'metadata', label: t('Metadata'), icon: Database },
-        { id: 'users', label: t('Users'), icon: Users },
-        { id: 'libraries', label: t('Libraries'), icon: LibraryIcon },
-        { id: 'admin', label: t('Admin Dashboard'), icon: ShieldCheck },
-    ];
-
     // Format setting key to human-readable label, preserving acronyms like HDR, CRF, etc.
     const formatSettingLabel = (key: string): string => {
         // Split on transitions from lowercase to uppercase, or before an uppercase followed by lowercase
@@ -371,14 +357,41 @@ export default function SettingsPage() {
 
     // Helper to render settings by group
     const renderSettingsGroup = (groupName: string) => {
-        let groupSettings = localSettings.filter(s => s.group === groupName);
+        let groupSettings = localSettings.filter(s => s.group === groupName && s.key !== 'DisableTranscoding');
 
         // Explicit ordering for Transcoding group
         if (groupName === 'Transcoding') {
-            const transcodingOrder = ['HardwareAcceleration', 'TranscodePreset', 'TranscodeThreadCount', 'MaxTranscodeResolution', 'TranscodeCRF', 'ToneMappingAlgorithm', 'EnableAV1Encoding', 'DisableTranscoding'];
+            const transcodingOrder = [
+                'EnableTranscoding',
+                'EnableAV1Encoding',
+                'ForceDirectPlayWhenPossible',
+                'TranscodePreset',
+                'OutputVideoCodec',
+                'HardwareAcceleration',
+                'MaxSimultaneousTranscodes',
+                'TranscodeThreadCount'
+            ];
             groupSettings = groupSettings.sort((a, b) => {
                 const aIndex = transcodingOrder.indexOf(a.key);
                 const bIndex = transcodingOrder.indexOf(b.key);
+                return (aIndex === -1 ? 999 : aIndex) - (bIndex === -1 ? 999 : bIndex);
+            });
+        }
+
+        // Explicit ordering for Streaming group
+        if (groupName === 'Streaming') {
+            const streamingOrder = [
+                'DefaultStreamingQuality',
+                'MaxTranscodeResolution',
+                'TranscodeCRF',
+                'PreserveHDR',
+                'ToneMappingAlgorithm',
+                'MaxStreamingBitrate',
+                'DefaultAudioChannels'
+            ];
+            groupSettings = groupSettings.sort((a, b) => {
+                const aIndex = streamingOrder.indexOf(a.key);
+                const bIndex = streamingOrder.indexOf(b.key);
                 return (aIndex === -1 ? 999 : aIndex) - (bIndex === -1 ? 999 : bIndex);
             });
         }
@@ -387,350 +400,347 @@ export default function SettingsPage() {
 
         return (
             <div className="space-y-6">
-                {groupSettings.map(setting => (
-                    <div key={setting.key} className="flex flex-col gap-2">
-                        {!['MusicProviderPrimary', 'MusicProviderFallback', 'DisableTranscoding'].includes(setting.key) && (
-                            <label className="text-sm font-medium text-gray-300">{t(formatSettingLabel(setting.key))}</label>
-                        )}
+                {groupSettings.map(setting => {
+                    const isTranscodingOrStreaming = groupName === 'Transcoding' || groupName === 'Streaming';
+                    const isToggle = (setting.value === 'true' || setting.value === 'false') && !['HardwareAcceleration', 'PreserveHDR'].includes(setting.key);
 
-                        {setting.key === 'AllowUserSignup' ? (
-                            <Combobox
-                                value={setting.value === 'true' ? 'Enabled' : setting.value === 'false' ? 'Disabled' : setting.value}
-                                onChange={(val) => handleChange(setting.key, val)}
-                                options={["Disabled", "InviteOnly", "Enabled"]}
-                                placeholder="Select signup mode..."
-                                className="max-w-md"
-                            />
-                        ) : (setting.value === 'true' || setting.value === 'false') && !['DisableTranscoding', 'HardwareAcceleration', 'PreserveHDR'].includes(setting.key) ? (
-                            <div className="flex items-center gap-3">
-                                <button
-                                    onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}
-                                    className={cn(
-                                        "w-12 h-6 rounded-full transition-colors relative",
-                                        setting.value === 'true' ? "bg-primary" : "bg-white/10"
-                                    )}
-                                >
-                                    <div className={cn(
-                                        "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
-                                        setting.value === 'true' ? "left-7" : "left-1"
-                                    )} />
-                                </button>
-                                <span className="text-sm text-gray-400">{setting.value === 'true' ? 'Enabled' : 'Disabled'}</span>
-                            </div>
-                        ) : setting.key === 'Language' ? (
-                            <Combobox
-                                value={setting.value}
-                                onChange={(val) => handleChange(setting.key, val)}
-                                options={languageOptions}
-                                placeholder="Select language..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'LogLevel' ? (
-                            <Combobox
-                                value={setting.value}
-                                onChange={(val) => handleChange(setting.key, val)}
-                                options={logLevelOptions}
-                                placeholder="Select log level..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'MovieProvider' ? (
-                            <Combobox
-                                value={setting.value}
-                                onChange={(val) => handleChange(setting.key, val)}
-                                options={movieProviders}
-                                placeholder="Select movie provider..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'TVProvider' ? (
-                            <>
+                    return (
+                        <div key={setting.key} className="flex flex-col gap-2">
+                            {/* For Transcoding/Streaming toggles, show toggle + label inline */}
+                            {isTranscodingOrStreaming && isToggle ? (
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}
+                                        className={cn(
+                                            "w-12 h-6 rounded-full transition-colors relative flex-shrink-0",
+                                            setting.value === 'true' ? "bg-primary" : "bg-white/10"
+                                        )}
+                                    >
+                                        <div className={cn(
+                                            "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
+                                            setting.value === 'true' ? "left-7" : "left-1"
+                                        )} />
+                                    </button>
+                                    <label className="text-sm font-medium text-gray-300">{t(formatSettingLabel(setting.key))}</label>
+                                </div>
+                            ) : (
+                                /* For other settings, show label first (if applicable) */
+                                !['MusicProviderPrimary', 'MusicProviderFallback'].includes(setting.key) && (
+                                    <label className="text-sm font-medium text-gray-300">{t(formatSettingLabel(setting.key))}</label>
+                                )
+                            )}
+
+                            {setting.key === 'AllowUserSignup' ? (
+                                <Combobox
+                                    value={setting.value === 'true' ? 'Enabled' : setting.value === 'false' ? 'Disabled' : setting.value}
+                                    onChange={(val) => handleChange(setting.key, val)}
+                                    options={["Disabled", "InviteOnly", "Enabled"]}
+                                    placeholder="Select signup mode..."
+                                    className="max-w-md"
+                                />
+                            ) : isTranscodingOrStreaming && isToggle ? (
+                                /* Toggle already rendered above for Transcoding/Streaming */
+                                null
+                            ) : (setting.value === 'true' || setting.value === 'false') && !['HardwareAcceleration', 'PreserveHDR'].includes(setting.key) ? (
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}
+                                        className={cn(
+                                            "w-12 h-6 rounded-full transition-colors relative",
+                                            setting.value === 'true' ? "bg-primary" : "bg-white/10"
+                                        )}
+                                    >
+                                        <div className={cn(
+                                            "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
+                                            setting.value === 'true' ? "left-7" : "left-1"
+                                        )} />
+                                    </button>
+                                    <span className="text-sm text-gray-400">{setting.value === 'true' ? 'Enabled' : 'Disabled'}</span>
+                                </div>
+                            ) : setting.key === 'Language' ? (
                                 <Combobox
                                     value={setting.value}
                                     onChange={(val) => handleChange(setting.key, val)}
-                                    options={tvProviders}
-                                    placeholder="Select TV provider..."
+                                    options={languageOptions}
+                                    placeholder="Select language..."
                                     className="max-w-md"
                                 />
-                                {setting.value === 'TVMaze' && (
-                                    <div className="mt-2 p-3 bg-blue-500/10 border border-blue-500/20 rounded-md max-w-md">
-                                        <p className="text-xs text-blue-200">
-                                            Data provided by TVMaze for free. Please consider supporting them: <a href="https://www.tvmaze.com/premium" target="_blank" rel="noopener noreferrer" className="underline hover:text-white font-bold">Donate to TVMaze</a>
-                                        </p>
-                                    </div>
-                                )}
-                            </>
-                        ) : setting.key === 'MusicProviderPrimary' ? (
-                            <>
-                                <label className="text-sm font-medium text-gray-300">Music Providers</label>
-                                <div className="bg-white/5 p-4 rounded-lg border border-white/10 space-y-4">
+                            ) : setting.key === 'LogLevel' ? (
+                                <Combobox
+                                    value={setting.value}
+                                    onChange={(val) => handleChange(setting.key, val)}
+                                    options={logLevelOptions}
+                                    placeholder="Select log level..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'MovieProvider' ? (
+                                <Combobox
+                                    value={setting.value}
+                                    onChange={(val) => handleChange(setting.key, val)}
+                                    options={movieProviders}
+                                    placeholder="Select movie provider..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'TVProvider' ? (
+                                <>
+                                    <Combobox
+                                        value={setting.value}
+                                        onChange={(val) => handleChange(setting.key, val)}
+                                        options={tvProviders}
+                                        placeholder="Select TV provider..."
+                                        className="max-w-md"
+                                    />
+                                    {setting.value === 'TVMaze' && (
+                                        <div className="mt-2 p-3 bg-blue-500/10 border border-blue-500/20 rounded-md max-w-md">
+                                            <p className="text-xs text-blue-200">
+                                                Data provided by TVMaze for free. Please consider supporting them: <a href="https://www.tvmaze.com/premium" target="_blank" rel="noopener noreferrer" className="underline hover:text-white font-bold">Donate to TVMaze</a>
+                                            </p>
+                                        </div>
+                                    )}
+                                </>
+                            ) : setting.key === 'MusicProviderPrimary' ? (
+                                <>
+                                    <label className="text-sm font-medium text-gray-300">Music Providers</label>
+                                    <div className="bg-white/5 p-4 rounded-lg border border-white/10 space-y-4">
 
-                                    <div className="space-y-2">
-                                        <label className="text-xs text-gray-400 block">Primary Provider (First Choice)</label>
-                                        <Combobox
-                                            value={setting.value}
-                                            onChange={(val) => handleChange(setting.key, val)}
-                                            options={musicProviders}
-                                            placeholder="Select primary music provider..."
-                                            className="w-full"
-                                        />
-                                    </div>
-                                    {localSettings.find(s => s.key === 'MusicProviderFallback') && (
                                         <div className="space-y-2">
-                                            <label className="text-xs text-gray-400 block">Fallback Provider (If Primary fails)</label>
+                                            <label className="text-xs text-gray-400 block">Primary Provider (First Choice)</label>
                                             <Combobox
-                                                value={localSettings.find(s => s.key === 'MusicProviderFallback')!.value}
-                                                onChange={(val) => handleChange('MusicProviderFallback', val)}
+                                                value={setting.value}
+                                                onChange={(val) => handleChange(setting.key, val)}
                                                 options={musicProviders}
-                                                placeholder="Select fallback music provider..."
+                                                placeholder="Select primary music provider..."
                                                 className="w-full"
                                             />
                                         </div>
-                                    )}
-                                </div>
-                            </>
-                        ) : setting.key === 'MusicProviderFallback' ? (
-                            null // Handled in Primary block
-                        ) : setting.key === 'BookProvider' ? (
-                            <Combobox
-                                value={setting.value}
-                                onChange={(val) => handleChange(setting.key, val)}
-                                options={bookProviders}
-                                placeholder="Select book provider..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'GameProvider' ? (
-                            <Combobox
-                                value={setting.value}
-                                onChange={(val) => handleChange(setting.key, val)}
-                                options={gameProviders}
-                                placeholder="Select game provider..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'PhotoProvider' ? (
-                            <Combobox
-                                value={setting.value}
-                                onChange={(val) => handleChange(setting.key, val)}
-                                options={photoProviders}
-                                placeholder="Select photo provider..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'HardwareAcceleration' ? (
-                            <Combobox
-                                value={hardwareAccelOptions.find(o => o.value === setting.value)?.label || setting.value}
-                                onChange={(val) => {
-                                    const option = hardwareAccelOptions.find(o => o.label === val);
-                                    handleChange(setting.key, option?.value || 'none');
-                                }}
-                                options={hardwareAccelOptions.map(o => o.label)}
-                                placeholder="Select hardware acceleration..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'TranscodePreset' ? (
-                            <Combobox
-                                value={presetOptions.find(o => o.value === setting.value)?.label || setting.value}
-                                onChange={(val) => {
-                                    const option = presetOptions.find(o => o.label === val);
-                                    handleChange(setting.key, option?.value || 'veryfast');
-                                }}
-                                options={presetOptions.map(o => o.label)}
-                                placeholder="Select encoding preset..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'MaxTranscodeResolution' ? (
-                            <Combobox
-                                value={resolutionOptions.find(o => o.value === setting.value)?.label || setting.value}
-                                onChange={(val) => {
-                                    const option = resolutionOptions.find(o => o.label === val);
-                                    handleChange(setting.key, option?.value || 'original');
-                                }}
-                                options={resolutionOptions.map(o => o.label)}
-                                placeholder="Select max resolution..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'TranscodeThreadCount' ? (
-                            <div className="flex items-center gap-3 max-w-md">
-                                <input
-                                    type="number"
-                                    min="0"
-                                    max="128"
-                                    value={setting.value}
-                                    onChange={(e) => handleChange(setting.key, e.target.value)}
-                                    className="w-24 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
-                                />
-                                <span className="text-sm text-gray-400">
-                                    {parseInt(setting.value) === 0 ? '(Auto)' : 'threads'}
-                                </span>
-                            </div>
-                        ) : setting.key === 'TranscodeCRF' ? (
-                            <div className="max-w-md">
-                                <div className="flex items-center gap-3">
-                                    <span className="text-xs text-gray-400 w-16">Lossless</span>
-                                    <div className="flex-1 relative">
-                                        <input
-                                            type="range"
-                                            min="0"
-                                            max="51"
-                                            value={parseInt(setting.value) || 23}
-                                            onChange={(e) => handleChange(setting.key, e.target.value)}
-                                            className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-primary"
-                                        />
-                                        {/* Following label under slider thumb */}
-                                        <div
-                                            className="absolute -bottom-6 transform -translate-x-1/2 text-xs text-primary font-medium whitespace-nowrap"
-                                            style={{ left: `${getCRFPosition(parseInt(setting.value) || 23)}%` }}
-                                        >
-                                            {setting.value} ({getCRFLabel(parseInt(setting.value) || 23)})
-                                        </div>
+                                        {localSettings.find(s => s.key === 'MusicProviderFallback') && (
+                                            <div className="space-y-2">
+                                                <label className="text-xs text-gray-400 block">Fallback Provider (If Primary fails)</label>
+                                                <Combobox
+                                                    value={localSettings.find(s => s.key === 'MusicProviderFallback')!.value}
+                                                    onChange={(val) => handleChange('MusicProviderFallback', val)}
+                                                    options={musicProviders}
+                                                    placeholder="Select fallback music provider..."
+                                                    className="w-full"
+                                                />
+                                            </div>
+                                        )}
                                     </div>
-                                    <span className="text-xs text-gray-400 w-12 text-right">Worst</span>
-                                </div>
-                                <p className="text-xs text-gray-500 mt-8">
-                                    Lower CRF = better quality but larger file sizes. 23 is a good balance.
-                                </p>
-                            </div>
-                        ) : setting.key === 'DisableTranscoding' ? (
-                            <div>
-                                <label className="flex items-center gap-3 cursor-pointer">
+                                </>
+                            ) : setting.key === 'MusicProviderFallback' ? (
+                                null // Handled in Primary block
+                            ) : setting.key === 'BookProvider' ? (
+                                <Combobox
+                                    value={setting.value}
+                                    onChange={(val) => handleChange(setting.key, val)}
+                                    options={bookProviders}
+                                    placeholder="Select book provider..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'GameProvider' ? (
+                                <Combobox
+                                    value={setting.value}
+                                    onChange={(val) => handleChange(setting.key, val)}
+                                    options={gameProviders}
+                                    placeholder="Select game provider..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'PhotoProvider' ? (
+                                <Combobox
+                                    value={setting.value}
+                                    onChange={(val) => handleChange(setting.key, val)}
+                                    options={photoProviders}
+                                    placeholder="Select photo provider..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'HardwareAcceleration' ? (
+                                <Combobox
+                                    value={hardwareAccelOptions.find(o => o.value === setting.value)?.label || setting.value}
+                                    onChange={(val) => {
+                                        const option = hardwareAccelOptions.find(o => o.label === val);
+                                        handleChange(setting.key, option?.value || 'none');
+                                    }}
+                                    options={hardwareAccelOptions.map(o => o.label)}
+                                    placeholder="Select hardware acceleration..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'TranscodePreset' ? (
+                                <Combobox
+                                    value={presetOptions.find(o => o.value === setting.value)?.label || setting.value}
+                                    onChange={(val) => {
+                                        const option = presetOptions.find(o => o.label === val);
+                                        handleChange(setting.key, option?.value || 'veryfast');
+                                    }}
+                                    options={presetOptions.map(o => o.label)}
+                                    placeholder="Select encoding preset..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'MaxTranscodeResolution' ? (
+                                <Combobox
+                                    value={resolutionOptions.find(o => o.value === setting.value)?.label || setting.value}
+                                    onChange={(val) => {
+                                        const option = resolutionOptions.find(o => o.label === val);
+                                        handleChange(setting.key, option?.value || 'original');
+                                    }}
+                                    options={resolutionOptions.map(o => o.label)}
+                                    placeholder="Select max resolution..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'TranscodeThreadCount' ? (
+                                <div className="flex items-center gap-3 max-w-md">
                                     <input
-                                        type="checkbox"
-                                        checked={setting.value === 'true'}
-                                        onChange={(e) => handleChange(setting.key, e.target.checked ? 'true' : 'false')}
-                                        className="w-5 h-5 rounded border-white/20 bg-black/20 text-primary focus:ring-primary focus:ring-offset-0 cursor-pointer"
+                                        type="number"
+                                        min="0"
+                                        max="128"
+                                        value={setting.value}
+                                        onChange={(e) => handleChange(setting.key, e.target.value)}
+                                        className="w-24 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
                                     />
-                                    <span className="text-sm font-medium text-gray-300">Disable Transcoding</span>
-                                </label>
-                                <p className="text-xs text-gray-500 mt-2 ml-8">
-                                    Skip video conversion and serve files directly. May cause playback issues in browsers that don't support the original video format.
-                                </p>
-                            </div>
-                        ) : setting.key === 'MaxStreamingBitrate' ? (
-                            <div className="flex items-center gap-3 max-w-md">
+                                    <span className="text-sm text-gray-400">
+                                        {parseInt(setting.value) === 0 ? '(Auto)' : 'threads'}
+                                    </span>
+                                </div>
+                            ) : setting.key === 'TranscodeCRF' ? (
+                                <div className="max-w-md">
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-xs text-gray-400 w-16">Lossless</span>
+                                        <div className="flex-1 relative">
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="51"
+                                                value={parseInt(setting.value) || 23}
+                                                onChange={(e) => handleChange(setting.key, e.target.value)}
+                                                className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-primary"
+                                            />
+                                            {/* Following label under slider thumb */}
+                                            <div
+                                                className="absolute -bottom-6 transform -translate-x-1/2 text-xs text-primary font-medium whitespace-nowrap"
+                                                style={{ left: `${getCRFPosition(parseInt(setting.value) || 23)}%` }}
+                                            >
+                                                {setting.value} ({getCRFLabel(parseInt(setting.value) || 23)})
+                                            </div>
+                                        </div>
+                                        <span className="text-xs text-gray-400 w-12 text-right">Worst</span>
+                                    </div>
+                                    <p className="text-xs text-gray-500 mt-8">
+                                        Lower CRF = better quality but larger file sizes. 23 is a good balance.
+                                    </p>
+                                </div>
+
+                            ) : setting.key === 'MaxStreamingBitrate' ? (
+                                <div className="flex items-center gap-3 max-w-md">
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        max="100000"
+                                        step="1000"
+                                        value={setting.value}
+                                        onChange={(e) => handleChange(setting.key, e.target.value)}
+                                        className="w-32 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
+                                    />
+                                    <span className="text-sm text-gray-400">
+                                        {parseInt(setting.value) === 0 ? 'Unlimited' : `${(parseInt(setting.value) / 1000).toFixed(0)} Mbps`}
+                                    </span>
+                                </div>
+                            ) : setting.key === 'MaxSimultaneousTranscodes' ? (
+                                <div className="flex items-center gap-3 max-w-md">
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        max="20"
+                                        value={setting.value}
+                                        onChange={(e) => handleChange(setting.key, e.target.value)}
+                                        className="w-24 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
+                                    />
+                                    <span className="text-sm text-gray-400">
+                                        {parseInt(setting.value) === 0 ? 'Unlimited' : 'concurrent sessions'}
+                                    </span>
+                                </div>
+                            ) : setting.key === 'DefaultStreamingQuality' ? (
+                                <Combobox
+                                    value={setting.value}
+                                    onChange={(val) => handleChange(setting.key, val)}
+                                    options={['auto', '720p', '1080p', '4k', 'original']}
+                                    placeholder="Select default quality..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'DefaultAudioChannels' ? (
+                                <Combobox
+                                    value={setting.value}
+                                    onChange={(val) => handleChange(setting.key, val)}
+                                    options={['auto', 'stereo', '5.1', '7.1']}
+                                    placeholder="Select audio preference..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'ToneMappingAlgorithm' ? (
+                                <Combobox
+                                    value={toneMappingOptions.find(o => o.value === setting.value)?.label || setting.value}
+                                    onChange={(val) => {
+                                        const option = toneMappingOptions.find(o => o.label === val);
+                                        handleChange(setting.key, option?.value || 'hable');
+                                    }}
+                                    options={toneMappingOptions.map(o => o.label)}
+                                    placeholder="Select tone mapping..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'OutputVideoCodec' ? (
+                                <Combobox
+                                    value={outputCodecOptions.find(o => o.value === setting.value)?.label || setting.value}
+                                    onChange={(val) => {
+                                        const option = outputCodecOptions.find(o => o.label === val);
+                                        handleChange(setting.key, option?.value || 'auto');
+                                    }}
+                                    options={outputCodecOptions.map(o => o.label)}
+                                    placeholder="Select output codec..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'PreserveHDR' ? (
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}
+                                        className={cn(
+                                            "w-12 h-6 rounded-full transition-colors relative",
+                                            setting.value === 'true' ? "bg-primary" : "bg-white/10"
+                                        )}
+                                    >
+                                        <div className={cn(
+                                            "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
+                                            setting.value === 'true' ? "left-7" : "left-1"
+                                        )} />
+                                    </button>
+                                    <span className="text-sm text-gray-400">{setting.value === 'true' ? 'Enabled' : 'Disabled'}</span>
+                                </div>
+                            ) : setting.key === 'MetadataRefreshIntervalHours' ? (
+                                <div className="flex items-center gap-3 max-w-md">
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        max="720"
+                                        value={setting.value}
+                                        onChange={(e) => handleChange(setting.key, e.target.value)}
+                                        className="w-24 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
+                                    />
+                                    <span className="text-sm text-gray-400">
+                                        {parseInt(setting.value) === 0 ? '(Disabled)' : 'hours'}
+                                    </span>
+                                </div>
+                            ) : (
                                 <input
-                                    type="number"
-                                    min="0"
-                                    max="100000"
-                                    step="1000"
+                                    type="text"
                                     value={setting.value}
                                     onChange={(e) => handleChange(setting.key, e.target.value)}
-                                    className="w-32 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
+                                    className="w-full max-w-md bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
                                 />
-                                <span className="text-sm text-gray-400">
-                                    {parseInt(setting.value) === 0 ? 'Unlimited' : `${(parseInt(setting.value) / 1000).toFixed(0)} Mbps`}
-                                </span>
-                            </div>
-                        ) : setting.key === 'MaxSimultaneousTranscodes' ? (
-                            <div className="flex items-center gap-3 max-w-md">
-                                <input
-                                    type="number"
-                                    min="0"
-                                    max="20"
-                                    value={setting.value}
-                                    onChange={(e) => handleChange(setting.key, e.target.value)}
-                                    className="w-24 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
-                                />
-                                <span className="text-sm text-gray-400">
-                                    {parseInt(setting.value) === 0 ? 'Unlimited' : 'concurrent sessions'}
-                                </span>
-                            </div>
-                        ) : setting.key === 'DefaultStreamingQuality' ? (
-                            <Combobox
-                                value={setting.value}
-                                onChange={(val) => handleChange(setting.key, val)}
-                                options={['auto', '720p', '1080p', '4k', 'original']}
-                                placeholder="Select default quality..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'DefaultAudioChannels' ? (
-                            <Combobox
-                                value={setting.value}
-                                onChange={(val) => handleChange(setting.key, val)}
-                                options={['auto', 'stereo', '5.1', '7.1']}
-                                placeholder="Select audio preference..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'ForceDirectPlayWhenPossible' ? (
-                            <div className="flex items-center gap-3">
-                                <button
-                                    onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}
-                                    className={cn(
-                                        "w-12 h-6 rounded-full transition-colors relative",
-                                        setting.value === 'true' ? "bg-primary" : "bg-white/10"
-                                    )}
-                                >
-                                    <div className={cn(
-                                        "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
-                                        setting.value === 'true' ? "left-7" : "left-1"
-                                    )} />
-                                </button>
-                                <span className="text-sm text-gray-400">{setting.value === 'true' ? 'Enabled' : 'Disabled'}</span>
-                            </div>
-                        ) : setting.key === 'ToneMappingAlgorithm' ? (
-                            <Combobox
-                                value={toneMappingOptions.find(o => o.value === setting.value)?.label || setting.value}
-                                onChange={(val) => {
-                                    const option = toneMappingOptions.find(o => o.label === val);
-                                    handleChange(setting.key, option?.value || 'hable');
-                                }}
-                                options={toneMappingOptions.map(o => o.label)}
-                                placeholder="Select tone mapping..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'OutputVideoCodec' ? (
-                            <Combobox
-                                value={outputCodecOptions.find(o => o.value === setting.value)?.label || setting.value}
-                                onChange={(val) => {
-                                    const option = outputCodecOptions.find(o => o.label === val);
-                                    handleChange(setting.key, option?.value || 'auto');
-                                }}
-                                options={outputCodecOptions.map(o => o.label)}
-                                placeholder="Select output codec..."
-                                className="max-w-md"
-                            />
-                        ) : setting.key === 'PreserveHDR' ? (
-                            <div className="flex items-center gap-3">
-                                <button
-                                    onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}
-                                    className={cn(
-                                        "w-12 h-6 rounded-full transition-colors relative",
-                                        setting.value === 'true' ? "bg-primary" : "bg-white/10"
-                                    )}
-                                >
-                                    <div className={cn(
-                                        "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
-                                        setting.value === 'true' ? "left-7" : "left-1"
-                                    )} />
-                                </button>
-                                <span className="text-sm text-gray-400">{setting.value === 'true' ? 'Enabled' : 'Disabled'}</span>
-                            </div>
-                        ) : setting.key === 'MetadataRefreshIntervalHours' ? (
-                            <div className="flex items-center gap-3 max-w-md">
-                                <input
-                                    type="number"
-                                    min="0"
-                                    max="720"
-                                    value={setting.value}
-                                    onChange={(e) => handleChange(setting.key, e.target.value)}
-                                    className="w-24 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
-                                />
-                                <span className="text-sm text-gray-400">
-                                    {parseInt(setting.value) === 0 ? '(Disabled)' : 'hours'}
-                                </span>
-                            </div>
-                        ) : (
-                            <input
-                                type="text"
-                                value={setting.value}
-                                onChange={(e) => handleChange(setting.key, e.target.value)}
-                                className="w-full max-w-md bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
-                            />
-                        )}
+                            )}
 
 
-                        {setting.description && !['MusicProviderPrimary', 'MusicProviderFallback', 'DisableTranscoding'].includes(setting.key) && (
-                            <p className="text-xs text-gray-500">{setting.description}</p>
-                        )}
-                    </div>
-                ))
-                }
+                            {setting.description && !['MusicProviderPrimary', 'MusicProviderFallback'].includes(setting.key) && (
+                                <p className="text-xs text-gray-500">{setting.description}</p>
+                            )}
+                        </div>
+                    );
+                })}
             </div >
         );
     };
@@ -752,218 +762,346 @@ export default function SettingsPage() {
                 </button>
             </div>
 
-            <div className="flex flex-col lg:flex-row gap-8">
-                {/* Sidebar Tabs */}
-                <div className="w-full lg:w-64 flex-shrink-0 space-y-2">
-                    {tabs.map((tab) => {
-                        const Icon = tab.icon;
-                        return (
-                            <button
-                                key={tab.id}
-                                onClick={() => setActiveTab(tab.id as Tab)}
-                                className={cn(
-                                    "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-left",
-                                    activeTab === tab.id
-                                        ? "bg-primary/10 text-primary border border-primary/20"
-                                        : "text-gray-400 hover:bg-white/5 hover:text-white border border-transparent"
-                                )}
-                            >
-                                <Icon size={20} />
-                                {tab.label}
-                            </button>
-                        );
-                    })}
-                </div>
+            {/* Content Area */}
+            <div className="bg-[#1a1a1a] rounded-2xl border border-white/5 p-8 min-h-[600px]">
+                {isLoading ? (
+                    <div className="flex items-center justify-center h-full text-gray-400">
+                        <RefreshCw className="animate-spin mr-2" /> Loading settings...
+                    </div>
+                ) : (
+                    <>
+                        {activeTab === 'playback-transcoding' && (
+                            <div>
+                                <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
+                                    <Play className="text-primary" /> Transcoding
+                                </h2>
+                                {renderSettingsGroup('Transcoding')}
+                            </div>
+                        )}
 
-                {/* Content Area */}
-                <div className="flex-1 bg-[#1a1a1a] rounded-2xl border border-white/5 p-8 min-h-[600px]">
-                    {isLoading ? (
-                        <div className="flex items-center justify-center h-full text-gray-400">
-                            <RefreshCw className="animate-spin mr-2" /> Loading settings...
-                        </div>
-                    ) : (
-                        <>
-                            {activeTab === 'server' && (
+                        {activeTab === 'playback-streaming' && (
+                            <div>
+                                <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
+                                    <Play className="text-primary" /> Streaming Quality
+                                </h2>
+                                {renderSettingsGroup('Streaming')}
+                            </div>
+                        )}
+
+
+                        {activeTab === 'library-metadata' && (
+                            <div className="space-y-8">
+                                <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-3">
+                                    <Database className="text-primary" /> Metadata Settings
+                                </h2>
+
+                                {/* Metadata Providers Section */}
                                 <div>
-                                    <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
-                                        <Server className="text-primary" /> Server Configuration
-                                    </h2>
-                                    {renderSettingsGroup('Server')}
-                                </div>
-                            )}
+                                    <h3 className="text-lg font-semibold text-white mb-4">Metadata Providers</h3>
+                                    <p className="text-sm text-gray-400 mb-6">Select which service to use for fetching metadata for each media type.</p>
 
-                            {activeTab === 'network' && (
-                                <div>
-                                    <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
-                                        <Network className="text-primary" /> Network Settings
-                                    </h2>
-                                    {renderSettingsGroup('Network')}
-                                </div>
-                            )}
+                                    <div className="space-y-4">
+                                        {/* Movie Provider */}
+                                        {(() => {
+                                            const setting = localSettings.find(s => s.key === 'MovieProvider');
+                                            const apiKeyModeSetting = localSettings.find(s => s.key === 'OMDbApiKeyMode');
+                                            const customKeySetting = localSettings.find(s => s.key === 'OMDbApiKeyCustom');
+                                            if (!setting) return null;
 
-                            {activeTab === 'playback' && (
-                                <div>
-                                    <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
-                                        <Play className="text-primary" /> Playback & Transcoding
-                                    </h2>
-                                    <div className="space-y-8">
-                                        <div>
-                                            <h3 className="text-lg font-semibold text-white mb-4">Transcoding</h3>
-                                            {renderSettingsGroup('Transcoding')}
-                                        </div>
-                                        <div className="border-t border-white/5 pt-6">
-                                            <h3 className="text-lg font-semibold text-white mb-4">Streaming Quality</h3>
-                                            <p className="text-sm text-gray-400 mb-4">Configure bandwidth and quality limits for remote streaming.</p>
-                                            {renderSettingsGroup('Streaming')}
-                                        </div>
-                                        <div className="border-t border-white/5 pt-6">
-                                            <h3 className="text-lg font-semibold text-white mb-4">Subtitles</h3>
-                                            {renderSettingsGroup('Subtitles')}
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
+                                            const isOMDb = setting.value === 'OMDb';
+                                            const apiKeyMode = apiKeyModeSetting?.value || 'softmedia';
 
+                                            return (
+                                                <div className="bg-black/20 rounded-lg p-4 border border-white/5">
 
-                            {activeTab === 'metadata' && (
-                                <div>
-                                    <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
-                                        <Database className="text-primary" /> Metadata Providers
-                                    </h2>
-                                    {renderSettingsGroup('Metadata')}
+                                                    <label className="text-sm font-medium text-gray-300 block mb-2">🎬 Movies</label>
+                                                    <Combobox
+                                                        value={setting.value}
+                                                        onChange={(val) => {
+                                                            handleChange(setting.key, val);
+                                                            // Set default API key mode when switching to OMDB
+                                                            if (val === 'OMDb' && apiKeyModeSetting) {
+                                                                handleChange('OMDbApiKeyMode', 'softmedia');
+                                                            }
+                                                        }}
+                                                        options={movieProviders}
+                                                        placeholder="Select provider..."
+                                                        className="w-full"
+                                                    />
 
-                                    {/* Metadata Refresh Section */}
-                                    <div className="mt-8 p-6 bg-white/5 rounded-xl border border-white/10">
-                                        <h3 className="text-lg font-semibold text-white mb-3">Metadata Refresh</h3>
-                                        <p className="text-white/60 text-sm mb-4">
-                                            Manually refresh metadata for all ongoing (Running) TV series. This respects rate limits and may take some time.
-                                        </p>
-                                        <button
-                                            onClick={() => refreshMetadataMutation.mutate()}
-                                            disabled={refreshMetadataMutation.isPending}
-                                            className={cn(
-                                                "flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all",
-                                                refreshMetadataMutation.isPending
-                                                    ? "bg-white/10 text-white/50 cursor-not-allowed"
-                                                    : "bg-primary hover:bg-primary/80 text-white"
-                                            )}
-                                        >
-                                            <RefreshCw className={cn("w-4 h-4", refreshMetadataMutation.isPending && "animate-spin")} />
-                                            {refreshMetadataMutation.isPending ? 'Refreshing...' : 'Refresh Now'}
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-
-                            {activeTab === 'users' && (
-                                <div>
-                                    <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
-                                        <Users className="text-primary" /> User Management
-                                    </h2>
-                                    {renderSettingsGroup('Users')}
-
-                                    <div className="mt-8 space-y-8">
-                                        <div>
-                                            <h3 className="text-lg font-semibold text-white mb-4">Users</h3>
-                                            <UserListTable />
-                                        </div>
-
-                                        <div className="border-t border-white/5 pt-8">
-                                            <InviteManager />
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            {activeTab === 'libraries' && (
-                                <div>
-                                    <div className="flex items-center justify-between mb-6">
-                                        <h2 className="text-2xl font-bold text-white flex items-center gap-3">
-                                            <LibraryIcon className="text-primary" /> Library Management
-                                        </h2>
-                                        <button
-                                            onClick={() => {
-                                                setEditingLibrary(undefined);
-                                                setIsLibraryFormOpen(true);
-                                            }}
-                                            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg font-medium transition-colors"
-                                        >
-                                            <Plus size={18} />
-                                            Add Library
-                                        </button>
-                                    </div>
-
-                                    {/* Scan Status Panel - Always visible */}
-                                    <div className="mb-6 p-4 bg-white/5 rounded-xl border border-white/10">
-                                        <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-3">Scan Status</h3>
-
-                                        {/* Active/Queued Scans */}
-                                        {scanQueue.filter(j => j.status === 'Running' || j.status === 'Queued').length > 0 ? (
-                                            <div className="space-y-3 mb-4">
-                                                {scanQueue
-                                                    .filter(j => j.status === 'Running' || j.status === 'Queued')
-                                                    .map(job => (
-                                                        <LibraryScanProgress key={job.id} job={job} />
-                                                    ))
-                                                }
-                                            </div>
-                                        ) : (
-                                            <p className="text-sm text-gray-500 mb-4">No active scans. Click the refresh icon on a library to start a scan.</p>
-                                        )}
-
-                                        {/* Recent Completed/Failed Scans */}
-                                        {scanQueue.filter(j => j.status === 'Completed' || j.status === 'Failed').length > 0 && (
-                                            <div className="border-t border-white/10 pt-3 mt-3">
-                                                <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Recent Scans</h4>
-                                                <div className="space-y-2">
-                                                    {/* Show only the most recent completed/failed scan per library */}
-                                                    {Object.values(
-                                                        scanQueue
-                                                            .filter(j => j.status === 'Completed' || j.status === 'Failed')
-                                                            .reduce((acc, job) => {
-                                                                // Keep only the most recent scan per library
-                                                                const existing = acc[job.libraryId];
-                                                                if (!existing ||
-                                                                    (job.completedAt && (!existing.completedAt ||
-                                                                        job.completedAt > existing.completedAt))) {
-                                                                    acc[job.libraryId] = job;
+                                                    {/* OMDB API Key Options */}
+                                                    {isOMDb && apiKeyModeSetting && (
+                                                        <div className="mt-4 space-y-3">
+                                                            <label className="text-xs text-gray-400 block">API Key</label>
+                                                            <Combobox
+                                                                value={
+                                                                    apiKeyMode === 'softmedia' ? 'SoftMedia Key (Default)' : 'Use My Own Key'
                                                                 }
-                                                                return acc;
-                                                            }, {} as Record<string, typeof scanQueue[0]>)
-                                                    ).map(job => (
-                                                        <LibraryScanProgress key={job.id} job={job} compact />
-                                                    ))}
+                                                                onChange={(val) => {
+                                                                    const mode = val === 'SoftMedia Key (Default)' ? 'softmedia' : 'custom';
+                                                                    handleChange('OMDbApiKeyMode', mode);
+                                                                }}
+                                                                options={['SoftMedia Key (Default)', 'Use My Own Key']}
+                                                                placeholder="Select API key mode..."
+                                                                className="w-full"
+                                                            />
+
+                                                            {/* Custom Key Input */}
+                                                            {apiKeyMode === 'custom' && customKeySetting && (
+                                                                <div className="mt-2">
+                                                                    <input
+                                                                        type="password"
+                                                                        value={customKeySetting.value}
+                                                                        onChange={(e) => handleChange('OMDbApiKeyCustom', e.target.value)}
+                                                                        placeholder="Enter your OMDB API key..."
+                                                                        className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:border-primary/50 focus:outline-none"
+                                                                    />
+                                                                    <p className="text-xs text-gray-500 mt-1">
+                                                                        Get a free key at <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">omdbapi.com</a>
+                                                                    </p>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                 </div>
-                                            </div>
-                                        )}
+                                            );
+                                        })()}
+
+                                        {/* TV Provider */}
+                                        {(() => {
+                                            const setting = localSettings.find(s => s.key === 'TVProvider');
+                                            if (!setting) return null;
+                                            return (
+                                                <div className="bg-black/20 rounded-lg p-4 border border-white/5">
+                                                    <label className="text-sm font-medium text-gray-300 block mb-2">📺 TV Shows</label>
+                                                    <Combobox
+                                                        value={setting.value}
+                                                        onChange={(val) => handleChange(setting.key, val)}
+                                                        options={tvProviders}
+                                                        placeholder="Select provider..."
+                                                        className="w-full"
+                                                    />
+                                                    {setting.value === 'TVMaze' && (
+                                                        <p className="text-xs text-blue-300 mt-2">
+                                                            Data by <a href="https://www.tvmaze.com/premium" target="_blank" rel="noopener noreferrer" className="underline hover:text-white">TVMaze</a>
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
+
+                                        {/* Music Providers */}
+                                        {(() => {
+                                            const primarySetting = localSettings.find(s => s.key === 'MusicProviderPrimary');
+                                            const fallbackSetting = localSettings.find(s => s.key === 'MusicProviderFallback');
+                                            if (!primarySetting) return null;
+                                            return (
+                                                <div className="bg-black/20 rounded-lg p-4 border border-white/5">
+                                                    <label className="text-sm font-medium text-gray-300 block mb-3">🎵 Music</label>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                        <div>
+                                                            <label className="text-xs text-gray-400 block mb-1">Primary</label>
+                                                            <Combobox
+                                                                value={primarySetting.value}
+                                                                onChange={(val) => handleChange(primarySetting.key, val)}
+                                                                options={musicProviders}
+                                                                placeholder="Select provider..."
+                                                                className="w-full"
+                                                            />
+                                                        </div>
+                                                        {fallbackSetting && (
+                                                            <div>
+                                                                <label className="text-xs text-gray-400 block mb-1">Fallback</label>
+                                                                <Combobox
+                                                                    value={fallbackSetting.value}
+                                                                    onChange={(val) => handleChange(fallbackSetting.key, val)}
+                                                                    options={musicProviders}
+                                                                    placeholder="Select provider..."
+                                                                    className="w-full"
+                                                                />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+
+                                        {/* Book Provider */}
+                                        {(() => {
+                                            const setting = localSettings.find(s => s.key === 'BookProvider');
+                                            if (!setting) return null;
+                                            return (
+                                                <div className="bg-black/20 rounded-lg p-4 border border-white/5">
+                                                    <label className="text-sm font-medium text-gray-300 block mb-2">📚 Books</label>
+                                                    <Combobox
+                                                        value={setting.value}
+                                                        onChange={(val) => handleChange(setting.key, val)}
+                                                        options={bookProviders}
+                                                        placeholder="Select provider..."
+                                                        className="w-full"
+                                                    />
+                                                </div>
+                                            );
+                                        })()}
+
+                                        {/* Game Provider */}
+                                        {(() => {
+                                            const setting = localSettings.find(s => s.key === 'GameProvider');
+                                            if (!setting) return null;
+                                            return (
+                                                <div className="bg-black/20 rounded-lg p-4 border border-white/5">
+                                                    <label className="text-sm font-medium text-gray-300 block mb-2">🎮 Games</label>
+                                                    <Combobox
+                                                        value={setting.value}
+                                                        onChange={(val) => handleChange(setting.key, val)}
+                                                        options={gameProviders}
+                                                        placeholder="Select provider..."
+                                                        className="w-full"
+                                                    />
+                                                </div>
+                                            );
+                                        })()}
+
+                                        {/* Photo Provider */}
+                                        {(() => {
+                                            const setting = localSettings.find(s => s.key === 'PhotoProvider');
+                                            if (!setting) return null;
+                                            return (
+                                                <div className="bg-black/20 rounded-lg p-4 border border-white/5">
+                                                    <label className="text-sm font-medium text-gray-300 block mb-2">📷 Photos</label>
+                                                    <Combobox
+                                                        value={setting.value}
+                                                        onChange={(val) => handleChange(setting.key, val)}
+                                                        options={photoProviders}
+                                                        placeholder="Select provider..."
+                                                        className="w-full"
+                                                    />
+                                                </div>
+                                            );
+                                        })()}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'users' && (
+                            <div>
+                                <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
+                                    <Users className="text-primary" /> Account Management
+                                </h2>
+                                {renderSettingsGroup('Users')}
+
+                                <div className="mt-8 space-y-8">
+                                    <div>
+                                        <h3 className="text-lg font-semibold text-white mb-4">Users</h3>
+                                        <UserListTable />
                                     </div>
 
-                                    {isLoadingLibraries ? (
-                                        <div className="text-center py-12">
-                                            <RefreshCw className="animate-spin w-8 h-8 text-primary mx-auto" />
+                                    <div className="border-t border-white/5 pt-8">
+                                        <InviteManager />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'library-libraries' && (
+                            <div>
+                                <div className="flex items-center justify-between mb-6">
+                                    <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+                                        <LibraryIcon className="text-primary" /> Libraries
+                                    </h2>
+                                </div>
+
+                                {/* Scanning Settings */}
+                                <div className="mb-6">
+                                    {renderSettingsGroup('Scanning')}
+                                </div>
+
+                                {/* Add Library Button - above library list */}
+                                <div className="flex justify-end mb-4">
+                                    <button
+                                        onClick={() => {
+                                            setEditingLibrary(undefined);
+                                            setIsLibraryFormOpen(true);
+                                        }}
+                                        className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg font-medium transition-colors"
+                                    >
+                                        <Plus size={18} />
+                                        Add Library
+                                    </button>
+                                </div>
+
+                                {/* Libraries List */}
+                                {isLoadingLibraries ? (
+                                    <div className="text-center py-12">
+                                        <RefreshCw className="animate-spin w-8 h-8 text-primary mx-auto" />
+                                    </div>
+                                ) : (
+                                    <LibraryListTable
+                                        libraries={libraries || []}
+                                        scanJobs={scanQueue}
+                                        onEdit={(library) => {
+                                            setEditingLibrary(library);
+                                            setIsLibraryFormOpen(true);
+                                        }}
+                                        onDelete={(library) => setLibraryToDelete(library)}
+                                        onReorder={(orderedIds) => reorderLibraryMutation.mutate(orderedIds)}
+                                        onScan={(library) => scanLibraryMutation.mutate(library.id)}
+                                    />
+                                )}
+
+                                {/* Scan Status Panel - below library list */}
+                                <div className="mt-6 p-4 bg-white/5 rounded-xl border border-white/10">
+                                    <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-3">Scan Status</h3>
+
+                                    {/* Active/Queued Scans */}
+                                    {scanQueue.filter(j => j.status === 'Running' || j.status === 'Queued').length > 0 ? (
+                                        <div className="space-y-3 mb-4">
+                                            {scanQueue
+                                                .filter(j => j.status === 'Running' || j.status === 'Queued')
+                                                .map(job => (
+                                                    <LibraryScanProgress key={job.id} job={job} />
+                                                ))
+                                            }
                                         </div>
                                     ) : (
-                                        <LibraryListTable
-                                            libraries={libraries || []}
-                                            scanJobs={scanQueue}
-                                            onEdit={(library) => {
-                                                setEditingLibrary(library);
-                                                setIsLibraryFormOpen(true);
-                                            }}
-                                            onDelete={(library) => setLibraryToDelete(library)}
-                                            onReorder={(orderedIds) => reorderLibraryMutation.mutate(orderedIds)}
-                                            onScan={(library) => scanLibraryMutation.mutate(library.id)}
-                                        />
+                                        <p className="text-sm text-gray-500 mb-4">No active scans. Click the refresh icon on a library to start a scan.</p>
+                                    )}
+
+                                    {/* Recent Completed/Failed Scans */}
+                                    {scanQueue.filter(j => j.status === 'Completed' || j.status === 'Failed').length > 0 && (
+                                        <div className="border-t border-white/10 pt-3 mt-3">
+                                            <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Recent Scans</h4>
+                                            <div className="space-y-2">
+                                                {/* Show only the most recent completed/failed scan per library */}
+                                                {Object.values(
+                                                    scanQueue
+                                                        .filter(j => j.status === 'Completed' || j.status === 'Failed')
+                                                        .reduce((acc, job) => {
+                                                            // Keep only the most recent scan per library
+                                                            const existing = acc[job.libraryId];
+                                                            if (!existing ||
+                                                                (job.completedAt && (!existing.completedAt ||
+                                                                    job.completedAt > existing.completedAt))) {
+                                                                acc[job.libraryId] = job;
+                                                            }
+                                                            return acc;
+                                                        }, {} as Record<string, typeof scanQueue[0]>)
+                                                ).map(job => (
+                                                    <LibraryScanProgress key={job.id} job={job} compact />
+                                                ))}
+                                            </div>
+                                        </div>
                                     )}
                                 </div>
-                            )}
-                        </>
-                    )}
+                            </div>
+                        )}
 
-                    {activeTab === 'admin' && (
-                        <AdminDashboard />
-                    )}
-                </div>
+                        {activeTab === 'admin' && (
+                            <AdminDashboard />
+                        )}
+                    </>
+                )}
             </div>
 
             {isLibraryFormOpen && (
@@ -991,6 +1129,7 @@ export default function SettingsPage() {
                 onCancel={() => setLibraryToDelete(null)}
                 variant="danger"
             />
-        </div >
+        </div>
     );
 }
+

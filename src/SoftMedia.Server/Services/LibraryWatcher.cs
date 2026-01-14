@@ -78,6 +78,18 @@ public class LibraryWatcher : BackgroundService, IDisposable
     {
         _logger.LogInformation("Library Watcher starting...");
         
+        // Check if file watcher is enabled in settings
+        using (var scope = _scopeFactory.CreateScope())
+        {
+            var settingsService = scope.ServiceProvider.GetRequiredService<ISettingsService>();
+            var enabled = await settingsService.GetSettingAsync("EnableFileWatcher", true);
+            if (!enabled)
+            {
+                _logger.LogInformation("FileWatcher disabled by EnableFileWatcher setting. Exiting.");
+                return;
+            }
+        }
+        
         await InitializeWatchersAsync();
 
         // Main loop - periodically check pending files and trigger scans

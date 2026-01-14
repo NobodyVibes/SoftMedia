@@ -16,11 +16,13 @@ public class UsersController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IPasswordHasher _passwordHasher;
+    private readonly IUserPreferencesService _userPreferencesService;
 
-    public UsersController(AppDbContext context, IPasswordHasher passwordHasher)
+    public UsersController(AppDbContext context, IPasswordHasher passwordHasher, IUserPreferencesService userPreferencesService)
     {
         _context = context;
         _passwordHasher = passwordHasher;
+        _userPreferencesService = userPreferencesService;
     }
 
     [HttpGet]
@@ -78,6 +80,9 @@ public class UsersController : ControllerBase
 
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
+
+        // Initialize default preferences for the new user
+        await _userPreferencesService.InitializeDefaultsAsync(user.Id);
 
         return Ok(new UserDto(
             user.Id,

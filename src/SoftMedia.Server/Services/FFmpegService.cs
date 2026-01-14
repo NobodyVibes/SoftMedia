@@ -72,7 +72,7 @@ public class MediaProbeResult
 /// </summary>
 public class TranscodeSettings
 {
-    public bool DisableTranscoding { get; set; } = false;
+    public bool EnableTranscoding { get; set; } = true;
     public string HardwareAcceleration { get; set; } = "none";
     public string Preset { get; set; } = "veryfast";
     public int ThreadCount { get; set; } = 0;
@@ -101,7 +101,7 @@ public class FFmpegService : IFFmpegService
     /// </summary>
     private async Task<TranscodeSettings> LoadSettingsAsync()
     {
-        var disableStr = await _settingsService.GetSettingAsync("DisableTranscoding", "false");
+        var enableStr = await _settingsService.GetSettingAsync("EnableTranscoding", "true");
         var hwAccel = await _settingsService.GetSettingAsync("HardwareAcceleration", "none");
         var preset = await _settingsService.GetSettingAsync("TranscodePreset", "veryfast");
         var threadCountStr = await _settingsService.GetSettingAsync("TranscodeThreadCount", "0");
@@ -113,7 +113,7 @@ public class FFmpegService : IFFmpegService
         
         return new TranscodeSettings
         {
-            DisableTranscoding = bool.TryParse(disableStr, out var disable) && disable,
+            EnableTranscoding = bool.TryParse(enableStr, out var enable) && enable,
             HardwareAcceleration = hwAccel,
             Preset = preset,
             ThreadCount = int.TryParse(threadCountStr, out var tc) ? tc : 0,
@@ -130,8 +130,8 @@ public class FFmpegService : IFFmpegService
     /// </summary>
     public async Task<bool> IsTranscodingDisabledAsync()
     {
-        var value = await _settingsService.GetSettingAsync("DisableTranscoding", "false");
-        return bool.TryParse(value, out var disabled) && disabled;
+        var value = await _settingsService.GetSettingAsync("EnableTranscoding", "true");
+        return bool.TryParse(value, out var enabled) && !enabled;
     }
 
     /// <summary>

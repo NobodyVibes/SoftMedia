@@ -158,9 +158,13 @@ export default function TopBar() {
                                         <UserIcon size={16} className="text-gray-400 group-hover:text-primary transition-colors" />
                                         <span>View Profile</span>
                                     </button>
-                                    <Link to="/settings" className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors group">
+                                    <Link
+                                        to="/account"
+                                        onClick={() => setIsUserMenuOpen(false)}
+                                        className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors group"
+                                    >
                                         <Settings size={16} className="text-gray-400 group-hover:text-primary transition-colors" />
-                                        <span>Account Settings</span>
+                                        <span>My Account</span>
                                     </Link>
                                     <button className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors group">
                                         <AlertCircle size={16} className="text-gray-400 group-hover:text-primary transition-colors" />

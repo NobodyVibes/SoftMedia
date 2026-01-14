@@ -11,11 +11,16 @@ public class MetadataRouter : IMetadataRouter
 {
     private readonly IEnumerable<IMetadataProvider> _providers;
     private readonly ISettingsService _settingsService;
+    private readonly ILogger<MetadataRouter> _logger;
 
-    public MetadataRouter(IEnumerable<IMetadataProvider> providers, ISettingsService settingsService)
+    public MetadataRouter(
+        IEnumerable<IMetadataProvider> providers, 
+        ISettingsService settingsService,
+        ILogger<MetadataRouter> logger)
     {
         _providers = providers;
         _settingsService = settingsService;
+        _logger = logger;
     }
 
     public async Task<string?> FetchMetadataAsync(MediaItem item, LibraryType type)
@@ -44,7 +49,13 @@ public class MetadataRouter : IMetadataRouter
                 break;
         }
 
-        // 2. Find the matching provider
+        // 2. Special handling for OMDB (requires API key)
+        if (type == LibraryType.Movie && preferredProvider == "OMDb")
+        {
+            return await FetchOMDbMetadataAsync(item);
+        }
+
+        // 3. Find the matching provider
         var provider = _providers.FirstOrDefault(p => p.SupportedType == type && p.ProviderName == preferredProvider)
                        ?? _providers.FirstOrDefault(p => p.SupportedType == type); // Fallback to any provider for type
 
@@ -54,4 +65,40 @@ public class MetadataRouter : IMetadataRouter
         }
         return null;
     }
+
+    /// <summary>
+    /// Handles OMDB metadata fetching with API key management.
+    /// </summary>
+    private async Task<string?> FetchOMDbMetadataAsync(MediaItem item)
+    {
+        var omdbProvider = _providers.OfType<OMDbProvider>().FirstOrDefault();
+        if (omdbProvider == null)
+        {
+            _logger.LogWarning("OMDB provider not registered");
+            return null;
+        }
+
+        // Get API key mode and custom key
+        var keyMode = await _settingsService.GetSettingAsync("OMDbApiKeyMode", "softmedia");
+        var customKey = await _settingsService.GetSettingAsync("OMDbApiKeyCustom", "");
+
+        // Resolve the actual API key
+        var apiKey = omdbProvider.GetActiveApiKey(keyMode, customKey);
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            if (keyMode == "disabled")
+            {
+                _logger.LogDebug("OMDB is disabled for movie: {Title}", item.Title);
+            }
+            else
+            {
+                _logger.LogWarning("No valid OMDB API key configured. Mode: {Mode}", keyMode);
+            }
+            return null;
+        }
+
+        return await omdbProvider.FetchMetadataWithKeyAsync(item, apiKey);
+    }
 }
+

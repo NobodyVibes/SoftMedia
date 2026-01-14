@@ -9,6 +9,7 @@ import LibraryPage from './pages/LibraryPage';
 import PlayerPage from './pages/PlayerPage';
 import ReaderPage from './pages/ReaderPage';
 import SettingsPage from './pages/SettingsPage';
+import MyAccountPage from './pages/MyAccountPage';
 import MediaDetailPage from './pages/MediaDetailPage';
 import { PersistentPlayer } from './components/player/PersistentPlayer';
 
@@ -23,7 +24,10 @@ function App() {
           <Route element={<MainLayout />}>
             <Route path="/" element={<HomePage />} />
             <Route path="/libraries/:id" element={<LibraryPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/settings" element={<Navigate to="/settings/playback/transcoding" replace />} />
+            <Route path="/settings/:section" element={<SettingsPage />} />
+            <Route path="/settings/:section/:subsection" element={<SettingsPage />} />
+            <Route path="/account" element={<MyAccountPage />} />
             <Route path="/media/:id" element={<MediaDetailPage />} />
           </Route>
           {/* PlayerPage and ReaderPage are full screen - outside MainLayout */}
@@ -40,3 +44,4 @@ function App() {
 }
 
 export default App;
+

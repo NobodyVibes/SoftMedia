@@ -38,8 +38,10 @@ builder.Services.AddSingleton<IBackgroundImageCacheService>(sp => sp.GetRequired
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BackgroundImageCacheService>());
 builder.Services.AddHttpClient<WikidataProvider>();
 builder.Services.AddHttpClient<TVMazeProvider>();
+builder.Services.AddHttpClient<OMDbProvider>();
 builder.Services.AddScoped<IMetadataProvider, WikidataProvider>();
 builder.Services.AddScoped<IMetadataProvider, TVMazeProvider>();
+builder.Services.AddScoped<IMetadataProvider, OMDbProvider>();
 builder.Services.AddHttpClient<MusicBrainzProvider>();
 builder.Services.AddScoped<EmbeddedMusicProvider>(); // No HttpClient needed
 builder.Services.AddHttpClient<OpenLibraryProvider>();
@@ -65,6 +67,7 @@ builder.Services.AddHttpClient<ImageCacheService>(client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
 });
 builder.Services.AddScoped<ISettingsService, SettingsService>();
+builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();
 
 // SignalR for real-time updates
 builder.Services.AddSignalR();

@@ -78,7 +78,7 @@ public class TranscodingIntegrationTests : IDisposable
     }
 
     [Fact]
-    public async Task Integration_DisableTranscoding_DefaultIsFalse()
+    public async Task Integration_EnableTranscoding_DefaultIsTrue()
     {
         // Arrange
         await _settingsService.InitializeDefaultsAsync();
@@ -209,10 +209,10 @@ public class TranscodingIntegrationTests : IDisposable
         var ffmpegService = CreateFFmpegService();
         Assert.False(await ffmpegService.IsTranscodingDisabledAsync());
 
-        // Simulate user disabling transcoding
+        // Simulate user disabling transcoding (EnableTranscoding = false)
         await SaveSettingsViaService(new List<AppSetting>
         {
-            new() { Key = "DisableTranscoding", Value = "true", Group = "Transcoding" }
+            new() { Key = "EnableTranscoding", Value = "false", Group = "Transcoding" }
         });
 
         // Act - New service instance reads updated setting

@@ -28,7 +28,7 @@ public class FFmpegServiceTests
 
     private void SetupDefaultSettings()
     {
-        _settingsServiceMock.Setup(s => s.GetSettingAsync("DisableTranscoding", "false")).ReturnsAsync("false");
+        _settingsServiceMock.Setup(s => s.GetSettingAsync("EnableTranscoding", "true")).ReturnsAsync("true");
         _settingsServiceMock.Setup(s => s.GetSettingAsync("HardwareAcceleration", "none")).ReturnsAsync("none");
         _settingsServiceMock.Setup(s => s.GetSettingAsync("TranscodePreset", "veryfast")).ReturnsAsync("veryfast");
         _settingsServiceMock.Setup(s => s.GetSettingAsync("TranscodeThreadCount", "0")).ReturnsAsync("0");
@@ -102,9 +102,9 @@ public class FFmpegServiceTests
     #region IsTranscodingDisabledAsync Tests
 
     [Fact]
-    public async Task IsTranscodingDisabledAsync_ReturnsFalse_WhenDefault()
+    public async Task IsTranscodingDisabledAsync_ReturnsFalse_WhenEnabled()
     {
-        // Arrange - default is false
+        // Arrange - EnableTranscoding = true (default)
         var service = CreateService();
 
         // Act
@@ -115,10 +115,10 @@ public class FFmpegServiceTests
     }
 
     [Fact]
-    public async Task IsTranscodingDisabledAsync_ReturnsTrue_WhenEnabled()
+    public async Task IsTranscodingDisabledAsync_ReturnsTrue_WhenDisabled()
     {
         // Arrange
-        _settingsServiceMock.Setup(s => s.GetSettingAsync("DisableTranscoding", "false")).ReturnsAsync("true");
+        _settingsServiceMock.Setup(s => s.GetSettingAsync("EnableTranscoding", "true")).ReturnsAsync("false");
         var service = CreateService();
 
         // Act
@@ -131,8 +131,22 @@ public class FFmpegServiceTests
     [Fact]
     public async Task IsTranscodingDisabledAsync_ReturnsFalse_OnInvalidValue()
     {
-        // Arrange
-        _settingsServiceMock.Setup(s => s.GetSettingAsync("DisableTranscoding", "false")).ReturnsAsync("invalid");
+        // Arrange - Default is true, so checks for !enabled, if parsing fails it returns default (true), !true = false? 
+        // Logic: IsTranscodingDisabledAsync gets EnableTranscoding (default "true"). 
+        // If "invalid", TryParse returns false (defaults to false). 
+        // We want default to range to true? 
+        // FFmpegService.LoadSettingsAsync: EnableTranscoding = bool.TryParse(enableStr, out var enable) && enable;
+        // If "invalid", TryParse is false -> EnableTranscoding is false.
+        
+        // Let's check IsTranscodingDisabledAsync implementation:
+        // var value = await _settingsService.GetSettingAsync("EnableTranscoding", "true");
+        // return bool.TryParse(value, out var enabled) && !enabled;
+        
+        // If value is "invalid", TryParse is false. return false && ... -> false.
+        // So IsTranscodingDisabledAsync returns FALSE (i.e. Transcoding IS ENABLED).
+        // This matches desired safe fallback (transcoding enabled by default).
+
+        _settingsServiceMock.Setup(s => s.GetSettingAsync("EnableTranscoding", "true")).ReturnsAsync("invalid");
         var service = CreateService();
 
         // Act

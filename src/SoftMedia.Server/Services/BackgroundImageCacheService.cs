@@ -142,8 +142,23 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
         // For Series: also cache season posters and episode stills
         if (item.Type == MediaType.Series)
         {
-            modified |= await CacheSeasonPostersAsync(item.Id, metadata, imageCache);
-            modified |= await CacheEpisodeStillsAsync(item.Id, metadata, imageCache);
+            // Optimization: Fetch existing Seasons and Episodes to filter caching
+            var existingSeasons = await context.MediaItems
+                .AsNoTracking()
+                .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Season && m.SeasonNumber.HasValue)
+                .Select(m => m.SeasonNumber.Value)
+                .ToListAsync(ct);
+            var existingSeasonsSet = new HashSet<int>(existingSeasons);
+
+            var existingEpisodes = await context.MediaItems
+                .AsNoTracking()
+                .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Episode && m.SeasonNumber.HasValue && m.EpisodeNumber.HasValue)
+                .Select(m => new { Season = m.SeasonNumber.Value, Episode = m.EpisodeNumber.Value })
+                .ToListAsync(ct);
+            var existingEpisodesSet = new HashSet<(int, int)>(existingEpisodes.Select(e => (e.Season, e.Episode)));
+
+            modified |= await CacheSeasonPostersAsync(item.Id, metadata, imageCache, existingSeasonsSet);
+            modified |= await CacheEpisodeStillsAsync(item.Id, metadata, imageCache, existingEpisodesSet);
         }
         
         if (modified)
@@ -211,7 +226,7 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
         return false;
     }
 
-    private async Task<bool> CacheSeasonPostersAsync(Guid seriesId, Dictionary<string, object> metadata, ImageCacheService imageCache)
+    private async Task<bool> CacheSeasonPostersAsync(Guid seriesId, Dictionary<string, object> metadata, ImageCacheService imageCache, HashSet<int> existingSeasons)
     {
         if (!metadata.TryGetValue("seasons", out var seasonsObj) || seasonsObj is not JsonElement seasonsArray)
             return false;
@@ -231,7 +246,9 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
                     var seasonNum = Convert.ToInt32(numObj.ToString());
                     var seasonPosterUrl = seasonPosterObj.ToString();
                     
-                    if (!string.IsNullOrEmpty(seasonPosterUrl) && 
+                    // Only cache if matches existing content
+                    if (existingSeasons.Contains(seasonNum) &&
+                        !string.IsNullOrEmpty(seasonPosterUrl) && 
                         seasonPosterUrl.StartsWith("http") && 
                         !seasonPosterUrl.StartsWith("/cache/"))
                     {
@@ -261,7 +278,7 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
         return modified;
     }
 
-    private async Task<bool> CacheEpisodeStillsAsync(Guid seriesId, Dictionary<string, object> metadata, ImageCacheService imageCache)
+    private async Task<bool> CacheEpisodeStillsAsync(Guid seriesId, Dictionary<string, object> metadata, ImageCacheService imageCache, HashSet<(int, int)> existingEpisodes)
     {
         if (!metadata.TryGetValue("episodes", out var episodesObj) || episodesObj is not JsonElement episodesArray)
             return false;
@@ -283,7 +300,9 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
                     var epNum = epNumObj != null ? Convert.ToInt32(epNumObj.ToString()) : 0;
                     var stillUrl = stillObj.ToString();
                     
-                    if (epNum > 0 && 
+                    // Only cache if matches existing content
+                    if (existingEpisodes.Contains((epSeason, epNum)) &&
+                        epNum > 0 && 
                         !string.IsNullOrEmpty(stillUrl) && 
                         stillUrl.StartsWith("http") && 
                         !stillUrl.StartsWith("/cache/"))

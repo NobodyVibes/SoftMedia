@@ -48,9 +48,9 @@ Library scans are highly optimized for performance:
 - Uses instant HashSet lookups to check if files are new
 - Only queries the database for files that need updates
 
-**Smart Skip** - Existing files that haven't changed are skipped entirely
-
-**Batch Processing** - Metadata enrichment and database updates are batched efficiently
+**Strict Existence Check** - To save bandwidth and storage:
+- Verifies that seasons and episodes *actually exist* on disk before fetching their metadata
+- Prevents downloading thousands of images for missing content
 
 ### Progressive Scanning
 
@@ -58,9 +58,9 @@ Library scans use a 3-phase approach for instant content visibility:
 
 1. **File Indexing (Fast)** - Discovers files, creates database entries, establishes relationships
 2. **Text Metadata (Fast)** - Fetches ratings, descriptions, and genres from providers
-3. **Image Caching (Background)** - Downloads posters and artwork asynchronously
+3. **Deferred Image Caching (Background)** - Downloads posters and artwork asynchronously *after* the scan ensures all items are indexed
 
-Media items appear in the library within seconds. Images load progressively as background caching completes.
+Media items appear in the library within seconds. Images load progressively as the background service processes the verified queue.
 
 ### Real-Time Updates
 

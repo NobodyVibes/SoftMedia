@@ -77,6 +77,9 @@ public class FileScannerService : IFileScannerService
         _logger.LogInformation($"Scanning library: {library.Name}");
         _logger.LogDebug($"Library paths: {string.Join(", ", library.Paths)}");
 
+        // Track series that need image caching (deferred to end of scan)
+        var seriesToCache = new HashSet<Guid>();
+
         // Pre-fetch existing series/artists/albums to avoid repeated DB queries
         var existingSeries = new Dictionary<string, MediaItem>();
         var existingArtists = new Dictionary<string, MediaItem>();
@@ -861,7 +864,7 @@ public class FileScannerService : IFileScannerService
                                 await metadataAggregator.EnrichMediaItemAsync(seriesItem, LibraryType.TV, deferImageCaching: true);
                                 context.MediaItems.Add(seriesItem);
                                 await context.SaveChangesAsync(); // Make series visible immediately
-                                _backgroundImageCache.QueueImageCaching(seriesItem.Id);
+                                seriesToCache.Add(seriesItem.Id);
                                 _notificationService.NotifyItemAdded(libraryId, seriesItem.Id, seriesItem.Type.ToString(), seriesItem.Title);
                             }
                             existingSeries[showName] = seriesItem;
@@ -876,7 +879,7 @@ public class FileScannerService : IFileScannerService
                             // Mark for re-enrichment to get correct metadata with year disambiguation
                             await metadataAggregator.EnrichMediaItemAsync(seriesItem, LibraryType.TV, deferImageCaching: true);
                             await context.SaveChangesAsync(); // Save before queuing for background caching
-                            _backgroundImageCache.QueueImageCaching(seriesItem.Id);
+                            seriesToCache.Add(seriesItem.Id);
                         }
 
                         mediaItem.SeriesId = seriesItem.Id;
@@ -1301,6 +1304,17 @@ public class FileScannerService : IFileScannerService
         }
 
         await context.SaveChangesAsync();
+        
+        // Queue deferred image caching for series
+        if (seriesToCache.Count > 0)
+        {
+            _logger.LogInformation($"Queuing background image caching for {seriesToCache.Count} series...");
+            foreach (var seriesId in seriesToCache)
+            {
+                _backgroundImageCache.QueueImageCaching(seriesId);
+            }
+        }
+
         _logger.LogInformation($"Finished scanning library: {library.Name}");
     }
 

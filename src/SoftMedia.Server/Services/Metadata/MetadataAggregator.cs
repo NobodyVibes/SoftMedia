@@ -1,5 +1,7 @@
 using SoftMedia.Server.Models;
 using System.Text.Json;
+using SoftMedia.Server.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace SoftMedia.Server.Services.Metadata;
 
@@ -9,6 +11,7 @@ public class MetadataAggregator
     private readonly IMetadataRouter _metadataRouter;
     private readonly ISettingsService _settingsService;
     private readonly ImageCacheService _imageCacheService;
+    private readonly AppDbContext _context;
     private readonly ILogger<MetadataAggregator> _logger;
 
     public MetadataAggregator(
@@ -16,12 +19,14 @@ public class MetadataAggregator
         IMetadataRouter metadataRouter,
         ISettingsService settingsService, 
         ImageCacheService imageCacheService,
+        AppDbContext context,
         ILogger<MetadataAggregator> logger)
     {
         _providers = providers;
         _metadataRouter = metadataRouter;
         _settingsService = settingsService;
         _imageCacheService = imageCacheService;
+        _context = context;
         _logger = logger;
     }
 
@@ -258,7 +263,23 @@ public class MetadataAggregator
             if (item.Type == MediaType.Series)
             {
                 bool metadataModified = false;
-                
+
+                // Optimization: Pre-fetch existing Seasons and Episodes to avoid caching images for unowned content
+                // This prevents excessive API calls and disk usage for content the user doesn't have.
+                var existingSeasons = await _context.MediaItems
+                    .AsNoTracking()
+                    .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Season && m.SeasonNumber.HasValue)
+                    .Select(m => m.SeasonNumber.Value)
+                    .ToListAsync();
+                var existingSeasonsSet = new HashSet<int>(existingSeasons);
+
+                var existingEpisodes = await _context.MediaItems
+                    .AsNoTracking()
+                    .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Episode && m.SeasonNumber.HasValue && m.EpisodeNumber.HasValue)
+                    .Select(m => new { Season = m.SeasonNumber.Value, Episode = m.EpisodeNumber.Value })
+                    .ToListAsync();
+                var existingEpisodesSet = new HashSet<(int, int)>(existingEpisodes.Select(e => (e.Season, e.Episode)));
+
                 // Cache season posters and update URLs
                 if (metadata.TryGetValue("seasons", out var seasonsObj) && seasonsObj is JsonElement seasonsArray)
                 {
@@ -276,7 +297,9 @@ public class MetadataAggregator
                                 var seasonNum = Convert.ToInt32(numObj.ToString());
                                 var seasonPosterUrl = seasonPosterObj.ToString();
                                 
-                                if (!string.IsNullOrEmpty(seasonPosterUrl) && seasonPosterUrl.StartsWith("http"))
+                                // Only cache if we actually have this season in the DB
+                                if (existingSeasonsSet.Contains(seasonNum) && 
+                                    !string.IsNullOrEmpty(seasonPosterUrl) && seasonPosterUrl.StartsWith("http"))
                                 {
                                     var cachedUrl = await _imageCacheService.CacheSeasonPosterAsync(item.Id, seasonNum, seasonPosterUrl);
                                     if (cachedUrl != seasonPosterUrl)
@@ -322,7 +345,9 @@ public class MetadataAggregator
                                 var epNum = epNumObj != null ? Convert.ToInt32(epNumObj.ToString()) : 0;
                                 var stillUrl = stillObj.ToString();
                                 
-                                if (epNum > 0 && !string.IsNullOrEmpty(stillUrl) && stillUrl.StartsWith("http"))
+                                // Only cache if we actually have this episode in the DB
+                                if (existingEpisodesSet.Contains((epSeason, epNum)) &&
+                                    epNum > 0 && !string.IsNullOrEmpty(stillUrl) && stillUrl.StartsWith("http"))
                                 {
                                     var cachedUrl = await _imageCacheService.CacheEpisodeStillAsync(item.Id, epSeason, epNum, stillUrl);
                                     if (cachedUrl != stillUrl)

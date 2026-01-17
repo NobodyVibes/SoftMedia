@@ -28,13 +28,12 @@ When media is scanned and metadata is fetched, the following images are download
 5. Metadata is updated with local cached paths as downloads complete
 
 ### Background Caching
+Image downloads run in the background service (`BackgroundImageCacheService`) to ensure high performance:
 
-Image downloads run in the background with:
-
-- **Rate Limiting** - 10 images per second to avoid overloading servers
-- **Deduplication** - Same items aren't queued multiple times
-- **Graceful Shutdown** - In-progress downloads complete on server stop
-- **Real-Time Updates** - Media detail pages auto-refresh when images are cached
+- **Deferred Processing**: Caching is automatically deferred until *after* a library scan completes. This ensures all your media is fully indexed before we attempt to fetch images.
+- **Strict Verification**: Before downloading an image (especially for TV seasons/episodes), the service checks if you *actually have* that file in your library. If you don't have Season 10, we won't waste space downloading its poster.
+- **Rate Limiting**: Requests are throttled (approx. 10/sec) to respect provider API limits.
+- **Real-Time Updates**: As images finish downloading, the UI updates instantly via SignalR.
 
 ## Smooth Image Loading
 

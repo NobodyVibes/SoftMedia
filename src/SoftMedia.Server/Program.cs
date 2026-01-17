@@ -67,6 +67,7 @@ builder.Services.AddHttpClient<ImageCacheService>(client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
 });
 builder.Services.AddScoped<ISettingsService, SettingsService>();
+builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();
 
 // SignalR for real-time updates

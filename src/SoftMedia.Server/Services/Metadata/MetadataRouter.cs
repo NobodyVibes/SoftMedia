@@ -49,6 +49,9 @@ public class MetadataRouter : IMetadataRouter
                 break;
         }
 
+        _logger.LogInformation("Using metadata provider '{Provider}' for {Type}: {Title}", 
+            preferredProvider, type, item.Title);
+
         // 2. Special handling for OMDB (requires API key)
         if (type == LibraryType.Movie && preferredProvider == "OMDb")
         {
@@ -98,7 +101,7 @@ public class MetadataRouter : IMetadataRouter
             return null;
         }
 
-        return await omdbProvider.FetchMetadataWithKeyAsync(item, apiKey);
+        return await omdbProvider.FetchMetadataWithKeyAsync(item, apiKey, keyMode);
     }
 }
 

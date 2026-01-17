@@ -17,6 +17,7 @@ import { ConfirmationModal } from '../components/ConfirmationModal';
 import { LibraryScanProgress } from '../components/LibraryScanProgress';
 import type { Library, LibraryScanJob, FileWatcherIssue } from '../types';
 import { adminService } from '../services/adminService';
+import { notificationService, type OMDbUsage, type SystemNotification } from '../services/notificationService';
 
 // Admin Dashboard Component
 function AdminDashboard() {
@@ -27,6 +28,20 @@ function AdminDashboard() {
         queryKey: ['fileWatcherIssues'],
         queryFn: adminService.getFileWatcherIssues,
         refetchInterval: 10000, // Poll every 10s
+    });
+
+    // OMDb usage query
+    const { data: omdbUsage } = useQuery<OMDbUsage>({
+        queryKey: ['omdbUsage'],
+        queryFn: notificationService.getOMDbUsage,
+        refetchInterval: 30000, // Poll every 30s
+    });
+
+    // System notifications query (available for future dashboard features)
+    const { data: _systemNotifications = [] } = useQuery<SystemNotification[]>({
+        queryKey: ['systemNotifications'],
+        queryFn: notificationService.getNotifications,
+        refetchInterval: 30000,
     });
 
     const retryMutation = useMutation({
@@ -51,8 +66,45 @@ function AdminDashboard() {
         return new Date(dateStr).toLocaleString();
     };
 
+    const getUsageColor = (used: number, limit: number) => {
+        const pct = (used / limit) * 100;
+        if (pct >= 100) return 'text-red-400 bg-red-500/20';
+        if (pct >= 90) return 'text-amber-400 bg-amber-500/20';
+        if (pct >= 75) return 'text-yellow-400 bg-yellow-500/20';
+        return 'text-green-400 bg-green-500/20';
+    };
+
     return (
         <div className="space-y-8">
+            {/* API Usage Warnings */}
+            {omdbUsage && omdbUsage.used > 0 && (
+                <div className="bg-white/5 rounded-xl p-6 border border-white/10">
+                    <div className="flex items-center gap-3 mb-4">
+                        <Database className="h-5 w-5 text-blue-400" />
+                        <h3 className="text-lg font-semibold text-white">{t('API Usage')}</h3>
+                    </div>
+
+                    <div className="flex items-center gap-4">
+                        <div className={`px-3 py-2 rounded-lg ${getUsageColor(omdbUsage.used, omdbUsage.limit)}`}>
+                            <span className="text-xs opacity-70">OMDb</span>
+                            <p className="font-semibold">
+                                {omdbUsage.used.toLocaleString()} / {omdbUsage.limit.toLocaleString()}
+                            </p>
+                        </div>
+                        {omdbUsage.isExhausted && (
+                            <div className="flex-1 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+                                <p className="text-sm text-red-300 font-medium">
+                                    ⚠️ {t('Daily limit reached')}
+                                </p>
+                                <p className="text-xs text-red-400/80 mt-0.5">
+                                    {t('Movie metadata will be skipped until midnight UTC.')}
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* File Watcher Issues */}
             <div className="bg-white/5 rounded-xl p-6 border border-white/10">
                 <div className="flex items-center gap-3 mb-6">
@@ -174,6 +226,17 @@ export default function SettingsPage() {
             const hasActiveScans = jobs.some((j: LibraryScanJob) => j.status === 'Running' || j.status === 'Queued');
             return hasActiveScans ? 2000 : false; // Poll every 2s when active, stop when idle
         },
+    });
+
+    // Fetch OMDb usage when OMDb is selected as movie provider
+    const movieProviderSetting = localSettings.find(s => s.key === 'MovieProvider');
+    const isOMDbSelected = movieProviderSetting?.value === 'OMDb';
+
+    const { data: omdbUsage } = useQuery({
+        queryKey: ['omdb-usage'],
+        queryFn: notificationService.getOMDbUsage,
+        enabled: isOMDbSelected,
+        refetchInterval: 30000, // Refresh every 30 seconds
     });
 
     // Update local state when data is fetched
@@ -848,7 +911,7 @@ export default function SettingsPage() {
 
                                                             {/* Custom Key Input */}
                                                             {apiKeyMode === 'custom' && customKeySetting && (
-                                                                <div className="mt-2">
+                                                                <div className="mt-2 space-y-3">
                                                                     <input
                                                                         type="password"
                                                                         value={customKeySetting.value}
@@ -856,9 +919,71 @@ export default function SettingsPage() {
                                                                         placeholder="Enter your OMDB API key..."
                                                                         className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:border-primary/50 focus:outline-none"
                                                                     />
-                                                                    <p className="text-xs text-gray-500 mt-1">
+                                                                    <p className="text-xs text-gray-500">
                                                                         Get a free key at <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">omdbapi.com</a>
                                                                     </p>
+
+                                                                    {/* Tier Dropdown */}
+                                                                    {(() => {
+                                                                        const tierSetting = localSettings.find(s => s.key === 'OMDbApiTier');
+                                                                        const currentTier = tierSetting?.value || 'free';
+                                                                        const tierOptions = [
+                                                                            { value: 'free', label: 'Free (1,000/day)' },
+                                                                            { value: 'basic', label: 'Basic (100,000/day)' },
+                                                                            { value: 'standard', label: 'Standard (250,000/day)' },
+                                                                            { value: 'pro', label: 'Pro (Unlimited)' }
+                                                                        ];
+                                                                        return (
+                                                                            <div>
+                                                                                <label className="text-xs text-gray-400 block mb-1">API Tier</label>
+                                                                                <Combobox
+                                                                                    value={tierOptions.find(t => t.value === currentTier)?.label || 'Free (1,000/day)'}
+                                                                                    onChange={(val) => {
+                                                                                        const tier = tierOptions.find(t => t.label === val);
+                                                                                        if (tier && tier.value !== 'free' && currentTier === 'free') {
+                                                                                            // Show warning for non-free tier
+                                                                                            if (confirm('⚠️ Important: Rate Limit Responsibility\n\nSelecting a tier that doesn\'t match your actual OMDb subscription may cause you to exceed limits and get your IP banned by OMDb.\n\nSoftMedia cannot verify your tier or protect against bans.\n\nAre you sure you want to continue?')) {
+                                                                                                handleChange('OMDbApiTier', tier.value);
+                                                                                            }
+                                                                                        } else if (tier) {
+                                                                                            handleChange('OMDbApiTier', tier.value);
+                                                                                        }
+                                                                                    }}
+                                                                                    options={tierOptions.map(t => t.label)}
+                                                                                    placeholder="Select tier..."
+                                                                                    className="w-full"
+                                                                                />
+                                                                            </div>
+                                                                        );
+                                                                    })()}
+                                                                </div>
+                                                            )}
+
+                                                            {/* OMDb Usage Display - Shows for both key modes */}
+                                                            {omdbUsage && (
+                                                                <div className="mt-4 p-3 rounded-lg bg-black/30 border border-white/10">
+                                                                    <div className="flex items-center justify-between mb-2">
+                                                                        <span className="text-xs text-gray-400">Daily Usage</span>
+                                                                        <span className="text-xs text-gray-500">{omdbUsage.tier.charAt(0).toUpperCase() + omdbUsage.tier.slice(1)} tier</span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-3">
+                                                                        <div className="flex-1 h-2 bg-black/50 rounded-full overflow-hidden">
+                                                                            <div
+                                                                                className={`h-full transition-all ${omdbUsage.isExhausted ? 'bg-red-500' :
+                                                                                    (omdbUsage.used / omdbUsage.limit) > 0.8 ? 'bg-amber-500' : 'bg-emerald-500'
+                                                                                    }`}
+                                                                                style={{ width: `${Math.min(100, (omdbUsage.used / omdbUsage.limit) * 100)}%` }}
+                                                                            />
+                                                                        </div>
+                                                                        <span className={`text-sm font-medium ${omdbUsage.isExhausted ? 'text-red-400' :
+                                                                            (omdbUsage.used / omdbUsage.limit) > 0.8 ? 'text-amber-400' : 'text-emerald-400'
+                                                                            }`}>
+                                                                            {omdbUsage.used.toLocaleString()} / {omdbUsage.limit === 999999999 ? '∞' : omdbUsage.limit.toLocaleString()}
+                                                                        </span>
+                                                                    </div>
+                                                                    {omdbUsage.isExhausted && (
+                                                                        <p className="text-xs text-red-400 mt-2">⚠️ Daily limit exhausted. Resets at midnight UTC.</p>
+                                                                    )}
                                                                 </div>
                                                             )}
                                                         </div>

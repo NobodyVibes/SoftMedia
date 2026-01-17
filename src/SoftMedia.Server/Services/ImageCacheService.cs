@@ -32,7 +32,10 @@ public class ImageCacheService
         "archive.org",
         // Wikidata / Wikimedia
         "upload.wikimedia.org",
-        "commons.wikimedia.org"
+        "commons.wikimedia.org",
+        // OMDb (posters hosted on Amazon)
+        "m.media-amazon.com",
+        "ia.media-imdb.com"
     };
 
     public ImageCacheService(HttpClient httpClient, ILogger<ImageCacheService> logger, IWebHostEnvironment env)
@@ -206,9 +209,12 @@ public class ImageCacheService
                 return url;
             }
             
+            _logger.LogInformation("Attempting to cache image from host: {Host}, URL: {Url}", uri.Host, url);
+            
             if (!AllowedHosts.Contains(uri.Host))
             {
-                _logger.LogWarning("URL host not in allowlist: {Host}", uri.Host);
+                _logger.LogWarning("URL host not in allowlist: {Host}. Allowed hosts: {AllowedHosts}", 
+                    uri.Host, string.Join(", ", AllowedHosts));
                 return url;
             }
             

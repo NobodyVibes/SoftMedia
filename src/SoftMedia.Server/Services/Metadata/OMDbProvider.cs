@@ -8,6 +8,7 @@ namespace SoftMedia.Server.Services.Metadata;
 /// <summary>
 /// OMDB API provider for movie metadata.
 /// Requires an API key - either the bundled SoftMedia key or a user-provided custom key.
+/// Implements daily usage tracking with tier-based limits.
 /// </summary>
 public class OMDbProvider : IMetadataProvider
 {
@@ -15,6 +16,8 @@ public class OMDbProvider : IMetadataProvider
     private readonly ILogger<OMDbProvider> _logger;
     private readonly RateLimiter _rateLimiter;
     private readonly IConfiguration _configuration;
+    private readonly ISettingsService _settingsService;
+    private readonly INotificationService _notificationService;
 
     public LibraryType SupportedType => LibraryType.Movie;
     public string ProviderName => "OMDb";
@@ -22,16 +25,35 @@ public class OMDbProvider : IMetadataProvider
     // Placeholder for SoftMedia bundled key - see docs/OMDB_API_KEY_SETUP.md
     private const string SOFTMEDIA_KEY_PLACEHOLDER = "SOFTMEDIA_OMDB_KEY_PLACEHOLDER";
 
+    // Daily limits by tier
+    private static readonly Dictionary<string, int> TierLimits = new()
+    {
+        { "free", 1_000 },
+        { "basic", 100_000 },
+        { "standard", 250_000 },
+        { "pro", int.MaxValue }
+    };
+
     public OMDbProvider(
         HttpClient httpClient, 
         ILogger<OMDbProvider> logger, 
         RateLimiterFactory rateLimiterFactory,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ISettingsService settingsService,
+        INotificationService notificationService)
     {
         _httpClient = httpClient;
         _logger = logger;
         _rateLimiter = rateLimiterFactory.GetLimiter("OMDb");
         _configuration = configuration;
+        _settingsService = settingsService;
+        _notificationService = notificationService;
+        
+        // Set User-Agent for API compliance
+        if (!_httpClient.DefaultRequestHeaders.Contains("User-Agent"))
+        {
+            _httpClient.DefaultRequestHeaders.Add("User-Agent", "SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
+        }
     }
 
     /// <summary>
@@ -66,6 +88,77 @@ public class OMDbProvider : IMetadataProvider
         return key;
     }
 
+    /// <summary>
+    /// Checks if daily limit allows another request. Resets counter at midnight UTC.
+    /// Only applies when using custom API key.
+    /// </summary>
+    private async Task<bool> CanMakeRequestAsync(string mode)
+    {
+        // No tracking for SoftMedia bundled key
+        if (mode != "custom")
+            return true;
+
+        var tier = await _settingsService.GetSettingAsync("OMDbApiTier", "free");
+        var limit = TierLimits.GetValueOrDefault(tier, 1_000);
+        
+        // Get current count and date
+        var countStr = await _settingsService.GetSettingAsync("OMDbDailyCount", "0");
+        var dateStr = await _settingsService.GetSettingAsync("OMDbCountDate", "");
+        var todayStr = DateTime.UtcNow.ToString("yyyy-MM-dd");
+
+        int count = 0;
+        int.TryParse(countStr, out count);
+
+        // Reset if new day
+        if (dateStr != todayStr)
+        {
+            count = 0;
+            await UpdateCountAsync(0, todayStr);
+        }
+
+        return count < limit;
+    }
+
+    /// <summary>
+    /// Records an API request to the daily counter.
+    /// </summary>
+    private async Task RecordRequestAsync()
+    {
+        var countStr = await _settingsService.GetSettingAsync("OMDbDailyCount", "0");
+        int.TryParse(countStr, out var count);
+        var todayStr = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        
+        await UpdateCountAsync(count + 1, todayStr);
+    }
+
+    private async Task UpdateCountAsync(int count, string date)
+    {
+        await _settingsService.UpdateSettingsAsync(new List<Models.AppSetting>
+        {
+            new() { Key = "OMDbDailyCount", Value = count.ToString(), Group = "Internal" },
+            new() { Key = "OMDbCountDate", Value = date, Group = "Internal" }
+        });
+    }
+
+    /// <summary>
+    /// Creates an exhaustion notification if one doesn't already exist.
+    /// </summary>
+    private async Task CreateExhaustionNotificationAsync()
+    {
+        if (!await _notificationService.HasActiveOfTypeAsync("omdb_exhausted"))
+        {
+            var tier = await _settingsService.GetSettingAsync("OMDbApiTier", "free");
+            var limit = TierLimits.GetValueOrDefault(tier, 1_000);
+            
+            await _notificationService.CreateAsync(
+                "omdb_exhausted",
+                "OMDb API Limit Reached",
+                $"Daily limit ({limit:N0}) exhausted. Movie metadata will be skipped until midnight UTC.",
+                "warning"
+            );
+        }
+    }
+
     public async Task<string?> FetchMetadataAsync(MediaItem item)
     {
         // This method is called by MetadataRouter which should pass the resolved API key
@@ -77,13 +170,21 @@ public class OMDbProvider : IMetadataProvider
     /// <summary>
     /// Fetches metadata using the provided API key.
     /// </summary>
-    public async Task<string?> FetchMetadataWithKeyAsync(MediaItem item, string apiKey)
+    public async Task<string?> FetchMetadataWithKeyAsync(MediaItem item, string apiKey, string mode = "custom")
     {
         var title = item.Title;
 
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             _logger.LogWarning("OMDB API key is not configured for movie: {Title}", title);
+            return null;
+        }
+
+        // Check daily limit (only for custom key mode)
+        if (!await CanMakeRequestAsync(mode))
+        {
+            _logger.LogWarning("OMDb daily limit exhausted. Skipping metadata for: {Title}", title);
+            await CreateExhaustionNotificationAsync();
             return null;
         }
 
@@ -98,17 +199,26 @@ public class OMDbProvider : IMetadataProvider
             }
 
             // Extract year from title if present (e.g., "Movie Name (2023)")
+            // Prefer MediaItem.Year if it was set during scanning, else try regex on title
             string? year = null;
             var cleanTitle = title;
+            
+            // Use year from MediaItem if available (set during filename parsing)
+            if (item.Year > 0)
+            {
+                year = item.Year.ToString();
+            }
+            
+            // Also try to extract from title in case year is embedded there
             var yearMatch = System.Text.RegularExpressions.Regex.Match(title, @"\((\d{4})\)$");
             if (yearMatch.Success)
             {
-                year = yearMatch.Groups[1].Value;
+                if (year == null) year = yearMatch.Groups[1].Value;
                 cleanTitle = title.Substring(0, yearMatch.Index).Trim();
             }
 
-            // Build search URL
-            var searchUrl = $"http://www.omdbapi.com/?apikey={apiKey}&t={Uri.EscapeDataString(cleanTitle)}&type=movie";
+            // Build search URL with full plot
+            var searchUrl = $"http://www.omdbapi.com/?apikey={apiKey}&t={Uri.EscapeDataString(cleanTitle)}&type=movie&plot=full";
             if (year != null)
             {
                 searchUrl += $"&y={year}";
@@ -117,95 +227,184 @@ public class OMDbProvider : IMetadataProvider
             _logger.LogInformation("Fetching OMDB data for: {Title}", title);
             var response = await _httpClient.GetStringAsync(searchUrl);
             
-            using var doc = JsonDocument.Parse(response);
-            var root = doc.RootElement;
-
-            // Check for API error
-            if (root.TryGetProperty("Error", out var errorProp))
+            // Record successful request (only for custom key)
+            if (mode == "custom")
             {
-                var error = errorProp.GetString();
-                _logger.LogWarning("OMDB API error for '{Title}': {Error}", title, error);
-                return null;
+                await RecordRequestAsync();
+            }
+            
+            JsonElement movieData;
+            using (var doc = JsonDocument.Parse(response))
+            {
+                var root = doc.RootElement;
+
+                // Check for API error or no results - try fallback search
+                bool exactMatchFailed = root.TryGetProperty("Error", out _) || 
+                    !root.TryGetProperty("Response", out var responseProp) || 
+                    responseProp.GetString() != "True";
+
+                if (!exactMatchFailed)
+                {
+                    // Exact match succeeded - clone the data
+                    movieData = root.Clone();
+                }
+                else
+                {
+                    _logger.LogDebug("Exact match failed for '{Title}', trying search...", title);
+                    
+                    // Fallback: Use search API (&s=) instead of exact match (&t=)
+                    var searchApiUrl = $"http://www.omdbapi.com/?apikey={apiKey}&s={Uri.EscapeDataString(cleanTitle)}&type=movie";
+                    if (year != null)
+                    {
+                        searchApiUrl += $"&y={year}";
+                    }
+
+                    var searchResponse = await _httpClient.GetStringAsync(searchApiUrl);
+                    
+                    // Count this as another request
+                    if (mode == "custom")
+                    {
+                        await RecordRequestAsync();
+                    }
+
+                    using var searchDoc = JsonDocument.Parse(searchResponse);
+                    var searchRoot = searchDoc.RootElement;
+
+                    if (searchRoot.TryGetProperty("Search", out var searchResults) && 
+                        searchResults.GetArrayLength() > 0)
+                    {
+                        // Get IMDb ID of first result and fetch full details
+                        var firstResult = searchResults[0];
+                        if (firstResult.TryGetProperty("imdbID", out var searchImdbIdProp))
+                        {
+                            var imdbId = searchImdbIdProp.GetString();
+                            _logger.LogInformation("Found via search: '{Title}' -> {ImdbId}", title, imdbId);
+                            
+                            // Fetch full details by IMDb ID
+                            var detailUrl = $"http://www.omdbapi.com/?apikey={apiKey}&i={imdbId}&plot=full";
+                            var detailResponse = await _httpClient.GetStringAsync(detailUrl);
+                            
+                            if (mode == "custom")
+                            {
+                                await RecordRequestAsync();
+                            }
+
+                            using var detailDoc = JsonDocument.Parse(detailResponse);
+                            movieData = detailDoc.RootElement.Clone();
+                        }
+                        else
+                        {
+                            _logger.LogDebug("No OMDB results for '{Title}'", title);
+                            return null;
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogDebug("No OMDB results for '{Title}'", title);
+                        return null;
+                    }
+                }
             }
 
-            // Check if found
-            if (!root.TryGetProperty("Response", out var responseProp) || responseProp.GetString() != "True")
-            {
-                _logger.LogDebug("No OMDB results for '{Title}'", title);
-                return null;
-            }
-
-            // Build metadata dictionary
+            // Build metadata dictionary using the cloned movieData
             var metadata = new Dictionary<string, object>();
 
-            if (root.TryGetProperty("Year", out var yearProp))
+            if (movieData.TryGetProperty("Year", out var yearProp))
             {
                 var yearStr = yearProp.GetString();
                 if (!string.IsNullOrEmpty(yearStr) && yearStr != "N/A")
                     metadata["year"] = yearStr;
             }
 
-            if (root.TryGetProperty("Plot", out var plotProp))
+            if (movieData.TryGetProperty("Plot", out var plotProp))
             {
                 var plot = plotProp.GetString();
                 if (!string.IsNullOrEmpty(plot) && plot != "N/A")
                     metadata["description"] = plot;
             }
 
-            if (root.TryGetProperty("Director", out var dirProp))
+            if (movieData.TryGetProperty("Director", out var dirProp))
             {
                 var director = dirProp.GetString();
                 if (!string.IsNullOrEmpty(director) && director != "N/A")
                     metadata["director"] = director;
             }
 
-            if (root.TryGetProperty("Genre", out var genreProp))
+            if (movieData.TryGetProperty("Genre", out var genreProp))
             {
                 var genreStr = genreProp.GetString();
                 if (!string.IsNullOrEmpty(genreStr) && genreStr != "N/A")
                     metadata["genres"] = genreStr.Split(',').Select(g => g.Trim()).ToArray();
             }
 
-            if (root.TryGetProperty("Rated", out var ratedProp))
+            if (movieData.TryGetProperty("Rated", out var ratedProp))
             {
                 var rated = ratedProp.GetString();
                 if (!string.IsNullOrEmpty(rated) && rated != "N/A")
                     metadata["contentRating"] = rated;
             }
 
-            if (root.TryGetProperty("Poster", out var posterProp))
+            if (movieData.TryGetProperty("Poster", out var posterProp))
             {
                 var poster = posterProp.GetString();
                 if (!string.IsNullOrEmpty(poster) && poster != "N/A")
                     metadata["poster"] = poster;
             }
 
-            if (root.TryGetProperty("imdbRating", out var ratingProp))
+            if (movieData.TryGetProperty("imdbRating", out var ratingProp))
             {
                 var ratingStr = ratingProp.GetString();
                 if (!string.IsNullOrEmpty(ratingStr) && ratingStr != "N/A" && double.TryParse(ratingStr, out var rating))
-                    metadata["rating"] = rating;
+                    metadata["imdbRating"] = rating;
             }
 
-            if (root.TryGetProperty("Runtime", out var runtimeProp))
+            if (movieData.TryGetProperty("Runtime", out var runtimeProp))
             {
                 var runtime = runtimeProp.GetString();
                 if (!string.IsNullOrEmpty(runtime) && runtime != "N/A")
                     metadata["runtime"] = runtime;
             }
 
-            if (root.TryGetProperty("Actors", out var actorsProp))
+            if (movieData.TryGetProperty("Actors", out var actorsProp))
             {
                 var actors = actorsProp.GetString();
                 if (!string.IsNullOrEmpty(actors) && actors != "N/A")
                     metadata["cast"] = actors.Split(',').Select(a => a.Trim()).ToArray();
             }
 
-            if (root.TryGetProperty("imdbID", out var imdbIdProp))
+            if (movieData.TryGetProperty("imdbID", out var imdbIdProp))
             {
                 var imdbId = imdbIdProp.GetString();
                 if (!string.IsNullOrEmpty(imdbId))
                     metadata["imdbId"] = imdbId;
+            }
+
+            if (movieData.TryGetProperty("Writer", out var writerProp))
+            {
+                var writer = writerProp.GetString();
+                if (!string.IsNullOrEmpty(writer) && writer != "N/A")
+                    metadata["writer"] = writer;
+            }
+
+            if (movieData.TryGetProperty("Awards", out var awardsProp))
+            {
+                var awards = awardsProp.GetString();
+                if (!string.IsNullOrEmpty(awards) && awards != "N/A")
+                    metadata["awards"] = awards;
+            }
+
+            if (movieData.TryGetProperty("BoxOffice", out var boxOfficeProp))
+            {
+                var boxOffice = boxOfficeProp.GetString();
+                if (!string.IsNullOrEmpty(boxOffice) && boxOffice != "N/A")
+                    metadata["boxOffice"] = boxOffice;
+            }
+
+            if (movieData.TryGetProperty("Production", out var productionProp))
+            {
+                var production = productionProp.GetString();
+                if (!string.IsNullOrEmpty(production) && production != "N/A")
+                    metadata["studio"] = production;
             }
 
             _logger.LogInformation("Successfully fetched OMDB metadata for: {Title}", title);
@@ -221,5 +420,26 @@ public class OMDbProvider : IMetadataProvider
             _logger.LogError(ex, "Error fetching OMDB data for '{Title}'", title);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Gets current usage info for admin display.
+    /// </summary>
+    public async Task<(int Used, int Limit, string Tier, bool IsExhausted)> GetUsageInfoAsync()
+    {
+        var tier = await _settingsService.GetSettingAsync("OMDbApiTier", "free");
+        var limit = TierLimits.GetValueOrDefault(tier, 1_000);
+        
+        var countStr = await _settingsService.GetSettingAsync("OMDbDailyCount", "0");
+        var dateStr = await _settingsService.GetSettingAsync("OMDbCountDate", "");
+        var todayStr = DateTime.UtcNow.ToString("yyyy-MM-dd");
+
+        int used = 0;
+        if (dateStr == todayStr && int.TryParse(countStr, out var count))
+        {
+            used = count;
+        }
+
+        return (used, limit, tier, used >= limit);
     }
 }

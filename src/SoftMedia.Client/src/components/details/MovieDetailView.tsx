@@ -1,4 +1,6 @@
 import { type MediaItem } from '../../types';
+import { Star, Trophy, DollarSign, Film, Clock, Pen } from 'lucide-react';
+import { useUIStore } from '../../store/uiStore';
 
 interface MovieDetailViewProps {
     item: MediaItem;
@@ -6,41 +8,138 @@ interface MovieDetailViewProps {
 
 export default function MovieDetailView({ item }: MovieDetailViewProps) {
     const metadata = item.metadata || {};
+    const { isSidebarCollapsed } = useUIStore();
+
+    // Extract metadata fields
     const cast = (metadata.cast as string[]) || [];
     const director = metadata.director as string;
-    const studio = metadata.studio as string;
+    const writer = metadata.writer as string;
+    const studio = metadata.studio || metadata.production as string;
+    const awards = metadata.awards as string;
+    const boxOffice = metadata.boxOffice as string;
+    const imdbRating = metadata.imdbRating as number;
+    const runtime = metadata.runtime as string;
+    const imdbId = metadata.imdbId as string;
+
+    // Get background poster
+    const backgroundPoster = item.posterPath || item.backdropPath || null;
 
     return (
-        <div className="space-y-8">
-            {/* Cast Grid */}
-            {cast.length > 0 && (
-                <div>
-                    <h2 className="text-2xl font-bold text-white mb-4">Cast</h2>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                        {cast.map((actor, index) => (
-                            <div key={index} className="bg-white/5 p-3 rounded-lg hover:bg-white/10 transition-colors">
-                                <div className="font-medium text-gray-200">{actor}</div>
-                            </div>
-                        ))}
-                    </div>
+        <>
+            {/* Full-page background poster overlay */}
+            {backgroundPoster && (
+                <div
+                    className={`fixed top-16 right-0 bottom-0 z-0 pointer-events-none transition-all duration-300 ${isSidebarCollapsed ? 'left-20' : 'left-64'
+                        }`}
+                >
+                    <img
+                        src={backgroundPoster}
+                        alt=""
+                        className="w-full h-full object-cover opacity-15 blur-sm transition-all duration-500"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-b from-transparent via-background/80 to-background" />
+                    <div className="absolute inset-0 bg-gradient-to-r from-background/60 via-transparent to-background/60" />
                 </div>
             )}
 
-            {/* Details Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {director && (
-                    <div>
-                        <h3 className="text-gray-400 text-sm uppercase tracking-wider mb-1">Director</h3>
-                        <p className="text-white text-lg">{director}</p>
+            <div className="space-y-8 relative z-10">
+                {/* IMDb Rating & Runtime Row */}
+                {(imdbRating || runtime) && (
+                    <div className="flex flex-wrap items-center gap-4">
+                        {imdbRating && (
+                            <a
+                                href={imdbId ? `https://www.imdb.com/title/${imdbId}` : '#'}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/20 border border-amber-500/30 hover:bg-amber-500/30 transition-colors"
+                            >
+                                <Star className="w-5 h-5 text-amber-400 fill-current" />
+                                <span className="text-lg font-bold text-amber-400">{imdbRating.toFixed(1)}</span>
+                                <span className="text-sm text-amber-400/70">IMDb</span>
+                            </a>
+                        )}
+                        {runtime && (
+                            <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10">
+                                <Clock className="w-4 h-4 text-gray-400" />
+                                <span className="text-gray-300">{runtime}</span>
+                            </div>
+                        )}
                     </div>
                 )}
-                {studio && (
+
+                {/* Cast Grid */}
+                {cast.length > 0 && (
                     <div>
-                        <h3 className="text-gray-400 text-sm uppercase tracking-wider mb-1">Studio</h3>
-                        <p className="text-white text-lg">{studio}</p>
+                        <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                            <Film className="w-5 h-5 text-violet-400" />
+                            Cast
+                        </h2>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                            {cast.slice(0, 12).map((actor, index) => (
+                                <div
+                                    key={index}
+                                    className="bg-white/5 p-3 rounded-xl border border-white/10 hover:border-violet-500/30 hover:bg-white/10 transition-all"
+                                >
+                                    <div className="font-medium text-gray-200 text-sm">{actor}</div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Crew & Details Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {director && (
+                        <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+                            <h3 className="text-gray-400 text-xs uppercase tracking-wider mb-2 flex items-center gap-2">
+                                <Film className="w-4 h-4" />
+                                Director
+                            </h3>
+                            <p className="text-white text-lg font-medium">{director}</p>
+                        </div>
+                    )}
+                    {writer && (
+                        <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+                            <h3 className="text-gray-400 text-xs uppercase tracking-wider mb-2 flex items-center gap-2">
+                                <Pen className="w-4 h-4" />
+                                Writer
+                            </h3>
+                            <p className="text-white text-lg font-medium">{writer}</p>
+                        </div>
+                    )}
+                    {studio && (
+                        <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+                            <h3 className="text-gray-400 text-xs uppercase tracking-wider mb-2">Studio</h3>
+                            <p className="text-white text-lg font-medium">{studio}</p>
+                        </div>
+                    )}
+                </div>
+
+                {/* Awards & Box Office */}
+                {(awards || boxOffice) && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {awards && awards !== 'N/A' && (
+                            <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/10 p-5 rounded-xl border border-amber-500/20">
+                                <h3 className="text-amber-400 text-sm uppercase tracking-wider mb-2 flex items-center gap-2">
+                                    <Trophy className="w-4 h-4" />
+                                    Awards
+                                </h3>
+                                <p className="text-white text-base">{awards}</p>
+                            </div>
+                        )}
+                        {boxOffice && boxOffice !== 'N/A' && (
+                            <div className="bg-gradient-to-br from-green-500/10 to-emerald-500/10 p-5 rounded-xl border border-green-500/20">
+                                <h3 className="text-green-400 text-sm uppercase tracking-wider mb-2 flex items-center gap-2">
+                                    <DollarSign className="w-4 h-4" />
+                                    Box Office
+                                </h3>
+                                <p className="text-white text-2xl font-bold">{boxOffice}</p>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
-        </div>
+        </>
     );
 }
+

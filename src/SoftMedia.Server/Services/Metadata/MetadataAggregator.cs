@@ -6,17 +6,20 @@ namespace SoftMedia.Server.Services.Metadata;
 public class MetadataAggregator
 {
     private readonly IEnumerable<IMetadataProvider> _providers;
+    private readonly IMetadataRouter _metadataRouter;
     private readonly ISettingsService _settingsService;
     private readonly ImageCacheService _imageCacheService;
     private readonly ILogger<MetadataAggregator> _logger;
 
     public MetadataAggregator(
-        IEnumerable<IMetadataProvider> providers, 
+        IEnumerable<IMetadataProvider> providers,
+        IMetadataRouter metadataRouter,
         ISettingsService settingsService, 
         ImageCacheService imageCacheService,
         ILogger<MetadataAggregator> logger)
     {
         _providers = providers;
+        _metadataRouter = metadataRouter;
         _settingsService = settingsService;
         _imageCacheService = imageCacheService;
         _logger = logger;
@@ -30,12 +33,10 @@ public class MetadataAggregator
              return;
         }
 
-        var provider = _providers.FirstOrDefault(p => p.SupportedType == type);
-        if (provider == null) return;
-
         try
         {
-            var json = await provider.FetchMetadataAsync(item);
+            // Use MetadataRouter to get metadata from the user's preferred provider
+            var json = await _metadataRouter.FetchMetadataAsync(item, type);
             if (string.IsNullOrEmpty(json)) return;
 
             item.MetadataJson = json;
@@ -223,14 +224,17 @@ public class MetadataAggregator
             if (metadata.TryGetValue("poster", out var posterObj))
             {
                 var posterUrl = posterObj.ToString();
+                _logger.LogInformation("Found poster URL for {Title}: {Url}, ItemType: {Type}", item.Title, posterUrl, item.Type);
+                
                 if (!string.IsNullOrEmpty(posterUrl) && posterUrl.StartsWith("http"))
                 {
                     try
                     {
+                        _logger.LogInformation("Caching poster for {Title} (Type: {Type})", item.Title, item.Type);
                         string cachedUrl = item.Type switch
                         {
-                            MediaType.Series => await _imageCacheService.CacheSeriesPosterAsync(item.Id, posterUrl),
                             MediaType.Movie => await _imageCacheService.CacheMoviePosterAsync(item.Id, posterUrl),
+                            MediaType.Series => await _imageCacheService.CacheSeriesPosterAsync(item.Id, posterUrl),
                             MediaType.Audio => await _imageCacheService.CacheAlbumCoverAsync(item.Id, posterUrl),
                             _ => posterUrl
                         };

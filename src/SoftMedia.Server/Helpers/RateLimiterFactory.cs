@@ -50,6 +50,17 @@ public class RateLimiterFactory : IDisposable
                 QueueLimit = 30
             })),
 
+        // OMDb: 20 requests per 10 seconds (confirmed by testing)
+        "OMDb" => _limiters.GetOrAdd(providerName, _ =>
+            new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions
+            {
+                Window = TimeSpan.FromSeconds(10),
+                SegmentsPerWindow = 2,
+                PermitLimit = 20,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 100
+            })),
+
         // Default: Conservative 10 requests per 10 seconds
         _ => _limiters.GetOrAdd("default", _ =>
             new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions

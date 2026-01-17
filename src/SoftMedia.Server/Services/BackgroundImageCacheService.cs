@@ -160,18 +160,30 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
     private async Task<bool> CachePosterAsync(MediaItem item, Dictionary<string, object> metadata, ImageCacheService imageCache)
     {
         if (!metadata.TryGetValue("poster", out var posterObj))
+        {
+            _logger.LogDebug("No poster key in metadata for {Title}", item.Title);
             return false;
+        }
         
         var posterUrl = posterObj.ToString();
+        _logger.LogInformation("Background: Found poster URL for {Title} ({Type}): {Url}", item.Title, item.Type, posterUrl);
+        
         if (string.IsNullOrEmpty(posterUrl) || !posterUrl.StartsWith("http"))
+        {
+            _logger.LogDebug("Poster URL invalid or not HTTP for {Title}: {Url}", item.Title, posterUrl);
             return false;
+        }
         
         // Already cached locally
         if (posterUrl.StartsWith("/cache/"))
+        {
+            _logger.LogDebug("Poster already cached for {Title}", item.Title);
             return false;
+        }
         
         try
         {
+            _logger.LogInformation("Background: Caching poster for {Title} (Type: {Type})", item.Title, item.Type);
             string cachedUrl = item.Type switch
             {
                 MediaType.Series => await imageCache.CacheSeriesPosterAsync(item.Id, posterUrl),
@@ -183,8 +195,12 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
             if (cachedUrl != posterUrl)
             {
                 metadata["poster"] = cachedUrl;
-                _logger.LogDebug("Cached poster for {Title}: {Url}", item.Title, cachedUrl);
+                _logger.LogInformation("Background: Cached poster for {Title}: {Url}", item.Title, cachedUrl);
                 return true;
+            }
+            else
+            {
+                _logger.LogWarning("Background: Caching returned same URL for {Title}, caching may have failed", item.Title);
             }
         }
         catch (Exception ex)

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services;
+using SoftMedia.Server.Services.Metadata;
 
 namespace SoftMedia.Server.Controllers;
 
@@ -15,11 +16,16 @@ public class AdminController : ControllerBase
 {
     private readonly LibraryWatcher _libraryWatcher;
     private readonly ILogger<AdminController> _logger;
+    private readonly IEnumerable<IMetadataProvider> _providers;
 
-    public AdminController(LibraryWatcher libraryWatcher, ILogger<AdminController> logger)
+    public AdminController(
+        LibraryWatcher libraryWatcher, 
+        ILogger<AdminController> logger,
+        IEnumerable<IMetadataProvider> providers)
     {
         _libraryWatcher = libraryWatcher;
         _logger = logger;
+        _providers = providers;
     }
 
     /// <summary>
@@ -73,9 +79,33 @@ public class AdminController : ControllerBase
         _logger.LogInformation("Admin cleared file issue: {Path}", path);
         return Ok(new { success = true });
     }
+
+    /// <summary>
+    /// Gets OMDb API usage information.
+    /// </summary>
+    [HttpGet("omdb-usage")]
+    public async Task<IActionResult> GetOMDbUsage()
+    {
+        var omdbProvider = _providers.OfType<OMDbProvider>().FirstOrDefault();
+        if (omdbProvider == null)
+        {
+            return NotFound("OMDb provider not registered");
+        }
+
+        var (used, limit, tier, isExhausted) = await omdbProvider.GetUsageInfoAsync();
+        return Ok(new
+        {
+            used,
+            limit,
+            tier,
+            isExhausted,
+            resetTimeUtc = DateTime.UtcNow.Date.AddDays(1).ToString("yyyy-MM-ddTHH:mm:ssZ")
+        });
+    }
 }
 
 public class RetryFileRequest
 {
     public string Path { get; set; } = string.Empty;
 }
+

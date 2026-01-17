@@ -894,6 +894,7 @@ public class FileScannerService : IFileScannerService
                             seriesItem.Year = showYear;
                             // Mark for re-enrichment to get correct metadata with year disambiguation
                             await metadataAggregator.EnrichMediaItemAsync(seriesItem, LibraryType.TV, deferImageCaching: true);
+                            await context.SaveChangesAsync(); // Save before queuing for background caching
                             _backgroundImageCache.QueueImageCaching(seriesItem.Id);
                         }
 
@@ -1164,15 +1165,16 @@ public class FileScannerService : IFileScannerService
                     _logger.LogDebug($"Added item: {mediaItem.Type} - '{mediaItem.Title}'");
                     _logger.LogInformation($"Added media: {mediaItem.Title}");
                     
-                    // Queue for background image caching (Movies and other types with remote images)
+                    // Save immediately so item is in DB before queuing for background caching
+                    await context.SaveChangesAsync();
+                    
+                    // Queue for background image caching AFTER saving (fixes race condition)
+                    // The background service needs the item to exist in DB with its MetadataJson
                     if (library.Type == LibraryType.Movie || 
                         (library.Type == LibraryType.Music && !string.IsNullOrEmpty(mediaItem.MetadataJson) && mediaItem.MetadataJson.Contains("\"poster\"")))
                     {
                         _backgroundImageCache.QueueImageCaching(mediaItem.Id);
                     }
-                    
-                    // Save immediately so item is in DB before pushing notification
-                    await context.SaveChangesAsync();
                     
                     // Push real-time notification for new item
                     _notificationService.NotifyItemAdded(libraryId, mediaItem.Id, mediaItem.Type.ToString(), mediaItem.Title);

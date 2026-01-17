@@ -478,150 +478,91 @@ public class LibrariesController : ControllerBase
     [HttpGet("series/{seriesId}/seasons")]
     public async Task<ActionResult<IEnumerable<object>>> GetSeriesSeasons(Guid seriesId)
     {
-        // Get the series item to access its metadata
-        var series = await _context.MediaItems.AsNoTracking()
-            .FirstOrDefaultAsync(m => m.Id == seriesId && m.Type == MediaType.Series);
-
-        if (series == null)
-        {
-            return NotFound("Series not found");
-        }
-
-        // Get distinct seasons from episodes
-        var seasonNumbers = await _context.MediaItems.AsNoTracking()
-            .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode)
-            .Select(m => m.SeasonNumber ?? 1)
-            .Distinct()
-            .OrderBy(s => s)
+        // New Hierarchical Logic: Fetch Season entities directly
+        var seasons = await _context.MediaItems.AsNoTracking()
+            .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Season)
+            .OrderBy(m => m.SeasonNumber)
             .ToListAsync();
 
-        // Helper to get cached or proxied season poster
-        string? GetSeasonPoster(int seasonNum, string? remotePosterUrl)
+        if (seasons.Count == 0)
         {
-            // Check for cached image first
-            var cacheBasePath = Path.Combine("wwwroot", "cache", "images", "tv");
-            var cachedFileName = $"{seriesId}_season{seasonNum:D2}_poster";
-            
-            if (Directory.Exists(cacheBasePath))
+            // Fallback for legacy/non-migrated data: Use distinct query
+            var seasonNumbers = await _context.MediaItems.AsNoTracking()
+                .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode)
+                .Select(m => m.SeasonNumber ?? 1)
+                .Distinct()
+                .OrderBy(s => s)
+                .ToListAsync();
+
+            if (seasonNumbers.Count > 0)
             {
-                var cachedFiles = Directory.GetFiles(cacheBasePath, $"{cachedFileName}.*");
-                if (cachedFiles.Length > 0)
-                {
-                    var extension = Path.GetExtension(cachedFiles[0]);
-                    return $"/cache/images/tv/{cachedFileName}{extension}";
-                }
+                // Try to get series poster for fallback
+                var series = await _context.MediaItems.AsNoTracking()
+                    .FirstOrDefaultAsync(m => m.Id == seriesId);
+                string? showPoster = null;
+                 if (series != null && !string.IsNullOrEmpty(series.MetadataJson))
+                 {
+                    try {
+                        var meta = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(series.MetadataJson);
+                        if (meta != null && meta.TryGetValue("poster", out var p)) showPoster = p.ToString();
+                     } catch {}
+                 }
+
+                 // Standardize fallback poster URL
+                 if (!string.IsNullOrEmpty(showPoster) && showPoster.StartsWith("http"))
+                     showPoster = $"/api/v1/image/proxy?url={Uri.EscapeDataString(showPoster)}";
+
+                return Ok(seasonNumbers.Select(num => new { 
+                    number = num, 
+                    poster = showPoster, 
+                    episodeCount = _context.MediaItems.Count(e => e.SeriesId == seriesId && e.SeasonNumber == num && e.Type == MediaType.Episode),
+                    premiereDate = (string?)null
+                }));
             }
-            
-            // Fallback to proxy
-            if (!string.IsNullOrEmpty(remotePosterUrl))
-            {
-                return $"/api/v1/image/proxy?url={Uri.EscapeDataString(remotePosterUrl)}";
-            }
-            
-            return null;
         }
 
-        // Parse seasons from series metadata
-        var seasonsFromMetadata = new Dictionary<int, object?>();
-        string? showPoster = null;
-        
-        if (!string.IsNullOrEmpty(series.MetadataJson))
-        {
-            try
-            {
-                var metadata = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(series.MetadataJson);
-                
-                // Get show poster for fallback
-                if (metadata != null && metadata.TryGetValue("poster", out var showPosterObj))
-                {
-                    var showPosterUrl = showPosterObj.ToString();
-                    // Use cached path directly if available, otherwise proxy
-                    if (!string.IsNullOrEmpty(showPosterUrl))
-                    {
-                        if (showPosterUrl.StartsWith("/cache/"))
-                        {
-                            showPoster = showPosterUrl;
-                        }
-                        else if (showPosterUrl.StartsWith("http"))
-                        {
-                            // Check for cached show poster on disk as fallback
-                            var showCacheBasePath = Path.Combine("wwwroot", "cache", "images", "tv");
-                            var showCachedFileName = $"{seriesId}_poster";
-                            if (Directory.Exists(showCacheBasePath))
-                            {
-                                var cachedFiles = Directory.GetFiles(showCacheBasePath, $"{showCachedFileName}.*");
-                                if (cachedFiles.Length > 0)
-                                {
-                                    showPoster = $"/cache/images/tv/{showCachedFileName}{Path.GetExtension(cachedFiles[0])}";
-                                }
-                            }
-                            if (string.IsNullOrEmpty(showPoster))
-                            {
-                                showPoster = $"/api/v1/image/proxy?url={Uri.EscapeDataString(showPosterUrl)}";
-                            }
-                        }
-                    }
-                }
-                
-                if (metadata != null && metadata.TryGetValue("seasons", out var seasonsObj) && seasonsObj is System.Text.Json.JsonElement seasonsArray)
-                {
-                    foreach (var season in seasonsArray.EnumerateArray())
-                    {
-                        int? num = season.TryGetProperty("number", out var numProp) && numProp.ValueKind != System.Text.Json.JsonValueKind.Null 
-                            ? numProp.GetInt32() 
-                            : null;
-                        
-                        if (num.HasValue)
-                        {
-                            string? posterUrl = season.TryGetProperty("poster", out var posterProp) && posterProp.ValueKind != System.Text.Json.JsonValueKind.Null
-                                ? posterProp.GetString()
-                                : null;
-                            
-                            // Use poster URL directly if it's a local cache path, otherwise proxy remote URLs
-                            string? poster = null;
-                            if (!string.IsNullOrEmpty(posterUrl))
-                            {
-                                if (posterUrl.StartsWith("/cache/"))
-                                {
-                                    poster = posterUrl;
-                                }
-                                else if (posterUrl.StartsWith("http"))
-                                {
-                                    poster = GetSeasonPoster(num.Value, posterUrl);
-                                }
-                            }
-                            
-                            int? episodeCount = season.TryGetProperty("episodeCount", out var epCountProp) && epCountProp.ValueKind != System.Text.Json.JsonValueKind.Null
-                                ? epCountProp.GetInt32()
-                                : null;
-                            
-                            string? premiereDate = season.TryGetProperty("premiereDate", out var premProp) && premProp.ValueKind != System.Text.Json.JsonValueKind.Null
-                                ? premProp.GetString()
-                                : null;
+        var result = new List<object>();
 
-                            seasonsFromMetadata[num.Value] = new { number = num.Value, poster, episodeCount, premiereDate };
+        foreach (var season in seasons)
+        {
+            // Extract metadata if available
+            string? poster = null;
+            string? premiereDate = null;
+            int? episodeCount = null;
+
+            if (!string.IsNullOrEmpty(season.MetadataJson))
+            {
+                try
+                {
+                    var meta = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(season.MetadataJson);
+                    if (meta != null)
+                    {
+                        if (meta.TryGetValue("poster", out var p) && p != null)
+                        {
+                            // Use the new standard image endpoint for the season entity itself
+                            // The ImageController will handle checking MediaImages or MetadataJson
+                            poster = $"/api/v1/items/{season.Id}/images/poster";
                         }
+                        if (meta.TryGetValue("premiereDate", out var pd) && pd != null) premiereDate = pd.ToString();
+                        if (meta.TryGetValue("episodeCount", out var ec) && ec is System.Text.Json.JsonElement el && el.ValueKind == System.Text.Json.JsonValueKind.Number) episodeCount = el.GetInt32();
                     }
                 }
+                catch { }
             }
-            catch { /* Ignore parsing errors */ }
+
+            // Real-time episode count is more accurate
+            var realCount = await _context.MediaItems.CountAsync(e => e.SeriesId == seriesId && e.SeasonNumber == season.SeasonNumber && e.Type == MediaType.Episode);
+            
+            result.Add(new
+            {
+                id = season.Id, // Expose ID now that it's an entity
+                number = season.SeasonNumber,
+                poster = poster,
+                episodeCount = realCount > 0 ? realCount : episodeCount,
+                premiereDate = premiereDate,
+                overview = season.Overview
+            });
         }
-
-        // Build result combining episode data with metadata
-        var result = seasonNumbers.Select(seasonNum =>
-        {
-            var episodeCount = _context.MediaItems.AsNoTracking()
-                .Count(m => m.SeriesId == seriesId && m.SeasonNumber == seasonNum && m.Type == MediaType.Episode);
-
-            if (seasonsFromMetadata.TryGetValue(seasonNum, out var metaSeason))
-            {
-                // Use metadata if available (has poster)
-                return metaSeason;
-            }
-
-            // Fallback to show poster as season poster
-            return (object)new { number = seasonNum, poster = showPoster, episodeCount = episodeCount, premiereDate = (string?)null };
-        }).ToList();
 
         return Ok(result);
     }

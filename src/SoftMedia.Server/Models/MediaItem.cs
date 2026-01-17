@@ -53,6 +53,9 @@ public class MediaItem
     public Guid? SeriesId { get; set; }
     public MediaItem? Series { get; set; }
 
+    public Guid? SeasonId { get; set; }
+    public MediaItem? Season { get; set; }
+
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
 
@@ -68,13 +71,16 @@ public class MediaItem
 
 public enum MediaType
 {
-    Movie,
-    Series,
-    Episode,
-    Audio,
-    Book,
-    Game,
-    Photo,
-    Artist,
-    Album
+    Movie = 0,
+    Series = 1,
+    Episode = 2,
+    Audio = 3,
+    Book = 4,
+    Game = 5,
+    Photo = 6,
+    
+    // New Types
+    Season = 7,
+    Artist = 8,
+    Album = 9
 }

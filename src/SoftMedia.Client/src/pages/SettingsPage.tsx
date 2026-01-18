@@ -459,6 +459,123 @@ export default function SettingsPage() {
             });
         }
 
+        // Dedicated layout for Scanning group
+        if (groupName === 'Scanning') {
+            const fileWatcher = groupSettings.find(s => s.key === 'EnableFileWatcher');
+            const interval = groupSettings.find(s => s.key === 'MetadataRefreshIntervalDays');
+            const mode = groupSettings.find(s => s.key === 'MetadataRefreshMode');
+            const startup = groupSettings.find(s => s.key === 'MetadataRefreshOnStartup');
+
+            return (
+                <div className="space-y-6">
+                    {/* File Watcher */}
+                    {fileWatcher && (
+                        <div key={fileWatcher.key} className="flex flex-col gap-2">
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={() => handleChange(fileWatcher.key, fileWatcher.value === 'true' ? 'false' : 'true')}
+                                    className={cn(
+                                        "w-12 h-6 rounded-full transition-colors relative flex-shrink-0",
+                                        fileWatcher.value === 'true' ? "bg-primary" : "bg-white/10"
+                                    )}
+                                >
+                                    <div className={cn(
+                                        "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
+                                        fileWatcher.value === 'true' ? "left-7" : "left-1"
+                                    )} />
+                                </button>
+                                <label className="text-sm font-medium text-gray-300">{t(formatSettingLabel(fileWatcher.key))}</label>
+                            </div>
+                            {fileWatcher.description && <p className="text-xs text-gray-500">{t(fileWatcher.description)}</p>}
+                        </div>
+                    )}
+
+                    {/* Metadata Strategy Group */}
+                    {(interval || mode || startup) && (
+                        <div className="bg-white/5 p-5 rounded-xl border border-white/10 space-y-5">
+                            <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                                <div className="flex items-center gap-2">
+                                    <RefreshCw className="w-4 h-4 text-primary" />
+                                    <h3 className="text-sm font-semibold text-white/90">Metadata Refresh Strategy</h3>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        toast.promise(settingsService.triggerMetadataRefresh(), {
+                                            loading: 'Triggering refresh...',
+                                            success: 'Background refresh started',
+                                            error: 'Failed to start refresh'
+                                        });
+                                    }}
+                                    className="text-xs px-3 py-1.5 bg-primary/20 hover:bg-primary/30 text-primary rounded transition-colors font-medium flex items-center gap-2"
+                                >
+                                    <Play size={12} fill="currentColor" />
+                                    Run Now
+                                </button>
+                            </div>
+
+                            <div className="grid gap-6">
+                                {interval && (
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-sm font-medium text-gray-300">Refresh Interval</label>
+                                        <div className="flex items-center gap-3">
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                max="365"
+                                                value={interval.value}
+                                                onChange={(e) => handleChange(interval.key, e.target.value)}
+                                                className="w-24 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
+                                            />
+                                            <span className="text-sm text-gray-400">
+                                                {parseInt(interval.value) === 0 ? '(Disabled)' : 'days'}
+                                            </span>
+                                        </div>
+                                        {interval.description && <p className="text-xs text-gray-500">{t(interval.description)}</p>}
+                                    </div>
+                                )}
+
+                                {mode && (
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-sm font-medium text-gray-300">Refresh Mode</label>
+                                        <Combobox
+                                            value={mode.value}
+                                            onChange={(val) => handleChange(mode.key, val)}
+                                            options={['Running', 'Variable', 'All']}
+                                            placeholder="Select refresh mode..."
+                                            className="max-w-md"
+                                        />
+                                        {mode.description && <p className="text-xs text-gray-500">{t(mode.description)}</p>}
+                                    </div>
+                                )}
+
+                                {startup && (
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-sm font-medium text-gray-300">Run on Startup</label>
+                                        <div className="flex items-center gap-3">
+                                            <button
+                                                onClick={() => handleChange(startup.key, startup.value === 'true' ? 'false' : 'true')}
+                                                className={cn(
+                                                    "w-12 h-6 rounded-full transition-colors relative flex-shrink-0",
+                                                    startup.value === 'true' ? "bg-primary" : "bg-white/10"
+                                                )}
+                                            >
+                                                <div className={cn(
+                                                    "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
+                                                    startup.value === 'true' ? "left-7" : "left-1"
+                                                )} />
+                                            </button>
+                                            <span className="text-sm text-gray-400">{startup.value === 'true' ? 'Enabled' : 'Disabled'}</span>
+                                        </div>
+                                        {startup.description && <p className="text-xs text-gray-500">{t(startup.description)}</p>}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
         if (groupSettings.length === 0) return <p className="text-gray-500 italic">No settings available.</p>;
 
         return (
@@ -774,19 +891,43 @@ export default function SettingsPage() {
                                     </button>
                                     <span className="text-sm text-gray-400">{setting.value === 'true' ? 'Enabled' : 'Disabled'}</span>
                                 </div>
-                            ) : setting.key === 'MetadataRefreshIntervalHours' ? (
+                            ) : setting.key === 'MetadataRefreshIntervalDays' ? (
                                 <div className="flex items-center gap-3 max-w-md">
                                     <input
                                         type="number"
                                         min="0"
-                                        max="720"
+                                        max="365"
                                         value={setting.value}
                                         onChange={(e) => handleChange(setting.key, e.target.value)}
                                         className="w-24 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
                                     />
                                     <span className="text-sm text-gray-400">
-                                        {parseInt(setting.value) === 0 ? '(Disabled)' : 'hours'}
+                                        {parseInt(setting.value) === 0 ? '(Disabled)' : 'days'}
                                     </span>
+                                </div>
+                            ) : setting.key === 'MetadataRefreshMode' ? (
+                                <Combobox
+                                    value={setting.value}
+                                    onChange={(val) => handleChange(setting.key, val)}
+                                    options={['Running', 'Variable', 'All']}
+                                    placeholder="Select refresh mode..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'MetadataRefreshOnStartup' ? (
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        onClick={() => handleChange(setting.key, setting.value === 'true' ? 'false' : 'true')}
+                                        className={cn(
+                                            "w-12 h-6 rounded-full transition-colors relative",
+                                            setting.value === 'true' ? "bg-primary" : "bg-white/10"
+                                        )}
+                                    >
+                                        <div className={cn(
+                                            "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
+                                            setting.value === 'true' ? "left-7" : "left-1"
+                                        )} />
+                                    </button>
+                                    <span className="text-sm text-gray-400">{setting.value === 'true' ? 'Enabled' : 'Disabled'}</span>
                                 </div>
                             ) : (
                                 <input
@@ -852,16 +993,15 @@ export default function SettingsPage() {
                         )}
 
 
-                        {activeTab === 'library-metadata' && (
+                        {activeTab === 'library-metadata-providers' && (
                             <div className="space-y-8">
                                 <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-3">
-                                    <Database className="text-primary" /> Metadata Settings
+                                    <Database className="text-primary" /> Metadata Providers
                                 </h2>
 
                                 {/* Metadata Providers Section */}
                                 <div>
-                                    <h3 className="text-lg font-semibold text-white mb-4">Metadata Providers</h3>
-                                    <p className="text-sm text-gray-400 mb-6">Select which service to use for fetching metadata for each media type.</p>
+
 
                                     <div className="space-y-4">
                                         {/* Movie Provider */}
@@ -920,7 +1060,7 @@ export default function SettingsPage() {
                                                                         className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:border-primary/50 focus:outline-none"
                                                                     />
                                                                     <p className="text-xs text-gray-500">
-                                                                        Get a free key at <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">omdbapi.com</a>
+                                                                        Get a free key at <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">omdbapi.com</a> and dont forget to activate the API key by clicking the link in the email
                                                                     </p>
 
                                                                     {/* Tier Dropdown */}
@@ -1137,46 +1277,8 @@ export default function SettingsPage() {
                                     </h2>
                                 </div>
 
-                                {/* Scanning Settings */}
-                                <div className="mb-6">
-                                    {renderSettingsGroup('Scanning')}
-                                </div>
-
-                                {/* Add Library Button - above library list */}
-                                <div className="flex justify-end mb-4">
-                                    <button
-                                        onClick={() => {
-                                            setEditingLibrary(undefined);
-                                            setIsLibraryFormOpen(true);
-                                        }}
-                                        className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg font-medium transition-colors"
-                                    >
-                                        <Plus size={18} />
-                                        Add Library
-                                    </button>
-                                </div>
-
-                                {/* Libraries List */}
-                                {isLoadingLibraries ? (
-                                    <div className="text-center py-12">
-                                        <RefreshCw className="animate-spin w-8 h-8 text-primary mx-auto" />
-                                    </div>
-                                ) : (
-                                    <LibraryListTable
-                                        libraries={libraries || []}
-                                        scanJobs={scanQueue}
-                                        onEdit={(library) => {
-                                            setEditingLibrary(library);
-                                            setIsLibraryFormOpen(true);
-                                        }}
-                                        onDelete={(library) => setLibraryToDelete(library)}
-                                        onReorder={(orderedIds) => reorderLibraryMutation.mutate(orderedIds)}
-                                        onScan={(library) => scanLibraryMutation.mutate(library.id)}
-                                    />
-                                )}
-
-                                {/* Scan Status Panel - below library list */}
-                                <div className="mt-6 p-4 bg-white/5 rounded-xl border border-white/10">
+                                {/* Scan Status Panel */}
+                                <div className="mb-6 p-4 bg-white/5 rounded-xl border border-white/10">
                                     <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-3">Scan Status</h3>
 
                                     {/* Active/Queued Scans */}
@@ -1218,6 +1320,45 @@ export default function SettingsPage() {
                                             </div>
                                         </div>
                                     )}
+                                </div>
+
+                                {/* Add Library Button */}
+                                <div className="flex justify-end mb-4">
+                                    <button
+                                        onClick={() => {
+                                            setEditingLibrary(undefined);
+                                            setIsLibraryFormOpen(true);
+                                        }}
+                                        className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg font-medium transition-colors"
+                                    >
+                                        <Plus size={18} />
+                                        Add Library
+                                    </button>
+                                </div>
+
+                                {/* Libraries List */}
+                                {isLoadingLibraries ? (
+                                    <div className="text-center py-12">
+                                        <RefreshCw className="animate-spin w-8 h-8 text-primary mx-auto" />
+                                    </div>
+                                ) : (
+                                    <LibraryListTable
+                                        libraries={libraries || []}
+                                        scanJobs={scanQueue}
+                                        onEdit={(library) => {
+                                            setEditingLibrary(library);
+                                            setIsLibraryFormOpen(true);
+                                        }}
+                                        onDelete={(library) => setLibraryToDelete(library)}
+                                        onReorder={(orderedIds) => reorderLibraryMutation.mutate(orderedIds)}
+                                        onScan={(library) => scanLibraryMutation.mutate(library.id)}
+                                    />
+                                )}
+
+                                {/* Scanning Settings (File Watcher etc) */}
+                                <div className="mt-8 pt-8 border-t border-white/5">
+                                    <h3 className="text-lg font-semibold text-white mb-4">Scanning Settings</h3>
+                                    {renderSettingsGroup('Scanning')}
                                 </div>
                             </div>
                         )}

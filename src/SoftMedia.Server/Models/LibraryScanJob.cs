@@ -15,6 +15,12 @@ public enum LibraryScanStatus
 /// <summary>
 /// Represents the current stage of a library scan.
 /// </summary>
+public enum LibraryScanJobType
+{
+    LibraryScan,
+    MetadataRefresh
+}
+
 public enum LibraryScanStage
 {
     Pending,
@@ -25,11 +31,14 @@ public enum LibraryScanStage
 }
 
 /// <summary>
-/// Tracks the state and progress of a library scan operation.
+/// Tracks the state and progress of a library scan or metadata refresh operation.
 /// </summary>
 public class LibraryScanJob
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public LibraryScanJobType Type { get; set; } = LibraryScanJobType.LibraryScan;
+    
+    // Nullable for global jobs like Metadata Refresh
     public Guid LibraryId { get; set; }
     public string LibraryName { get; set; } = string.Empty;
     public LibraryScanStatus Status { get; set; } = LibraryScanStatus.Queued;

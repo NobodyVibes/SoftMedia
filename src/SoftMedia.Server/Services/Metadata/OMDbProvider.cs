@@ -159,12 +159,12 @@ public class OMDbProvider : IMetadataProvider
         }
     }
 
-    public async Task<string?> FetchMetadataAsync(MediaItem item)
+    public Task<string?> FetchMetadataAsync(MediaItem item)
     {
         // This method is called by MetadataRouter which should pass the resolved API key
         // For direct calls, we return null as the key context isn't available
         _logger.LogDebug("FetchMetadataAsync called directly - use FetchMetadataWithKeyAsync instead");
-        return null;
+        return Task.FromResult<string?>(null);
     }
 
     /// <summary>
@@ -198,6 +198,45 @@ public class OMDbProvider : IMetadataProvider
                 return null;
             }
 
+            // 1. First, check if we already have an IMDb ID cached in MetadataJson
+            // This allows us to skip search/fuzzy matching on refreshes and use a single direct API call.
+            if (!string.IsNullOrEmpty(item.MetadataJson))
+            {
+                try
+                {
+                    using var existingDoc = JsonDocument.Parse(item.MetadataJson);
+                    if (existingDoc.RootElement.TryGetProperty("imdbId", out var idProp))
+                    {
+                        var existingId = idProp.GetString();
+                        if (!string.IsNullOrEmpty(existingId) && existingId.StartsWith("tt"))
+                        {
+                            _logger.LogInformation("Using cached IMDb ID for '{Title}': {Id}", title, existingId);
+                            
+                            // Direct ID Fetch (Cost: 1 request)
+                            var directUrl = $"http://www.omdbapi.com/?apikey={apiKey}&i={existingId}&plot=full";
+                            var directResponse = await _httpClient.GetStringAsync(directUrl);
+                            
+                            if (mode == "custom") await RecordRequestAsync();
+
+                            using var directDoc = JsonDocument.Parse(directResponse);
+                             // Check for valid response
+                            if (directDoc.RootElement.TryGetProperty("Response", out var resp) && resp.GetString() == "True")
+                            {
+                                // Return valid result immediately
+                                return ProcessProcessAndSerialize(directDoc.RootElement, title);
+                            }
+                            
+                             _logger.LogWarning("Cached IMDb ID {Id} failed lookup, falling back to title search", existingId);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to parse existing metadata for ID check");
+                }
+            }
+
+            // 2. Fallback: Search by Title + Year
             // Extract year from title if present (e.g., "Movie Name (2023)")
             // Prefer MediaItem.Year if it was set during scanning, else try regex on title
             string? year = null;
@@ -307,6 +346,22 @@ public class OMDbProvider : IMetadataProvider
             }
 
             // Build metadata dictionary using the cloned movieData
+            return ProcessProcessAndSerialize(movieData, title);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "HTTP error fetching OMDB data for '{Title}'", title);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching OMDB data for '{Title}'", title);
+            return null;
+        }
+    }
+
+    private string ProcessProcessAndSerialize(JsonElement movieData, string title)
+    {
             var metadata = new Dictionary<string, object>();
 
             if (movieData.TryGetProperty("Year", out var yearProp))
@@ -409,17 +464,6 @@ public class OMDbProvider : IMetadataProvider
 
             _logger.LogInformation("Successfully fetched OMDB metadata for: {Title}", title);
             return JsonSerializer.Serialize(metadata);
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogError(ex, "HTTP error fetching OMDB data for '{Title}'", title);
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error fetching OMDB data for '{Title}'", title);
-            return null;
-        }
     }
 
     /// <summary>

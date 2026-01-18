@@ -6,7 +6,7 @@ SoftMedia uses a smart metadata system to enrich your local media with rich info
 
 We currently support the following providers:
 - **TV Shows**: [TVMaze](https://www.tvmaze.com/) (Series info, Episode summaries, Air dates, Cast)
-- **Movies**: [OMDb](https://www.omdbapi.com/) (Plot, Director, Year, Posters)
+- **Movies**: [OMDb](https://www.omdbapi.com/) and [Wikidata](https://www.wikidata.org/)
 - **Music**: [MusicBrainz](https://musicbrainz.org/) (via Cover Art Archive for images) + Embedded ID3 Tags
 
 ## How It Works
@@ -25,6 +25,15 @@ SoftMedia utilizes a **Strict Existence Check** pipeline:
 - **The Feature**: SoftMedia **only** applies metadata and downloads images for the seasons and episodes you actually have on disk.
 - **Benefit**: This prevents your database and disk from being cluttered with thousands of records and images for content you don't own, significantly saving storage space and bandwidth.
 
+### 4. Smart ID Lookup & Caching
+To prohibitively reduce API calls and improve performance (especially for paid tiers like OMDb), SoftMedia implements a **"Smart ID First"** strategy across all providers (OMDb, TVMaze, Wikidata). The lookup hierarchy is as follows:
+
+1.  **Cached ID (Priority 1)**: The system first checks your local `MetadataJson` for a specific provider ID (e.g., `imdbId`, `tvmazeId`). If found, it performs a **single direct lookup** (1 API call).
+2.  **Exact Match (Priority 2)**: If no ID is found, it attempts an "Exact Match" lookup (e.g., OMDb `t=` parameter) using the filename's title and year.
+3.  **Broad Search (Last Resort)**: Only if the exact match fails (or returns no results) does the system fall back to a broader "Search" (e.g., OMDb `s=` parameter), which is more resource-intensive.
+
+**Result**: This tiered approach ensures the vast majority of refreshes use only 1 API call, reserving expensive search operations for truly new or unrecognized content.
+
 ## Updates & Refreshing
 
 ### Manual Refresh
@@ -32,8 +41,12 @@ You can force a metadata update for any item via the "Refresh Metadata" button i
 - This will re-fetch the latest data from the provider.
 - It respects the same **Strict Existence Check** rules—it will never download images for missing episodes.
 
-### Automatic Refresh
-A background job runs periodically (configurable, default 24h) to keep your library up to date.
-- **Criteria**: It **only** targets TV Series that are marked as `Running` in their metadata.
-- **Purpose**: To fetch new episode air dates, season announcements, or status changes (e.g., if a show ends).
-- **Efficiency**: Ended shows (like *Breaking Bad*) are skipped to save resources.
+### Automatic RefreshStrategy
+A background service keeps your metadata fresh according to your preferences in **Settings > Scanning**.
+
+- **Interval**: Configurable in **Days** (Default: 30 days).
+- **Run on Startup**: Optional toggle (Default: Disabled) to prevent performance impact when restarting.
+- **Refresh Modes**:
+    1.  **Running (Default)**: Updates only TV Series marked as "Running". Efficient and fast.
+    2.  **Variable**: Updates text metadata (ratings, votes, cast) for **ALL** content but **skips image downloading**. Great for keeping ratings fresh without bandwidth usage.
+    3.  **All**: Performs a full update (text + images) for **ALL** content. Most comprehensive but resource-intensive.

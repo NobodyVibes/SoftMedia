@@ -476,7 +476,7 @@ public class TranscodeService
             }
 
             // Start FFmpeg (without subtitle burn-in since we're using sidecar)
-            var process = await StartFFmpegProcessAsync(session, seekPosition);
+            var process = StartFFmpegProcess(session, seekPosition);
             if (process == null)
             {
                 _logger.LogError("Failed to start FFmpeg for {MediaId}", mediaId);
@@ -580,7 +580,7 @@ public class TranscodeService
     /// <summary>
     /// Start FFmpeg process with current session settings
     /// </summary>
-    private async Task<Process?> StartFFmpegProcessAsync(TranscodeSession session, double? seekPosition)
+    private Process? StartFFmpegProcess(TranscodeSession session, double? seekPosition)
     {
         using var scope = _scopeFactory.CreateScope();
         var ffmpegService = scope.ServiceProvider.GetRequiredService<IFFmpegService>();

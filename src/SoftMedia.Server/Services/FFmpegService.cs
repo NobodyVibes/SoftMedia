@@ -719,10 +719,9 @@ public class FFmpegService : IFFmpegService
         const double MaxSlowSeekSeconds = 60.0;
         bool seekIsTooLarge = seekPosition.HasValue && seekPosition.Value > MaxSlowSeekSeconds;
         bool useFastSeek = !useTextSubtitles || seekIsTooLarge;
-        
-        if (seekIsTooLarge && useTextSubtitles)
+                if (seekIsTooLarge && useTextSubtitles)
         {
-            _logger.LogInformation("Using fast seek for large position {Seek}s (slow seek would be too slow)", seekPosition.Value);
+            _logger.LogInformation("Using fast seek for large position {Seek}s (slow seek would be too slow)", seekPosition ?? 0);
         }
         
         if (useFastSeek && seekPosition.HasValue && seekPosition.Value > 0)
@@ -834,7 +833,7 @@ public class FFmpegService : IFFmpegService
             {
                 // Bitmap subtitles (PGS, DVD): use overlay filter
                 // The [v] label captures the output for mapping
-                filterChain.Append($"[0:v][0:{subtitleTrackIndex.Value}]overlay");
+                filterChain.Append($"[0:v][0:{subtitleTrackIndex ?? 0}]overlay");
                 
                 // Add scaling if needed
                 if (!string.IsNullOrEmpty(scaleFilter))
@@ -866,7 +865,7 @@ public class FFmpegService : IFFmpegService
                     .Replace("'", @"\\'");
                 
                 // Build filter: subtitles filter with stream index, then optional scale
-                filterChain.Append($"subtitles='{escapedPath}':si={GetSubtitleStreamIndex(inputPath, subtitleTrackIndex!.Value)}");
+                filterChain.Append($"subtitles='{escapedPath}':si={GetSubtitleStreamIndex(inputPath, subtitleTrackIndex ?? 0)}");
                 
                 // Add scaling if needed (chain after subtitles)
                 if (!string.IsNullOrEmpty(scaleFilter))

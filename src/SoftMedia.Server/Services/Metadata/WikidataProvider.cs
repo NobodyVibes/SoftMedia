@@ -36,11 +36,40 @@ public class WikidataProvider : IMetadataProvider
                 return null;
             }
             
-            // SPARQL Query to find movie by title and get details
-            // Filters: instance of (P31) film (Q11424) or subclass
-            // Optional: Director (P57), Cast (P161), Pub Date (P577), Genre (P136), MPAA (P1657)
-            var sparqlQuery = $@"
-                SELECT DISTINCT ?item ?itemLabel ?year ?directorLabel ?genreLabel ?mpaaLabel ?description ?poster ?image WHERE {{
+            // Check for cached IMDb ID first
+            string itemSelector;
+            string? imdbId = null;
+            
+            if (!string.IsNullOrEmpty(item.MetadataJson))
+            {
+                try 
+                {
+                    using var existingDoc = JsonDocument.Parse(item.MetadataJson);
+                    if (existingDoc.RootElement.TryGetProperty("imdbId", out var idProp))
+                    {
+                        var id = idProp.GetString();
+                        if (!string.IsNullOrEmpty(id) && id.StartsWith("tt"))
+                        {
+                            imdbId = id;
+                        }
+                    }
+                }
+                catch {}
+            }
+
+            if (imdbId != null)
+            {
+                _logger.LogInformation($"Using cached IMDb ID for '{title}': {imdbId}");
+                // Direct lookup by IMDb ID (P345)
+                // Note: We don't strictly filter by Q11424 (film) here because the ID is specific enough, 
+                // but we might want to ensure it's a creative work if needed. For now, trusting the ID is safe.
+                itemSelector = $"?item wdt:P345 \"{imdbId}\" .";
+            }
+            else
+            {
+                // Fallback: SPARQL Text Search
+                // Filters: instance of (P31) film (Q11424) or subclass
+                itemSelector = $@"
                   SERVICE wikibase:mwapi {{
                       bd:serviceParam wikibase:api ""EntitySearch"" .
                       bd:serviceParam wikibase:endpoint ""www.wikidata.org"" .
@@ -49,6 +78,13 @@ public class WikidataProvider : IMetadataProvider
                       ?item wikibase:apiOutputItem mwapi:item .
                   }}
                   ?item wdt:P31/wdt:P279* wd:Q11424 .
+                ";
+            }
+            
+            // Optional: Director (P57), Cast (P161), Pub Date (P577), Genre (P136), MPAA (P1657)
+            var sparqlQuery = $@"
+                SELECT DISTINCT ?item ?itemLabel ?year ?directorLabel ?genreLabel ?mpaaLabel ?description ?poster ?image WHERE {{
+                  {itemSelector}
                   
                   OPTIONAL {{ ?item wdt:P577 ?pubDate . BIND(YEAR(?pubDate) AS ?year) }}
                   OPTIONAL {{ ?item wdt:P57 ?director . }}

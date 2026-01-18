@@ -35,6 +35,65 @@ public class TVMazeProvider : IMetadataProvider
                 _logger.LogWarning($"TVMaze rate limit exceeded for '{title}', request was queued too long");
                 return null;
             }
+
+            // 1. First, check for cached IDs in MetadataJson to skip search
+            if (!string.IsNullOrEmpty(item.MetadataJson))
+            {
+                try
+                {
+                    using var existingDoc = System.Text.Json.JsonDocument.Parse(item.MetadataJson);
+                    
+                    // Priority A: TVMaze ID (Native)
+                    if (existingDoc.RootElement.TryGetProperty("tvmazeId", out var idProp) && idProp.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    {
+                        var tvmazeId = idProp.GetInt32();
+                        _logger.LogInformation($"Using cached TVMaze ID for '{title}': {tvmazeId}");
+                        var directUrl = $"https://api.tvmaze.com/shows/{tvmazeId}";
+                        try 
+                        {
+                            var response = await _httpClient.GetStringAsync(directUrl);
+                            using var doc = System.Text.Json.JsonDocument.Parse(response);
+                            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Null)
+                            {
+                                return await ProcessShowMetadataAsync(doc.RootElement, title);
+                            }
+                        }
+                        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+                        {
+                            _logger.LogWarning($"Cached TVMaze ID {tvmazeId} not found, falling back to search");
+                        }
+                    } 
+                    
+                    // Priority B: IMDb ID (Lookup)
+                    else if (existingDoc.RootElement.TryGetProperty("imdbId", out var imdbProp))
+                    {
+                         var imdbId = imdbProp.GetString();
+                         if (!string.IsNullOrEmpty(imdbId) && imdbId.StartsWith("tt"))
+                         {
+                             _logger.LogInformation($"Using cached IMDb ID for '{title}': {imdbId}");
+                             var lookupUrl = $"https://api.tvmaze.com/lookup/shows?imdb={imdbId}";
+                             try
+                             {
+                                 var response = await _httpClient.GetStringAsync(lookupUrl);
+                                 // TVMaze lookup redirects to the show endpoint, so we get the Show object directly
+                                 using var doc = System.Text.Json.JsonDocument.Parse(response);
+                                 if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Null)
+                                 {
+                                     return await ProcessShowMetadataAsync(doc.RootElement, title);
+                                 }
+                             }
+                             catch (Exception ex)
+                             {
+                                  _logger.LogDebug(ex, "Failed lookup by IMDb ID");
+                             }
+                         }
+                    }
+                }
+                catch (Exception ex)
+                {
+                     _logger.LogDebug(ex, "Failed to parse existing metadata for ID check");
+                }
+            }
             
             // Use /search/shows endpoint to get multiple results for year-based disambiguation
             // Per TVMaze API: https://www.tvmaze.com/api#show-search
@@ -133,6 +192,18 @@ public class TVMazeProvider : IMetadataProvider
             
             var root = bestMatch.Value;
             
+            return await ProcessShowMetadataAsync(root, title);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Error fetching TVMaze for {title}");
+            var errorData = new Dictionary<string, string> { { "error", ex.Message }, { "stack", ex.StackTrace ?? "" } };
+            return System.Text.Json.JsonSerializer.Serialize(errorData);
+        }
+    }
+
+    private async Task<string> ProcessShowMetadataAsync(System.Text.Json.JsonElement root, string title)
+    {
             var metadata = new Dictionary<string, object>();
             
             // Store TVMaze show ID for season/episode lookups
@@ -380,12 +451,5 @@ public class TVMazeProvider : IMetadataProvider
             }
 
             return System.Text.Json.JsonSerializer.Serialize(metadata);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, $"Error fetching TVMaze for {title}");
-            var errorData = new Dictionary<string, string> { { "error", ex.Message }, { "stack", ex.StackTrace ?? "" } };
-            return System.Text.Json.JsonSerializer.Serialize(errorData);
-        }
     }
-}
+    }

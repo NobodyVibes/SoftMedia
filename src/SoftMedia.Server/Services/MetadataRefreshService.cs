@@ -9,11 +9,12 @@ namespace SoftMedia.Server.Services;
 /// Background service that periodically refreshes metadata for ongoing (Running) TV series.
 /// Can be triggered manually via TriggerRefreshNow() or runs on a configurable interval.
 /// </summary>
+
 public class MetadataRefreshService : BackgroundService
 {
     private readonly IServiceProvider _services;
     private readonly ILogger<MetadataRefreshService> _logger;
-    private readonly TimeSpan _initialDelay = TimeSpan.FromMinutes(5);
+    private readonly TimeSpan _initialDelay = TimeSpan.FromMinutes(1); // Short delay to check startup setting
     private TaskCompletionSource<bool>? _manualTrigger;
 
     public MetadataRefreshService(IServiceProvider services, ILogger<MetadataRefreshService> logger)
@@ -23,116 +24,164 @@ public class MetadataRefreshService : BackgroundService
     }
 
     /// <summary>
-    /// Triggers an immediate metadata refresh for ongoing series.
+    /// Triggers an immediate metadata refresh by enqueuing a job.
     /// </summary>
     public void TriggerRefreshNow()
     {
-        _logger.LogInformation("Manual metadata refresh triggered");
+        using var scope = _services.CreateScope();
+        var queueService = scope.ServiceProvider.GetRequiredService<ILibraryScanQueueService>();
+        queueService.EnqueueMetadataRefresh();
+        _logger.LogInformation("Manual metadata refresh enqueued");
+        
+        // Signal the loop in case it's waiting on a long interval
         _manualTrigger?.TrySetResult(true);
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        // Wait initial delay to avoid startup load
-        _logger.LogInformation("MetadataRefreshService starting, waiting {Delay} before first run", _initialDelay);
-        try
-        {
-            await Task.Delay(_initialDelay, stoppingToken);
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await RefreshRunningSeriesAsync(stoppingToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Metadata refresh failed");
-            }
-
-            // Wait for interval OR manual trigger
-            var intervalHours = await GetIntervalFromSettingsAsync();
-            if (intervalHours <= 0)
-            {
-                // Disabled - wait for manual trigger only
-                _logger.LogInformation("Metadata refresh interval disabled, waiting for manual trigger");
-                _manualTrigger = new TaskCompletionSource<bool>();
-                try
-                {
-                    await Task.WhenAny(_manualTrigger.Task, Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken));
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
-            else
-            {
-                _logger.LogInformation("Next metadata refresh in {Hours} hours", intervalHours);
-                _manualTrigger = new TaskCompletionSource<bool>();
-                try
-                {
-                    await Task.WhenAny(
-                        _manualTrigger.Task,
-                        Task.Delay(TimeSpan.FromHours(intervalHours), stoppingToken)
-                    );
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
-        }
-    }
-
-    private async Task<int> GetIntervalFromSettingsAsync()
-    {
-        using var scope = _services.CreateScope();
-        var settings = scope.ServiceProvider.GetRequiredService<ISettingsService>();
-        var setting = await settings.GetSettingAsync("MetadataRefreshIntervalHours");
-        return int.TryParse(setting?.Value, out var hours) ? hours : 24;
-    }
-
-    private async Task RefreshRunningSeriesAsync(CancellationToken ct)
+    /// <summary>
+    /// Executed by LibraryScanQueueService when processing a MetadataRefresh job
+    /// </summary>
+    public async Task RunRefreshJobAsync(LibraryScanJob job, CancellationToken ct)
     {
         using var scope = _services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var aggregator = scope.ServiceProvider.GetRequiredService<MetadataAggregator>();
+        var settings = scope.ServiceProvider.GetRequiredService<ISettingsService>();
+        var queueService = scope.ServiceProvider.GetRequiredService<ILibraryScanQueueService>();
 
-        // Find all series with status "Running" in their metadata
-        var runningSeries = await context.MediaItems
-            .Where(m => m.Type == MediaType.Series &&
-                        m.MetadataJson != null &&
-                        m.MetadataJson.Contains("\"status\":\"Running\""))
-            .ToListAsync(ct);
+        // Get Mode
+        var modeSetting = await settings.GetSettingAsync("MetadataRefreshMode");
+        var mode = modeSetting?.Value ?? "Running";
+        
+        _logger.LogInformation("Starting Metadata Refresh Job. Mode: {Mode}", mode);
 
-        _logger.LogInformation("Refreshing metadata for {Count} running series", runningSeries.Count);
+        // Update Job Status
+        queueService.UpdateProgress(job.Id, LibraryScanStage.Discovery, 0, 0);
+
+        List<MediaItem> candidates = new();
+
+        if (string.Equals(mode, "Running", StringComparison.OrdinalIgnoreCase))
+        {
+             candidates = await context.MediaItems
+                .Where(m => m.Type == MediaType.Series &&
+                            m.MetadataJson != null &&
+                            m.MetadataJson.Contains("\"status\":\"Running\""))
+                .ToListAsync(ct);
+        }
+        else if (string.Equals(mode, "Variable", StringComparison.OrdinalIgnoreCase) || 
+                 string.Equals(mode, "All", StringComparison.OrdinalIgnoreCase))
+        {
+             candidates = await context.MediaItems
+                .Where(m => (m.Type == MediaType.Series || m.Type == MediaType.Movie))
+                .ToListAsync(ct);
+        }
+
+        _logger.LogInformation("Found {Count} candidates for metadata refresh", candidates.Count);
+        
+        // Update Job with Total Files
+        queueService.UpdateProgress(job.Id, LibraryScanStage.Processing, 0, candidates.Count);
+
+        bool refreshImages = !string.Equals(mode, "Variable", StringComparison.OrdinalIgnoreCase);
 
         int successCount = 0;
         int failCount = 0;
+        int processed = 0;
 
-        foreach (var series in runningSeries)
+        foreach (var item in candidates)
         {
             if (ct.IsCancellationRequested) break;
             try
             {
-                await aggregator.EnrichMediaItemAsync(series, LibraryType.TV);
+                var libType = item.Type == MediaType.Movie ? LibraryType.Movie : LibraryType.TV;
+                await aggregator.EnrichMediaItemAsync(item, libType, deferImageCaching: false, refreshImages: refreshImages);
                 successCount++;
-                _logger.LogDebug("Refreshed: {Title}", series.Title);
+                _logger.LogDebug("Refreshed: {Title} (Images: {Images})", item.Title, refreshImages);
             }
             catch (Exception ex)
             {
                 failCount++;
-                _logger.LogWarning(ex, "Failed to refresh metadata for: {Title}", series.Title);
+                _logger.LogWarning(ex, "Failed to refresh metadata for: {Title}", item.Title);
+            }
+
+            processed++;
+            // Update progress every 5 items or on completion
+            if (processed % 5 == 0 || processed == candidates.Count)
+            {
+                queueService.UpdateProgress(job.Id, LibraryScanStage.Processing, processed, candidates.Count, item.Title);
             }
         }
 
         await context.SaveChangesAsync(ct);
-        _logger.LogInformation("Metadata refresh complete: {Success} succeeded, {Failed} failed", successCount, failCount);
+        
+        queueService.CompleteJob(job.Id, 0, successCount, 0, failCount);
+        _logger.LogInformation("Metadata refresh job complete: {Success} succeeded, {Failed} failed", successCount, failCount);
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _logger.LogInformation("MetadataRefreshService starting (Scheduler Mode)...");
+
+        // The ManualTrigger is now only used to wake up the scheduler if the user changes the interval
+        // NOT for running the scan itself (that goes through the queue)
+        _manualTrigger = new TaskCompletionSource<bool>();
+
+        // Initial startup check
+        bool runOnStartup = await GetStartupSettingAsync();
+        if (runOnStartup)
+        {
+            _logger.LogInformation("Startup refresh enabled. Enqueuing initial refresh...");
+            TriggerRefreshNow();
+        }
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var intervalDays = await GetIntervalDaysAsync();
+            
+            if (intervalDays <= 0)
+            {
+                _logger.LogInformation("Metadata refresh scheduler disabled.");
+                // Wait indefinitely until cancelled or manually woken up (e.g. config change)
+                try { await Task.WhenAny(_manualTrigger.Task, Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken)); }
+                catch (OperationCanceledException) { break; }
+            }
+            else
+            {
+                _logger.LogInformation("Next scheduled metadata refresh in {Days} days", intervalDays);
+                try 
+                { 
+                    await Task.WhenAny(_manualTrigger.Task, Task.Delay(TimeSpan.FromDays(intervalDays), stoppingToken)); 
+                } 
+                catch (OperationCanceledException) { break; }
+            }
+            
+            if (stoppingToken.IsCancellationRequested) break;
+
+            // If we woke up due to timeout (schedule), trigger a refresh
+            // If woke up due to manual trigger, we just loop around (TriggerRefreshNow already enqueued it)
+            if (_manualTrigger.Task.IsCompleted)
+            {
+                // Reset trigger
+                _manualTrigger = new TaskCompletionSource<bool>();
+            }
+            else
+            {
+                // Timeout fired -> Enqueue scheduled refresh
+                TriggerRefreshNow();
+            }
+        }
+    }
+    private async Task<int> GetIntervalDaysAsync()
+    {
+        using var scope = _services.CreateScope();
+        var settings = scope.ServiceProvider.GetRequiredService<ISettingsService>();
+        var setting = await settings.GetSettingAsync("MetadataRefreshIntervalDays");
+        return int.TryParse(setting?.Value, out var days) ? days : 30; // Default 30 days
+    }
+
+    private async Task<bool> GetStartupSettingAsync()
+    {
+        using var scope = _services.CreateScope();
+        var settings = scope.ServiceProvider.GetRequiredService<ISettingsService>();
+        var setting = await settings.GetSettingAsync("MetadataRefreshOnStartup");
+        return bool.TryParse(setting?.Value, out var val) && val;
     }
 }

@@ -16,6 +16,11 @@ public interface ILibraryScanQueueService
     LibraryScanJob EnqueueScan(Guid libraryId, string libraryName);
     
     /// <summary>
+    /// Enqueue a global metadata refresh job.
+    /// </summary>
+    LibraryScanJob EnqueueMetadataRefresh();
+    
+    /// <summary>
     /// Get the status of a specific scan job.
     /// </summary>
     LibraryScanJob? GetJobStatus(Guid jobId);
@@ -77,6 +82,7 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
         {
             var existingJob = _jobs.Values.FirstOrDefault(j => 
                 j.LibraryId == libraryId && 
+                j.Type == LibraryScanJobType.LibraryScan &&
                 (j.Status == LibraryScanStatus.Queued || j.Status == LibraryScanStatus.Running));
             
             if (existingJob != null)
@@ -88,6 +94,7 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
 
         var job = new LibraryScanJob
         {
+            Type = LibraryScanJobType.LibraryScan,
             LibraryId = libraryId,
             LibraryName = libraryName,
             Status = LibraryScanStatus.Queued,
@@ -95,13 +102,41 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
             StartedAt = DateTime.UtcNow
         };
 
+        return EnqueueJob(job);
+    }
+
+    public LibraryScanJob EnqueueMetadataRefresh()
+    {
+        // Check if Metadata Refresh is already running/queued
+        var existingJob = _jobs.Values.FirstOrDefault(j => 
+            j.Type == LibraryScanJobType.MetadataRefresh &&
+            (j.Status == LibraryScanStatus.Queued || j.Status == LibraryScanStatus.Running));
+
+        if (existingJob != null)
+        {
+            _logger.LogInformation("Metadata refresh is already in queue/running, returning existing job");
+            return existingJob;
+        }
+
+        var job = new LibraryScanJob
+        {
+            Type = LibraryScanJobType.MetadataRefresh,
+            LibraryId = Guid.Empty, // Global job
+            LibraryName = "Metadata Refresh",
+            Status = LibraryScanStatus.Queued,
+            Stage = LibraryScanStage.Pending,
+            StartedAt = DateTime.UtcNow
+        };
+
+        return EnqueueJob(job);
+    }
+
+    private LibraryScanJob EnqueueJob(LibraryScanJob job)
+    {
         _jobs[job.Id] = job;
         _queue.Enqueue(job);
-        
         UpdateQueuePositions();
-        
-        _logger.LogInformation("Enqueued scan for library {LibraryName} (Job ID: {JobId})", libraryName, job.Id);
-        
+        _logger.LogInformation("Enqueued job: {Type} for {Name} (Job ID: {JobId})", job.Type, job.LibraryName, job.Id);
         return job;
     }
 
@@ -128,9 +163,9 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
     {
         return _jobs.Values.Any(j => 
             j.LibraryId == libraryId && 
+            j.Type == LibraryScanJobType.LibraryScan &&
             (j.Status == LibraryScanStatus.Queued || j.Status == LibraryScanStatus.Running));
     }
-
     public void UpdateProgress(Guid jobId, LibraryScanStage stage, int processedFiles, int totalFiles,
         string? currentFile = null, int newItems = 0, int updatedItems = 0, int skippedItems = 0)
     {
@@ -245,19 +280,27 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
 
     private async Task ProcessScanJobAsync(LibraryScanJob job, CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Starting scan for library: {LibraryName} (Job ID: {JobId})", job.LibraryName, job.Id);
+        _logger.LogInformation("Starting job: {Type} - {Name} (Job ID: {JobId})", job.Type, job.LibraryName, job.Id);
 
         try
         {
             using var scope = _scopeFactory.CreateScope();
-            var fileScanner = scope.ServiceProvider.GetRequiredService<IFileScannerService>();
 
-            // Call the scanner with progress reporting
-            await fileScanner.ScanLibraryWithProgressAsync(job.LibraryId, job);
+            if (job.Type == LibraryScanJobType.LibraryScan)
+            {
+                var fileScanner = scope.ServiceProvider.GetRequiredService<IFileScannerService>();
+                await fileScanner.ScanLibraryWithProgressAsync(job.LibraryId, job);
+            }
+            else if (job.Type == LibraryScanJobType.MetadataRefresh)
+            {
+                var refreshService = scope.ServiceProvider.GetRequiredService<MetadataRefreshService>();
+                // We'll need to expose a method in MetadataRefreshService that takes the Job
+                await refreshService.RunRefreshJobAsync(job, stoppingToken);
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error scanning library {LibraryName}", job.LibraryName);
+            _logger.LogError(ex, "Error processing job {Name}", job.LibraryName);
             FailJob(job.Id, ex.Message);
         }
     }

@@ -146,14 +146,14 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
             var existingSeasons = await context.MediaItems
                 .AsNoTracking()
                 .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Season && m.SeasonNumber.HasValue)
-                .Select(m => m.SeasonNumber.Value)
+                .Select(m => m.SeasonNumber ?? 0)
                 .ToListAsync(ct);
             var existingSeasonsSet = new HashSet<int>(existingSeasons);
 
             var existingEpisodes = await context.MediaItems
                 .AsNoTracking()
                 .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Episode && m.SeasonNumber.HasValue && m.EpisodeNumber.HasValue)
-                .Select(m => new { Season = m.SeasonNumber.Value, Episode = m.EpisodeNumber.Value })
+                .Select(m => new { Season = m.SeasonNumber ?? 0, Episode = m.EpisodeNumber ?? 0 })
                 .ToListAsync(ct);
             var existingEpisodesSet = new HashSet<(int, int)>(existingEpisodes.Select(e => (e.Season, e.Episode)));
 

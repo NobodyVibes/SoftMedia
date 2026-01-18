@@ -30,11 +30,11 @@ public class MetadataAggregator
         _logger = logger;
     }
 
-    public async Task EnrichMediaItemAsync(MediaItem item, LibraryType type, bool deferImageCaching = false)
+    public async Task EnrichMediaItemAsync(MediaItem item, LibraryType type, bool deferImageCaching = false, bool refreshImages = true)
     {
         if (type == LibraryType.Music)
         {
-             await EnrichMusicItemAsync(item, deferImageCaching);
+             await EnrichMusicItemAsync(item, deferImageCaching, refreshImages);
              return;
         }
 
@@ -46,7 +46,7 @@ public class MetadataAggregator
 
             item.MetadataJson = json;
 
-            await ProcessMetadataJsonAsync(item, json, deferImageCaching);
+            await ProcessMetadataJsonAsync(item, json, deferImageCaching, refreshImages);
         }
         catch (Exception ex)
         {
@@ -54,7 +54,7 @@ public class MetadataAggregator
         }
     }
 
-    private async Task EnrichMusicItemAsync(MediaItem item, bool deferImageCaching = false)
+    private async Task EnrichMusicItemAsync(MediaItem item, bool deferImageCaching = false, bool refreshImages = true)
     {
         var primaryName = await _settingsService.GetSettingAsync("MusicProviderPrimary", "Embedded");
         var fallbackName = await _settingsService.GetSettingAsync("MusicProviderFallback", "MusicBrainz");
@@ -108,7 +108,7 @@ public class MetadataAggregator
             {
                 var finalJson = JsonSerializer.Serialize(primaryData);
                 item.MetadataJson = finalJson;
-                await ProcessMetadataJsonAsync(item, finalJson, deferImageCaching);
+                await ProcessMetadataJsonAsync(item, finalJson, deferImageCaching, refreshImages);
             }
             return;
         }
@@ -157,7 +157,7 @@ public class MetadataAggregator
         {
             var finalJson = JsonSerializer.Serialize(mergedData);
             item.MetadataJson = finalJson;
-            await ProcessMetadataJsonAsync(item, finalJson, deferImageCaching);
+            await ProcessMetadataJsonAsync(item, finalJson, deferImageCaching, refreshImages);
         }
     }
 
@@ -192,7 +192,7 @@ public class MetadataAggregator
         }
     }
 
-    private async Task ProcessMetadataJsonAsync(MediaItem item, string json, bool deferImageCaching = false)
+    private async Task ProcessMetadataJsonAsync(MediaItem item, string json, bool deferImageCaching = false, bool refreshImages = true)
     {
         // Parse and promote fields
         var metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
@@ -218,9 +218,9 @@ public class MetadataAggregator
                 item.ReleaseDate = releaseDate;
             }
             
-            // If deferring image caching, skip all image download operations
-            // Background service will handle image caching later
-            if (deferImageCaching)
+            // If deferring image caching OR explicitly disabled, skip all image download operations
+            // Background service will handle image caching later (if deferred) or never (if disabled)
+            if (deferImageCaching || !refreshImages)
             {
                 return;
             }
@@ -269,14 +269,14 @@ public class MetadataAggregator
                 var existingSeasons = await _context.MediaItems
                     .AsNoTracking()
                     .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Season && m.SeasonNumber.HasValue)
-                    .Select(m => m.SeasonNumber.Value)
+                    .Select(m => m.SeasonNumber ?? 0)
                     .ToListAsync();
                 var existingSeasonsSet = new HashSet<int>(existingSeasons);
 
                 var existingEpisodes = await _context.MediaItems
                     .AsNoTracking()
                     .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Episode && m.SeasonNumber.HasValue && m.EpisodeNumber.HasValue)
-                    .Select(m => new { Season = m.SeasonNumber.Value, Episode = m.EpisodeNumber.Value })
+                    .Select(m => new { Season = m.SeasonNumber ?? 0, Episode = m.EpisodeNumber ?? 0 })
                     .ToListAsync();
                 var existingEpisodesSet = new HashSet<(int, int)>(existingEpisodes.Select(e => (e.Season, e.Episode)));
 

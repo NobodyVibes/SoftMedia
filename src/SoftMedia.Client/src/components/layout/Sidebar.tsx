@@ -36,7 +36,7 @@ const settingsNavTree = [
         path: '/settings/library/libraries',
         children: [
             { id: 'libraries', label: 'Libraries', path: '/settings/library/libraries' },
-            { id: 'metadata', label: 'Metadata', path: '/settings/library/metadata' },
+            { id: 'metadata', label: 'Metadata Providers', path: '/settings/library/metadata-providers' },
         ]
     },
     { id: 'users', label: 'Account Management', icon: Users, path: '/settings/users' },

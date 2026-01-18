@@ -91,7 +91,9 @@ public class SettingsService : ISettingsService
             
             // Scanning
             new() { Key = "EnableFileWatcher", Value = "true", Group = "Scanning", Description = "Automatically detect new files and update library. Disable for manual scanning only." },
-            new() { Key = "MetadataRefreshIntervalHours", Value = "24", Group = "Scanning", Description = "Hours between automatic refresh of ongoing series metadata. 0 = disabled." },
+            new() { Key = "MetadataRefreshIntervalDays", Value = "30", Group = "Scanning", Description = "Days between automatic refresh of metadata. 0 = disabled." },
+            new() { Key = "MetadataRefreshMode", Value = "Running", Group = "Scanning", Description = "Running (active shows only), Variable (all metadata except images), or All (everything)." },
+            new() { Key = "MetadataRefreshOnStartup", Value = "false", Group = "Scanning", Description = "Run metadata refresh when server starts." },
             
             // Metadata
             new() { Key = "MovieProvider", Value = "Wikidata", Group = "Metadata", Description = "Primary API for Movie metadata." },
@@ -118,6 +120,17 @@ public class SettingsService : ISettingsService
                 _context.Settings.Add(def);
             }
         }
+        // Cleanup obsolete settings
+        var obsoleteKeys = new[] { "MetadataRefreshIntervalHours" };
+        foreach (var key in obsoleteKeys)
+        {
+            var obsolete = await _context.Settings.FindAsync(key);
+            if (obsolete != null)
+            {
+                _context.Settings.Remove(obsolete);
+            }
+        }
+        
         await _context.SaveChangesAsync();
     }
 }

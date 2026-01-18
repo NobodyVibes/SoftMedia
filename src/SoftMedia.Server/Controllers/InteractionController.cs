@@ -60,7 +60,7 @@ public class InteractionController : ControllerBase
         double? communityRating = null;
         if (ratings.Any())
         {
-            communityRating = ratings.Average(r => r.Value);
+            communityRating = ratings.Average(r => r ?? 0);
         }
 
         var mediaItem = await _context.MediaItems.FindAsync(mediaId);

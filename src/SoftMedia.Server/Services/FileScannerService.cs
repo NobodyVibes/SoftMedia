@@ -473,9 +473,9 @@ public class FileScannerService : IFileScannerService
                                             if (s.TryGetProperty("number", out var n) && n.GetInt32() == season)
                                             {
                                                 var meta = new Dictionary<string, object>();
-                                                if (s.TryGetProperty("poster", out var p)) meta["poster"] = p.GetString();
-                                                if (s.TryGetProperty("summary", out var sum)) meta["overview"] = sum.GetString();
-                                                if (s.TryGetProperty("premiereDate", out var pd)) meta["premiereDate"] = pd.GetString();
+                                                if (s.TryGetProperty("poster", out var p)) meta["poster"] = p.GetString() ?? string.Empty;
+                                                if (s.TryGetProperty("summary", out var sum)) meta["overview"] = sum.GetString() ?? string.Empty;
+                                                if (s.TryGetProperty("premiereDate", out var pd)) meta["premiereDate"] = pd.GetString() ?? string.Empty;
                                                 if (s.TryGetProperty("episodeCount", out var ec)) meta["episodeCount"] = ec.GetInt32();
                                                 if(meta.Count > 0)
                                                 {

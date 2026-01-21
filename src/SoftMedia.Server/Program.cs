@@ -33,10 +33,6 @@ builder.Services.AddScoped<SoftMedia.Server.Services.Scanning.IMediaScanner, Sof
 builder.Services.AddScoped<SoftMedia.Server.Services.Scanning.IMediaScanner, SoftMedia.Server.Services.Scanning.MovieScanner>();
 builder.Services.AddScoped<IMusicImageService, MusicImageService>();
 
-// Keep legacy FileScannerService for now (gradual migration)
-// TODO: Remove after full scanner migration is verified
-builder.Services.AddScoped<IFileScannerService, FileScannerService>();
-
 builder.Services.AddSingleton<LibraryScanQueueService>();
 builder.Services.AddSingleton<ILibraryScanQueueService>(sp => sp.GetRequiredService<LibraryScanQueueService>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<LibraryScanQueueService>());

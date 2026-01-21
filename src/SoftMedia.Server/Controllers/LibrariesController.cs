@@ -16,20 +16,20 @@ namespace SoftMedia.Server.Controllers;
 public class LibrariesController : ControllerBase
 {
     private readonly AppDbContext _context;
-    private readonly IFileScannerService _fileScanner;
     private readonly ILibraryScanQueueService _scanQueueService;
     private readonly ImageCacheService _imageCacheService;
+    private readonly LibraryWatcher _libraryWatcher;
 
     public LibrariesController(
         AppDbContext context, 
-        IFileScannerService fileScanner, 
         ILibraryScanQueueService scanQueueService,
-        ImageCacheService imageCacheService)
+        ImageCacheService imageCacheService,
+        LibraryWatcher libraryWatcher)
     {
         _context = context;
-        _fileScanner = fileScanner;
         _scanQueueService = scanQueueService;
         _imageCacheService = imageCacheService;
+        _libraryWatcher = libraryWatcher;
     }
 
     [HttpGet]
@@ -143,6 +143,9 @@ public class LibrariesController : ControllerBase
         {
             return NotFound();
         }
+
+        // Remove file watchers for this library
+        _libraryWatcher.RemoveWatchersForLibrary(id);
 
         // Get all media items with their types for image cleanup
         var mediaItemsToCleanup = await _context.MediaItems

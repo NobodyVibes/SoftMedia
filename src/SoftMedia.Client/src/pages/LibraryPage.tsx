@@ -57,7 +57,8 @@ export default function LibraryPage() {
                 minRating,
                 isFavorite,
                 watched,
-                viewMode: library?.type === 'Music' ? viewMode : undefined
+                // Always send viewMode - backend will ignore for non-music libraries
+                viewMode: viewMode
             };
             // Clean undefined/null params
             Object.keys(params).forEach(key => (params[key] === null || params[key] === '') && delete params[key]);

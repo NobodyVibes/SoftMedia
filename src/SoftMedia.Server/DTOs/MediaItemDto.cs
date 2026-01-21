@@ -226,6 +226,32 @@ public class MediaItemDto
                  dto.PosterPath = $"/api/v1/audio/{dto.Id}/cover";
             }
 
+            // Fallback to CoverArtPath for music items (albums, artists)
+            if (string.IsNullOrEmpty(dto.PosterPath) && !string.IsNullOrEmpty(item.CoverArtPath))
+            {
+                // Use the music image endpoint which handles local files safely
+                if (item.Type == MediaType.Album)
+                {
+                    dto.PosterPath = $"/api/v1/music/album/{dto.Id}/cover";
+                }
+                else if (item.Type == MediaType.Artist)
+                {
+                    dto.PosterPath = $"/api/v1/music/artist/{dto.Id}/image";
+                }
+            }
+
+            // For albums without CoverArtPath, still try the endpoint (may have embedded or remote art)
+            if (string.IsNullOrEmpty(dto.PosterPath) && item.Type == MediaType.Album)
+            {
+                dto.PosterPath = $"/api/v1/music/album/{dto.Id}/cover";
+            }
+
+            // For audio tracks, use their album's cover art endpoint
+            if (string.IsNullOrEmpty(dto.PosterPath) && item.Type == MediaType.Audio && item.AlbumId.HasValue)
+            {
+                dto.PosterPath = $"/api/v1/music/album/{item.AlbumId}/cover";
+            }
+
             // Fallback for Duration if not in metadata but in technical details
             if (string.IsNullOrEmpty(dto.Duration) && item.Duration > 0)
             {

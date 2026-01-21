@@ -288,8 +288,27 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
 
             if (job.Type == LibraryScanJobType.LibraryScan)
             {
-                var fileScanner = scope.ServiceProvider.GetRequiredService<IFileScannerService>();
-                await fileScanner.ScanLibraryWithProgressAsync(job.LibraryId, job);
+                // Use new scanner orchestrator with progress adapter
+                var orchestrator = scope.ServiceProvider.GetRequiredService<Scanning.IScannerOrchestrator>();
+                
+                // Create synchronous progress adapter (Progress<T> is async and may not fire before CompleteJob)
+                var lastProgress = new Scanning.ScanProgress(0, 0, null, "Starting");
+                var progress = new SyncProgress<Scanning.ScanProgress>(p =>
+                {
+                    job.Stage = LibraryScanStage.Processing;
+                    job.ProcessedFiles = p.ProcessedCount;
+                    job.TotalFiles = p.TotalCount;
+                    job.CurrentFile = p.CurrentFileName;
+                    job.NewItems = p.NewCount;
+                    job.UpdatedItems = p.UpdatedCount;
+                    job.SkippedItems = p.SkippedCount;
+                    lastProgress = p;
+                });
+                
+                await orchestrator.ScanLibraryAsync(job.LibraryId, progress, stoppingToken);
+                
+                // Mark as complete using the LAST captured progress (guaranteed synchronous)
+                CompleteJob(job.Id, lastProgress.NewCount, lastProgress.UpdatedCount, lastProgress.SkippedCount, job.ErrorCount);
             }
             else if (job.Type == LibraryScanJobType.MetadataRefresh)
             {
@@ -303,6 +322,16 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
             _logger.LogError(ex, "Error processing job {Name}", job.LibraryName);
             FailJob(job.Id, ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Synchronous IProgress implementation to ensure callbacks run immediately.
+    /// </summary>
+    private class SyncProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> _handler;
+        public SyncProgress(Action<T> handler) => _handler = handler;
+        public void Report(T value) => _handler(value);
     }
 
     private void CleanupOldJobs()

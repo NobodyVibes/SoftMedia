@@ -1,0 +1,500 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using SoftMedia.Server.Data;
+using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Abstractions;
+using TagLib;
+
+namespace SoftMedia.Server.Services.Scanning;
+
+/// <summary>
+/// Scanner for music libraries. Handles artist/album/track hierarchy.
+/// </summary>
+public class MusicScanner : BaseMediaScanner
+{
+    private readonly IBackgroundImageCacheService _backgroundImageCache;
+
+    // Session caches to avoid duplicate entity creation
+    private Dictionary<string, MediaItem> _artistCache = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<(Guid ArtistId, string AlbumName), MediaItem> _albumCache = new();
+
+    // Local cover art filenames to check (in priority order)
+    private static readonly string[] LocalCoverNames =
+    {
+        "cover.jpg", "cover.png", "cover.webp",
+        "folder.jpg", "folder.png",
+        "album.jpg", "album.png",
+        "front.jpg", "front.png"
+    };
+
+    // Subdirectories to check for cover art (in priority order)
+    private static readonly string[] CoverSubdirectories =
+    {
+        "Covers", "Cover", "Artwork", "Art", "Scans", "Images", "CD"
+    };
+
+    // Supported audio extensions
+    private static readonly string[] AudioExtensions =
+    {
+        "mp3", "flac", "aac", "m4a", "ogg", "wma", "wav", "ape", "alac"
+    };
+
+    public override LibraryType SupportedType => LibraryType.Music;
+    public override string[] SupportedExtensions => AudioExtensions;
+    public override string DisplayName => "Music Scanner";
+
+    public MusicScanner(
+        IServiceScopeFactory scopeFactory,
+        ILogger<MusicScanner> logger,
+        IMediaNotificationService notificationService,
+        IBackgroundImageCacheService backgroundImageCache)
+        : base(scopeFactory, logger, notificationService)
+    {
+        _backgroundImageCache = backgroundImageCache;
+    }
+
+    /// <summary>
+    /// Override to clear session caches at start of scan.
+    /// </summary>
+    public override async Task ScanLibraryAsync(
+        Library library,
+        IProgress<ScanProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        // Clear session caches
+        _artistCache.Clear();
+        _albumCache.Clear();
+
+        await base.ScanLibraryAsync(library, progress, cancellationToken);
+    }
+
+    /// <summary>
+    /// Process a single audio file.
+    /// </summary>
+    protected override async Task<ScanResult> ProcessFileAsync(
+        AppDbContext context,
+        string filePath,
+        MediaItem? existing,
+        Library library,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Parse metadata using TagLib
+            using var tagFile = TagLib.File.Create(filePath);
+            var tag = tagFile.Tag;
+
+            var artistName = GetFirstOrDefault(tag.AlbumArtists) 
+                ?? GetFirstOrDefault(tag.Performers) 
+                ?? "Unknown Artist";
+            var albumName = tag.Album ?? "Unknown Album";
+            var trackTitle = tag.Title ?? Path.GetFileNameWithoutExtension(filePath);
+
+            // Get or create artist
+            var artist = await EnsureArtistAsync(context, artistName, library, filePath, cancellationToken);
+
+            // Get or create album
+            var album = await EnsureAlbumAsync(context, albumName, artist, library, filePath, tagFile, cancellationToken);
+
+            // Create or update track
+            var isNew = existing == null;
+            var track = existing ?? new MediaItem { LibraryId = library.Id };
+
+            track.Title = trackTitle;
+            track.SortTitle = SortableTitle(trackTitle);
+            track.Path = filePath;
+            track.Type = MediaType.Audio;
+            track.ArtistId = artist.Id;
+            track.AlbumId = album.Id;
+            track.TrackNumber = (int?)tag.Track > 0 ? (int)tag.Track : null;
+            track.DiscNumber = (int?)tag.Disc > 0 ? (int)tag.Disc : null;
+            track.Year = (int?)tag.Year > 0 ? (int)tag.Year : null;
+            track.Duration = tagFile.Properties.Duration.TotalSeconds;
+            track.Size = new FileInfo(filePath).Length;
+            track.DateModified = System.IO.File.GetLastWriteTimeUtc(filePath);
+
+            // Audio codec info
+            track.AudioCodec = tagFile.Properties.Codecs
+                .FirstOrDefault(c => c is TagLib.ICodec)?.Description ?? "Unknown";
+
+            if (isNew)
+            {
+                context.MediaItems.Add(track);
+                _logger.LogDebug("[MusicScanner] Added track: {Title} by {Artist}",
+                    track.Title, artistName);
+                return ScanResult.New;
+            }
+            else
+            {
+                _logger.LogDebug("[MusicScanner] Updated track: {Title}", track.Title);
+                return ScanResult.Updated;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[MusicScanner] Error processing audio file: {FilePath}", filePath);
+            return ScanResult.Skipped;
+        }
+    }
+
+    /// <summary>
+    /// Get or create an artist entity.
+    /// </summary>
+    private async Task<MediaItem> EnsureArtistAsync(
+        AppDbContext context,
+        string artistName,
+        Library library,
+        string trackPath,
+        CancellationToken cancellationToken)
+    {
+        // Check session cache first
+        if (_artistCache.TryGetValue(artistName, out var cached))
+            return cached;
+
+        // Check EF Core local cache (entities added but not yet saved)
+        var localArtist = context.MediaItems.Local
+            .FirstOrDefault(m => 
+                m.Title.Equals(artistName, StringComparison.OrdinalIgnoreCase) &&
+                m.Type == MediaType.Artist &&
+                m.LibraryId == library.Id);
+
+        if (localArtist != null)
+        {
+            _artistCache[artistName] = localArtist;
+            return localArtist;
+        }
+
+        // Check database
+        var artist = await context.MediaItems
+            .FirstOrDefaultAsync(m =>
+                m.Title == artistName &&
+                m.Type == MediaType.Artist &&
+                m.LibraryId == library.Id,
+                cancellationToken);
+
+        if (artist != null)
+        {
+            _artistCache[artistName] = artist;
+            return artist;
+        }
+
+        // Create new artist
+        artist = new MediaItem
+        {
+            LibraryId = library.Id,
+            Title = artistName,
+            SortTitle = SortableTitle(artistName),
+            Path = Path.GetDirectoryName(trackPath) ?? trackPath,
+            Type = MediaType.Artist,
+            DateModified = DateTime.UtcNow
+        };
+
+        // Check for local artist image
+        var artistDir = Path.GetDirectoryName(trackPath);
+        if (artistDir != null)
+        {
+            var parentDir = Path.GetDirectoryName(artistDir);
+            if (parentDir != null)
+            {
+                var artistImage = FindArtistImage(parentDir);
+                if (artistImage != null)
+                {
+                    artist.CoverArtPath = artistImage;
+                    _logger.LogDebug("[MusicScanner] Found artist image: {Path}", artistImage);
+                }
+            }
+        }
+
+        context.MediaItems.Add(artist);
+        _artistCache[artistName] = artist;
+        _logger.LogInformation("[MusicScanner] Created artist: {ArtistName}", artistName);
+
+        return artist;
+    }
+
+    /// <summary>
+    /// Get or create an album entity.
+    /// </summary>
+    private async Task<MediaItem> EnsureAlbumAsync(
+        AppDbContext context,
+        string albumName,
+        MediaItem artist,
+        Library library,
+        string trackPath,
+        TagLib.File tagFile,
+        CancellationToken cancellationToken)
+    {
+        var cacheKey = (artist.Id, albumName);
+        
+        // Check session cache first
+        if (_albumCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
+        // Check EF Core local cache (entities added but not yet saved)
+        var localAlbum = context.MediaItems.Local
+            .FirstOrDefault(m => 
+                m.Title.Equals(albumName, StringComparison.OrdinalIgnoreCase) &&
+                m.ArtistId == artist.Id &&
+                m.Type == MediaType.Album &&
+                m.LibraryId == library.Id);
+
+        if (localAlbum != null)
+        {
+            _albumCache[cacheKey] = localAlbum;
+            return localAlbum;
+        }
+
+        // Check database
+        var album = await context.MediaItems
+            .FirstOrDefaultAsync(m =>
+                m.Title == albumName &&
+                m.ArtistId == artist.Id &&
+                m.Type == MediaType.Album &&
+                m.LibraryId == library.Id,
+                cancellationToken);
+
+        if (album != null)
+        {
+            _albumCache[cacheKey] = album;
+            return album;
+        }
+
+        // Create new album
+        var albumDir = Path.GetDirectoryName(trackPath) ?? trackPath;
+        album = new MediaItem
+        {
+            LibraryId = library.Id,
+            Title = albumName,
+            SortTitle = SortableTitle(albumName),
+            Path = albumDir,
+            Type = MediaType.Album,
+            ArtistId = artist.Id,
+            Year = (int?)tagFile.Tag.Year > 0 ? (int)tagFile.Tag.Year : null,
+            DateModified = DateTime.UtcNow
+        };
+
+        // Resolve cover art (priority: local file > embedded > deferred)
+        await ResolveAlbumCoverAsync(album, albumDir, tagFile, cancellationToken);
+
+        context.MediaItems.Add(album);
+        _albumCache[cacheKey] = album;
+        _logger.LogInformation("[MusicScanner] Created album: {AlbumName} by {ArtistName}",
+            albumName, artist.Title);
+
+        return album;
+    }
+
+    /// <summary>
+    /// Resolve album cover art from local files, embedded art, or queue for remote fetch.
+    /// </summary>
+    private async Task ResolveAlbumCoverAsync(
+        MediaItem album,
+        string albumDir,
+        TagLib.File tagFile,
+        CancellationToken cancellationToken)
+    {
+        // 1. Check for local cover art
+        var localCover = FindLocalCoverArt(albumDir);
+        if (localCover != null)
+        {
+            album.CoverArtPath = localCover;
+            _logger.LogInformation("[MusicScanner] Found local cover for {Album}: {Path}", album.Title, localCover);
+            return;
+        }
+
+        // 2. Try to extract embedded cover
+        var pictures = tagFile.Tag.Pictures;
+        _logger.LogInformation("[MusicScanner] Album {Album} has {Count} embedded pictures", album.Title, pictures.Length);
+        
+        if (pictures.Length > 0)
+        {
+            var coverPic = pictures.FirstOrDefault(p =>
+                p.Type == PictureType.FrontCover ||
+                p.Type == PictureType.Other) ?? pictures[0];
+
+            // Extract to cache
+            var cacheDir = Path.Combine(
+                Environment.CurrentDirectory,
+                "wwwroot", "cache", "images", "music");
+            Directory.CreateDirectory(cacheDir);
+
+            var extension = GetImageExtension(coverPic.MimeType);
+            var cachePath = Path.Combine(cacheDir, $"{album.Id}{extension}");
+
+            try
+            {
+                await System.IO.File.WriteAllBytesAsync(cachePath, coverPic.Data.Data, cancellationToken);
+                album.CoverArtPath = cachePath;
+                _logger.LogInformation("[MusicScanner] Extracted embedded cover for {Album}: {Path}", album.Title, cachePath);
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[MusicScanner] Failed to extract embedded cover for album {Album}",
+                    album.Title);
+            }
+        }
+
+        // 3. Queue for background fetch (MusicBrainz)
+        // Will be handled after SaveChangesAsync when the album has a valid ID
+        _backgroundImageCache.QueueImageCaching(album.Id);
+        _logger.LogInformation("[MusicScanner] Queued album for background cover fetch: {Album}", album.Title);
+    }
+
+    /// <summary>
+    /// Find local cover art file in the album directory or common subdirectories.
+    /// </summary>
+    private string? FindLocalCoverArt(string albumDirectory)
+    {
+        if (!Directory.Exists(albumDirectory))
+            return null;
+
+        // First, check the album directory itself
+        var result = SearchDirectoryForCover(albumDirectory);
+        if (result != null)
+            return result;
+
+        // Then check common subdirectories
+        foreach (var subdir in CoverSubdirectories)
+        {
+            var subdirPath = Path.Combine(albumDirectory, subdir);
+            if (Directory.Exists(subdirPath))
+            {
+                result = SearchDirectoryForCover(subdirPath);
+                if (result != null)
+                    return result;
+            }
+            
+            // Also try case-insensitive match for the subdirectory on Windows
+            if (OperatingSystem.IsWindows())
+            {
+                try
+                {
+                    var matchingDirs = Directory.GetDirectories(albumDirectory, subdir, SearchOption.TopDirectoryOnly);
+                    foreach (var matchedDir in matchingDirs)
+                    {
+                        result = SearchDirectoryForCover(matchedDir);
+                        if (result != null)
+                            return result;
+                    }
+                }
+                catch { /* Ignore access errors */ }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Search a single directory for cover art files.
+    /// </summary>
+    private string? SearchDirectoryForCover(string directory)
+    {
+        foreach (var name in LocalCoverNames)
+        {
+            var path = Path.Combine(directory, name);
+            if (System.IO.File.Exists(path))
+                return path;
+
+            // Case-insensitive check on Windows
+            if (OperatingSystem.IsWindows())
+            {
+                try
+                {
+                    var files = Directory.GetFiles(directory, name, SearchOption.TopDirectoryOnly);
+                    if (files.Length > 0)
+                        return files[0];
+                }
+                catch { /* Ignore access errors */ }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Find artist image in the artist directory.
+    /// </summary>
+    private string? FindArtistImage(string artistDirectory)
+    {
+        if (!Directory.Exists(artistDirectory))
+            return null;
+
+        var artistImages = new[] { "artist.jpg", "artist.png", "folder.jpg" };
+        foreach (var name in artistImages)
+        {
+            var path = Path.Combine(artistDirectory, name);
+            if (System.IO.File.Exists(path))
+                return path;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Cleanup empty albums and artists.
+    /// </summary>
+    protected override async Task CleanupEmptyContainersAsync(
+        AppDbContext context,
+        Library library,
+        CancellationToken cancellationToken)
+    {
+        // Find albums with no tracks
+        var emptyAlbums = await context.MediaItems
+            .Where(m => m.LibraryId == library.Id && m.Type == MediaType.Album)
+            .Where(album => !context.MediaItems.Any(t =>
+                t.Type == MediaType.Audio && t.AlbumId == album.Id))
+            .ToListAsync(cancellationToken);
+
+        if (emptyAlbums.Count > 0)
+        {
+            _logger.LogInformation("[MusicScanner] Removing {Count} empty albums", emptyAlbums.Count);
+            context.MediaItems.RemoveRange(emptyAlbums);
+        }
+
+        // Find artists with no tracks
+        var emptyArtists = await context.MediaItems
+            .Where(m => m.LibraryId == library.Id && m.Type == MediaType.Artist)
+            .Where(artist => !context.MediaItems.Any(t =>
+                t.Type == MediaType.Audio && t.ArtistId == artist.Id))
+            .ToListAsync(cancellationToken);
+
+        if (emptyArtists.Count > 0)
+        {
+            _logger.LogInformation("[MusicScanner] Removing {Count} empty artists", emptyArtists.Count);
+            context.MediaItems.RemoveRange(emptyArtists);
+        }
+    }
+
+    /// <summary>
+    /// Get image file extension from MIME type.
+    /// </summary>
+    private static string GetImageExtension(string mimeType) => mimeType.ToLowerInvariant() switch
+    {
+        "image/png" => ".png",
+        "image/webp" => ".webp",
+        "image/gif" => ".gif",
+        _ => ".jpg"
+    };
+
+    /// <summary>
+    /// Get first non-null value from array or null.
+    /// </summary>
+    private static string? GetFirstOrDefault(string[] values) =>
+        values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+
+    /// <summary>
+    /// Create a sortable version of a title (removes leading "The ", "A ", etc.)
+    /// </summary>
+    private static string SortableTitle(string title)
+    {
+        if (title.StartsWith("The ", StringComparison.OrdinalIgnoreCase))
+            return title[4..];
+        if (title.StartsWith("A ", StringComparison.OrdinalIgnoreCase))
+            return title[2..];
+        if (title.StartsWith("An ", StringComparison.OrdinalIgnoreCase))
+            return title[3..];
+        return title;
+    }
+}

@@ -15,6 +15,7 @@ public class LibraryWatcher : BackgroundService, IDisposable
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<LibraryWatcher> _logger;
     private readonly List<FileSystemWatcher> _watchers = new();
+    private readonly Dictionary<Guid, List<FileSystemWatcher>> _libraryWatchers = new();
     
     // Track pending files with their last known size and timestamp
     private readonly ConcurrentDictionary<string, PendingFile> _pendingFiles = new();
@@ -56,6 +57,43 @@ public class LibraryWatcher : BackgroundService, IDisposable
         };
         _logger.LogInformation("Retrying file: {Path}", path);
         return true;
+    }
+
+    /// <summary>
+    /// Removes all file watchers for a specific library.
+    /// Called when a library is deleted.
+    /// </summary>
+    public void RemoveWatchersForLibrary(Guid libraryId)
+    {
+        lock (_libraryWatchers)
+        {
+            if (_libraryWatchers.TryGetValue(libraryId, out var watchers))
+            {
+                foreach (var watcher in watchers)
+                {
+                    watcher.EnableRaisingEvents = false;
+                    watcher.Dispose();
+                    _watchers.Remove(watcher);
+                    _logger.LogInformation("Removed watcher for deleted library {LibraryId}: {Path}", 
+                        libraryId, watcher.Path);
+                }
+                _libraryWatchers.Remove(libraryId);
+            }
+        }
+
+        // Also clean up any pending files for this library
+        var filesToRemove = _pendingFiles
+            .Where(kvp => kvp.Value.LibraryId == libraryId)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var path in filesToRemove)
+        {
+            _pendingFiles.TryRemove(path, out _);
+        }
+
+        // Remove from scan queue
+        _librariesToScan.TryRemove(libraryId, out _);
     }
 
     private class PendingFile
@@ -160,6 +198,14 @@ public class LibraryWatcher : BackgroundService, IDisposable
 
             watcher.EnableRaisingEvents = true;
             _watchers.Add(watcher);
+
+            // Track watcher by library ID for cleanup
+            lock (_libraryWatchers)
+            {
+                if (!_libraryWatchers.ContainsKey(libraryId))
+                    _libraryWatchers[libraryId] = new List<FileSystemWatcher>();
+                _libraryWatchers[libraryId].Add(watcher);
+            }
             _logger.LogInformation("Watching directory: {Path} for library {LibraryId}", path, libraryId);
         }
         catch (Exception ex)

@@ -65,6 +65,12 @@ public class MediaItem
     public Guid? AlbumId { get; set; }
     public MediaItem? Album { get; set; }
 
+    /// <summary>
+    /// Path to cover art file (for albums/artists) or cached extraction.
+    /// SECURITY: Must be validated before file access to prevent path traversal.
+    /// </summary>
+    public string? CoverArtPath { get; set; }
+
     public int? TrackNumber { get; set; }
     public int? DiscNumber { get; set; }
 }
@@ -82,5 +88,6 @@ public enum MediaType
     // New Types
     Season = 7,
     Artist = 8,
-    Album = 9
+    Album = 9,
+    Track = 10
 }

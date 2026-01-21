@@ -102,6 +102,8 @@ public class ImageCacheService
             Models.MediaType.Episode => $"tv/{mediaItemId}",
             Models.MediaType.Movie => $"movies/{mediaItemId}",
             Models.MediaType.Audio => $"music/{mediaItemId}",
+            Models.MediaType.Album => $"music/{mediaItemId}",
+            Models.MediaType.Artist => $"music/{mediaItemId}",
             _ => null
         };
         

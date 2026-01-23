@@ -140,10 +140,27 @@ public class StreamPlanService : IStreamPlanService
 
         // Probe the source file
         var probe = await _ffmpegService.ProbeMediaAsync(mediaItem.Path);
+        
+        // If probing failed, try to fallback to DB metadata if available
         if (probe == null)
         {
-            _logger.LogWarning("Could not probe media {Id}, defaulting to transcode", mediaId);
-            return CreateTranscodePlan(mediaId, mediaItem, sanitizedCaps, token, "Unable to probe source file", outputCodecSetting, effectivePreserveHdr, false, enableAV1);
+            bool hasDbMetadata = !string.IsNullOrEmpty(mediaItem.VideoCodec) && !string.IsNullOrEmpty(mediaItem.Container);
+            if (!hasDbMetadata)
+            {
+                _logger.LogWarning("Could not probe media {Id} and no DB metadata available, defaulting to transcode", mediaId);
+                return CreateTranscodePlan(mediaId, mediaItem, sanitizedCaps, token, "Unable to probe source file", outputCodecSetting, effectivePreserveHdr, false, enableAV1);
+            }
+            
+            _logger.LogWarning("Live probe failed for {Id}, using cached DB metadata", mediaId);
+            // Create a dummy probe result from DB data to reuse logic below
+            probe = new MediaProbeResult
+            {
+                VideoCodec = mediaItem.VideoCodec,
+                AudioCodec = mediaItem.AudioCodec,
+                Resolution = mediaItem.Resolution,
+                PixelFormat = "yuv420p", // Assumption for fallback
+                Duration = mediaItem.Duration
+            };
         }
 
         var sourceVideoCodec = NormalizeCodecName(mediaItem.VideoCodec ?? probe.VideoCodec ?? "");

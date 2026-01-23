@@ -5,6 +5,9 @@ using Moq;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services;
 using SoftMedia.Server.Services.Metadata;
+using SoftMedia.Server.Services.Metadata;
+using SoftMedia.Server.Data;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace SoftMedia.Server.Tests;
@@ -16,6 +19,8 @@ public class MetadataAggregatorTests
     private readonly Mock<IMetadataProvider> _embeddedProviderMock;
     private readonly Mock<IMetadataProvider> _mbProviderMock;
     private readonly Mock<ImageCacheService> _imageCacheMock;
+    private readonly Mock<IMetadataRouter> _metadataRouterMock;
+    private readonly AppDbContext _context;
     private readonly List<IMetadataProvider> _providers;
     private readonly MetadataAggregator _aggregator;
 
@@ -41,7 +46,17 @@ public class MetadataAggregatorTests
 
         _providers = new List<IMetadataProvider> { _embeddedProviderMock.Object, _mbProviderMock.Object };
         
-        _aggregator = new MetadataAggregator(_providers, _settingsMock.Object, _imageCacheMock.Object, _loggerMock.Object);
+        _metadataRouterMock = new Mock<IMetadataRouter>();
+        // Mock AppDbContext not easily mockable without in-memory options, but lets try null or strict mock if allowed. 
+        // Better: use InMemory DB logic like StreamControllerTests?
+        // Or just pass null if not used in the test case?
+        // EnrichMediaItemAsync MIGHT use context.
+        var dbOptions = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"TestDb_{Guid.NewGuid()}")
+            .Options;
+        _context = new AppDbContext(dbOptions);
+
+        _aggregator = new MetadataAggregator(_providers, _metadataRouterMock.Object, _settingsMock.Object, _imageCacheMock.Object, _context, _loggerMock.Object);
 
         // Default settings
         _settingsMock.Setup(s => s.GetSettingAsync("MusicProviderPrimary", "Embedded"))

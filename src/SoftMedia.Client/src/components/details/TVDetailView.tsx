@@ -31,14 +31,25 @@ function LoadingImage({
 }) {
     const [loaded, setLoaded] = useState(false);
     const [error, setError] = useState(false);
+    const prevSrcRef = useRef<string | null | undefined>(src);
+    const [displaySrc, setDisplaySrc] = useState(src);
 
-    // Reset state when src changes
+    // Only reset state when src actually changes to a different value
     useEffect(() => {
-        setLoaded(false);
-        setError(false);
+        if (src !== prevSrcRef.current) {
+            prevSrcRef.current = src;
+            // Keep showing the old image until new one loads
+            if (src) {
+                setLoaded(false);
+                setError(false);
+                setDisplaySrc(src);
+            } else {
+                setDisplaySrc(src);
+            }
+        }
     }, [src]);
 
-    if (!src || error) {
+    if (!displaySrc || error) {
         return fallback ? <>{fallback}</> : null;
     }
 
@@ -50,7 +61,7 @@ function LoadingImage({
             )}
             {/* Actual image with fade-in */}
             <img
-                src={src}
+                src={displaySrc}
                 alt={alt}
                 className={`${className} transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
                 onLoad={() => setLoaded(true)}
@@ -223,7 +234,7 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
         }
     });
 
-    const { data: seasonsData } = useQuery({
+    const { data: seasonsData, isLoading: seasonsLoading } = useQuery({
         queryKey: ['series', item.id, 'seasons'],
         queryFn: async () => {
             const res = await api.get<Season[]>(`/libraries/series/${item.id}/seasons`);
@@ -305,9 +316,11 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
     };
 
     const getSeasonPoster = (seasonNum: number): string | null => {
-        if (!seasonsData) return item.posterPath || null;
+        // Return null while loading to show skeleton, not fallback poster
+        if (!seasonsData) return null;
         const season = seasonsData.find(s => s.number === seasonNum);
-        return season?.poster || item.posterPath || null;
+        // Only fall back to series poster if season data was loaded but has no poster
+        return season?.poster || null;
     };
 
     const getResolutionBadge = (ep: MediaItem) => {
@@ -532,7 +545,9 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
                                 >
                                     <div className={`relative rounded-xl overflow-hidden border-2 transition-all ${isSelected ? 'border-violet-500 shadow-lg shadow-violet-500/30' : 'border-transparent hover:border-white/30'}`}>
                                         <div className="aspect-[2/3] bg-gradient-to-br from-gray-800 to-gray-900">
-                                            {seasonPoster ? (
+                                            {seasonsLoading ? (
+                                                <div className="w-full h-full animate-pulse bg-gradient-to-br from-gray-700 via-gray-600 to-gray-700" />
+                                            ) : seasonPoster ? (
                                                 <img src={seasonPoster} alt={`Season ${seasonNum}`} className="w-full h-full object-cover" />
                                             ) : (
                                                 <div className="w-full h-full flex items-center justify-center">

@@ -446,7 +446,7 @@ public class LibrariesController : ControllerBase
         Guid userGuid = userIdClaim != null ? Guid.Parse(userIdClaim) : Guid.Empty;
 
         var query = _context.MediaItems.AsNoTracking()
-            .Where(m => m.SeriesId == seriesId)
+            .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode)
             .OrderBy(m => m.SeasonNumber)
             .ThenBy(m => m.EpisodeNumber);
 
@@ -481,7 +481,39 @@ public class LibrariesController : ControllerBase
     [HttpGet("series/{seriesId}/seasons")]
     public async Task<ActionResult<IEnumerable<object>>> GetSeriesSeasons(Guid seriesId)
     {
-        // New Hierarchical Logic: Fetch Season entities directly
+        // Fetch the series entity to get cached season poster URLs from its metadata
+        var series = await _context.MediaItems.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Id == seriesId && m.Type == MediaType.Series);
+
+        // Parse series metadata to extract cached season posters
+        Dictionary<int, string>? cachedSeasonPosters = null;
+        if (series != null && !string.IsNullOrEmpty(series.MetadataJson))
+        {
+            try
+            {
+                var seriesMeta = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(series.MetadataJson);
+                if (seriesMeta != null && seriesMeta.TryGetValue("seasons", out var seasonsObj) && 
+                    seasonsObj is System.Text.Json.JsonElement seasonsArray)
+                {
+                    cachedSeasonPosters = new Dictionary<int, string>();
+                    foreach (var s in seasonsArray.EnumerateArray())
+                    {
+                        if (s.TryGetProperty("number", out var numProp) && 
+                            s.TryGetProperty("poster", out var posterProp) &&
+                            posterProp.ValueKind != System.Text.Json.JsonValueKind.Null)
+                        {
+                            var num = numProp.GetInt32();
+                            var poster = posterProp.GetString();
+                            if (!string.IsNullOrEmpty(poster))
+                                cachedSeasonPosters[num] = poster;
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        // Fetch Season entities 
         var seasons = await _context.MediaItems.AsNoTracking()
             .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Season)
             .OrderBy(m => m.SeasonNumber)
@@ -499,25 +531,9 @@ public class LibrariesController : ControllerBase
 
             if (seasonNumbers.Count > 0)
             {
-                // Try to get series poster for fallback
-                var series = await _context.MediaItems.AsNoTracking()
-                    .FirstOrDefaultAsync(m => m.Id == seriesId);
-                string? showPoster = null;
-                 if (series != null && !string.IsNullOrEmpty(series.MetadataJson))
-                 {
-                    try {
-                        var meta = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(series.MetadataJson);
-                        if (meta != null && meta.TryGetValue("poster", out var p)) showPoster = p.ToString();
-                     } catch {}
-                 }
-
-                 // Standardize fallback poster URL
-                 if (!string.IsNullOrEmpty(showPoster) && showPoster.StartsWith("http"))
-                     showPoster = $"/api/v1/image/proxy?url={Uri.EscapeDataString(showPoster)}";
-
                 return Ok(seasonNumbers.Select(num => new { 
                     number = num, 
-                    poster = showPoster, 
+                    poster = cachedSeasonPosters?.TryGetValue(num, out var cp) == true ? cp : null, 
                     episodeCount = _context.MediaItems.Count(e => e.SeriesId == seriesId && e.SeasonNumber == num && e.Type == MediaType.Episode),
                     premiereDate = (string?)null
                 }));
@@ -528,11 +544,37 @@ public class LibrariesController : ControllerBase
 
         foreach (var season in seasons)
         {
-            // Extract metadata if available
             string? poster = null;
             string? premiereDate = null;
             int? episodeCount = null;
 
+            // First check cached posters from series metadata (this is where BackgroundImageCacheService stores them)
+            if (cachedSeasonPosters?.TryGetValue(season.SeasonNumber ?? 0, out var cachedPoster) == true)
+            {
+                poster = cachedPoster;
+            }
+            // Fall back to season entity metadata
+            else if (!string.IsNullOrEmpty(season.MetadataJson))
+            {
+                try
+                {
+                    var meta = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(season.MetadataJson);
+                    if (meta != null && meta.TryGetValue("poster", out var p) && p != null)
+                    {
+                        var posterUrl = p.ToString();
+                        if (!string.IsNullOrEmpty(posterUrl))
+                        {
+                            if (posterUrl.StartsWith("/cache/"))
+                                poster = posterUrl;
+                            else if (posterUrl.StartsWith("http"))
+                                poster = $"/api/v1/image/proxy?url={Uri.EscapeDataString(posterUrl)}";
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // Extract other metadata from season entity
             if (!string.IsNullOrEmpty(season.MetadataJson))
             {
                 try
@@ -540,12 +582,6 @@ public class LibrariesController : ControllerBase
                     var meta = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(season.MetadataJson);
                     if (meta != null)
                     {
-                        if (meta.TryGetValue("poster", out var p) && p != null)
-                        {
-                            // Use the new standard image endpoint for the season entity itself
-                            // The ImageController will handle checking MediaImages or MetadataJson
-                            poster = $"/api/v1/items/{season.Id}/images/poster";
-                        }
                         if (meta.TryGetValue("premiereDate", out var pd) && pd != null) premiereDate = pd.ToString();
                         if (meta.TryGetValue("episodeCount", out var ec) && ec is System.Text.Json.JsonElement el && el.ValueKind == System.Text.Json.JsonValueKind.Number) episodeCount = el.GetInt32();
                     }
@@ -558,7 +594,7 @@ public class LibrariesController : ControllerBase
             
             result.Add(new
             {
-                id = season.Id, // Expose ID now that it's an entity
+                id = season.Id,
                 number = season.SeasonNumber,
                 poster = poster,
                 episodeCount = realCount > 0 ? realCount : episodeCount,

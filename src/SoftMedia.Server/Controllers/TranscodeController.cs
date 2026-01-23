@@ -23,18 +23,24 @@ public class TranscodeController : ControllerBase
     private readonly ISettingsService _settingsService;
     private readonly AppDbContext _context;
     private readonly ILogger<TranscodeController> _logger;
+    private readonly IHlsManifestService _hlsManifestService;
+    private readonly IBinaryLocationService _binaryLocationService;
 
     public TranscodeController(
         TranscodeService transcodeService, 
         IStreamPlanService streamPlanService,
         ISettingsService settingsService,
-        AppDbContext context, 
+        AppDbContext context,
+        IHlsManifestService hlsManifestService,
+        IBinaryLocationService binaryLocationService,
         ILogger<TranscodeController> logger)
     {
         _transcodeService = transcodeService;
         _streamPlanService = streamPlanService;
         _settingsService = settingsService;
         _context = context;
+        _hlsManifestService = hlsManifestService;
+        _binaryLocationService = binaryLocationService;
         _logger = logger;
     }
 
@@ -184,68 +190,22 @@ public class TranscodeController : ControllerBase
 
             // Read and rewrite M3U8 to inject token AND subtitle track into segment URLs
             var token = Request.Query["token"].ToString();
-            if (!string.IsNullOrEmpty(token))
+            
+            if (string.IsNullOrEmpty(token))
             {
-                using var reader = new StreamReader(stream);
-                var content = await reader.ReadToEndAsync();
-                
-                _logger.LogDebug("M3U8 content length: {Length}, rewriting with token", content.Length);
-                
-                // Build query string for segments (include token and subtitle track)
-                var queryParts = new List<string> { $"token={token}" };
-                if (sub.HasValue)
-                {
-                    queryParts.Add($"sub={sub.Value}");
-                }
-                var queryString = string.Join("&", queryParts);
-                
-                // Check if we have a WebVTT subtitle file to include in the playlist
+                _logger.LogWarning("No token provided for transcode request {Id}", id);
+                return File(stream, "application/vnd.apple.mpegurl");
+            }
+            
+            // Rewrite path: We consume the stream, so we must dispose it
+            using (stream)
+            {
                 var session = _transcodeService.GetSession(id, userId, sub);
-                var hasSubtitles = session?.SubtitleVttPath != null && System.IO.File.Exists(session.SubtitleVttPath);
+                var subtitleVttPath = session?.SubtitleVttPath;
                 
-                _logger.LogInformation("Playlist for {Id}: session={Session}, SubtitleVttPath={Path}, hasSubtitles={HasSubs}",
-                    id, session != null ? "found" : "null", session?.SubtitleVttPath ?? "null", hasSubtitles);
-                
-                var rewrittenContent = new System.Text.StringBuilder();
-                
-                // If subtitles available, add HLS subtitle track reference
-                if (hasSubtitles && content.Contains("#EXTM3U"))
-                {
-                    // Insert subtitle track definition after #EXTM3U
-                    // Include both token and sub parameter for proper session lookup
-                    var subtitleQueryParts = new List<string> { $"token={token}" };
-                    if (sub.HasValue) subtitleQueryParts.Add($"sub={sub.Value}");
-                    var subtitleUrl = $"/api/transcode/{id}/subtitles.vtt?{string.Join("&", subtitleQueryParts)}";
-                    
-                    rewrittenContent.AppendLine("#EXTM3U");
-                    rewrittenContent.AppendLine($"#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Subtitles\",DEFAULT=YES,AUTOSELECT=YES,URI=\"{subtitleUrl}\"");
-                    
-                    // Add the rest of the playlist content (skip #EXTM3U since we already added it)
-                    var restOfContent = content.Replace("#EXTM3U", "").TrimStart();
-                    rewrittenContent.Append(restOfContent);
-                    
-                    _logger.LogInformation("Added subtitle track reference to HLS manifest for {Id}", id);
-                }
-                else
-                {
-                    rewrittenContent.Append(content);
-                }
-                
-                // Append query string to all segment files (both .ts and .m4s)
-                // Also handle init.mp4 for fMP4 initialization segment
-                var finalContent = rewrittenContent.ToString()
-                    .Replace(".ts", $".ts?{queryString}")
-                    .Replace(".m4s", $".m4s?{queryString}")
-                    .Replace("init.mp4", $"init.mp4?{queryString}");
-                
-                // Return modified playlist as bytes
-                var bytes = System.Text.Encoding.UTF8.GetBytes(finalContent);
+                var bytes = await _hlsManifestService.GenerateMasterPlaylistAsync(stream, token, id.ToString(), sub, subtitleVttPath);
                 return File(bytes, "application/vnd.apple.mpegurl");
             }
-
-            // Fallback for no token
-            _logger.LogWarning("No token provided for transcode request {Id}", id);
-            return File(stream, "application/vnd.apple.mpegurl");
         }
         catch (Exception ex)
         {
@@ -615,7 +575,7 @@ public class TranscodeController : ControllerBase
                 return new { error = "No transcode output files found yet" };
             }
             
-            var ffprobePath = ResolveFFprobePath();
+            var ffprobePath = _binaryLocationService.ResolveFFprobePath();
             var startInfo = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = ffprobePath,
@@ -701,18 +661,7 @@ public class TranscodeController : ControllerBase
         }
     }
     
-    private string ResolveFFprobePath()
-    {
-        var paths = new[]
-        {
-            Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg-bin", "ffprobe.exe"),
-            Path.Combine(Directory.GetCurrentDirectory(), "ffprobe.exe"),
-            @"C:\Program Files\ffmpeg\bin\ffprobe.exe",
-            @"C:\ffmpeg\bin\ffprobe.exe",
-            "ffprobe"
-        };
-        return paths.FirstOrDefault(System.IO.File.Exists) ?? "ffprobe";
-    }
+
 
     /// <summary>
     /// Get a single frame preview at a specific timestamp.

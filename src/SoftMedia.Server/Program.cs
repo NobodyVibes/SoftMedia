@@ -64,6 +64,14 @@ builder.Services.AddScoped<IFFmpegService, FFmpegService>();
 builder.Services.AddScoped<IStreamPlanService, StreamPlanService>();
 builder.Services.AddSingleton<IProcessController, ProcessController>(); // Cross-platform process suspend/resume
 builder.Services.AddSingleton<TranscodeService>(); // Singleton to maintain process tracking across requests
+builder.Services.AddSingleton<IBinaryLocationService, BinaryLocationService>();
+builder.Services.AddSingleton<IMediaProbeService, MediaProbeService>();
+builder.Services.AddScoped<ISubtitleService, SubtitleService>();
+builder.Services.AddScoped<ITranscodeProfileBuilder, TranscodeProfileBuilder>();
+builder.Services.AddScoped<IHlsManifestService, HlsManifestService>(); // Singleton or Scoped? HlsManifestService uses Logger only, so Singleton is fine, but scoped is safe. Actually HlsManifestService in my implementation only uses Logger. Let's keep it consistent.
+// HlsManifestService was registered as Singleton previously.
+// RecommendationService uses DbContext, so it MUST be Scoped.
+builder.Services.AddScoped<IRecommendationService, RecommendationService>();
 builder.Services.AddHostedService<ThrottleMonitorService>(); // Background service for throttling
 builder.Services.AddSingleton<RateLimiterFactory>(); // Rate limiting for external metadata APIs
 builder.Services.AddSingleton<MetadataRefreshService>(); // Metadata refresh for ongoing series
@@ -147,9 +155,14 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     path.StartsWithSegments("/hubs/media"))
                 {
                     var token = context.Request.Query["token"];
+                    var accessToken = context.Request.Query["access_token"];
                     if (!string.IsNullOrEmpty(token))
                     {
                         context.Token = token;
+                    }
+                    else if (!string.IsNullOrEmpty(accessToken))
+                    {
+                        context.Token = accessToken;
                     }
                 }
                 return Task.CompletedTask;

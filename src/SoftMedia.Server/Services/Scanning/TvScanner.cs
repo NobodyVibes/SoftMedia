@@ -16,6 +16,7 @@ namespace SoftMedia.Server.Services.Scanning;
 public class TvScanner : BaseMediaScanner
 {
     private readonly IBackgroundImageCacheService _backgroundImageCache;
+    private readonly IMediaProbeService _mediaProbeService;
 
     // Supported video extensions
     private static readonly string[] VideoExtensions =
@@ -30,15 +31,20 @@ public class TvScanner : BaseMediaScanner
     // Session caches to avoid repeated DB queries
     private Dictionary<string, MediaItem> _seriesCache = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<(Guid SeriesId, int SeasonNum), MediaItem> _seasonCache = new();
+    
+    // Track new series IDs for deferred image caching (to avoid race condition)
+    private HashSet<Guid> _newSeriesIds = new();
 
     public TvScanner(
         IServiceScopeFactory scopeFactory,
         ILogger<TvScanner> logger,
         IMediaNotificationService notificationService,
-        IBackgroundImageCacheService backgroundImageCache)
+        IBackgroundImageCacheService backgroundImageCache,
+        IMediaProbeService mediaProbeService)
         : base(scopeFactory, logger, notificationService)
     {
         _backgroundImageCache = backgroundImageCache;
+        _mediaProbeService = mediaProbeService;
     }
 
     /// <summary>
@@ -52,8 +58,16 @@ public class TvScanner : BaseMediaScanner
         // Clear session caches
         _seriesCache.Clear();
         _seasonCache.Clear();
+        _newSeriesIds.Clear();
 
         await base.ScanLibraryAsync(library, progress, cancellationToken);
+        
+        // Queue image caching for new series AFTER all episodes/seasons are created.
+        // This ensures BackgroundImageCacheService sees all seasons/episodes when processing.
+        foreach (var seriesId in _newSeriesIds)
+        {
+            _backgroundImageCache.QueueImageCaching(seriesId);
+        }
     }
 
     /// <summary>
@@ -101,6 +115,9 @@ public class TvScanner : BaseMediaScanner
             // Ensure season exists
             var season = await EnsureSeasonAsync(context, series, seasonNum, library, cancellationToken);
 
+            // Probe media for technical metadata
+            var probe = await _mediaProbeService.ProbeMediaAsync(filePath);
+            
             // Create or update episode
             var isNew = existing == null;
             var episode = existing ?? new MediaItem { LibraryId = library.Id };
@@ -126,8 +143,18 @@ public class TvScanner : BaseMediaScanner
             episode.Size = new FileInfo(filePath).Length;
             episode.DateModified = File.GetLastWriteTimeUtc(filePath);
 
-            // TODO: Probe for duration/codec via FFmpeg (deferred for performance)
-            // This would be done in a separate pass or lazily on first play
+            // Populate technical metadata
+            if (probe != null)
+            {
+                episode.Duration = probe.Duration;
+                episode.VideoCodec = probe.VideoCodec;
+                episode.AudioCodec = probe.AudioCodec;
+                episode.Resolution = probe.Resolution;
+                episode.Container = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
+            }
+
+            // Populate episode metadata from series (still image, summary, airdate)
+            PopulateEpisodeMetadata(episode, series, seasonNum, episodeNum);
 
             if (isNew)
             {
@@ -210,7 +237,7 @@ public class TvScanner : BaseMediaScanner
         await context.SaveChangesAsync(cancellationToken);
 
         _seriesCache[showName] = series;
-        _backgroundImageCache.QueueImageCaching(series.Id);
+        _newSeriesIds.Add(series.Id);  // Defer image caching until scan completes
 
         _logger.LogInformation("[TvScanner] Created series: {ShowName}", showName);
         return series;
@@ -348,6 +375,71 @@ public class TvScanner : BaseMediaScanner
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Populate episode metadata (still, summary, airdate) from series metadata.
+    /// </summary>
+    private void PopulateEpisodeMetadata(MediaItem episode, MediaItem series, int seasonNum, int episodeNum)
+    {
+        if (string.IsNullOrEmpty(series.MetadataJson))
+            return;
+
+        try
+        {
+            var seriesMeta = JsonSerializer.Deserialize<Dictionary<string, object>>(series.MetadataJson);
+            if (seriesMeta == null || !seriesMeta.TryGetValue("episodes", out var eObj) || eObj is not JsonElement eArr)
+                return;
+
+            foreach (var ep in eArr.EnumerateArray())
+            {
+                int s = ep.TryGetProperty("season", out var _s) ? _s.GetInt32() : 0;
+                int e = ep.TryGetProperty("episode", out var _e) ? _e.GetInt32() : 0;
+
+                if (s == seasonNum && e == episodeNum)
+                {
+                    var epMeta = new Dictionary<string, object>();
+
+                    // Extract still image URL
+                    if (ep.TryGetProperty("still", out var stillProp) && stillProp.ValueKind != JsonValueKind.Null)
+                    {
+                        var stillUrl = stillProp.GetString();
+                        if (!string.IsNullOrEmpty(stillUrl))
+                            epMeta["still"] = stillUrl;
+                    }
+
+                    // Extract summary/description
+                    if (ep.TryGetProperty("summary", out var summaryProp) && summaryProp.ValueKind != JsonValueKind.Null)
+                    {
+                        var summary = summaryProp.GetString();
+                        if (!string.IsNullOrEmpty(summary))
+                        {
+                            epMeta["summary"] = summary;
+                            episode.Overview = summary;
+                        }
+                    }
+
+                    // Extract airdate
+                    if (ep.TryGetProperty("airdate", out var airdateProp) && airdateProp.ValueKind != JsonValueKind.Null)
+                    {
+                        var airdate = airdateProp.GetString();
+                        if (!string.IsNullOrEmpty(airdate))
+                            epMeta["airdate"] = airdate;
+                    }
+
+                    if (epMeta.Count > 0)
+                    {
+                        episode.MetadataJson = JsonSerializer.Serialize(epMeta);
+                    }
+                    break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[TvScanner] Failed to parse episode metadata for S{Season}E{Episode}",
+                seasonNum, episodeNum);
+        }
     }
 
     /// <summary>

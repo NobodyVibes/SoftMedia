@@ -402,6 +402,7 @@ public class OMDbProvider : IMetadataProvider
             if (movieData.TryGetProperty("Poster", out var posterProp))
             {
                 var poster = posterProp.GetString();
+                _logger.LogInformation("Raw OMDb Poster value for {Title}: '{Poster}'", title, poster);
                 if (!string.IsNullOrEmpty(poster) && poster != "N/A")
                     metadata["poster"] = poster;
             }
@@ -462,7 +463,7 @@ public class OMDbProvider : IMetadataProvider
                     metadata["studio"] = production;
             }
 
-            _logger.LogInformation("Successfully fetched OMDB metadata for: {Title}", title);
+            _logger.LogInformation("Successfully fetched OMDB metadata for: {Title}. Keys: {Keys}", title, string.Join(", ", metadata.Keys));
             return JsonSerializer.Serialize(metadata);
     }
 

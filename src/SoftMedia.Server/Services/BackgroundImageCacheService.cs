@@ -108,10 +108,20 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var imageCache = scope.ServiceProvider.GetRequiredService<ImageCacheService>();
         
-        var item = await context.MediaItems.FindAsync(new object[] { itemId }, ct);
+        // Retry loop to handle race condition where scanner hasn't committed new item yet
+        MediaItem? item = null;
+        for (int i = 0; i < 5; i++)
+        {
+            item = await context.MediaItems.FindAsync(new object[] { itemId }, ct);
+            if (item != null) break;
+            
+            // Wait for DB commit
+            await Task.Delay(500, ct); 
+        }
+
         if (item == null)
         {
-            _logger.LogDebug("Media item {Id} not found, skipping image cache", itemId);
+            _logger.LogWarning("Media item {Id} not found after retries, skipping image cache", itemId);
             return;
         }
         
@@ -137,33 +147,29 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
         bool modified = false;
         
         // Cache poster for all media types
+        _logger.LogInformation("Processing background cache for {Title}. Metadata contains keys: {Keys}", item.Title, string.Join(", ", metadata.Keys));
         modified |= await CachePosterAsync(item, metadata, imageCache);
         
         // For Series: also cache season posters and episode stills
         if (item.Type == MediaType.Series)
         {
-            // Optimization: Fetch existing Seasons and Episodes to filter caching
+            // Fetch existing Seasons and Episodes WITH tracking to update them
             var existingSeasons = await context.MediaItems
-                .AsNoTracking()
                 .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Season && m.SeasonNumber.HasValue)
-                .Select(m => m.SeasonNumber ?? 0)
                 .ToListAsync(ct);
-            var existingSeasonsSet = new HashSet<int>(existingSeasons);
 
             var existingEpisodes = await context.MediaItems
-                .AsNoTracking()
                 .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Episode && m.SeasonNumber.HasValue && m.EpisodeNumber.HasValue)
-                .Select(m => new { Season = m.SeasonNumber ?? 0, Episode = m.EpisodeNumber ?? 0 })
                 .ToListAsync(ct);
-            var existingEpisodesSet = new HashSet<(int, int)>(existingEpisodes.Select(e => (e.Season, e.Episode)));
 
-            modified |= await CacheSeasonPostersAsync(item.Id, metadata, imageCache, existingSeasonsSet);
-            modified |= await CacheEpisodeStillsAsync(item.Id, metadata, imageCache, existingEpisodesSet);
+            modified |= await CacheSeasonPostersAsync(item.Id, metadata, imageCache, existingSeasons);
+            modified |= await CacheEpisodeStillsAsync(item.Id, metadata, imageCache, existingEpisodes);
         }
         
         if (modified)
         {
             item.MetadataJson = JsonSerializer.Serialize(metadata);
+            // Save changes to Series and any modified Season/Episode items
             await context.SaveChangesAsync(ct);
             _logger.LogInformation("Background cached images for {Type}: {Title}", item.Type, item.Title);
             
@@ -226,7 +232,7 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
         return false;
     }
 
-    private async Task<bool> CacheSeasonPostersAsync(Guid seriesId, Dictionary<string, object> metadata, ImageCacheService imageCache, HashSet<int> existingSeasons)
+    private async Task<bool> CacheSeasonPostersAsync(Guid seriesId, Dictionary<string, object> metadata, ImageCacheService imageCache, List<MediaItem> existingSeasons)
     {
         if (!metadata.TryGetValue("seasons", out var seasonsObj) || seasonsObj is not JsonElement seasonsArray)
             return false;
@@ -246,8 +252,12 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
                     var seasonNum = Convert.ToInt32(numObj.ToString());
                     var seasonPosterUrl = seasonPosterObj.ToString();
                     
-                    // Only cache if matches existing content
-                    if (existingSeasons.Contains(seasonNum) &&
+                    // Find matching season entities (plural to handle duplicates)
+                    var matchingSeasons = existingSeasons
+                        .Where(s => s.SeasonNumber == seasonNum)
+                        .ToList();
+
+                    if (matchingSeasons.Any() && 
                         !string.IsNullOrEmpty(seasonPosterUrl) && 
                         seasonPosterUrl.StartsWith("http") && 
                         !seasonPosterUrl.StartsWith("/cache/"))
@@ -258,6 +268,12 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
                             seasonDict["poster"] = cachedUrl;
                             modified = true;
                             _logger.LogDebug("Cached season {Season} poster", seasonNum);
+                            
+                            // Update ALL matching Season Entity Metadata
+                            foreach (var seasonEntity in matchingSeasons)
+                            {
+                                UpdateSeasonEntityMetadata(seasonEntity, cachedUrl);
+                            }
                         }
                     }
                 }
@@ -278,7 +294,24 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
         return modified;
     }
 
-    private async Task<bool> CacheEpisodeStillsAsync(Guid seriesId, Dictionary<string, object> metadata, ImageCacheService imageCache, HashSet<(int, int)> existingEpisodes)
+    private void UpdateSeasonEntityMetadata(MediaItem season, string cachedUrl)
+    {
+        try
+        {
+            var meta = string.IsNullOrEmpty(season.MetadataJson) 
+                ? new Dictionary<string, object>() 
+                : JsonSerializer.Deserialize<Dictionary<string, object>>(season.MetadataJson) ?? new Dictionary<string, object>();
+            
+            meta["poster"] = cachedUrl;
+            season.MetadataJson = JsonSerializer.Serialize(meta);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update season entity metadata for {Id}", season.Id);
+        }
+    }
+
+    private async Task<bool> CacheEpisodeStillsAsync(Guid seriesId, Dictionary<string, object> metadata, ImageCacheService imageCache, List<MediaItem> existingEpisodes)
     {
         if (!metadata.TryGetValue("episodes", out var episodesObj) || episodesObj is not JsonElement episodesArray)
             return false;
@@ -300,8 +333,12 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
                     var epNum = epNumObj != null ? Convert.ToInt32(epNumObj.ToString()) : 0;
                     var stillUrl = stillObj.ToString();
                     
-                    // Only cache if matches existing content
-                    if (existingEpisodes.Contains((epSeason, epNum)) &&
+                    // Find matching episode entities (plural to handle duplicates)
+                    var matchingEpisodes = existingEpisodes
+                        .Where(e => e.SeasonNumber == epSeason && e.EpisodeNumber == epNum)
+                        .ToList();
+
+                    if (matchingEpisodes.Any() && 
                         epNum > 0 && 
                         !string.IsNullOrEmpty(stillUrl) && 
                         stillUrl.StartsWith("http") && 
@@ -312,7 +349,13 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
                         {
                             epDict["still"] = cachedUrl;
                             modified = true;
-                            _logger.LogDebug("Cached S{Season}E{Episode} still", epSeason, epNum);
+                            _logger.LogDebug("Cached S{Season}E{Episode} still for {Count} items", epSeason, epNum, matchingEpisodes.Count);
+
+                            // Update ALL matching Episode Entity Metadata
+                            foreach (var epEntity in matchingEpisodes)
+                            {
+                                UpdateEpisodeEntityMetadata(epEntity, cachedUrl);
+                            }
                         }
                     }
                 }
@@ -331,5 +374,22 @@ public class BackgroundImageCacheService : BackgroundService, IBackgroundImageCa
         }
         
         return modified;
+    }
+
+    private void UpdateEpisodeEntityMetadata(MediaItem episode, string cachedUrl)
+    {
+        try
+        {
+            var meta = string.IsNullOrEmpty(episode.MetadataJson) 
+                ? new Dictionary<string, object>() 
+                : JsonSerializer.Deserialize<Dictionary<string, object>>(episode.MetadataJson) ?? new Dictionary<string, object>();
+            
+            meta["still"] = cachedUrl;
+            episode.MetadataJson = JsonSerializer.Serialize(meta);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update episode entity metadata for {Id}", episode.Id);
+        }
     }
 }

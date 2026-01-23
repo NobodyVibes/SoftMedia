@@ -6,6 +6,8 @@ using SoftMedia.Server.Models;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Http; // For DefaultHttpContext
+using Moq;
+using SoftMedia.Server.Services.Abstractions;
 
 namespace SoftMedia.Tests;
 
@@ -21,7 +23,8 @@ public class InteractionLogicTests
 
     private InteractionController GetController(AppDbContext context, Guid userId)
     {
-        var controller = new InteractionController(context);
+        var mockRecommendationService = new Mock<IRecommendationService>();
+        var controller = new InteractionController(context, new Microsoft.Extensions.Logging.Abstractions.NullLogger<InteractionController>(), mockRecommendationService.Object);
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

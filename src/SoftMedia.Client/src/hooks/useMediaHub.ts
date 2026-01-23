@@ -8,6 +8,44 @@ interface UseMediaHubOptions {
     mediaId?: string;
 }
 
+// Custom logger to filter out known SignalR errors during React Strict Mode unmounts
+import type { ILogger } from '@microsoft/signalr';
+
+class SignalRLogger implements ILogger {
+    log(logLevel: LogLevel, message: string) {
+        // Filter out "connection stopped during negotiation" errors
+        if (message && (
+            message.includes('The connection was stopped during negotiation') ||
+            message.includes('Failed to start the connection')
+        )) {
+            return;
+        }
+
+        // Filter out logs below Warning level to keep console clean
+        if (logLevel < LogLevel.Warning) {
+            return;
+        }
+
+        // Forward other logs to console
+        switch (logLevel) {
+            case LogLevel.Critical:
+            case LogLevel.Error:
+                console.error(`[SignalR] ${message}`);
+                break;
+            case LogLevel.Warning:
+                console.warn(`[SignalR] ${message}`);
+                break;
+            case LogLevel.Information:
+                console.info(`[SignalR] ${message}`);
+                break;
+            case LogLevel.Debug:
+            case LogLevel.Trace:
+                console.debug(`[SignalR] ${message}`);
+                break;
+        }
+    }
+}
+
 /**
  * React hook for real-time SignalR updates.
  * Automatically connects to the hub, joins appropriate groups, and invalidates queries on updates.
@@ -27,12 +65,15 @@ export function useMediaHub({ libraryId, mediaId }: UseMediaHubOptions) {
 
         // Build connection with auto-reconnect
         const connection = new HubConnectionBuilder()
-            .withUrl(`/hubs/media?access_token=${encodeURIComponent(token)}`)
+            .withUrl('/hubs/media', {
+                accessTokenFactory: () => token
+            })
             .withAutomaticReconnect([0, 2000, 5000, 10000, 30000]) // Retry: immediately, 2s, 5s, 10s, 30s
-            .configureLogging(LogLevel.Warning)
+            .configureLogging(new SignalRLogger()) // Use custom logger
             .build();
 
         connectionRef.current = connection;
+        let isMounted = true;
 
         // Handle incoming events
         connection.on('ItemAdded', (libId: string) => {
@@ -60,27 +101,46 @@ export function useMediaHub({ libraryId, mediaId }: UseMediaHubOptions) {
         });
 
         // Start connection and join groups
-        connection.start()
-            .then(() => {
+        const startConnection = async () => {
+            try {
+                await connection.start();
+                if (!isMounted) {
+                    await connection.stop();
+                    return;
+                }
+
                 console.debug('[SignalR] Connected');
                 const opts = optionsRef.current;
+
                 if (opts.libraryId) {
-                    connection.invoke('JoinLibrary', opts.libraryId)
-                        .catch(err => console.error('[SignalR] Failed to join library group:', err));
+                    await connection.invoke('JoinLibrary', opts.libraryId).catch(err => console.error('[SignalR] Failed to join library group:', err));
                 }
                 if (opts.mediaId) {
-                    connection.invoke('JoinMedia', opts.mediaId)
-                        .catch(err => console.error('[SignalR] Failed to join media group:', err));
+                    await connection.invoke('JoinMedia', opts.mediaId).catch(err => console.error('[SignalR] Failed to join media group:', err));
                 }
-            })
-            .catch(err => console.error('[SignalR] Connection failed:', err));
+            } catch (err: any) {
+                // Ignore AbortError which happens when unmounting during negotiation
+                const errorMessage = err?.message || err?.toString() || '';
+                if (isMounted &&
+                    !errorMessage.includes('The connection was stopped during negotiation') &&
+                    !errorMessage.includes('Failed to start the connection')) {
+                    console.error('[SignalR] Connection failed:', err);
+                }
+            }
+        };
+
+        startConnection();
 
         // Cleanup on unmount
         return () => {
+            isMounted = false;
+            // Only stop if we are connected or connecting
             if (connection.state !== HubConnectionState.Disconnected) {
                 connection.stop()
                     .then(() => console.debug('[SignalR] Disconnected'))
-                    .catch(console.error);
+                    .catch(() => {
+                        // Ignore errors during stop
+                    });
             }
         };
     }, [token, queryClient]);

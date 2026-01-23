@@ -361,7 +361,7 @@ public class TranscodeService
                             else
                             {
                                 // Text subtitle - extract to WebVTT
-                                var subtitleStreamIndex = ffmpegService.GetSubtitleStreamIndex(inputPath, subtitleTrackIndex.Value);
+                                var subtitleStreamIndex = await ffmpegService.GetSubtitleStreamIndexAsync(inputPath, subtitleTrackIndex.Value);
                                 var vttPath = Path.Combine(existingSession.SessionDirectory, "subtitles.vtt");
                                 
                                 var extracted = await ffmpegService.ExtractSubtitleToVttAsync(inputPath, subtitleStreamIndex, vttPath);
@@ -450,7 +450,7 @@ public class TranscodeService
                 else
                 {
                     // Get the subtitle stream index within subtitle streams (0-based for -map 0:s:N)
-                    var subtitleStreamIndex = ffmpegService.GetSubtitleStreamIndex(inputPath, subtitleTrackIndex.Value);
+                    var subtitleStreamIndex = await ffmpegService.GetSubtitleStreamIndexAsync(inputPath, subtitleTrackIndex.Value);
                     var vttPath = Path.Combine(sessionDir, "subtitles.vtt");
                     
                     _logger.LogInformation("Extracting subtitle track {Index} (stream {Stream}, codec={Codec}) to WebVTT", 
@@ -476,7 +476,7 @@ public class TranscodeService
             }
 
             // Start FFmpeg (without subtitle burn-in since we're using sidecar)
-            var process = StartFFmpegProcess(session, seekPosition);
+            var process = await StartFFmpegProcessAsync(session, seekPosition);
             if (process == null)
             {
                 _logger.LogError("Failed to start FFmpeg for {MediaId}", mediaId);
@@ -580,7 +580,7 @@ public class TranscodeService
     /// <summary>
     /// Start FFmpeg process with current session settings
     /// </summary>
-    private Process? StartFFmpegProcess(TranscodeSession session, double? seekPosition)
+    private async Task<Process?> StartFFmpegProcessAsync(TranscodeSession session, double? seekPosition)
     {
         using var scope = _scopeFactory.CreateScope();
         var ffmpegService = scope.ServiceProvider.GetRequiredService<IFFmpegService>();
@@ -594,7 +594,7 @@ public class TranscodeService
             _logger.LogInformation("Using burn-in for bitmap subtitle track {Index}", subtitleBurnInIndex);
         }
         
-        var startInfo = ffmpegService.GetTranscodeArguments(
+        var startInfo = await ffmpegService.GetTranscodeArgumentsAsync(
             session.InputPath, 
             session.SessionDirectory, 
             "seg", 
@@ -763,20 +763,52 @@ public class TranscodeService
         {
             if (session.Process != null && !session.Process.HasExited)
             {
-                session.Process.Kill();
+                try 
+                {
+                    session.Process.Kill();
+                    // Give the process time to release handles
+                    session.Process.WaitForExit(2000); 
+                }
+                catch (Exception ex)
+                {
+                     _logger.LogWarning("Error killing process for session {Key}: {Message}", session.Key, ex.Message);
+                }
             }
             session.Process?.Dispose();
             
             if (deleteFiles && Directory.Exists(session.SessionDirectory))
             {
-                Directory.Delete(session.SessionDirectory, true);
+                // Retry deletion strategy to handle transient file locks
+                int attempts = 0;
+                while (attempts < 3)
+                {
+                    try
+                    {
+                        Directory.Delete(session.SessionDirectory, true);
+                        break; 
+                    }
+                    catch (IOException)
+                    {
+                        attempts++;
+                        if (attempts >= 3) throw;
+                        Thread.Sleep(200); 
+                    }
+                }
             }
             
             session.State = TranscodeState.Completed;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error stopping transcode session for {Key}", session.Key);
+            // Downgrade IO errors to warnings to avoid "Failure" log spam for benign locking issues
+            if (ex is IOException)
+            {
+                _logger.LogWarning("Cleanup warning for {Key}: {Message}", session.Key, ex.Message);
+            }
+            else
+            {
+                _logger.LogError(ex, "Error stopping transcode session for {Key}", session.Key);
+            }
         }
     }
 }

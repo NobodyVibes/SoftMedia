@@ -15,6 +15,7 @@ namespace SoftMedia.Server.Services.Scanning;
 public class MovieScanner : BaseMediaScanner
 {
     private readonly IBackgroundImageCacheService _backgroundImageCache;
+    private readonly IMediaProbeService _mediaProbeService;
 
     // Supported video extensions
     private static readonly string[] VideoExtensions =
@@ -30,10 +31,12 @@ public class MovieScanner : BaseMediaScanner
         IServiceScopeFactory scopeFactory,
         ILogger<MovieScanner> logger,
         IMediaNotificationService notificationService,
-        IBackgroundImageCacheService backgroundImageCache)
+        IBackgroundImageCacheService backgroundImageCache,
+        IMediaProbeService mediaProbeService)
         : base(scopeFactory, logger, notificationService)
     {
         _backgroundImageCache = backgroundImageCache;
+        _mediaProbeService = mediaProbeService;
     }
 
     /// <summary>
@@ -56,6 +59,9 @@ public class MovieScanner : BaseMediaScanner
             if (string.IsNullOrEmpty(title))
                 title = Path.GetFileNameWithoutExtension(filePath);
 
+            // Probe media for technical metadata
+            var probe = await _mediaProbeService.ProbeMediaAsync(filePath);
+            
             // Create or update movie
             var isNew = existing == null;
             var movie = existing ?? new MediaItem { LibraryId = library.Id };
@@ -67,6 +73,16 @@ public class MovieScanner : BaseMediaScanner
             movie.Year = year;
             movie.Size = new FileInfo(filePath).Length;
             movie.DateModified = File.GetLastWriteTimeUtc(filePath);
+
+            // Populate technical metadata
+            if (probe != null)
+            {
+                movie.Duration = probe.Duration;
+                movie.VideoCodec = probe.VideoCodec;
+                movie.AudioCodec = probe.AudioCodec;
+                movie.Resolution = probe.Resolution;
+                movie.Container = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
+            }
 
             if (isNew)
             {
@@ -80,6 +96,8 @@ public class MovieScanner : BaseMediaScanner
             }
             else
             {
+                // Put probe data update here too if specific logic needed, but setting it above handles both
+                
                 // Check if metadata needs refresh
                 var needsEnrichment = string.IsNullOrEmpty(existing!.MetadataJson) ||
                     !existing.MetadataJson.Contains("\"poster\"");

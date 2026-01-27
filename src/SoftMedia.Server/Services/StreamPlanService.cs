@@ -80,6 +80,7 @@ public class StreamPlanService : IStreamPlanService
         var outputCodecSetting = await _settingsService.GetSettingAsync("OutputVideoCodec", "auto");
         var preserveHdrSetting = await _settingsService.GetSettingAsync("PreserveHDR", false);
         var enableAV1 = await _settingsService.GetSettingAsync("EnableAV1Encoding", false);
+        var maxTranscodeResolution = await _settingsService.GetSettingAsync("MaxTranscodeResolution", "original");
         
         // Validate output codec against allowlist (security)
         if (!ValidOutputCodecs.Contains(outputCodecSetting))
@@ -98,8 +99,8 @@ public class StreamPlanService : IStreamPlanService
             _logger.LogInformation("PreserveHDR requested but client doesn't support HDR - will tonemap to SDR");
         }
         
-        _logger.LogDebug("Streaming settings: MaxBitrate={Bitrate}kbps, ForceDirectPlay={FDP}, Quality={Q}, Audio={A}, Codec={Codec}, PreserveHDR={HDR} (effective={EffHDR}), AV1={AV1}",
-            maxServerBitrate, forceDirectPlay, defaultQuality, defaultAudioChannels, outputCodecSetting, preserveHdrSetting, effectivePreserveHdr, enableAV1);
+        _logger.LogDebug("Streaming settings: MaxBitrate={Bitrate}kbps, ForceDirectPlay={FDP}, Quality={Q}, Audio={A}, Codec={Codec}, PreserveHDR={HDR} (effective={EffHDR}), AV1={AV1}, MaxTranscodeRes={MaxTranscodeRes}",
+            maxServerBitrate, forceDirectPlay, defaultQuality, defaultAudioChannels, outputCodecSetting, preserveHdrSetting, effectivePreserveHdr, enableAV1, maxTranscodeResolution);
 
         // Sanitize client capabilities
         var sanitizedCaps = SanitizeCapabilities(clientCaps);
@@ -124,6 +125,25 @@ public class StreamPlanService : IStreamPlanService
             {
                 _logger.LogDebug("Applying quality {Quality} -> max resolution {Res}p", effectiveQuality, qualityResolution);
                 sanitizedCaps.MaxResolution = qualityResolution;
+            }
+        }
+        
+        // Apply global MaxTranscodeResolution limit (ULTIMATE cap - admin controlled)
+        // This overrides both DefaultStreamingQuality and client RequestedQuality
+        if (maxTranscodeResolution != "original" && maxTranscodeResolution != "auto")
+        {
+            var maxTranscodeHeight = ParseQualityToResolution(maxTranscodeResolution);
+            if (maxTranscodeHeight > 0)
+            {
+                // If client has no limit OR client's limit exceeds admin's global limit
+                if (sanitizedCaps.MaxResolution <= 0 || sanitizedCaps.MaxResolution > maxTranscodeHeight)
+                {
+                    _logger.LogInformation(
+                        "Enforcing global MaxTranscodeResolution limit: {MaxRes}p (client wanted {ClientRes})",
+                        maxTranscodeHeight,
+                        sanitizedCaps.MaxResolution > 0 ? sanitizedCaps.MaxResolution : -1);
+                    sanitizedCaps.MaxResolution = maxTranscodeHeight;
+                }
             }
         }
 

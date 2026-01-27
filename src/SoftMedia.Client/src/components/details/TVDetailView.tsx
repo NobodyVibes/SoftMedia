@@ -319,8 +319,8 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
         // Return null while loading to show skeleton, not fallback poster
         if (!seasonsData) return null;
         const season = seasonsData.find(s => s.number === seasonNum);
-        // Only fall back to series poster if season data was loaded but has no poster
-        return season?.poster || null;
+        // Fall back to series poster if season data was loaded but has no poster
+        return season?.poster || item.posterPath || null;
     };
 
     const getResolutionBadge = (ep: MediaItem) => {

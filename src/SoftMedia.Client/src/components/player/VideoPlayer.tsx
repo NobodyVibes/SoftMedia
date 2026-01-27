@@ -6,6 +6,7 @@ import { useAuthStore } from '../../store/authStore';
 import { NextEpisodeOverlay, type NextEpisodeInfo } from './NextEpisodeOverlay';
 import { PlayerDebugPanel } from './PlayerDebugPanel';
 import { useMediaCapabilities, createCapabilitiesWithOverrides } from '../../hooks/useMediaCapabilities';
+import { useLocalPreferences } from '../../hooks/useLocalPreferences';
 
 
 
@@ -134,6 +135,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     // Detect browser media capabilities for stream negotiation
     const { capabilities: mediaCapabilities, isDetecting: isDetectingCapabilities } = useMediaCapabilities();
+
+    // Get user's local preferences (including default streaming quality)
+    const { preferences: localPrefs } = useLocalPreferences();
 
     // Get actual duration from media item metadata (in seconds)
     const getActualDuration = useCallback((): number => {
@@ -476,12 +480,21 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         let isMounted = true;
 
         const fetchStreamPlan = async () => {
+            // Use priority: media player selection > user's default quality > "auto"
+            // This ensures user's "Default Quality" from My Account is respected
+            const effectiveQuality = selectedQuality !== 'auto'
+                ? selectedQuality
+                : (localPrefs.defaultStreamingQuality && localPrefs.defaultStreamingQuality !== 'auto'
+                    ? localPrefs.defaultStreamingQuality
+                    : 'auto');
+
             // Create capabilities with quality override
             const capabilitiesToSend = createCapabilitiesWithOverrides(mediaCapabilities, {
-                requestedQuality: selectedQuality
+                requestedQuality: effectiveQuality
             });
 
-            console.log('[StreamPlan] Requesting stream plan with quality:', selectedQuality, capabilitiesToSend);
+            console.log('[StreamPlan] Quality - selected:', selectedQuality, 'default:', localPrefs.defaultStreamingQuality, 'effective:', effectiveQuality);
+            console.log('[StreamPlan] Requesting stream plan with capabilities:', capabilitiesToSend);
 
             try {
                 const response = await fetch(`/api/transcode/${item.id}/plan`, {
@@ -705,6 +718,17 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     fragLoadingMaxRetry: 6,
                     // Enable native subtitle track rendering for WebVTT sidecar subtitles
                     renderTextTracksNatively: true,
+
+                    // Buffer management for live transcoding
+                    // These settings prevent unnecessary pausing when transcode is slower than real-time
+                    maxBufferLength: 60,          // Target 60s of buffer (enough for CPU transcode)
+                    maxMaxBufferLength: 120,      // Hard limit 120s of buffer
+                    maxBufferSize: 100 * 1024 * 1024,  // 100MB max buffer size
+                    maxBufferHole: 0.5,           // Skip gaps smaller than 0.5s
+
+                    // Start playback more aggressively
+                    startFragPrefetch: true,      // Start prefetching next fragment early
+                    testBandwidth: false,         // Don't test bandwidth (we control transcode quality)
                 });
 
                 hls.loadSource(src);

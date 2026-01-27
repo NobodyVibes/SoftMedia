@@ -238,20 +238,20 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
                 argumentBuilder.Append($"-vf \"{filterChain}\" ");
             }
             
-            argumentBuilder.Append(GetEncoderOptions(settings));
+            argumentBuilder.Append(GetEncoderOptions(settings, probe?.FrameRate ?? 23.976));
         }
         else if (!string.IsNullOrEmpty(scaleFilter))
         {
             argumentBuilder.Append(scaleFilter);
-            argumentBuilder.Append(GetEncoderOptions(settings));
+            argumentBuilder.Append(GetEncoderOptions(settings, probe?.FrameRate ?? 23.976));
         }
         else if (useToneMappingPipeline)
         {
-            argumentBuilder.Append(GetEncoderOptions(settings));
+            argumentBuilder.Append(GetEncoderOptions(settings, probe?.FrameRate ?? 23.976));
         }
         else
         {
-            argumentBuilder.Append(GetEncoderOptions(settings));
+            argumentBuilder.Append(GetEncoderOptions(settings, probe?.FrameRate ?? 23.976));
         }
         
         if (audioTrackIndex.HasValue)
@@ -328,72 +328,77 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
         };
     }
 
-    private string GetEncoderOptions(TranscodeSettings settings)
+    private string GetEncoderOptions(TranscodeSettings settings, double fps)
     {
         var encoder = GetVideoEncoder(settings.HardwareAcceleration, settings.OutputVideoCodec);
-        _logger.LogDebug("Selected encoder: {Encoder} for codec: {Codec}, hw: {HW}", 
-            encoder, settings.OutputVideoCodec, settings.HardwareAcceleration);
+        _logger.LogDebug("Selected encoder: {Encoder} for codec: {Codec}, hw: {HW}, fps: {FPS}", 
+            encoder, settings.OutputVideoCodec, settings.HardwareAcceleration, fps);
+
+        // Calculate GOP size for consistent 6s segments
+        // We use -hls_time 6, so keyframes should be every 6 seconds
+        var gopSize = (int)Math.Round(fps * 6.0);
+        var keyframeFlags = $"-g {gopSize} -keyint_min {gopSize} -sc_threshold 0 -force_key_frames \"expr:gte(t,n_forced*6)\" ";
         
         if (encoder == "libx264")
         {
             return $"-c:v libx264 -profile:v baseline -level 3.1 -pix_fmt yuv420p " +
-                   $"-preset {settings.Preset} -crf {settings.CRF} ";
+                   $"-preset {settings.Preset} -crf {settings.CRF} {keyframeFlags}";
         }
         else if (encoder == "h264_nvenc")
         {
             var nvencPreset = MapToNvencPreset(settings.Preset);
-            return $"-c:v h264_nvenc -preset {nvencPreset} -cq {settings.CRF} ";
+            return $"-c:v h264_nvenc -preset {nvencPreset} -cq {settings.CRF} {keyframeFlags}";
         }
         else if (encoder == "h264_amf")
         {
             var amfQuality = MapToAmfQuality(settings.Preset);
-            return $"-c:v h264_amf -quality {amfQuality} -rc cqp -qp_i {settings.CRF} -qp_p {settings.CRF} -pix_fmt yuv420p ";
+            return $"-c:v h264_amf -quality {amfQuality} -rc cqp -qp_i {settings.CRF} -qp_p {settings.CRF} -pix_fmt yuv420p {keyframeFlags}";
         }
         else if (encoder == "h264_qsv")
         {
             var qsvPreset = MapToQsvPreset(settings.Preset);
-            return $"-c:v h264_qsv -preset {qsvPreset} -global_quality {settings.CRF} -pix_fmt nv12 ";
+            return $"-c:v h264_qsv -preset {qsvPreset} -global_quality {settings.CRF} -pix_fmt nv12 {keyframeFlags}";
         }
         // HEVC encoders
         else if (encoder == "libx265")
         {
             var adjustedCrf = Math.Min(settings.CRF + 2, 51);
-            return $"-c:v libx265 -preset {settings.Preset} -crf {adjustedCrf} -pix_fmt yuv420p ";
+            return $"-c:v libx265 -preset {settings.Preset} -crf {adjustedCrf} -pix_fmt yuv420p {keyframeFlags}";
         }
         else if (encoder == "hevc_nvenc")
         {
             var nvencPreset = MapToNvencPreset(settings.Preset);
-            return $"-c:v hevc_nvenc -preset {nvencPreset} -cq {settings.CRF} ";
+            return $"-c:v hevc_nvenc -preset {nvencPreset} -cq {settings.CRF} {keyframeFlags}";
         }
         else if (encoder == "hevc_amf")
         {
             var amfQuality = MapToAmfQuality(settings.Preset);
-            return $"-c:v hevc_amf -quality {amfQuality} -rc cqp -qp_i {settings.CRF} -qp_p {settings.CRF} ";
+            return $"-c:v hevc_amf -quality {amfQuality} -rc cqp -qp_i {settings.CRF} -qp_p {settings.CRF} {keyframeFlags}";
         }
         else if (encoder == "hevc_qsv")
         {
             var qsvPreset = MapToQsvPreset(settings.Preset);
-            return $"-c:v hevc_qsv -preset {qsvPreset} -global_quality {settings.CRF} ";
+            return $"-c:v hevc_qsv -preset {qsvPreset} -global_quality {settings.CRF} {keyframeFlags}";
         }
         // AV1 encoders
         else if (encoder == "av1_nvenc")
         {
             var nvencPreset = MapToNvencPreset(settings.Preset);
             var adjustedCrf = Math.Min(settings.CRF + 4, 63);
-            return $"-c:v av1_nvenc -preset {nvencPreset} -cq {adjustedCrf} ";
+            return $"-c:v av1_nvenc -preset {nvencPreset} -cq {adjustedCrf} {keyframeFlags}";
         }
         else if (encoder == "av1_amf")
         {
             var amfQuality = MapToAmfQuality(settings.Preset);
-            return $"-c:v av1_amf -quality {amfQuality} -rc cqp -qp_i {settings.CRF} -qp_p {settings.CRF} ";
+            return $"-c:v av1_amf -quality {amfQuality} -rc cqp -qp_i {settings.CRF} -qp_p {settings.CRF} {keyframeFlags}";
         }
         else if (encoder == "av1_qsv")
         {
             var qsvPreset = MapToQsvPreset(settings.Preset);
-            return $"-c:v av1_qsv -preset {qsvPreset} -global_quality {settings.CRF} ";
+            return $"-c:v av1_qsv -preset {qsvPreset} -global_quality {settings.CRF} {keyframeFlags}";
         }
         
-        return $"-c:v libx264 -preset {settings.Preset} -crf {settings.CRF} -pix_fmt yuv420p ";
+        return $"-c:v libx264 -preset {settings.Preset} -crf {settings.CRF} -pix_fmt yuv420p {keyframeFlags}";
     }
 
     private string GetScaleFilter(string maxResolution, bool hasSubtitleOverlay, string hwAccel)

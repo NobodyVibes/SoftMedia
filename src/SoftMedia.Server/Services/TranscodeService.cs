@@ -82,6 +82,11 @@ public class TranscodeSession
     /// Selected audio track index (null = use default audio track)
     /// </summary>
     public int? AudioTrackIndex { get; set; }
+
+    /// <summary>
+    /// Maximum bitrate limit in kbps (null = unlimited)
+    /// </summary>
+    public int? MaxBitrate { get; set; }
 }
 
 /// <summary>
@@ -296,7 +301,8 @@ public class TranscodeService
         double? readRate = null,
         string? codec = null,
         bool? preserveHdr = null,
-        int? audioTrack = null)
+        int? audioTrack = null,
+        int? maxBitrate = null)
     {
         // Check concurrent transcode limit from settings
         using (var scope = _scopeFactory.CreateScope())
@@ -415,7 +421,8 @@ public class TranscodeService
                 AudioTrackIndex = audioTrack,  // Store selected audio track
                 SessionDirectory = sessionDir,
                 SessionStartTime = DateTime.UtcNow,
-                LastClientRequestTime = DateTime.UtcNow
+                LastClientRequestTime = DateTime.UtcNow,
+                MaxBitrate = maxBitrate
             };
 
             _logger.LogInformation("Created new transcode session for {MediaId}: subtitleTrackIndex={Sub}, sessionDir={Dir}",
@@ -604,7 +611,8 @@ public class TranscodeService
             session.TargetResolution,  // Pass resolution from session
             session.TargetCodec,       // Pass codec from session
             session.PreserveHdr,       // Pass HDR preference from session
-            session.AudioTrackIndex);  // Pass audio track from session
+            session.AudioTrackIndex,   // Pass audio track from session
+            session.MaxBitrate);       // Pass max bitrate from session
 
         _logger.LogInformation("Starting FFmpeg for {MediaId} (seek={Seek}): {Args}", 
             session.Key.MediaId, seekPosition, startInfo.Arguments);

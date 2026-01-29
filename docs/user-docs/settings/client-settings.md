@@ -24,3 +24,23 @@ These settings control how SoftMedia selects audio and subtitle tracks for you a
 
 > [!NOTE]
 > sometimes multiple subtitle tracks may exist for a single language. If subtitles dont work for the selected language, try the other. Once the correct track is selected for a TV Show or Movie, SoftMedia will remember that preference for that TV Show or Movie.
+
+## Playback Tab
+
+The Playback tab allows you to manage streaming quality and data usage client side.
+
+### Streaming Quality
+
+**Settings Tree:** `Settings > Client Settings > Playback > Streaming Quality`
+
+1.  **Default Quality**
+    *   **Description**: Sets your preferred video resolution (e.g., 720p, 1080p, 4K, Auto).
+    *   **Purpose**: SoftMedia attempts to stream at this resolution by default. "Auto" uses the Server's configured default quality (usually 1080p), while "Original" plays the file as-is without transcoding if possible.
+
+2.  **Max Bitrate (kbps)**
+    *   **Description**: Sets a maximum bandwidth limit for streaming.
+    *   **Purpose**: Prevents the stream from exceeding a specific bitrate, which is useful for limited internet connections. This limit takes priority over your "Default Quality" if the quality requires more bandwidth than allowed.
+
+3.  **Data Saver Mode**
+    *   **Description**: A toggle to aggressively reduce data usage.
+    *   **Purpose**: when enabled, this automatically limits playback to a maximum of **2 Mbps** and **720p** resolution. This overrides your other quality settings to ensure minimal data consumption, ideal for mobile data.

@@ -17,7 +17,7 @@ public interface IFFmpegService
     /// <summary>
     /// Get transcode arguments with subtitle, seek, read rate, target resolution, codec, HDR, and audio track settings.
     /// </summary>
-    Task<ProcessStartInfo> GetTranscodeArgumentsAsync(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false, int? audioTrackIndex = null);
+    Task<ProcessStartInfo> GetTranscodeArgumentsAsync(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false, int? audioTrackIndex = null, int? maxBitrate = null);
     
     Task<bool> ExtractSubtitleToVttAsync(string inputPath, int subtitleStreamIndex, string outputPath);
     
@@ -74,7 +74,7 @@ public class FFmpegService : IFFmpegService
         return await _transcodeProfileBuilder.BuildTranscodeArgumentsAsync(inputPath, outputDir, segmentPrefix, settings, subtitleTrackIndex, seekPosition);
     }
 
-    public async Task<ProcessStartInfo> GetTranscodeArgumentsAsync(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false, int? audioTrackIndex = null)
+    public async Task<ProcessStartInfo> GetTranscodeArgumentsAsync(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false, int? audioTrackIndex = null, int? maxBitrate = null)
     {
         var settings = await LoadSettingsAsync();
         
@@ -90,7 +90,7 @@ public class FFmpegService : IFFmpegService
         }
         settings.PreserveHDR = preserveHdr;
 
-        return await _transcodeProfileBuilder.BuildTranscodeArgumentsAsync(inputPath, outputDir, segmentPrefix, settings, subtitleTrackIndex, seekPosition, readRate, audioTrackIndex);
+        return await _transcodeProfileBuilder.BuildTranscodeArgumentsAsync(inputPath, outputDir, segmentPrefix, settings, subtitleTrackIndex, seekPosition, readRate, audioTrackIndex, maxBitrate);
     }
 
     public async Task<bool> ExtractSubtitleToVttAsync(string inputPath, int subtitleStreamIndex, string outputPath)

@@ -406,6 +406,12 @@ public class StreamPlanService : IStreamPlanService
         // Build URL with codec and HDR parameters
         var url = $"/api/transcode/{mediaId}/master.m3u8?token={token}&resolution={targetResolution}&codec={targetVideoCodec}";
         
+        // Add bitrate limit if present (and less than global max, otherwise no need to clutter URL)
+        if (caps.MaxBitrate < MaxAllowedBitrate)
+        {
+            url += $"&bitrate={caps.MaxBitrate}";
+        }
+
         // Determine if output will be HDR
         var outputIsHdr = preserveHdr && sourceIsHdr && caps.SupportsHdr;
         if (outputIsHdr)

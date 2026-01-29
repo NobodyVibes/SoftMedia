@@ -138,9 +138,10 @@ public class TranscodeController : ControllerBase
     /// - codec: Target video codec (e.g., "h264", "hevc", "av1")
     /// - hdr: Whether to preserve HDR (e.g., "true", "false")
     /// - audio: Audio track index to select
+    /// - bitrate: Max bitrate in kbps (optional)
     /// </summary>
     [HttpGet("{id}/master.m3u8")]
-    public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null, [FromQuery] string? resolution = null, [FromQuery] string? codec = null, [FromQuery] bool? hdr = null, [FromQuery] int? audio = null)
+    public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null, [FromQuery] string? resolution = null, [FromQuery] string? codec = null, [FromQuery] bool? hdr = null, [FromQuery] int? audio = null, [FromQuery] int? bitrate = null)
     {
 
         try
@@ -177,9 +178,9 @@ public class TranscodeController : ControllerBase
             }
 
             // Start transcoding with user ID for session ownership
-            _logger.LogInformation("Starting transcode for media {Id} (user={UserId}, sub={Sub}, seek={Seek}, resolution={Res}, codec={Codec}, hdr={HDR}, audio={Audio})", 
-                id, userId, sub, seek, resolution, codec, hdr, audio);
-            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr, audioTrack: audio);
+            _logger.LogInformation("Starting transcode for media {Id} (user={UserId}, sub={Sub}, seek={Seek}, resolution={Res}, codec={Codec}, hdr={HDR}, audio={Audio}, bitrate={Bitrate})", 
+                id, userId, sub, seek, resolution, codec, hdr, audio, bitrate);
+            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr, audioTrack: audio, maxBitrate: bitrate);
 
             var stream = _transcodeService.GetPlaylist(id, userId, sub);
             if (stream == null)

@@ -468,12 +468,31 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     ? localPrefs.defaultStreamingQuality
                     : 'auto');
 
-            // Create capabilities with quality override
+            // Calculate effective max bitrate
+            const userMaxBitrate = parseInt(localPrefs.maxBitrate, 10) || 0;
+            const isDataSaver = localPrefs.dataSaverMode === 'true';
+
+            // Data Saver: max 2 Mbps, max 720p
+            let effectiveMaxBitrate = userMaxBitrate;
+            let effectiveMaxResolution = 0; // 0 = original
+
+            if (isDataSaver) {
+                const DATA_SAVER_BITRATE_LIMIT = 2000; // 2 Mbps
+                if (effectiveMaxBitrate === 0 || effectiveMaxBitrate > DATA_SAVER_BITRATE_LIMIT) {
+                    effectiveMaxBitrate = DATA_SAVER_BITRATE_LIMIT;
+                }
+                effectiveMaxResolution = 720;
+            }
+
+            // Create capabilities with quality override, bitrate override, and resolution override
             const capabilitiesToSend = createCapabilitiesWithOverrides(mediaCapabilities, {
-                requestedQuality: effectiveQuality
+                requestedQuality: effectiveQuality,
+                maxBitrate: effectiveMaxBitrate,
+                maxResolution: effectiveMaxResolution
             });
 
             console.log('[StreamPlan] Quality - selected:', selectedQuality, 'default:', localPrefs.defaultStreamingQuality, 'effective:', effectiveQuality);
+            console.log('[StreamPlan] Data Saver:', isDataSaver, 'Bitrate:', effectiveMaxBitrate, 'Resolution:', effectiveMaxResolution);
             console.log('[StreamPlan] Requesting stream plan with capabilities:', capabilitiesToSend);
 
             try {

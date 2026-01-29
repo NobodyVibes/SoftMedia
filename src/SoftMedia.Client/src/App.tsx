@@ -3,6 +3,7 @@ import { Toaster } from 'sonner';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import ProtectedRoute from './components/auth/ProtectedRoute';
+import { useAuthStore } from './store/authStore';
 import MainLayout from './components/layout/MainLayout';
 import HomePage from './pages/HomePage';
 import LibraryPage from './pages/LibraryPage';
@@ -14,6 +15,7 @@ import MediaDetailPage from './pages/MediaDetailPage';
 import { PersistentPlayer } from './components/player/PersistentPlayer';
 
 function App() {
+  const user = useAuthStore((state: any) => state.user);
   return (
     <>
       <Routes>
@@ -24,7 +26,11 @@ function App() {
           <Route element={<MainLayout />}>
             <Route path="/" element={<HomePage />} />
             <Route path="/libraries/:id" element={<LibraryPage />} />
-            <Route path="/settings" element={<Navigate to="/settings/playback/transcoding" replace />} />
+            <Route path="/settings" element={
+              user?.role === 'Admin'
+                ? <Navigate to="/settings/playback/transcoding" replace />
+                : <Navigate to="/settings/client/general" replace />
+            } />
             <Route path="/settings/:section" element={<SettingsPage />} />
             <Route path="/settings/:section/:subsection" element={<SettingsPage />} />
             <Route path="/account" element={<MyAccountPage />} />

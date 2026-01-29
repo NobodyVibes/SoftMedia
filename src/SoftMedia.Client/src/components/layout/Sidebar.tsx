@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Film, Tv, Music, Book, LogOut, Gamepad2, Image, Settings, ChevronRight, ChevronDown, Play, Database, Users, ShieldCheck } from 'lucide-react';
+import { Home, Film, Tv, Music, Book, LogOut, Gamepad2, Image, Settings, ChevronRight, ChevronDown, Play, Database, Users, ShieldCheck, User } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useUIStore } from '../../store/uiStore';
 import { useLibraries } from '../../hooks/useLibrary';
@@ -20,10 +20,21 @@ const libraryTypeIcons: Record<string, any> = {
 // Settings navigation tree structure with URL paths
 const settingsNavTree = [
     {
+        id: 'client',
+        label: 'Client Settings',
+        icon: User,
+        path: '/settings/client/general',
+        children: [
+            { id: 'general', label: 'General', path: '/settings/client/general' },
+            { id: 'playback-client', label: 'Playback', path: '/settings/client/playback' },
+        ]
+    },
+    {
         id: 'playback',
-        label: 'Playback',
+        label: 'Server Playback',
         icon: Play,
         path: '/settings/playback/transcoding',
+        adminOnly: true,
         children: [
             { id: 'transcoding', label: 'Transcoding', path: '/settings/playback/transcoding' },
             { id: 'streaming', label: 'Streaming Quality', path: '/settings/playback/streaming' },
@@ -34,13 +45,14 @@ const settingsNavTree = [
         label: 'Library Management',
         icon: Database,
         path: '/settings/library/libraries',
+        adminOnly: true,
         children: [
             { id: 'libraries', label: 'Libraries', path: '/settings/library/libraries' },
             { id: 'metadata', label: 'Metadata Providers', path: '/settings/library/metadata-providers' },
         ]
     },
-    { id: 'users', label: 'Account Management', icon: Users, path: '/settings/users' },
-    { id: 'admin', label: 'Admin Dashboard', icon: ShieldCheck, path: '/settings/admin' },
+    { id: 'users', label: 'Account Management', icon: Users, path: '/settings/users', adminOnly: true },
+    { id: 'admin', label: 'Admin Dashboard', icon: ShieldCheck, path: '/settings/admin', adminOnly: true },
 ];
 
 export default function Sidebar() {
@@ -160,8 +172,8 @@ export default function Sidebar() {
                     );
                 })}
 
-                {/* Settings Section - Only for Admin */}
-                {isAdmin && (
+                {/* Settings Section */}
+                {true && (
                     <>
                         {!isSidebarCollapsed && (
                             <motion.div
@@ -221,70 +233,72 @@ export default function Sidebar() {
                                     exit={{ opacity: 0, height: 0 }}
                                     className="ml-4 pl-3 border-l border-white/10 space-y-1 mt-1"
                                 >
-                                    {settingsNavTree.map((item) => {
-                                        const Icon = item.icon;
-                                        const hasChildren = item.children && item.children.length > 0;
-                                        const isExpanded = expandedCategories.has(item.id);
-                                        const isActive = isSettingsItemActive(item);
+                                    {settingsNavTree
+                                        .filter(item => !item.adminOnly || isAdmin)
+                                        .map((item) => {
+                                            const Icon = item.icon;
+                                            const hasChildren = item.children && item.children.length > 0;
+                                            const isExpanded = expandedCategories.has(item.id);
+                                            const isActive = isSettingsItemActive(item);
 
-                                        return (
-                                            <div key={item.id}>
-                                                {hasChildren ? (
-                                                    <button
-                                                        onClick={() => toggleCategory(item.id)}
-                                                        className={cn(
-                                                            "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all text-left",
-                                                            isActive
-                                                                ? "bg-primary/10 text-primary"
-                                                                : "text-gray-500 hover:bg-white/5 hover:text-white"
-                                                        )}
-                                                    >
-                                                        <span className="w-3 flex-shrink-0">
-                                                            {isExpanded ? (
-                                                                <ChevronDown size={12} />
-                                                            ) : (
-                                                                <ChevronRight size={12} />
+                                            return (
+                                                <div key={item.id}>
+                                                    {hasChildren ? (
+                                                        <button
+                                                            onClick={() => toggleCategory(item.id)}
+                                                            className={cn(
+                                                                "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all text-left",
+                                                                isActive
+                                                                    ? "bg-primary/10 text-primary"
+                                                                    : "text-gray-500 hover:bg-white/5 hover:text-white"
                                                             )}
-                                                        </span>
-                                                        {Icon && <Icon size={16} className="flex-shrink-0" />}
-                                                        <span className="flex-1 truncate">{t(item.label)}</span>
-                                                    </button>
-                                                ) : (
-                                                    <Link
-                                                        to={item.path}
-                                                        className={cn(
-                                                            "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all text-left",
-                                                            isActive
-                                                                ? "bg-primary/10 text-primary"
-                                                                : "text-gray-500 hover:bg-white/5 hover:text-white"
-                                                        )}
-                                                    >
-                                                        {Icon && <Icon size={16} className="flex-shrink-0" />}
-                                                        <span className="flex-1 truncate">{t(item.label)}</span>
-                                                    </Link>
-                                                )}
-
-                                                {hasChildren && isExpanded && (
-                                                    <div className="ml-5 pl-3 border-l border-white/5 space-y-0.5 mt-0.5">
-                                                        {item.children!.map((child) => (
-                                                            <Link
-                                                                key={child.id}
-                                                                to={child.path}
-                                                                className={cn(
-                                                                    "w-full flex items-center px-3 py-1.5 rounded text-xs transition-all text-left block",
-                                                                    location.pathname === child.path
-                                                                        ? "bg-primary/10 text-primary"
-                                                                        : "text-gray-500 hover:bg-white/5 hover:text-white"
+                                                        >
+                                                            <span className="w-3 flex-shrink-0">
+                                                                {isExpanded ? (
+                                                                    <ChevronDown size={12} />
+                                                                ) : (
+                                                                    <ChevronRight size={12} />
                                                                 )}
-                                                            >
-                                                                {t(child.label)}
-                                                            </Link>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
+                                                            </span>
+                                                            {Icon && <Icon size={16} className="flex-shrink-0" />}
+                                                            <span className="flex-1 truncate">{t(item.label)}</span>
+                                                        </button>
+                                                    ) : (
+                                                        <Link
+                                                            to={item.path}
+                                                            className={cn(
+                                                                "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all text-left",
+                                                                isActive
+                                                                    ? "bg-primary/10 text-primary"
+                                                                    : "text-gray-500 hover:bg-white/5 hover:text-white"
+                                                            )}
+                                                        >
+                                                            {Icon && <Icon size={16} className="flex-shrink-0" />}
+                                                            <span className="flex-1 truncate">{t(item.label)}</span>
+                                                        </Link>
+                                                    )}
+
+                                                    {hasChildren && isExpanded && (
+                                                        <div className="ml-5 pl-3 border-l border-white/5 space-y-0.5 mt-0.5">
+                                                            {item.children!.map((child) => (
+                                                                <Link
+                                                                    key={child.id}
+                                                                    to={child.path}
+                                                                    className={cn(
+                                                                        "w-full flex items-center px-3 py-1.5 rounded text-xs transition-all text-left block",
+                                                                        location.pathname === child.path
+                                                                            ? "bg-primary/10 text-primary"
+                                                                            : "text-gray-500 hover:bg-white/5 hover:text-white"
+                                                                    )}
+                                                                >
+                                                                    {t(child.label)}
+                                                                </Link>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
                                 </motion.div>
                             )}
                         </AnimatePresence>

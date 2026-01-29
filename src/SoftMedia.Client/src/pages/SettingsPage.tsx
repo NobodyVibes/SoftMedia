@@ -9,6 +9,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
+import { useAuthStore } from '../store/authStore';
+import ClientSettings from './settings/ClientSettings';
 import { UserListTable } from '../components/UserListTable';
 import { InviteManager } from '../components/InviteManager';
 import { LibraryListTable } from '../components/LibraryListTable';
@@ -205,16 +207,20 @@ export default function SettingsPage() {
     const [editingLibrary, setEditingLibrary] = useState<Library | undefined>(undefined);
     const [libraryToDelete, setLibraryToDelete] = useState<Library | null>(null);
 
-    // Fetch Settings
+    const isAdmin = useAuthStore(state => state.user?.role === 'Admin');
+
+    // Fetch Settings - Only for Admin or when not on Client section
     const { data: settings, isLoading } = useQuery({
         queryKey: ['settings'],
         queryFn: settingsService.getAll,
+        enabled: isAdmin && section !== 'client',
     });
 
-    // Fetch Libraries
+    // Fetch Libraries - Only for Admin
     const { data: libraries, isLoading: isLoadingLibraries } = useQuery({
         queryKey: ['libraries'],
         queryFn: libraryService.getAll,
+        enabled: isAdmin,
     });
 
     // Fetch Scan Queue with polling when scans are active
@@ -954,26 +960,34 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between mb-8">
                 <div className="flex items-center gap-4">
                     <Settings className="w-8 h-8 text-primary" />
-                    <h1 className="text-3xl font-bold text-white">{t('Settings')}</h1>
+                    <h1 className="text-3xl font-bold text-white">
+                        {section === 'client' ? t('Client Settings') : t('Settings')}
+                    </h1>
                 </div>
-                <button
-                    onClick={handleSave}
-                    disabled={updateMutation.isPending}
-                    className="flex items-center gap-2 px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-                >
-                    {updateMutation.isPending ? <RefreshCw className="animate-spin" size={18} /> : <Save size={18} />}
-                    {t('Save Changes')}
-                </button>
+                {isAdmin && section !== 'client' && (
+                    <button
+                        onClick={handleSave}
+                        disabled={updateMutation.isPending}
+                        className="flex items-center gap-2 px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                    >
+                        {updateMutation.isPending ? <RefreshCw className="animate-spin" size={18} /> : <Save size={18} />}
+                        {t('Save Changes')}
+                    </button>
+                )}
             </div>
 
             {/* Content Area */}
             <div className="bg-[#1a1a1a] rounded-2xl border border-white/5 p-8 min-h-[600px]">
-                {isLoading ? (
+                {isLoading && section !== 'client' ? (
                     <div className="flex items-center justify-center h-full text-gray-400">
                         <RefreshCw className="animate-spin mr-2" /> Loading settings...
                     </div>
                 ) : (
                     <>
+                        {section === 'client' && (
+                            <ClientSettings subsection={subsection} />
+                        )}
+
                         {activeTab === 'playback-transcoding' && (
                             <div>
                                 <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">

@@ -7,6 +7,7 @@ import { NextEpisodeOverlay, type NextEpisodeInfo } from './NextEpisodeOverlay';
 import { PlayerDebugPanel } from './PlayerDebugPanel';
 import { useMediaCapabilities, createCapabilitiesWithOverrides } from '../../hooks/useMediaCapabilities';
 import { useLocalPreferences } from '../../hooks/useLocalPreferences';
+import { normalizeLanguage } from '../../lib/utils';
 
 
 
@@ -371,41 +372,20 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         }
     };
 
-    // Save subtitle preference for TV episodes
-    const saveSubtitlePreference = async (language: string | null) => {
-        if (!item.seriesId || !token) return; // Only save for TV episodes
-
-        try {
-            await fetch(`/api/v1/series/${item.seriesId}/subtitle-preference`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`
-                },
-                body: JSON.stringify({ language })
-            });
-            console.log(`Saved subtitle preference: ${language ?? 'off'} for series ${item.seriesId}`);
-        } catch {
-            // Silently fail - preference save is not critical
-        }
+    // Helper to get storage key for "Last Used" track
+    const getLastUsedKey = (type: 'audio' | 'subtitle') => {
+        const userId = useAuthStore.getState().user?.id || 'guest';
+        const contentId = item.seriesId || item.id; // Share prefs across series
+        return `sm_last_track_${userId}_${contentId}_${type}`;
     };
 
-    // Save audio preference for TV episodes
-    const saveAudioPreference = async (language: string | null) => {
-        if (!item.seriesId || !token) return; // Only save for TV episodes
-
+    // Save "Last Used" track to local storage (Device/User specific)
+    const saveLastUsedTrack = (type: 'audio' | 'subtitle', index: number) => {
         try {
-            await fetch(`/api/v1/series/${item.seriesId}/audio-preference`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`
-                },
-                body: JSON.stringify({ language })
-            });
-            console.log(`Saved audio preference: ${language ?? 'default'} for series ${item.seriesId}`);
-        } catch {
-            // Silently fail - preference save is not critical
+            console.log(`[Player] Saving last used ${type}: ${index}`);
+            localStorage.setItem(getLastUsedKey(type), index.toString());
+        } catch (e) {
+            console.error('Failed to save last used track:', e);
         }
     };
 
@@ -575,7 +555,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     if (selectedSubtitleTrack !== null) {
                         finalUrl += `&sub=${selectedSubtitleTrack}`;
                     }
-                    if (selectedAudioTrack !== null) {
+                    if (selectedAudioTrack !== null && selectedAudioTrack >= 0) {
                         finalUrl += `&audio=${selectedAudioTrack}`;
                     }
                     if (startPosition > 0) {
@@ -609,7 +589,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
 
 
-    // Fetch audio and subtitle tracks, and apply saved subtitle preference for TV episodes
+    // Fetch audio and subtitle tracks, and apply hierarchal selection logic
     useEffect(() => {
         if (!token || !item.id) return;
 
@@ -620,75 +600,115 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 });
                 if (response.ok) {
                     const data: TracksResponse = await response.json();
-                    setAudioTracks(data.audioTracks || []);
-                    setSubtitleTracks(data.subtitleTracks || []);
+                    const audioTracks = data.audioTracks || [];
+                    const subtitleTracks = data.subtitleTracks || [];
 
-                    // Set default audio
-                    const defaultAudio = data.audioTracks?.find(t => t.isDefault);
-                    if (defaultAudio) setSelectedAudioTrack(defaultAudio.index);
+                    setAudioTracks(audioTracks);
+                    setSubtitleTracks(subtitleTracks);
 
-                    // For TV episodes, try to load saved subtitle preference
-                    if (item.seriesId) {
-                        try {
-                            const prefResponse = await fetch(`/api/v1/series/${item.seriesId}/subtitle-preference`, {
-                                headers: { Authorization: `Bearer ${token}` }
-                            });
-                            if (prefResponse.ok) {
-                                const prefData = await prefResponse.json();
-                                if (prefData.language) {
-                                    // Find a subtitle track matching the saved language
-                                    const matchingTrack = data.subtitleTracks?.find(
-                                        t => t.language?.toLowerCase() === prefData.language.toLowerCase()
-                                    );
-                                    if (matchingTrack) {
-                                        console.log(`Applying saved subtitle preference: ${prefData.language}`);
-                                        setSelectedSubtitleTrack(matchingTrack.index);
-                                    }
-                                }
-                            }
-                        } catch {
-                            // Ignore preference load errors - fall back to default
-                        }
+                    const userId = useAuthStore.getState().user?.id || 'guest';
+                    const contentId = item.seriesId || item.id;
+                    const audioKey = `sm_last_track_${userId}_${contentId}_audio`;
+                    const subKey = `sm_last_track_${userId}_${contentId}_subtitle`;
 
-                        // Also load saved audio preference for TV episodes
-                        try {
-                            const audioPrefResponse = await fetch(`/api/v1/series/${item.seriesId}/audio-preference`, {
-                                headers: { Authorization: `Bearer ${token}` }
-                            });
-                            if (audioPrefResponse.ok) {
-                                const audioPrefData = await audioPrefResponse.json();
-                                if (audioPrefData.language) {
-                                    // Find an audio track matching the saved language
-                                    const matchingAudioTrack = data.audioTracks?.find(
-                                        t => t.language?.toLowerCase() === audioPrefData.language.toLowerCase()
-                                    );
-                                    if (matchingAudioTrack) {
-                                        console.log(`Applying saved audio preference: ${audioPrefData.language}`);
-                                        setSelectedAudioTrack(matchingAudioTrack.index);
-                                    }
-                                }
-                            }
-                        } catch {
-                            // Ignore audio preference load errors - fall back to default
+                    // --- STRICT HIERARCHY LOGIC ---
+
+                    // 1. Determine Audio Track
+                    let targetAudioIndex = -1;
+
+                    // Priority 1: Last Used (Per User/Device)
+                    const lastAudio = localStorage.getItem(audioKey);
+                    if (lastAudio !== null) {
+                        const idx = parseInt(lastAudio);
+                        // Verify track exists
+                        if (audioTracks.some(t => t.index === idx)) {
+                            targetAudioIndex = idx;
+                            console.log(`[Player] Using Last Used Audio: ${idx}`);
                         }
                     }
 
-                    // Fall back to default subtitle if no saved preference matched
-                    if (selectedSubtitleTrack === null) {
-                        const defaultSub = data.subtitleTracks?.find(t => t.isDefault);
-                        if (defaultSub) setSelectedSubtitleTrack(defaultSub.index);
+                    // Priority 2: Global Preference (Native/Device)
+                    if (targetAudioIndex === -1 && localPrefs.audioLanguage !== 'original') {
+                        // Find matching track
+                        const match = audioTracks.find(t =>
+                            normalizeLanguage(t.language) === normalizeLanguage(localPrefs.audioLanguage)
+                        );
+                        if (match) {
+                            targetAudioIndex = match.index;
+                            console.log(`[Player] Using Global Audio Pref: ${match.language}`);
+                        }
                     }
+
+                    // Priority 3: Default Flag / First Track
+                    if (targetAudioIndex === -1) {
+                        const defaultTrack = audioTracks.find(t => t.isDefault);
+                        targetAudioIndex = defaultTrack ? defaultTrack.index : (audioTracks[0]?.index ?? -1);
+                        console.log(`[Player] Using Default/First Audio: ${targetAudioIndex}`);
+                    }
+
+                    // 2. Determine Subtitle Track
+                    let targetSubIndex = -1; // Default to OFF (-1)
+
+                    // Priority 1: Last Used
+                    const lastSub = localStorage.getItem(subKey);
+                    if (lastSub !== null) {
+                        const idx = parseInt(lastSub);
+                        // Verify track exists (or is -1 for off)
+                        if (idx === -1 || subtitleTracks.some(t => t.index === idx)) {
+                            targetSubIndex = idx;
+                            console.log(`[Player] Using Last Used Subtitle: ${idx}`);
+                        }
+                    } else {
+                        // Priority 2: Global Preference & Auto-Select
+                        const prefLang = localPrefs.subtitleLanguage;
+                        console.log(`[Player] Subtitle Logic - Pref: ${prefLang}`);
+
+                        if (prefLang !== 'off') {
+                            const match = subtitleTracks.find(t =>
+                                normalizeLanguage(t.language) === normalizeLanguage(prefLang)
+                            );
+
+                            if (match) {
+                                // If a subtitle language is set, treat it as "Always On" unless manually turned off later
+                                // This simplifies logic: If I picked "English", I want English.
+                                targetSubIndex = match.index;
+                                console.log(`[Player] Using Global Subtitle Pref: ${match.language}`);
+                            } else {
+                                console.log(`[Player] No matching subtitle track found for ${prefLang}`);
+                            }
+                        }
+                    }
+
+                    setSelectedAudioTrack(targetAudioIndex);
+                    setSelectedSubtitleTrack(targetSubIndex);
                 }
             } catch (err) {
                 console.error('Failed to fetch tracks:', err);
             } finally {
-                // Mark subtitle preference as loaded (even if it failed or wasn't a TV show)
                 setHasLoadedSubtitlePref(true);
             }
         };
 
         fetchTracks();
-    }, [item.id, item.seriesId, token]);
+    }, [item.id, item.seriesId, token, localPrefs.audioLanguage, localPrefs.subtitleLanguage]);
+
+
+    // Save "Last Used" preferences whenever tracks change
+    useEffect(() => {
+        if (!item.id) return;
+
+        const userId = useAuthStore.getState().user?.id || 'guest';
+        const contentId = item.seriesId || item.id;
+        const audioKey = `sm_last_track_${userId}_${contentId}_audio`;
+        const subKey = `sm_last_track_${userId}_${contentId}_subtitle`;
+
+        if (selectedAudioTrack !== null) {
+            localStorage.setItem(audioKey, selectedAudioTrack.toString());
+        }
+        if (selectedSubtitleTrack !== null) {
+            localStorage.setItem(subKey, selectedSubtitleTrack.toString());
+        }
+    }, [selectedAudioTrack, selectedSubtitleTrack, item.id, item.seriesId]);
 
     // Setup HLS.js or native playback
     useEffect(() => {
@@ -757,19 +777,32 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         trackElement.default = true;
                         video.appendChild(trackElement);
 
-                        // Enable the track after adding
-                        setTimeout(() => {
+                        // Enable the track reliably
+                        trackElement.onload = () => {
                             if (video.textTracks && video.textTracks.length > 0) {
                                 for (let i = 0; i < video.textTracks.length; i++) {
                                     const track = video.textTracks[i];
-                                    if (track.kind === 'subtitles' || track.kind === 'captions') {
+                                    if (track.label === 'Subtitles' && (track.kind === 'subtitles' || track.kind === 'captions')) {
                                         track.mode = 'showing';
-                                        console.log(`Enabled text track: ${track.label}`);
+                                        console.log(`Enabled text track (onload): ${track.label}`);
                                         break;
                                     }
                                 }
                             }
-                        }, 100);
+                        };
+
+                        // Fallback timeout in case onload doesn't fire (cached)
+                        setTimeout(() => {
+                            if (video.textTracks) {
+                                for (let i = 0; i < video.textTracks.length; i++) {
+                                    const track = video.textTracks[i];
+                                    if (track.label === 'Subtitles' && track.mode !== 'showing') {
+                                        track.mode = 'showing';
+                                        console.log(`Enabled text track (timeout): ${track.label}`);
+                                    }
+                                }
+                            }
+                        }, 500);
                     }
 
                     // Auto-play when ready
@@ -1396,6 +1429,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             if (selectedSubtitleTrack !== null) {
                 hlsUrl += `&sub=${selectedSubtitleTrack}`;
             }
+            if (selectedAudioTrack !== null && selectedAudioTrack >= 0) {
+                hlsUrl += `&audio=${selectedAudioTrack}`;
+            }
             setSrc(hlsUrl);
         } else {
             const targetInStream = seekTime - seekOffset;
@@ -1412,6 +1448,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 let hlsUrl = `/api/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}`;
                 if (selectedSubtitleTrack !== null) {
                     hlsUrl += `&sub=${selectedSubtitleTrack}`;
+                }
+                if (selectedAudioTrack !== null && selectedAudioTrack >= 0) {
+                    hlsUrl += `&audio=${selectedAudioTrack}`;
                 }
                 setSrc(hlsUrl);
             } else {
@@ -1850,7 +1889,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                                             setIsSubtitleChange(true);
                                                             setSelectedSubtitleTrack(null);
                                                             setShowTrackMenu(false);
-                                                            saveSubtitlePreference(null); // Save "off" preference for TV episodes
+                                                            saveLastUsedTrack('subtitle', -1); // Save "off" preference
                                                         }}
                                                         className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedSubtitleTrack === null ? 'text-blue-400' : 'text-white'}`}
                                                     >
@@ -1869,7 +1908,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                                                 setIsSubtitleChange(true);
                                                                 setSelectedSubtitleTrack(track.index);
                                                                 setShowTrackMenu(false);
-                                                                saveSubtitlePreference(track.language || null); // Save language preference for TV episodes
+                                                                saveLastUsedTrack('subtitle', track.index); // Save index
                                                             }}
                                                             className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedSubtitleTrack === track.index ? 'text-blue-400' : 'text-white'}`}
                                                         >
@@ -1889,7 +1928,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                                             key={track.index}
                                                             onClick={() => {
                                                                 setSelectedAudioTrack(track.index);
-                                                                saveAudioPreference(track.language ?? null);
+                                                                saveLastUsedTrack('audio', track.index); // Save index
                                                                 setShowTrackMenu(false);
                                                             }}
                                                             className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedAudioTrack === track.index ? 'text-blue-400' : 'text-white'}`}

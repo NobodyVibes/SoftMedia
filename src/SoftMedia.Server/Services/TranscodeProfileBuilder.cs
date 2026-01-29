@@ -218,7 +218,19 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
                 filterChain.Append("[v]");
                 
                 argumentBuilder.Append($"-filter_complex \"{filterChain}\" ");
-                argumentBuilder.Append("-map \"[v]\" -map 0:a:0 ");
+                
+                // Map processed video from filter complex
+                argumentBuilder.Append("-map \"[v]\" ");
+                
+                // Map audio: use selected track if available, otherwise default to first audio stream
+                if (audioTrackIndex.HasValue)
+                {
+                    argumentBuilder.Append($"-map 0:{audioTrackIndex.Value} ");
+                }
+                else
+                {
+                    argumentBuilder.Append("-map 0:a:0 ");
+                }
             }
             else
             {
@@ -254,7 +266,11 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             argumentBuilder.Append(GetEncoderOptions(settings, probe?.FrameRate ?? 23.976));
         }
         
-        if (audioTrackIndex.HasValue)
+        // Standard mapping for non-bitmap scenarios
+        // (Bitmap scenarios handle mapping internally to preserve overlay)
+        bool isBitmap = hasSubtitleOverlay && IsBitmapSubtitleCodec(subtitleCodec);
+        
+        if (audioTrackIndex.HasValue && !isBitmap)
         {
             argumentBuilder.Append("-map 0:v:0 ");
             argumentBuilder.Append($"-map 0:{audioTrackIndex.Value} ");
@@ -321,7 +337,9 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
     {
         return hwAccel.ToLower() switch
         {
-            "nvidia" => "-hwaccel cuda -hwaccel_output_format cuda ",
+            "nvidia" => hasSubtitleOverlay 
+                ? "-hwaccel cuda " // Don't force CUDA output format if we need to burn subtitles (requires SW frames)
+                : "-hwaccel cuda -hwaccel_output_format cuda ",
             "intel" => "-hwaccel qsv -init_hw_device qsv=hw -filter_hw_device hw ",
             "amd" => "-hwaccel d3d11va ",
             _ => ""

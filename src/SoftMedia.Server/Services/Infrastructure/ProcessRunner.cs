@@ -3,7 +3,7 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 using SoftMedia.Server.Services.Abstractions;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Infrastructure;
 
 public class ProcessRunner : IProcessRunner
 {

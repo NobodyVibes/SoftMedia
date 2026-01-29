@@ -4,6 +4,7 @@ using Moq;
 using Moq.Protected;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Metadata;
+using SoftMedia.Server.Helpers;
 using Xunit;
 
 namespace SoftMedia.Tests;
@@ -19,11 +20,11 @@ public class WikidataProviderTests
         // In a real CI/CD, we should mock this. But for this specific debugging task, 
         // we want to verify the SPARQL query against the real endpoint.
         
-        var provider = new WikidataProvider(httpClient, mockLogger.Object);
+        var provider = new WikidataProvider(httpClient, mockLogger.Object, new RateLimiterFactory());
         var title = "Austin Powers: International Man of Mystery";
 
         // Act
-        var json = await provider.FetchMetadataAsync(title, "");
+        var json = await provider.FetchMetadataAsync(new MediaItem { Title = title });
 
         // Assert
         Assert.NotNull(json);
@@ -65,10 +66,10 @@ public class WikidataProviderTests
             });
 
         var httpClient = new HttpClient(mockHttpMessageHandler.Object);
-        var provider = new WikidataProvider(httpClient, mockLogger.Object);
+        var provider = new WikidataProvider(httpClient, mockLogger.Object, new RateLimiterFactory());
 
         // Act
-        var resultJson = await provider.FetchMetadataAsync("Test Movie", "");
+        var resultJson = await provider.FetchMetadataAsync(new MediaItem { Title = "Test Movie" });
 
         // Assert
         Assert.NotNull(resultJson);

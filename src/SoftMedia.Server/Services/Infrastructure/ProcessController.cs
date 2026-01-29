@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using SoftMedia.Server.Services.Abstractions;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Infrastructure;
 
 /// <summary>
 /// Cross-platform process controller for suspending and resuming FFmpeg processes.

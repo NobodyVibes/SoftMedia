@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Infrastructure;
 
 public interface IBinaryLocationService
 {

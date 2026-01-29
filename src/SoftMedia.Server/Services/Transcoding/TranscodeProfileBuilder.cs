@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using Microsoft.Extensions.Logging;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Transcoding;
 
 public class TranscodeSettings
 {

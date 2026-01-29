@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Scanning;
 
 /// <summary>
 /// Smart file watcher that detects new files and waits for them to be fully downloaded

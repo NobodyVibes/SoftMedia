@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using SoftMedia.Server.Services.Abstractions;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Transcoding;
 
 
 /// <summary>

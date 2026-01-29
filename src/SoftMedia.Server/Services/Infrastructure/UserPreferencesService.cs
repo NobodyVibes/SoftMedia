@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Infrastructure;
 
 /// <summary>
 /// Service for managing per-user preferences stored on the server.

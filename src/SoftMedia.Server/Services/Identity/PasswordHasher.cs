@@ -2,7 +2,7 @@ using Konscious.Security.Cryptography;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Identity;
 
 public interface IPasswordHasher
 {

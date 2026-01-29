@@ -3,7 +3,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Metadata;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Scanning;
 
 /// <summary>
 /// Background service that periodically refreshes metadata for ongoing (Running) TV series.

@@ -1,8 +1,12 @@
 using Microsoft.Extensions.Logging;
-using SoftMedia.Server.Services;
+using SoftMedia.Server.Services.Identity;
+using SoftMedia.Server.Services.Infrastructure;
+using SoftMedia.Server.Services.Media;
+using SoftMedia.Server.Services.Scanning;
+using SoftMedia.Server.Services.Transcoding;
 using System.Text;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Transcoding;
 
 public interface IHlsManifestService
 {

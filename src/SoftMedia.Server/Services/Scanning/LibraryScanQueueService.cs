@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Scanning;
 
 /// <summary>
 /// Interface for the library scan queue service.

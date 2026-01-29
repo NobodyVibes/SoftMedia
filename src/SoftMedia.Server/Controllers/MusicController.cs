@@ -1,7 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SoftMedia.Server.Data;
-using SoftMedia.Server.Services;
+using SoftMedia.Server.Services.Identity;
+using SoftMedia.Server.Services.Infrastructure;
+using SoftMedia.Server.Services.Media;
+using SoftMedia.Server.Services.Scanning;
+using SoftMedia.Server.Services.Transcoding;
 
 namespace SoftMedia.Server.Controllers;
 

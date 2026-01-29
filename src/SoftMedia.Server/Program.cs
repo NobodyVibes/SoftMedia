@@ -5,10 +5,7 @@ using Microsoft.OpenApi.Models;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
 using SoftMedia.Server.Data;
-using SoftMedia.Server.Services;
-using SoftMedia.Server.Services.Abstractions;
-using SoftMedia.Server.Services.Metadata;
-using SoftMedia.Server.Helpers;
+using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Hubs;
 using System.Text;
 
@@ -18,78 +15,15 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
-builder.Services.AddScoped<ITokenService, TokenService>();
-builder.Services.AddHttpClient();
-
-// Library Management Services
-builder.Services.AddSingleton<IFileSystem, FileSystem>();
-builder.Services.AddSingleton<IProcessRunner, ProcessRunner>();
-
-// New modular scanner architecture
-builder.Services.AddScoped<SoftMedia.Server.Services.Scanning.IScannerOrchestrator, SoftMedia.Server.Services.Scanning.ScannerOrchestrator>();
-builder.Services.AddScoped<SoftMedia.Server.Services.Scanning.IMediaScanner, SoftMedia.Server.Services.Scanning.MusicScanner>();
-builder.Services.AddScoped<SoftMedia.Server.Services.Scanning.IMediaScanner, SoftMedia.Server.Services.Scanning.TvScanner>();
-builder.Services.AddScoped<SoftMedia.Server.Services.Scanning.IMediaScanner, SoftMedia.Server.Services.Scanning.MovieScanner>();
-builder.Services.AddScoped<IMusicImageService, MusicImageService>();
-
-builder.Services.AddSingleton<LibraryScanQueueService>();
-builder.Services.AddSingleton<ILibraryScanQueueService>(sp => sp.GetRequiredService<LibraryScanQueueService>());
-builder.Services.AddHostedService(sp => sp.GetRequiredService<LibraryScanQueueService>());
-builder.Services.AddSingleton<LibraryWatcher>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<LibraryWatcher>());
-
-// Background image caching service for progressive library scanning
-builder.Services.AddSingleton<BackgroundImageCacheService>();
-builder.Services.AddSingleton<IBackgroundImageCacheService>(sp => sp.GetRequiredService<BackgroundImageCacheService>());
-builder.Services.AddHostedService(sp => sp.GetRequiredService<BackgroundImageCacheService>());
-builder.Services.AddHttpClient<WikidataProvider>();
-builder.Services.AddHttpClient<TVMazeProvider>();
-builder.Services.AddHttpClient<OMDbProvider>();
-builder.Services.AddScoped<IMetadataProvider, WikidataProvider>();
-builder.Services.AddScoped<IMetadataProvider, TVMazeProvider>();
-builder.Services.AddScoped<IMetadataProvider, OMDbProvider>();
-builder.Services.AddHttpClient<MusicBrainzProvider>();
-builder.Services.AddScoped<EmbeddedMusicProvider>(); // No HttpClient needed
-builder.Services.AddHttpClient<OpenLibraryProvider>();
-builder.Services.AddHttpClient<GameMetadataProvider>();
-builder.Services.AddScoped<IMetadataProvider, MusicBrainzProvider>();
-builder.Services.AddScoped<IMetadataProvider, EmbeddedMusicProvider>();
-builder.Services.AddScoped<IMetadataProvider, OpenLibraryProvider>();
-builder.Services.AddScoped<IMetadataProvider, GameMetadataProvider>();
-builder.Services.AddScoped<IMetadataProvider, ExifMetadataProvider>();
-builder.Services.AddScoped<IMetadataRouter, MetadataRouter>();
-builder.Services.AddScoped<MetadataAggregator>();
-builder.Services.AddScoped<IFFmpegService, FFmpegService>();
-builder.Services.AddScoped<IStreamPlanService, StreamPlanService>();
-builder.Services.AddSingleton<IProcessController, ProcessController>(); // Cross-platform process suspend/resume
-builder.Services.AddSingleton<TranscodeService>(); // Singleton to maintain process tracking across requests
-builder.Services.AddSingleton<IBinaryLocationService, BinaryLocationService>();
-builder.Services.AddSingleton<IMediaProbeService, MediaProbeService>();
-builder.Services.AddScoped<ISubtitleService, SubtitleService>();
-builder.Services.AddScoped<ITranscodeProfileBuilder, TranscodeProfileBuilder>();
-builder.Services.AddScoped<IHlsManifestService, HlsManifestService>(); // Singleton or Scoped? HlsManifestService uses Logger only, so Singleton is fine, but scoped is safe. Actually HlsManifestService in my implementation only uses Logger. Let's keep it consistent.
-// HlsManifestService was registered as Singleton previously.
-// RecommendationService uses DbContext, so it MUST be Scoped.
-builder.Services.AddScoped<IRecommendationService, RecommendationService>();
-builder.Services.AddHostedService<ThrottleMonitorService>(); // Background service for throttling
-builder.Services.AddSingleton<RateLimiterFactory>(); // Rate limiting for external metadata APIs
-builder.Services.AddSingleton<MetadataRefreshService>(); // Metadata refresh for ongoing series
-builder.Services.AddHostedService(sp => sp.GetRequiredService<MetadataRefreshService>());
-builder.Services.AddHttpClient<ImageCacheService>(client =>
-{
-    client.Timeout = TimeSpan.FromSeconds(30);
-    client.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
-});
-builder.Services.AddScoped<ISettingsService, SettingsService>();
-builder.Services.AddScoped<INotificationService, NotificationService>();
-builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();
+// Register Application Services via Extensions
+builder.Services.AddIdentityServices(builder.Configuration);
+builder.Services.AddMediaServices();
+builder.Services.AddBackgroundServices();
 
 // SignalR for real-time updates
 builder.Services.AddSignalR();
-builder.Services.AddSingleton<IMediaNotificationService, MediaNotificationService>();
 
-
+// API Configuration
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
@@ -97,7 +31,6 @@ builder.Services.AddCors(options =>
         var allowAnyOriginForLAN = builder.Configuration.GetValue<bool>("Cors:AllowAnyOriginForLAN");
         if (allowAnyOriginForLAN)
         {
-            // Allow any origin for LAN access - required since we can't know all possible local IPs
             policy.SetIsOriginAllowed(_ => true)
                   .AllowAnyHeader()
                   .AllowAnyMethod()
@@ -126,55 +59,12 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = builder.Configuration["JwtSettings:Issuer"],
-            ValidAudience = builder.Configuration["JwtSettings:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["JwtSettings:Secret"]!))
-        };
-        
-        // Support JWT from query parameter for streaming endpoints
-        // This is required because browser media elements can't set Authorization headers
-        options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
-        {
-            OnMessageReceived = context =>
-            {
-                var path = context.HttpContext.Request.Path;
-                // Only extract from query for streaming/transcode/media endpoints
-                // This is required because browser media elements can't set Authorization headers
-                if (path.StartsWithSegments("/api/transcode") || 
-                    path.StartsWithSegments("/api/v1/stream") ||
-                    path.StartsWithSegments("/api/media") ||
-                    path.StartsWithSegments("/hubs/media"))
-                {
-                    var token = context.Request.Query["token"];
-                    var accessToken = context.Request.Query["access_token"];
-                    if (!string.IsNullOrEmpty(token))
-                    {
-                        context.Token = token;
-                    }
-                    else if (!string.IsNullOrEmpty(accessToken))
-                    {
-                        context.Token = accessToken;
-                    }
-                }
-                return Task.CompletedTask;
-            }
-        };
-    });
-
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
     });
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -212,23 +102,17 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-// app.UseHttpsRedirection();
-
 app.UseCors("AllowFrontend");
 app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Serve static files (cached images, etc.) from wwwroot
 app.UseStaticFiles();
 
 app.MapControllers();
-
-// SignalR hub for real-time updates
 app.MapHub<MediaHub>("/hubs/media");
 
-// Seed the database
 using (var scope = app.Services.CreateScope())
 {
     await DbInitializer.InitializeAsync(scope.ServiceProvider);

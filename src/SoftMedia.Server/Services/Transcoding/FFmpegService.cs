@@ -2,7 +2,7 @@ using System.Diagnostics;
 using SoftMedia.Server.Services.Abstractions;
 using Microsoft.Extensions.Logging;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Transcoding;
 
 public interface IFFmpegService
 {

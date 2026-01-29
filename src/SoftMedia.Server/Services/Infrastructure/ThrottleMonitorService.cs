@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Infrastructure;
 
 /// <summary>
 /// Background service that monitors transcode sessions and handles:

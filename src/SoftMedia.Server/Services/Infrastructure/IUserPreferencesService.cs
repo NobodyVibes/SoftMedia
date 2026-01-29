@@ -1,4 +1,4 @@
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Infrastructure;
 
 /// <summary>
 /// Service for managing per-user preferences stored on the server.

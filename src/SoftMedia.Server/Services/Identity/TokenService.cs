@@ -5,7 +5,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace SoftMedia.Server.Services;
+namespace SoftMedia.Server.Services.Identity;
 
 public interface ITokenService
 {

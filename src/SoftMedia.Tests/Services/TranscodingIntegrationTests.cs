@@ -5,6 +5,8 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Media;
+using SoftMedia.Server.Services.Transcoding;
 using Xunit;
 
 namespace SoftMedia.Tests.Services;
@@ -17,7 +19,9 @@ public class TranscodingIntegrationTests : IDisposable
 {
     private readonly AppDbContext _context;
     private readonly SettingsService _settingsService;
-    private readonly Mock<IProcessRunner> _processRunnerMock;
+    private readonly Mock<IMediaProbeService> _mediaProbeMock;
+    private readonly Mock<ISubtitleService> _subtitleMock;
+    private readonly Mock<ITranscodeProfileBuilder> _profileBuilderMock;
     private readonly Mock<ILogger<FFmpegService>> _ffmpegLoggerMock;
     private readonly Mock<ILogger<SettingsService>> _settingsLoggerMock;
     private readonly string _testInputPath = "C:\\test\\input.mkv";
@@ -34,7 +38,9 @@ public class TranscodingIntegrationTests : IDisposable
         _context = new AppDbContext(options);
         _settingsLoggerMock = new Mock<ILogger<SettingsService>>();
         _settingsService = new SettingsService(_context, _settingsLoggerMock.Object);
-        _processRunnerMock = new Mock<IProcessRunner>();
+        _mediaProbeMock = new Mock<IMediaProbeService>();
+        _subtitleMock = new Mock<ISubtitleService>();
+        _profileBuilderMock = new Mock<ITranscodeProfileBuilder>();
         _ffmpegLoggerMock = new Mock<ILogger<FFmpegService>>();
     }
 
@@ -46,7 +52,12 @@ public class TranscodingIntegrationTests : IDisposable
 
     private FFmpegService CreateFFmpegService()
     {
-        return new FFmpegService(_ffmpegLoggerMock.Object, _processRunnerMock.Object, _settingsService);
+        return new FFmpegService(
+            _ffmpegLoggerMock.Object, 
+            _settingsService, 
+            _mediaProbeMock.Object, 
+            _subtitleMock.Object, 
+            _profileBuilderMock.Object);
     }
 
     /// <summary>

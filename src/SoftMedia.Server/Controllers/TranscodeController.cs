@@ -1,14 +1,16 @@
+using SoftMedia.Server.Data;
+using SoftMedia.Server.DTOs;
+using SoftMedia.Server.Services.Identity;
+using SoftMedia.Server.Services.Transcoding;
+using SoftMedia.Server.Services.Infrastructure;
+using SoftMedia.Server.Services.Abstractions;
+using System.Diagnostics;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using SoftMedia.Server.Data;
-using SoftMedia.Server.DTOs;
-using SoftMedia.Server.Services.Identity;
-using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Scanning;
-using SoftMedia.Server.Services.Transcoding;
 using SoftMedia.Server.Services.Transcoding.Models;
 
 namespace SoftMedia.Server.Controllers;
@@ -29,7 +31,8 @@ public class TranscodeController : ControllerBase
     private readonly AppDbContext _context;
     private readonly ILogger<TranscodeController> _logger;
     private readonly IHlsManifestService _hlsManifestService;
-    private readonly IBinaryLocationService _binaryLocationService;
+    private readonly ITranscodeDebugService _debugService;
+    private readonly IVideoPreviewService _videoPreviewService;
 
     public TranscodeController(
         TranscodeService transcodeService, 
@@ -37,7 +40,8 @@ public class TranscodeController : ControllerBase
         ISettingsService settingsService,
         AppDbContext context,
         IHlsManifestService hlsManifestService,
-        IBinaryLocationService binaryLocationService,
+        ITranscodeDebugService debugService,
+        IVideoPreviewService videoPreviewService,
         ILogger<TranscodeController> logger)
     {
         _transcodeService = transcodeService;
@@ -45,7 +49,8 @@ public class TranscodeController : ControllerBase
         _settingsService = settingsService;
         _context = context;
         _hlsManifestService = hlsManifestService;
-        _binaryLocationService = binaryLocationService;
+        _debugService = debugService;
+        _videoPreviewService = videoPreviewService;
         _logger = logger;
     }
 
@@ -445,261 +450,30 @@ public class TranscodeController : ControllerBase
     [HttpPost("{id}/debug")]
     public async Task<IActionResult> GetPlaybackDebug(Guid id, [FromBody] ClientCapabilities? clientCaps, [FromQuery] int? sub = null)
     {
-        if (sub.HasValue && sub.Value < 0) sub = null;
-
         try
         {
             var userId = GetUserId();
-            var session = _transcodeService.GetSession(id, userId, sub);
-            
-            // Fetch individual server settings
-            var outputVideoCodec = await _settingsService.GetSettingAsync("OutputVideoCodec", "auto");
-            var maxResolution = await _settingsService.GetSettingAsync("MaxTranscodeResolution", "original");
-            var preserveHdr = await _settingsService.GetSettingAsync("PreserveHDR", "true") == "true";
-            var enableAv1 = await _settingsService.GetSettingAsync("EnableAV1Encoding", "false") == "true";
-            var hwAccel = await _settingsService.GetSettingAsync("HardwareAcceleration", "none");
-            var preset = await _settingsService.GetSettingAsync("TranscodePreset", "veryfast");
-            var crf = await _settingsService.GetSettingAsync("TranscodeCRF", "23");
-            var audioChannels = await _settingsService.GetSettingAsync("DefaultAudioChannels", "auto");
-            
-            // Get source media info
-            using var scope = HttpContext.RequestServices.CreateScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var mediaItem = await dbContext.MediaItems.FindAsync(id);
-            
-            if (session == null)
-            {
-                return Ok(new
-                {
-                    playbackMode = "DirectPlay",
-                    isTranscoding = false,
-                    message = "No active transcode session - likely direct play",
-                    clientCapabilities = clientCaps != null ? new
-                    {
-                        videoCodecs = clientCaps.VideoCodecs,
-                        audioCodecs = clientCaps.AudioCodecs,
-                        supportsHdr = clientCaps.SupportsHdr,
-                        maxAudioChannels = clientCaps.MaxAudioChannels,
-                        requestedQuality = clientCaps.RequestedQuality,
-                        supportedSubtitleFormats = clientCaps.SupportedSubtitleFormats
-                    } : null,
-                    serverSettings = new
-                    {
-                        outputVideoCodec,
-                        maxResolution,
-                        preserveHdr,
-                        enableAv1,
-                        hardwareAcceleration = hwAccel,
-                        targetAudioChannels = audioChannels
-                    },
-                    selectedSubtitleTrack = sub
-                });
-            }
-            
-            
-            bool isAdmin = User.IsInRole("Admin");
-            
-            // Get probe info from transcoded output
-            var probeInfo = await ProbeTranscodedOutput(session, isAdmin);
-            
-            // Build comprehensive debug response
-            var debugResponse = new
-            {
-                playbackMode = "Transcode",
-                isTranscoding = true,
-                
-                // 1. Client Capabilities - what the browser/client sent
-                clientCapabilities = clientCaps != null ? new
-                {
-                    videoCodecs = clientCaps.VideoCodecs,
-                    audioCodecs = clientCaps.AudioCodecs,
-                    supportsHdr = clientCaps.SupportsHdr,
-                    maxAudioChannels = clientCaps.MaxAudioChannels,
-                    maxResolution = clientCaps.MaxResolution,
-                    maxBitrate = clientCaps.MaxBitrate,
-                    requestedQuality = clientCaps.RequestedQuality,
-                    supportedContainers = clientCaps.SupportedContainers,
-                    supportedSubtitleFormats = clientCaps.SupportedSubtitleFormats,
-                    displaySupportsHdr = clientCaps.DisplaySupportsHdr,
-                    codecSupportsHdr = clientCaps.CodecSupportsHdr
-                } : null,
-                
-                // 2. Server Settings - admin-configured transcode settings
-                serverSettings = new
-                {
-                    outputVideoCodec,
-                    maxResolution,
-                    preserveHdr,
-                    enableAv1,
-                    hardwareAcceleration = hwAccel,
-                    preset,
-                    crf,
-                    targetAudioChannels = audioChannels
-                },
-                
-                // 3. Source Media Info - what was detected from the source file
-                sourceMedia = mediaItem != null ? new
-                {
-                    videoCodec = mediaItem.VideoCodec,
-                    audioCodec = mediaItem.AudioCodec,
-                    resolution = mediaItem.Resolution,
-                    container = mediaItem.Container,
-                    duration = mediaItem.Duration,
-                    isHdr = session.IsSourceHdr
-                } : null,
-                
-                // 4. Final Decision - what the backend ultimately decided to do
-                decision = new
-                {
-                    targetCodec = session.TargetCodec ?? "h264",
-                    targetResolution = session.TargetResolution ?? "original",
-                    preserveHdr = session.PreserveHdr,
-                    toneMapped = session.IsSourceHdr && !session.PreserveHdr,
-                    subtitleBurnIn = session.IsBitmapSubtitle,
-                    subtitleTrack = session.Key.SubtitleTrackIndex,
-                    subtitleLanguage = session.SubtitleLanguage
-                },
-                
-                // 5. Actual Output - FFprobe data from the transcoded file
-                probe = probeInfo,
-                
-                // Metadata
-                sessionDirectory = isAdmin ? session.SessionDirectory : "<redacted>",
-                probedAt = DateTime.UtcNow
-            };
-            
-            return Ok(debugResponse);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return Unauthorized();
+            var isAdmin = User.IsInRole("Admin");
+            var result = await _debugService.GetDebugInfoAsync(id, userId, clientCaps, sub, isAdmin);
+            return Ok(result);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting debug info for {Id}", id);
-            return StatusCode(500, $"Error getting debug info: {ex.Message}");
+            return StatusCode(500, new { error = ex.Message });
         }
     }
-    
-    /// <summary>
-    /// Probe the transcoded output file to get actual codec/HDR info
-    /// </summary>
-    private async Task<object?> ProbeTranscodedOutput(TranscodeSession session, bool includeSensitiveData)
-    {
-        try
-        {
-            // Try init.mp4 first (fMP4 mode), then fall back to first segment
-            var initPath = Path.Combine(session.SessionDirectory, "init.mp4");
-            var probeFile = System.IO.File.Exists(initPath) 
-                ? initPath 
-                : Directory.GetFiles(session.SessionDirectory, "seg_000.*").FirstOrDefault();
-                
-            if (probeFile == null)
-            {
-                return new { error = "No transcode output files found yet" };
-            }
-            
-            var ffprobePath = _binaryLocationService.ResolveFFprobePath();
-            var startInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = ffprobePath,
-                Arguments = $"-v quiet -print_format json -show_streams \"{probeFile}\"",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                CreateNoWindow = true
-            };
-            
-            using var process = System.Diagnostics.Process.Start(startInfo);
-            if (process == null) return new { error = "Failed to start FFprobe" };
-            
-            var output = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            
-            // Parse JSON and extract video and audio stream info
-            var probeData = System.Text.Json.JsonDocument.Parse(output);
-            var streams = probeData.RootElement.GetProperty("streams");
-            
-            // Find video and audio streams
-            string? videoCodec = null, pixelFormat = null, colorSpace = null, colorTransfer = null, colorPrimaries = null, resolution = null;
-            bool hasHdrMetadata = false, isHdr = false;
-            string? audioCodec = null;
-            int? audioChannels = null;
-            
-            foreach (var stream in streams.EnumerateArray())
-            {
-                if (stream.TryGetProperty("codec_type", out var codecType))
-                {
-                    var type = codecType.GetString();
-                    
-                    if (type == "video" && videoCodec == null)
-                    {
-                        videoCodec = stream.TryGetProperty("codec_name", out var cn) ? cn.GetString() : null;
-                        pixelFormat = stream.TryGetProperty("pix_fmt", out var pf) ? pf.GetString() : null;
-                        colorSpace = stream.TryGetProperty("color_space", out var cs) ? cs.GetString() : null;
-                        colorTransfer = stream.TryGetProperty("color_transfer", out var ct) ? ct.GetString() : null;
-                        colorPrimaries = stream.TryGetProperty("color_primaries", out var cp) ? cp.GetString() : null;
-                        var width = stream.TryGetProperty("width", out var w) ? w.GetInt32() : 0;
-                        var height = stream.TryGetProperty("height", out var h) ? h.GetInt32() : 0;
-                        resolution = $"{width}x{height}";
-                        
-                        hasHdrMetadata = stream.TryGetProperty("side_data_list", out var sideData) &&
-                            sideData.EnumerateArray().Any(sd => 
-                                sd.TryGetProperty("side_data_type", out var sdType) &&
-                                (sdType.GetString()?.Contains("Mastering") == true || 
-                                 sdType.GetString()?.Contains("Content light") == true));
-                                 
-                        isHdr = colorTransfer == "smpte2084" || colorSpace == "bt2020nc";
-                    }
-                    else if (type == "audio" && audioCodec == null)
-                    {
-                        audioCodec = stream.TryGetProperty("codec_name", out var acn) ? acn.GetString() : null;
-                        audioChannels = stream.TryGetProperty("channels", out var ch) ? ch.GetInt32() : null;
-                    }
-                }
-            }
-            
-            if (videoCodec == null)
-            {
-                return new { error = "No video stream found in probe data" };
-            }
-            
-            return new
-            {
-                filePath = includeSensitiveData ? probeFile : Path.GetFileName(probeFile),
-                videoCodec,
-                pixelFormat,
-                colorSpace,
-                colorTransfer,
-                colorPrimaries,
-                resolution,
-                hasHdrMetadata,
-                isHdr,
-                audioCodec,
-                audioChannels
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to probe transcoded output");
-            return new { error = ex.Message };
-        }
-    }
-    
-
 
     /// <summary>
     /// Get a single frame preview at a specific timestamp.
     /// Used for scrubber thumbnail preview while dragging.
     /// </summary>
-    private static readonly Dictionary<string, (byte[] Data, DateTime Expires)> _frameCache = new();
-    private static readonly object _frameCacheLock = new();
-    
     [HttpGet("{id}/frame")]
     public async Task<IActionResult> GetFramePreview(Guid id, [FromQuery] double time, [FromQuery] string? token = null)
     {
         try
         {
-            // Validate token (same as other endpoints)
+            // Permission check logic...
             if (!string.IsNullOrEmpty(token))
             {
                 var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
@@ -715,117 +489,23 @@ public class TranscodeController : ControllerBase
                 GetUserId(); // Will throw if not authenticated
             }
             
-            // Round time to 1 second to increase cache hits
-            var roundedTime = Math.Floor(time);
-            var cacheKey = $"{id}_{roundedTime}";
+            var (data, contentType) = await _videoPreviewService.GetPreviewImageAsync(id, time);
             
-            // Check cache first
-            lock (_frameCacheLock)
+            if (data == null || data.Length == 0)
             {
-                if (_frameCache.TryGetValue(cacheKey, out var cached) && cached.Expires > DateTime.UtcNow)
-                {
-                    return File(cached.Data, "image/jpeg");
-                }
+                return NotFound("Could not extract frame");
             }
-
-            // Get media item path
-            using var scope = HttpContext.RequestServices.CreateScope();
-            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var mediaItem = await context.MediaItems.FindAsync(id);
-            if (mediaItem == null) return NotFound();
-
-            // Extract single frame using FFmpeg
-            var ffmpegPath = "ffmpeg"; // Assumes ffmpeg is on PATH
-            var tempFile = Path.Combine(Path.GetTempPath(), $"frame_{id}_{roundedTime}.jpg");
             
-            try
-            {
-                // Use FFmpeg to extract frame at timestamp (fast seek with -ss before -i)
-                var arguments = $"-ss {roundedTime:F0} -i \"{mediaItem.Path}\" -vframes 1 -q:v 8 -vf scale=320:-1 -f image2 -y \"{tempFile}\"";
-                _logger.LogDebug("FFmpeg frame extraction: {Args}", arguments);
-                
-                var startInfo = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = ffmpegPath,
-                    Arguments = arguments,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-
-                using var process = System.Diagnostics.Process.Start(startInfo);
-                if (process == null)
-                {
-                    _logger.LogError("Failed to start FFmpeg process");
-                    return StatusCode(500, "Failed to start FFmpeg");
-                }
-                
-                // Read stderr asynchronously
-                var stderrTask = process.StandardError.ReadToEndAsync();
-                
-                // Wait with timeout of 5 seconds (increased for slower files)
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                try
-                {
-                    await process.WaitForExitAsync(cts.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Timeout - kill the process
-                    try { process.Kill(true); } catch { }
-                    _logger.LogWarning("Frame extraction timed out for {MediaId} at {Time}s", id, time);
-                    return StatusCode(504, "Frame extraction timed out");
-                }
-                
-                var stderr = await stderrTask;
-                
-                if (process.ExitCode != 0)
-                {
-                    _logger.LogError("FFmpeg frame extraction failed with exit code {ExitCode}: {Stderr}", process.ExitCode, stderr);
-                    return StatusCode(500, $"FFmpeg failed: {stderr.Substring(0, Math.Min(500, stderr.Length))}");
-                }
-
-                if (!System.IO.File.Exists(tempFile))
-                {
-                    _logger.LogError("FFmpeg did not create output file. Stderr: {Stderr}", stderr);
-                    return StatusCode(500, "Failed to extract frame - no output file");
-                }
-
-                var bytes = await System.IO.File.ReadAllBytesAsync(tempFile);
-                
-                if (bytes.Length == 0)
-                {
-                    _logger.LogError("FFmpeg created empty file. Stderr: {Stderr}", stderr);
-                    return StatusCode(500, "Failed to extract frame - empty file");
-                }
-                
-                // Cache for 30 seconds
-                lock (_frameCacheLock)
-                {
-                    _frameCache[cacheKey] = (bytes, DateTime.UtcNow.AddSeconds(30));
-                    
-                    // Cleanup old cache entries
-                    var expiredKeys = _frameCache.Where(kv => kv.Value.Expires < DateTime.UtcNow).Select(kv => kv.Key).ToList();
-                    foreach (var key in expiredKeys) _frameCache.Remove(key);
-                }
-                
-                // Cleanup temp file
-                try { System.IO.File.Delete(tempFile); } catch { }
-                
-                _logger.LogDebug("Frame extracted successfully: {Bytes} bytes", bytes.Length);
-
-                return File(bytes, "image/jpeg");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to extract frame at {Time}s for {MediaId}", time, id);
-                return StatusCode(500, $"Frame extraction failed: {ex.Message}");
-            }
+            return File(data, contentType);
         }
         catch (UnauthorizedAccessException)
         {
             return Unauthorized();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting frame preview for {Id} at {Time}", id, time);
+            return StatusCode(500, ex.Message);
         }
     }
 }

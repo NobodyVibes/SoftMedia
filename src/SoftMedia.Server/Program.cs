@@ -24,6 +24,10 @@ builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.ILibraryServic
 builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.IMediaRepository, SoftMedia.Server.Services.Infrastructure.MediaRepository>();
 builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.ILibraryRepository, SoftMedia.Server.Services.Infrastructure.LibraryRepository>();
 builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.IMediaService, SoftMedia.Server.Services.Media.MediaService>();
+builder.Services.AddScoped<SoftMedia.Server.Services.Transcoding.ITranscodeDebugService, SoftMedia.Server.Services.Transcoding.TranscodeDebugService>();
+builder.Services.AddScoped<SoftMedia.Server.Services.Media.IVideoPreviewService, SoftMedia.Server.Services.Media.VideoPreviewService>();
+
+
 
 // SignalR for real-time updates
 builder.Services.AddSignalR();

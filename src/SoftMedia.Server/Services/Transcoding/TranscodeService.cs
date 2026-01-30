@@ -347,6 +347,31 @@ public class TranscodeService
                 BurnSubtitles = burnSubtitles ?? false
             };
 
+            // Detect if source is HDR for accurate reporting
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var ffmpegService = scope.ServiceProvider.GetRequiredService<IFFmpegService>();
+                var probe = await ffmpegService.ProbeMediaAsync(inputPath);
+                if (probe != null)
+                {
+                    // Basic HDR detection logic matches StreamPlanService/TranscodeProfileBuilder
+                    session.IsSourceHdr = !string.IsNullOrEmpty(probe.ColorTransfer) && 
+                        (probe.ColorTransfer.Contains("smpte2084") || probe.ColorTransfer.Contains("arib-std-b67"));
+                    
+                    if (!session.IsSourceHdr && !string.IsNullOrEmpty(probe.PixelFormat))
+                    {
+                        var fmt = probe.PixelFormat.ToLowerInvariant();
+                        if (fmt.Contains("10") || fmt.Contains("12") || fmt.Contains("p010") || fmt.Contains("p016"))
+                        {
+                            if (string.IsNullOrEmpty(probe.ColorTransfer) || probe.ColorTransfer.ToLowerInvariant() != "bt709")
+                            {
+                                session.IsSourceHdr = true;
+                            }
+                        }
+                    }
+                }
+            }
+
             _logger.LogInformation("Created new transcode session for {MediaId}: subtitleTrackIndex={Sub}, sessionDir={Dir}",
                 mediaId, subtitleTrackIndex?.ToString() ?? "null", sessionDir);
 

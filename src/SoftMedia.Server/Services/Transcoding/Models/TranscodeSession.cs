@@ -69,6 +69,11 @@ public class TranscodeSession
     public string? TargetCodec { get; set; }
     
     /// <summary>
+    /// Whether the source media is HDR
+    /// </summary>
+    public bool IsSourceHdr { get; set; }
+    
+    /// <summary>
     /// Whether to preserve HDR (skip tone mapping)
     /// </summary>
     public bool PreserveHdr { get; set; }

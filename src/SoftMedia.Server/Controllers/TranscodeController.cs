@@ -544,7 +544,8 @@ public class TranscodeController : ControllerBase
                     audioCodec = mediaItem.AudioCodec,
                     resolution = mediaItem.Resolution,
                     container = mediaItem.Container,
-                    duration = mediaItem.Duration
+                    duration = mediaItem.Duration,
+                    isHdr = session.IsSourceHdr
                 } : null,
                 
                 // 4. Final Decision - what the backend ultimately decided to do
@@ -553,7 +554,7 @@ public class TranscodeController : ControllerBase
                     targetCodec = session.TargetCodec ?? "h264",
                     targetResolution = session.TargetResolution ?? "original",
                     preserveHdr = session.PreserveHdr,
-                    toneMapped = !session.PreserveHdr,
+                    toneMapped = session.IsSourceHdr && !session.PreserveHdr,
                     subtitleBurnIn = session.IsBitmapSubtitle,
                     subtitleTrack = session.Key.SubtitleTrackIndex,
                     subtitleLanguage = session.SubtitleLanguage

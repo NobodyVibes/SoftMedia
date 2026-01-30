@@ -9,6 +9,7 @@ export interface LocalPreferences {
     audioLanguage: string;
     subtitleLanguage: string;
     autoSelectSubtitle: string; // 'true' | 'false'
+    burnSubtitles: string; // 'auto' | 'always'
 }
 
 const BASE_PREFERENCES_KEY = 'softmedia_preferences';
@@ -20,6 +21,7 @@ const defaultPreferences: LocalPreferences = {
     audioLanguage: 'en',
     subtitleLanguage: 'off',
     autoSelectSubtitle: 'true',
+    burnSubtitles: 'auto',
 };
 
 /**

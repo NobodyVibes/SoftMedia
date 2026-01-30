@@ -11,8 +11,12 @@ export interface ClientCapabilities {
     audioCodecs: string[];
     /** Maximum audio channels the client supports (2 = stereo, 6 = 5.1, 8 = 7.1) */
     maxAudioChannels: number;
-    /** Whether the client supports HDR playback */
+    /** Whether the client supports HDR playback (Display + Codec) */
     supportsHdr: boolean;
+    /** Whether the display hardware reports HDR support */
+    displaySupportsHdr?: boolean;
+    /** Whether the browser has software support for HDR codecs */
+    codecSupportsHdr?: boolean;
     /** Maximum bitrate the client can handle (in kbps). 0 = unlimited */
     maxBitrate: number;
     /** Maximum resolution height the client prefers (e.g., 720, 1080, 2160). 0 = original */
@@ -23,6 +27,8 @@ export interface ClientCapabilities {
     supportedContainers: string[];
     /** User's requested quality from player UI (e.g., "auto", "720p", "1080p", "4k", "original") */
     requestedQuality?: string;
+    /** Index of the subtitle track to be burned in (if any) */
+    subtitleTrackIndex?: number | null;
 }
 
 
@@ -132,29 +138,28 @@ function detectAudioCodecs(): string[] {
  * Detect HDR support using CSS color-gamut media query.
  * Note: This checks display capability, not video decode capability.
  */
-function detectHdrSupport(): boolean {
-    // Check for wide color gamut display (P3 or Rec2020)
+function detectHdrDetails(): { displaySupportsHdr: boolean, codecSupportsHdr: boolean } {
+    // 1. Check Display Capabilities
+    let displaySupportsHdr = false;
     if (typeof window.matchMedia === 'function') {
-        // P3 wide gamut (common on modern displays)
-        if (window.matchMedia('(color-gamut: p3)').matches) {
-            return true;
+        // Modern standard for detecting HDR display support
+        if (window.matchMedia('(video-dynamic-range: high)').matches) {
+            displaySupportsHdr = true;
         }
-        // Rec2020 (HDR standard)
-        if (window.matchMedia('(color-gamut: rec2020)').matches) {
-            return true;
+        // Wide color gamut (P3 or Rec2020) - often synonymous with HDR capability
+        else if (window.matchMedia('(color-gamut: p3)').matches || window.matchMedia('(color-gamut: rec2020)').matches) {
+            displaySupportsHdr = true;
         }
     }
 
-    // Check for HDR video codec support (HDR10)
-    // Note: This is a heuristic - presence of 10-bit codec support suggests HDR capability
-    if (checkMediaSourceSupport('video/mp4; codecs="hvc1.2.4.L153.B0"')) { // HEVC 10-bit HDR
-        return true;
-    }
-    if (checkMediaSourceSupport('video/mp4; codecs="av01.0.09M.10"')) { // AV1 HDR10
-        return true;
-    }
+    // 2. Check Codec Capabilities (Software Check)
+    // Even if the screen is HDR, the browser must be able to decode at least one HDR format.
+    const codecSupportsHdr =
+        checkMediaSourceSupport('video/mp4; codecs="hvc1.2.4.L153.B0"') || // HEVC 10-bit
+        checkMediaSourceSupport('video/mp4; codecs="av01.0.09M.10"') ||    // AV1 10-bit
+        checkMediaSourceSupport('video/webm; codecs="vp09.02.51.10.01.09.16.09.01"'); // VP9 Profile 2
 
-    return false;
+    return { displaySupportsHdr, codecSupportsHdr };
 }
 
 /**
@@ -249,11 +254,14 @@ export function useMediaCapabilities(): {
     useEffect(() => {
         // Run detection
         const detect = () => {
+            const { displaySupportsHdr, codecSupportsHdr } = detectHdrDetails();
             const detected: ClientCapabilities = {
                 videoCodecs: detectVideoCodecs(),
                 audioCodecs: detectAudioCodecs(),
                 maxAudioChannels: detectMaxAudioChannels(),
-                supportsHdr: detectHdrSupport(),
+                supportsHdr: displaySupportsHdr && codecSupportsHdr,
+                displaySupportsHdr,
+                codecSupportsHdr,
                 maxBitrate: 0, // 0 = unlimited, user/settings can override
                 maxResolution: 0, // 0 = original, user/settings can override
                 supportedSubtitleFormats: ['vtt'], // WebVTT is universally supported
@@ -281,13 +289,14 @@ export function useMediaCapabilities(): {
  */
 export function createCapabilitiesWithOverrides(
     baseCapabilities: ClientCapabilities,
-    overrides: Partial<Pick<ClientCapabilities, 'maxBitrate' | 'maxResolution' | 'requestedQuality'>>
+    overrides: Partial<Pick<ClientCapabilities, 'maxBitrate' | 'maxResolution' | 'requestedQuality' | 'subtitleTrackIndex'>>
 ): ClientCapabilities {
     return {
         ...baseCapabilities,
         maxBitrate: overrides.maxBitrate ?? baseCapabilities.maxBitrate,
         maxResolution: overrides.maxResolution ?? baseCapabilities.maxResolution,
         requestedQuality: overrides.requestedQuality ?? baseCapabilities.requestedQuality,
+        subtitleTrackIndex: overrides.subtitleTrackIndex ?? baseCapabilities.subtitleTrackIndex,
     };
 }
 

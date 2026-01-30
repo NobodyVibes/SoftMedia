@@ -25,7 +25,17 @@ The video and audio streams are copied into a new container (HLS) without re-enc
 ### 3. Transcode (Fallback)
 The video is re-encoded on-the-fly to a format your browser supports. This uses server CPU/GPU but ensures compatibility.
 
-**Used when:** Your browser doesn't support the source video codec, audio codec, or the resolution exceeds your quality settings.
+**Used when:** Your browser doesn't support the source video codec, audio codec, the resolution exceeds your quality settings, or **when subtitles must be burned into HDR content**.
+
+## Subtitles and HDR
+
+HDR (High Dynamic Range) content requires special care when using subtitles:
+
+- **Text Subtitles**: Most modern browsers can overlay text subtitles directly. In this case, HDR is preserved.
+- **Image/Bitmap Subtitles**: Formats like PGS (from Blu-rays) cannot be overlaid by the browser. They must be "burned" into the video image by the server.
+- **Tone Mapping**: When burning subtitles into an HDR video, SoftMedia automatically applies **Tone Mapping** to convert the video to SDR. This ensures the subtitles are clearly visible and prevents visual artifacts that occur when trying to "draw" on an HDR stream.
+
+SoftMedia will automatically switch back to native HDR playback if you turn the subtitles off.
 
 ## Settings That Affect Decisions
 

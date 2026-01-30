@@ -91,15 +91,6 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
                 hasSubtitleOverlay = false;
                 useTextSubtitles = false;
             }
-            
-            // WORKAROUND: Large seek position desync
-            const double MaxSeekForTextSubtitles = 60.0;
-            if (useTextSubtitles && seekPosition.HasValue && seekPosition.Value > MaxSeekForTextSubtitles)
-            {
-                _logger.LogWarning("Skipping text subtitle burn-in for large seek position {Seek}s (would be desynced)", seekPosition.Value);
-                hasSubtitleOverlay = false;
-                useTextSubtitles = false;
-            }
         }
 
         var argumentBuilder = new StringBuilder();
@@ -122,7 +113,8 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
         
         if (useFastSeek && seekPosition.HasValue && seekPosition.Value > 0)
         {
-            // Fast seek: -ss before -i
+            // Fast seek: -ss before -i. 
+            // We use -copyts after -i (standard professional approach) to preserve timestamps for subtitle sync.
             argumentBuilder.Append($"-ss {seekPosition.Value:F2} ");
         }
 
@@ -132,8 +124,25 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             argumentBuilder.Append($"-readrate {readRate.Value:F1} ");
         }
         
+        // --- 10-BIT / HDR HANDLING ---
+        bool isHdr = probe != null && IsHdr(probe.ColorTransfer);
+        bool skipTonemapping = settings.PreserveHDR && isHdr;
+        
+        // Smart HDR Override: If subtitles are active on HDR content, we MUST tone map to burn them in accurately.
+        bool forceToneMappingForSubtitles = isHdr && hasSubtitleOverlay;
+        bool useToneMappingPipeline = isHdr && settings.HardwareAcceleration.ToLower() == "nvidia" && (!skipTonemapping || forceToneMappingForSubtitles);
+        
+        if (skipTonemapping && !forceToneMappingForSubtitles)
+        {
+            _logger.LogInformation("PreserveHDR enabled: skipping tonemapping for 10-bit/HDR content");
+        }
+        else if (skipTonemapping && forceToneMappingForSubtitles)
+        {
+            _logger.LogInformation("PreserveHDR enabled but OVERRIDDEN: tone mapping forced for subtitle burn-in compatibility");
+        }
+
         // HARDWARE DECODE
-        var hwDecodeOptions = GetHardwareDecodeOptions(settings.HardwareAcceleration, hasSubtitleOverlay);
+        var hwDecodeOptions = GetHardwareDecodeOptions(settings.HardwareAcceleration, hasSubtitleOverlay, useToneMappingPipeline);
         if (!string.IsNullOrEmpty(hwDecodeOptions))
         {
             argumentBuilder.Append(hwDecodeOptions);
@@ -142,6 +151,15 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
         
         // Input file
         argumentBuilder.Append($"-i \"{inputPath}\" ");
+
+        // Timestamps and synchronization
+        if (useFastSeek && seekPosition.HasValue && seekPosition.Value > 0)
+        {
+            // -copyts: Preserve timestamps for subtitle synchronization
+            // -start_at_zero: Ensure the output HLS segments start their internal clock at zero
+            argumentBuilder.Append("-copyts -start_at_zero ");
+            _logger.LogInformation("Using -copyts to maintain subtitle sync for fast seek at {Seek}s", seekPosition.Value);
+        }
         
         // Slow seek: -ss after -i
         if (!useFastSeek && seekPosition.HasValue && seekPosition.Value > 0)
@@ -150,17 +168,10 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             _logger.LogInformation("Using slow seek for text subtitle synchronization at {Seek}s", seekPosition.Value);
         }
 
-        // --- 10-BIT / HDR HANDLING ---
-        bool isHdr = probe != null && IsHdr(probe.ColorTransfer);
-        bool skipTonemapping = settings.PreserveHDR && isHdr;
-        bool useToneMappingPipeline = isHdr && settings.HardwareAcceleration.ToLower() == "nvidia" && !skipTonemapping;
-        
-        if (skipTonemapping)
-        {
-            _logger.LogInformation("PreserveHDR enabled: skipping tonemapping for 10-bit/HDR content");
-        }
+
         
         string scaleFilter = "";
+        string toneMapFilter = string.Empty;
         
         if (useToneMappingPipeline)
         {
@@ -186,18 +197,14 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             double fps = probe?.FrameRate > 0 ? probe.FrameRate : 24.0;
             chain.Add($"fps={fps}");
             
-            string toneMapFilter = string.Join(",", chain);
-            
             if (hasSubtitleOverlay)
             {
-               _logger.LogWarning("10-bit content with subtitles: bypassing tone mapping to ensure subtitle rendering.");
-               scaleFilter = GetScaleFilter(settings.MaxResolution, hasSubtitleOverlay, settings.HardwareAcceleration);
-               useToneMappingPipeline = false;
+               // Download from CUDA to CPU memory for subtitle burning
+               chain.Add("hwdownload");
+               chain.Add("format=nv12");
             }
-            else
-            {
-                argumentBuilder.Append($"-vf \"{toneMapFilter}\" ");
-            }
+            
+            toneMapFilter = string.Join(",", chain);
         }
         
         if (!useToneMappingPipeline)
@@ -222,27 +229,26 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             
             if (IsBitmapSubtitleCodec(subtitleCodec))
             {
-                // Use scale2ref to ensure subtitles are scaled to match video resolution
-                // This prevents "tiny subtitles" when overlaying SD subtitles (e.g. DVD) on HD/4K video
-                // [0:s][0:v]scale2ref=flags=bicubic[subs][vid]
-                // - [0:s] is the subtitle stream
-                // - [0:v] is the video stream (reference)
-                // - scale2ref scales the FIRST input ([0:s]) to match the SECOND input ([0:v])
-                // - outputs [subs] (scaled subtitles) and [vid] (original video passed through)
+                // [0:s] is subtitles, [0:v] is video
+                string videoInput = "[0:v]";
                 
-                filterChain.Append($"[0:{subtitleTrackIndex}][0:v]scale2ref=flags=bicubic[subs][vid];");
+                if (useToneMappingPipeline)
+                {
+                    // Apply tone mapping to video first: [0:v]toneMapFilter[tm];
+                    filterChain.Append($"[0:v]{toneMapFilter}[tm];");
+                    videoInput = "[tm]";
+                }
                 
-                // Now verify if we need to scale the VIDEO itself (e.g. 4K -> 1080p)
-                // We must apply scaling to the [vid] output from scale2ref
+                // Use scale2ref to ensure subtitles are scaled to match video
+                // [0:s][videoInput]scale2ref...
+                filterChain.Append($"[0:{subtitleTrackIndex}]{videoInput}scale2ref=flags=bicubic[subs][vid];");
+                
+                // [vid] is the video stream output from scale2ref (original resolution/tonemapped)
                 string videoLabel = "[vid]";
                 
-                if (!string.IsNullOrEmpty(scaleFilter))
+                if (!useToneMappingPipeline && !string.IsNullOrEmpty(scaleFilter))
                 {
-                    // scaleFilter format is usually "-vf "scale=..."" or just filter chain part "scale=..."
-                    // We need just the filter part, e.g. "scale=1920:-2"
-                    // And we need to chain it: [vid]scale=...[vscaled]
-                    
-                    // Cleanup scaleFilter to get just the filter command
+                    // Cleanup scaleFilter if using software scaling
                     var cleanScale = scaleFilter.Replace("-vf ", "").Replace("\"", "").Trim();
                     if (cleanScale.StartsWith(",")) cleanScale = cleanScale.Substring(1);
                     
@@ -257,10 +263,10 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
                 
                 argumentBuilder.Append($"-filter_complex \"{filterChain}\" ");
                 
-                // Map processed video from filter complex
+                // Map processed video
                 argumentBuilder.Append("-map \"[v]\" ");
                 
-                // Map audio: use selected track if available, otherwise default to first audio stream
+                // Map audio
                 if (audioTrackIndex.HasValue)
                 {
                     argumentBuilder.Append($"-map 0:{audioTrackIndex.Value} ");
@@ -272,15 +278,23 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             }
             else
             {
+                // Text subtitles
                 var escapedPath = inputPath
                     .Replace("\\", "/")
                     .Replace(":", "\\:")
                     .Replace("'", @"\\'");
                 
                 var si = await _subtitleService.GetSubtitleStreamIndexAsync(inputPath, subtitleTrackIndex ?? 0);
+                
+                // Prepend tone mapping if active
+                if (useToneMappingPipeline)
+                {
+                    filterChain.Append($"{toneMapFilter},");
+                }
+                
                 filterChain.Append($"subtitles='{escapedPath}':si={si}");
                 
-                if (!string.IsNullOrEmpty(scaleFilter))
+                if (!useToneMappingPipeline && !string.IsNullOrEmpty(scaleFilter))
                 {
                     filterChain.Append(scaleFilter);
                 }
@@ -290,18 +304,19 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             
             argumentBuilder.Append(GetEncoderOptions(settings, probe?.FrameRate ?? 23.976, maxBitrate));
         }
-        else if (!string.IsNullOrEmpty(scaleFilter))
+        else 
         {
-            argumentBuilder.Append(scaleFilter);
-            argumentBuilder.Append(GetEncoderOptions(settings, probe?.FrameRate ?? 23.976, maxBitrate));
-        }
-        else if (useToneMappingPipeline)
-        {
-            argumentBuilder.Append(GetEncoderOptions(settings, probe?.FrameRate ?? 23.976, maxBitrate));
-        }
-        else
-        {
-            argumentBuilder.Append(GetEncoderOptions(settings, probe?.FrameRate ?? 23.976, maxBitrate));
+             // No subtitles
+             if (useToneMappingPipeline)
+             {
+                 argumentBuilder.Append($"-vf \"{toneMapFilter}\" ");
+             }
+             else if (!string.IsNullOrEmpty(scaleFilter))
+             {
+                 argumentBuilder.Append(scaleFilter);
+             }
+             
+             argumentBuilder.Append(GetEncoderOptions(settings, probe?.FrameRate ?? 23.976, maxBitrate));
         }
         
         // Standard mapping for non-bitmap scenarios
@@ -377,13 +392,13 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
         return colorTransfer != null && (colorTransfer.Contains("smpte2084") || colorTransfer.Contains("arib-std-b67"));
     }
 
-    private string GetHardwareDecodeOptions(string hwAccel, bool hasSubtitleOverlay)
+    private string GetHardwareDecodeOptions(string hwAccel, bool hasSubtitleOverlay, bool useToneMappingPipeline)
     {
         return hwAccel.ToLower() switch
         {
-            "nvidia" => hasSubtitleOverlay 
-                ? "-hwaccel cuda " // Don't force CUDA output format if we need to burn subtitles (requires SW frames)
-                : "-hwaccel cuda -hwaccel_output_format cuda ",
+            "nvidia" => (useToneMappingPipeline || !hasSubtitleOverlay) 
+                ? "-hwaccel cuda -hwaccel_output_format cuda "
+                : "-hwaccel cuda ", // Software output for legacy subtitle path if not tone mapping
             "intel" => "-hwaccel qsv -init_hw_device qsv=hw -filter_hw_device hw ",
             "amd" => "-hwaccel d3d11va ",
             _ => ""

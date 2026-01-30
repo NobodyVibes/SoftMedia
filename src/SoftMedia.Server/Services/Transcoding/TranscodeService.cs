@@ -178,7 +178,8 @@ public class TranscodeService
         string? codec = null,
         bool? preserveHdr = null,
         int? audioTrack = null,
-        int? maxBitrate = null)
+        int? maxBitrate = null,
+        bool? burnSubtitles = null)
     {
         // Sanitize subtitle track index: if negative, treat as null (disabled)
         if (subtitleTrackIndex.HasValue && subtitleTrackIndex.Value < 0)
@@ -246,14 +247,19 @@ public class TranscodeService
                          parametersChanged = true;
                          restartReason = $"Max bitrate changed from {existingSession.MaxBitrate} to {maxBitrate}";
                     }
-                    // Check seek position last
-                    else if (existingSession.SeekPosition != seekPosition)
-                    {
+                     else if (existingSession.SeekPosition != seekPosition)
+                     {
+                          parametersChanged = true;
+                          restartReason = $"Seek position changed from {existingSession.SeekPosition} to {seekPosition}";
+                     }
+                     // Check if burn subtitles preference changed
+                     else if (existingSession.BurnSubtitles != (burnSubtitles ?? false))
+                     {
                          parametersChanged = true;
-                         restartReason = $"Seek position changed from {existingSession.SeekPosition} to {seekPosition}";
-                    }
+                         restartReason = $"Burn subtitles preference changed from {existingSession.BurnSubtitles} to {burnSubtitles ?? false}";
+                     }
 
-                    if (parametersChanged)
+                     if (parametersChanged)
                     {
                         _logger.LogInformation("{Reason} for {MediaId}, restarting transcode", restartReason, mediaId);
                         await StopSessionInternalAsync(existingSession, sessionKey);
@@ -337,7 +343,8 @@ public class TranscodeService
                 SessionDirectory = sessionDir,
                 SessionStartTime = DateTime.UtcNow,
                 LastClientRequestTime = DateTime.UtcNow,
-                MaxBitrate = maxBitrate
+                MaxBitrate = maxBitrate,
+                BurnSubtitles = burnSubtitles ?? false
             };
 
             _logger.LogInformation("Created new transcode session for {MediaId}: subtitleTrackIndex={Sub}, sessionDir={Dir}",
@@ -362,10 +369,10 @@ public class TranscodeService
                     _logger.LogInformation("Detected subtitle language: {Lang}", session.SubtitleLanguage);
                 }
                 
-                if (FFmpegService.IsBitmapSubtitleCodec(subtitleCodec))
+                if (FFmpegService.IsBitmapSubtitleCodec(subtitleCodec) || (burnSubtitles == true))
                 {
-                    _logger.LogInformation("Subtitle track {Index} is bitmap-based ({Codec}) - will use burn-in overlay.", 
-                        subtitleTrackIndex.Value, subtitleCodec);
+                    _logger.LogInformation("Subtitle track {Index} is bitmap-based ({Codec}) OR burn-in forced (Forced={Forced}) - will use burn-in overlay.", 
+                        subtitleTrackIndex.Value, subtitleCodec, burnSubtitles);
                     session.IsBitmapSubtitle = true;
                     // Burn-in will be handled by StartFFmpegProcessAsync
                 }

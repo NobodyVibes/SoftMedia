@@ -146,7 +146,7 @@ public class TranscodeController : ControllerBase
     /// - bitrate: Max bitrate in kbps (optional)
     /// </summary>
     [HttpGet("{id}/master.m3u8")]
-    public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null, [FromQuery] string? resolution = null, [FromQuery] string? codec = null, [FromQuery] bool? hdr = null, [FromQuery] int? audio = null, [FromQuery] int? bitrate = null)
+    public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null, [FromQuery] string? resolution = null, [FromQuery] string? codec = null, [FromQuery] bool? hdr = null, [FromQuery] int? audio = null, [FromQuery] int? bitrate = null, [FromQuery] bool? burnSubtitles = null)
     {
         if (sub.HasValue && sub.Value < 0) sub = null;
 
@@ -184,9 +184,9 @@ public class TranscodeController : ControllerBase
             }
 
             // Start transcoding with user ID for session ownership
-            _logger.LogInformation("Starting transcode for media {Id} (user={UserId}, sub={Sub}, seek={Seek}, resolution={Res}, codec={Codec}, hdr={HDR}, audio={Audio}, bitrate={Bitrate})", 
-                id, userId, sub, seek, resolution, codec, hdr, audio, bitrate);
-            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr, audioTrack: audio, maxBitrate: bitrate);
+            _logger.LogInformation("Starting transcode for media {Id} (user={UserId}, sub={Sub}, seek={Seek}, resolution={Res}, codec={Codec}, hdr={HDR}, audio={Audio}, bitrate={Bitrate}, burnSubtitles={BurnSubtitles})", 
+                id, userId, sub, seek, resolution, codec, hdr, audio, bitrate, burnSubtitles);
+            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr, audioTrack: audio, maxBitrate: bitrate, burnSubtitles: burnSubtitles);
 
             var stream = _transcodeService.GetPlaylist(id, userId, sub);
             if (stream == null)
@@ -519,7 +519,9 @@ public class TranscodeController : ControllerBase
                     maxBitrate = clientCaps.MaxBitrate,
                     requestedQuality = clientCaps.RequestedQuality,
                     supportedContainers = clientCaps.SupportedContainers,
-                    supportedSubtitleFormats = clientCaps.SupportedSubtitleFormats
+                    supportedSubtitleFormats = clientCaps.SupportedSubtitleFormats,
+                    displaySupportsHdr = clientCaps.DisplaySupportsHdr,
+                    codecSupportsHdr = clientCaps.CodecSupportsHdr
                 } : null,
                 
                 // 2. Server Settings - admin-configured transcode settings

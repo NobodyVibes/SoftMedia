@@ -82,4 +82,9 @@ public class TranscodeSession
     /// Maximum bitrate limit in kbps (null = unlimited)
     /// </summary>
     public int? MaxBitrate { get; set; }
+
+    /// <summary>
+    /// Whether to force subtitle burn-in (even for text subtitles)
+    /// </summary>
+    public bool BurnSubtitles { get; set; } = false;
 }

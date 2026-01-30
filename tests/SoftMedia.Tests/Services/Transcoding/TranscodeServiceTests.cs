@@ -47,6 +47,14 @@ public class TranscodeServiceTests
         _serviceProviderMock.Setup(sp => sp.GetService(typeof(ISettingsService)))
             .Returns(_settingsServiceMock.Object);
 
+        // Setup default mock for GetTranscodeArgumentsAsync to avoid NRE
+        _ffmpegServiceMock.Setup(x => x.GetTranscodeArgumentsAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), 
+            It.IsAny<int?>(), It.IsAny<double?>(), It.IsAny<double?>(), 
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), 
+            It.IsAny<int?>(), It.IsAny<int?>()))
+            .ReturnsAsync(new System.Diagnostics.ProcessStartInfo { FileName = "cmd", Arguments = "/c echo test", RedirectStandardError = true, UseShellExecute = false });
+
         _service = new TranscodeService(
             _scopeFactoryMock.Object,
             _loggerMock.Object,

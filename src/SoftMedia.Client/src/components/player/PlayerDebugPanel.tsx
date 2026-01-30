@@ -14,6 +14,8 @@ interface DebugInfo {
         requestedQuality?: string;
         supportedContainers?: string[];
         supportedSubtitleFormats?: string[];
+        displaySupportsHdr?: boolean;
+        codecSupportsHdr?: boolean;
     };
     serverSettings?: {
         outputVideoCodec?: string;
@@ -220,7 +222,11 @@ export function PlayerDebugPanel({ mediaId, token, subtitleTrack, clientCapabili
                                         <Row label="Video Codecs" value={renderValue(debugInfo.clientCapabilities.videoCodecs)} />
                                         <Row label="Audio Codecs" value={renderValue(debugInfo.clientCapabilities.audioCodecs)} />
                                         <Row label="Max Audio Ch" value={debugInfo.clientCapabilities.maxAudioChannels} />
-                                        <Row label="Supports HDR" value={renderValue(debugInfo.clientCapabilities.supportsHdr)} />
+                                        <Row label="Supports HDR" value={renderValue(debugInfo.clientCapabilities.supportsHdr)} highlight={debugInfo.clientCapabilities.supportsHdr} />
+                                        <div className="pl-4 border-l border-cyan-500/20 my-1">
+                                            <Row label="↳ Display" value={renderValue(debugInfo.clientCapabilities.displaySupportsHdr)} />
+                                            <Row label="↳ Codec" value={renderValue(debugInfo.clientCapabilities.codecSupportsHdr)} />
+                                        </div>
                                         <Row label="Subtitle Formats" value={renderValue(debugInfo.clientCapabilities.supportedSubtitleFormats)} />
                                         <Row label="Quality Req" value={debugInfo.clientCapabilities.requestedQuality ?? 'auto'} />
                                     </Section>

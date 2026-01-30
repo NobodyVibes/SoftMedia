@@ -52,6 +52,19 @@ export default function ClientSettings({ subsection = 'general' }: ClientSetting
                             </select>
                         </div>
 
+                        <div className="flex flex-col gap-2">
+                            <label className="text-sm font-medium text-gray-400">Burn Subtitles</label>
+                            <select
+                                value={localPrefs.burnSubtitles}
+                                onChange={(e) => updateLocalPref('burnSubtitles', e.target.value)}
+                                className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary [&>option]:bg-[#1a1a1a] [&>option]:text-white"
+                            >
+                                <option value="auto">Automatic</option>
+                                <option value="always">Always Burn-in</option>
+                            </select>
+                            <p className="text-xs text-gray-500">Force server to burn subtitles into video</p>
+                        </div>
+
                         <div className="flex items-center justify-between bg-white/5 rounded-lg px-4 py-3 md:col-span-2">
                             <div className="flex items-center gap-3">
                                 <Volume2 className="w-4 h-4 text-gray-400" />

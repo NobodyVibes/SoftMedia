@@ -38,6 +38,7 @@ interface StreamPlan {
     audioCodec: string;
     container: string;
     isHdr: boolean;
+    sourceIsHdr: boolean;
     resolution: string;
     audioChannels: number;
     reason: string;
@@ -126,6 +127,14 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     // Debug panel state
     const [showDebugPanel, setShowDebugPanel] = useState(false);
+
+    // HDR state tracking for toasts
+    const [playerToast, setPlayerToast] = useState<{ message: string; type: 'info' | 'success' } | null>(null);
+    const lastToastStatusRef = useRef<'hdr' | 'tonemapped' | null>(null);
+
+    const handleDismissToast = useCallback(() => {
+        setPlayerToast(null);
+    }, []);
 
     const token = useAuthStore((state) => state.token);
     const navigate = useNavigate();
@@ -488,10 +497,12 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             const capabilitiesToSend = createCapabilitiesWithOverrides(mediaCapabilities, {
                 requestedQuality: effectiveQuality,
                 maxBitrate: effectiveMaxBitrate,
-                maxResolution: effectiveMaxResolution
+                maxResolution: effectiveMaxResolution,
+                subtitleTrackIndex: selectedSubtitleTrack
             });
 
             console.log('[StreamPlan] Quality - selected:', selectedQuality, 'default:', localPrefs.defaultStreamingQuality, 'effective:', effectiveQuality);
+            console.log('[StreamPlan] Subtitle:', selectedSubtitleTrack);
             console.log('[StreamPlan] Data Saver:', isDataSaver, 'Bitrate:', effectiveMaxBitrate, 'Resolution:', effectiveMaxResolution);
             console.log('[StreamPlan] Requesting stream plan with capabilities:', capabilitiesToSend);
 
@@ -509,6 +520,34 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
                 const plan: StreamPlan = await response.json();
                 console.log('[StreamPlan] Received plan:', plan);
+
+                // --- HDR TOAST LOGIC ---
+                const isSourceHdr = plan.sourceIsHdr;
+                const hasSubtitles = selectedSubtitleTrack !== null && selectedSubtitleTrack !== -1;
+
+                if (isSourceHdr) {
+                    if (!plan.isHdr && hasSubtitles) {
+                        // Transition to Tonemapping
+                        if (lastToastStatusRef.current !== 'tonemapped') {
+                            setPlayerToast({
+                                message: "HDR tone-mapping applied for subtitles. HDR will be disabled while subtitles are active.",
+                                type: 'info'
+                            });
+                            lastToastStatusRef.current = 'tonemapped';
+                        }
+                    } else if (plan.isHdr && !hasSubtitles) {
+                        // Transition to HDR Passthrough
+                        if (lastToastStatusRef.current === 'tonemapped') {
+                            setPlayerToast({
+                                message: "Subtitles disabled. HDR passthrough re-enabled.",
+                                type: 'success'
+                            });
+                        }
+                        lastToastStatusRef.current = 'hdr';
+                    } else if (plan.isHdr) {
+                        lastToastStatusRef.current = 'hdr';
+                    }
+                }
 
                 const needsTranscode = plan.method !== 'DirectPlay';
                 const isFreshEpisodeLoad = lastLoadedItemIdRef.current !== item.id;
@@ -532,9 +571,13 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         console.log(`Using captured click position: ${startPosition}s`);
                         pendingSeekPositionRef.current = null; // Clear after use
                     } else if (effectivePlaybackPositionRef.current > 1) {
-                        // Fallback to tracked position
                         startPosition = Math.floor(effectivePlaybackPositionRef.current);
                         console.log(`Using tracked position: ${startPosition}s`);
+                    } else if (seekOffset > 0 || (videoRef.current?.currentTime || 0) > 1) {
+                        // Priority 3: Final fallback for non-fresh loads
+                        const currentPosition = videoRef.current?.currentTime || 0;
+                        startPosition = Math.max(0, seekOffset > 0 ? (currentPosition + seekOffset) : currentPosition);
+                        console.log(`Continuing from fallback position: ${startPosition}s`);
                     }
 
                     // Delete previous transcode session to start fresh
@@ -543,17 +586,12 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' }).catch(() => { });
                     }
                 }
-                // Priority 2: Resume position for fresh loads
+                // Priority 4: Resume position for fresh loads
                 else if (isFreshEpisodeLoad && resumePosition > 0) {
                     startPosition = resumePosition;
                     console.log(`Using saved resume position: ${resumePosition}s`);
                 }
-                // Priority 3: Fallback for fresh loads with minimal progress
-                else if (!isFreshEpisodeLoad && (seekOffset > 0 || (videoRef.current?.currentTime || 0) > 1)) {
-                    const currentPosition = videoRef.current?.currentTime || 0;
-                    startPosition = seekOffset > 0 ? (currentPosition + seekOffset) : currentPosition;
-                    console.log(`Continuing from fallback position: ${startPosition}s`);
-                }
+
 
                 // Set offset for time display
                 // IMPORTANT: Reset currentTime to 0 FIRST to prevent flicker (displayedTime = currentTime + seekOffset)
@@ -578,6 +616,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     }
                     if (selectedAudioTrack !== null && selectedAudioTrack >= 0) {
                         finalUrl += `&audio=${selectedAudioTrack}`;
+                    }
+                    if (localPrefs.burnSubtitles === 'always') {
+                        finalUrl += `&burnSubtitles=true`;
                     }
                     if (startPosition > 0) {
                         finalUrl += `&seek=${Math.floor(startPosition)}`;
@@ -1571,15 +1612,24 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             >
                 {/* Loading overlay */}
                 {(isLoading || isBuffering) && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-20">
-                        <div className="flex flex-col items-center gap-3">
-                            {/* Spinner */}
-                            <div className="w-12 h-12 border-4 border-white/30 border-t-blue-500 rounded-full animate-spin" />
-                            <div className="text-white text-sm">
-                                {isLoading ? (isTranscoding ? 'Starting transcoding...' : 'Loading video...') : 'Buffering...'}
+                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm transition-opacity duration-300">
+                        <div className="flex flex-col items-center gap-4">
+                            <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
+                            <div className="text-white/70 text-sm font-medium animate-pulse tracking-wide">
+                                {isBuffering ? 'Buffering...' : (isTranscoding ? 'Starting transcoding...' : 'Starting playback...')}
                             </div>
                         </div>
                     </div>
+                )}
+
+                {/* Player Toast Notification */}
+                {playerToast && (
+                    <PlayerToast
+                        key={playerToast.message}
+                        message={playerToast.message}
+                        type={playerToast.type}
+                        onDismiss={handleDismissToast}
+                    />
                 )}
 
                 {/* Next Episode Overlay (for TV Episodes only) */}
@@ -2078,6 +2128,86 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     onClose={() => setShowDebugPanel(false)}
                 />
             )}
+        </div>
+    );
+}
+
+/**
+ * Premium in-player toast notification with circular progress timer and exit animations.
+ */
+function PlayerToast({ message, type, onDismiss }: { message: string, type: 'info' | 'success', onDismiss: () => void }) {
+    const [isExiting, setIsExiting] = useState(false);
+
+    useEffect(() => {
+        // Auto-dismiss after 8 seconds
+        const timer = setTimeout(() => {
+            setIsExiting(true);
+            setTimeout(onDismiss, 500); // Wait for fade-out transition
+        }, 8000);
+
+        return () => clearTimeout(timer);
+    }, [onDismiss]);
+
+    const handleManualDismiss = () => {
+        setIsExiting(true);
+        setTimeout(onDismiss, 500);
+    };
+
+    return (
+        <div className={`absolute top-6 left-1/2 -translate-x-1/2 z-[100] transition-all duration-500 ease-in-out ${isExiting ? 'opacity-0 -translate-y-4 scale-95' : 'opacity-100 translate-y-0 scale-100'
+            }`}>
+            <div className="px-4 py-2.5 rounded-xl shadow-2xl backdrop-blur-xl border bg-blue-500/20 border-blue-500/40 text-blue-50 flex items-center gap-4 font-medium text-sm sm:text-base whitespace-nowrap">
+
+                <div className="flex items-center gap-3">
+                    <div className="w-6 h-6 rounded-full bg-blue-500/40 flex items-center justify-center">
+                        <svg className="w-4 h-4 text-blue-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            {type === 'success' ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                            ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            )}
+                        </svg>
+                    </div>
+                    {message}
+                </div>
+
+                {/* Dismissal UI with circular progress */}
+                <div className="h-6 w-px bg-white/10 mx-1" />
+
+                <button
+                    onClick={handleManualDismiss}
+                    className="relative w-8 h-8 flex items-center justify-center hover:bg-white/10 rounded-full transition-colors group"
+                    title="Dismiss"
+                >
+                    {/* Background track */}
+                    <svg className="absolute w-8 h-8 -rotate-90">
+                        <circle
+                            cx="16"
+                            cy="16"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            fill="transparent"
+                            className="opacity-10"
+                        />
+                        {/* Progress circle */}
+                        <circle
+                            cx="16"
+                            cy="16"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            fill="transparent"
+                            strokeDasharray="62.83"
+                            className="animate-toast-progress"
+                        />
+                    </svg>
+                    {/* Exit X */}
+                    <svg className="relative w-4 h-4 text-white/50 group-hover:text-white transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
         </div>
     );
 }

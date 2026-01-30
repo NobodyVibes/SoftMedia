@@ -22,9 +22,19 @@ public class ClientCapabilities
     public int MaxAudioChannels { get; set; } = 2;
 
     /// <summary>
-    /// Whether the client supports HDR playback.
+    /// Whether the client supports HDR playback (Display + Codec).
     /// </summary>
     public bool SupportsHdr { get; set; } = false;
+
+    /// <summary>
+    /// Whether the display hardware reports HDR support.
+    /// </summary>
+    public bool DisplaySupportsHdr { get; set; } = false;
+
+    /// <summary>
+    /// Whether the browser has software support for HDR codecs.
+    /// </summary>
+    public bool CodecSupportsHdr { get; set; } = false;
 
     /// <summary>
     /// Maximum bitrate the client can handle (in kbps). 0 = unlimited.
@@ -51,6 +61,11 @@ public class ClientCapabilities
     /// This overrides default streaming quality when specified.
     /// </summary>
     public string? RequestedQuality { get; set; } = null;
+
+    /// <summary>
+    /// Index of the subtitle track to be burned in (if any).
+    /// </summary>
+    public int? SubtitleTrackIndex { get; set; } = null;
 }
 
 
@@ -105,9 +120,14 @@ public class StreamPlan
     public string Container { get; set; } = string.Empty;
 
     /// <summary>
-    /// Whether HDR will be preserved (true) or tonemapped to SDR (false).
+    /// Whether the output will be HDR (true) or tonemapped to SDR (false).
     /// </summary>
     public bool IsHdr { get; set; } = false;
+
+    /// <summary>
+    /// Whether the source file is HDR.
+    /// </summary>
+    public bool SourceIsHdr { get; set; } = false;
 
     /// <summary>
     /// The audio channel count that will be delivered.

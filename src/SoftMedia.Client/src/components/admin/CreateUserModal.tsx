@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { toast } from 'sonner';
-import { userService } from '../services/userService';
+import { userService } from '../../services/userService';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 interface CreateUserModalProps {

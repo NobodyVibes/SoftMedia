@@ -11,12 +11,12 @@ import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../store/authStore';
 import ClientSettings from './settings/ClientSettings';
-import { UserListTable } from '../components/UserListTable';
-import { InviteManager } from '../components/InviteManager';
-import { LibraryListTable } from '../components/LibraryListTable';
-import { LibraryForm } from '../components/LibraryForm';
-import { ConfirmationModal } from '../components/ConfirmationModal';
-import { LibraryScanProgress } from '../components/LibraryScanProgress';
+import { UserListTable } from '../components/admin/UserListTable';
+import { InviteManager } from '../components/admin/InviteManager';
+import { LibraryListTable } from '../components/library/LibraryListTable';
+import { LibraryForm } from '../components/library/LibraryForm';
+import { ConfirmationModal } from '../components/modals/ConfirmationModal';
+import { LibraryScanProgress } from '../components/library/LibraryScanProgress';
 import type { Library, LibraryScanJob, FileWatcherIssue } from '../types';
 import { adminService } from '../services/adminService';
 import { notificationService, type OMDbUsage, type SystemNotification } from '../services/notificationService';
@@ -956,7 +956,8 @@ export default function SettingsPage() {
     };
 
     return (
-        <div className="max-w-4xl mx-auto p-6 pb-24" >
+        <div className={cn("mx-auto p-6 pb-24 transition-all duration-300",
+            ['users', 'library-metadata-providers', 'playback-transcoding', 'admin'].includes(activeTab) ? "max-w-7xl" : "max-w-4xl")} >
             <div className="flex items-center justify-between mb-8">
                 <div className="flex items-center gap-4">
                     <Settings className="w-8 h-8 text-primary" />

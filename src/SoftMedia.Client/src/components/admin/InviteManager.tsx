@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { inviteService, type InviteDto } from '../services/inviteService';
-import { ConfirmationModal } from './ConfirmationModal';
+import { inviteService, type InviteDto } from '../../services/inviteService';
+import { ConfirmationModal } from '../modals/ConfirmationModal';
 import { toast } from 'sonner';
 import { Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
@@ -267,7 +267,7 @@ export const InviteManager: React.FC = () => {
             {isLoading ? (
                 <div className="text-gray-400">Loading invites...</div>
             ) : (
-                <div className="bg-gray-800 rounded-lg overflow-hidden">
+                <div className="bg-gray-800 rounded-lg overflow-auto">
                     <table className="w-full">
                         <thead className="bg-gray-900">
                             <tr>

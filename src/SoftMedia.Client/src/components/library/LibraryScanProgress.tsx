@@ -1,5 +1,5 @@
 import { CheckCircle, Loader2, AlertCircle, Clock, AlertTriangle, FolderSearch } from 'lucide-react';
-import type { LibraryScanJob, LibraryScanStatus } from '../types';
+import type { LibraryScanJob, LibraryScanStatus } from '../../types';
 
 interface LibraryScanProgressProps {
     job: LibraryScanJob;

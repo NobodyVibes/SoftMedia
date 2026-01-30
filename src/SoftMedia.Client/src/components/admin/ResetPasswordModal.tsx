@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Button } from './ui/Button';
-import { Input } from './ui/Input';
-import { userService, type UserDto } from '../services/userService';
+import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
+import { userService, type UserDto } from '../../services/userService';
 import { toast } from 'sonner';
 import { useMutation } from '@tanstack/react-query';
 

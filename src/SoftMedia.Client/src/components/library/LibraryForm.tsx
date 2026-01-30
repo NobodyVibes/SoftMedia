@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { X, Plus, Trash2 } from 'lucide-react';
-import { Combobox } from './ui/Combobox';
-import type { Library } from '../types';
+import { Combobox } from '../ui/Combobox';
+import type { Library } from '../../types';
 
 interface LibraryFormProps {
     initialData?: Library;

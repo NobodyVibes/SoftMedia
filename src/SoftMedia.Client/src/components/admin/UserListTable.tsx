@@ -1,11 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { userService, type UserDto } from '../services/userService';
-import { ConfirmationModal } from './ConfirmationModal';
-import { useAuthStore } from '../store/authStore';
+import { userService, type UserDto } from '../../services/userService';
+import { ConfirmationModal } from '../modals/ConfirmationModal';
+import { useAuthStore } from '../../store/authStore';
 import { toast } from 'sonner';
 import { CreateUserModal } from './CreateUserModal';
-import { RatingsModal } from './RatingsModal';
+import { RatingsModal } from '../modals/RatingsModal';
 import { ResetPasswordModal } from './ResetPasswordModal';
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
@@ -314,7 +314,7 @@ export const UserListTable: React.FC = () => {
             </div>
 
             <div className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
-                <div className="max-h-[600px] overflow-y-auto">
+                <div className="max-h-[600px] overflow-auto">
                     <table className="w-full relative">
                         <thead className="bg-gray-900 sticky top-0 z-10">
                             <tr>

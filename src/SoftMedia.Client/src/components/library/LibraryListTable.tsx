@@ -1,5 +1,5 @@
 import { Edit2, Trash2, Folder, ArrowUp, ArrowDown, RefreshCw, Clock, Loader2 } from 'lucide-react';
-import type { Library, LibraryScanJob } from '../types';
+import type { Library, LibraryScanJob } from '../../types';
 
 interface LibraryListTableProps {
     libraries: Library[];
@@ -56,7 +56,7 @@ export function LibraryListTable({ libraries, scanJobs, onEdit, onDelete, onReor
     };
 
     return (
-        <div className="overflow-hidden rounded-xl border border-white/10">
+        <div className="overflow-auto rounded-xl border border-white/10">
             <table className="w-full text-left border-collapse">
                 <thead>
                     <tr className="bg-white/5 border-b border-white/10">
@@ -143,8 +143,8 @@ export function LibraryListTable({ libraries, scanJobs, onEdit, onDelete, onReor
                                             onClick={() => onScan(library)}
                                             disabled={isBusy}
                                             className={`p-2 rounded-lg transition-colors ${isBusy
-                                                    ? 'text-gray-500 cursor-not-allowed'
-                                                    : 'text-blue-400 hover:text-blue-300 hover:bg-blue-500/10'
+                                                ? 'text-gray-500 cursor-not-allowed'
+                                                : 'text-blue-400 hover:text-blue-300 hover:bg-blue-500/10'
                                                 }`}
                                             title={isBusy ? 'Scan in progress' : 'Scan Library'}
                                         >

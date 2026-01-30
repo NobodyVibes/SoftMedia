@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
-import { userService, type UserDto } from '../services/userService';
+import { userService, type UserDto } from '../../services/userService';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 interface RatingsModalProps {

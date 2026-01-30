@@ -5,6 +5,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services;
+using SoftMedia.Server.Services.Media;
 using Xunit;
 
 namespace SoftMedia.Server.Tests.Services;

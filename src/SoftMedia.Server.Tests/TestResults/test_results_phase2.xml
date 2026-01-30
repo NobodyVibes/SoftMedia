@@ -1,0 +1,551 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="0ab11051-67d2-42ed-a046-f6a421fff4a4" name="Admin@GAMING 2026-01-30 02:50:55" runUser="GAMING\Admin" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-01-30T02:50:55.0211881-08:00" queuing="2026-01-30T02:50:55.0211882-08:00" start="2026-01-30T02:50:54.4584878-08:00" finish="2026-01-30T02:51:02.1262792-08:00" />
+  <TestSettings name="default" id="50029d09-90e0-426e-be8b-f968339ff975">
+    <Deployment runDeploymentRoot="Admin_GAMING_2026-01-30_02_50_55" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="3ac73a66-69ce-4fdd-b0e5-3baafdc151bf" testId="b2ab25d2-fc22-2194-7542-4aca18d58e6a" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(fileName: &quot;Breaking.Bad.S01E01.Pilot&quot;, expectedShow: &quot;Breaking Bad&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;Pilot&quot;)" computerName="GAMING" duration="00:00:00.0004044" startTime="2026-01-30T02:50:55.0284217-08:00" endTime="2026-01-30T02:50:55.0284218-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3ac73a66-69ce-4fdd-b0e5-3baafdc151bf">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Strings differ&#xD;
+           ↓ (pos 0)&#xD;
+Expected: "Pilot"&#xD;
+Actual:   ""</Message>
+          <StackTrace>   at SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(String fileName, String expectedShow, Int32 expectedSeason, Int32 expectedEpisode, String expectedTitle) in C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\FileNameParserTests.cs:line 63&#xD;
+   at InvokeStub_FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(Object, Span`1)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="1b06c6b1-e615-4bab-b3d7-da11cb4a35f9" testId="b6bb4d3a-4942-99ca-7abe-ed56bddb9f2a" testName="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;The Office US 2005&quot;, expected: &quot;The Office US&quot;)" computerName="GAMING" duration="00:00:00.0000418" startTime="2026-01-30T02:50:55.0080185-08:00" endTime="2026-01-30T02:50:55.0080186-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1b06c6b1-e615-4bab-b3d7-da11cb4a35f9" />
+    <UnitTestResult executionId="b2c28f6c-b3d2-4706-a515-5745730e1149" testId="d2f8327d-0443-435e-5e7f-49d4a5cb8342" testName="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;Breaking Bad 2008 1080p BluRay&quot;, expected: &quot;Breaking Bad&quot;)" computerName="GAMING" duration="00:00:00.0003472" startTime="2026-01-30T02:50:55.0079341-08:00" endTime="2026-01-30T02:50:55.0079342-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b2c28f6c-b3d2-4706-a515-5745730e1149" />
+    <UnitTestResult executionId="0c26f672-cdc1-4521-9bd3-8e52339e1ee5" testId="551fa35b-f711-538f-7c0d-1e12a936041c" testName="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldIgnoreDiscFolder_AndFindCorrectAlbum" computerName="GAMING" duration="00:00:01.0028066" startTime="2026-01-30T02:51:00.0756411-08:00" endTime="2026-01-30T02:51:00.0756413-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="0c26f672-cdc1-4521-9bd3-8e52339e1ee5" />
+    <UnitTestResult executionId="77ff90d8-b755-43bb-8f7a-29024fedea90" testId="675c629d-d9dc-fdec-c6f8-e131b5ab03a3" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(fileName: &quot;Breaking.Bad.S00E01.Pilot.Unaired&quot;, expectedShow: &quot;Breaking Bad&quot;, expectedSeason: 0, expectedEpisode: 1, expectedTitle: &quot;Pilot Unaired&quot;)" computerName="GAMING" duration="00:00:00.0003487" startTime="2026-01-30T02:50:55.0292355-08:00" endTime="2026-01-30T02:50:55.0292356-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="77ff90d8-b755-43bb-8f7a-29024fedea90">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Strings differ&#xD;
+                ↓ (pos 5)&#xD;
+Expected: "Pilot Unaired"&#xD;
+Actual:   "Pilot"</Message>
+          <StackTrace>   at SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(String fileName, String expectedShow, Int32 expectedSeason, Int32 expectedEpisode, String expectedTitle) in C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\FileNameParserTests.cs:line 93&#xD;
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="5fcd255c-8a2e-401b-8084-7ed58966f0a2" testId="4357fb0a-f3cf-5a22-8df0-d8932ca643dd" testName="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldHandleHyphenatedTitles" computerName="GAMING" duration="00:00:01.0469898" startTime="2026-01-30T02:50:56.0451939-08:00" endTime="2026-01-30T02:50:56.0451941-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5fcd255c-8a2e-401b-8084-7ed58966f0a2" />
+    <UnitTestResult executionId="0ac45131-8296-4b1c-9e85-c3e5a55ef6c9" testId="902d9987-f058-3f19-1e91-243650b7b712" testName="SoftMedia.Server.Tests.StreamControllerTests.GetStream_ReturnsPhysicalFile_WhenValid" computerName="GAMING" duration="00:00:00.0469963" startTime="2026-01-30T02:50:55.0439576-08:00" endTime="2026-01-30T02:50:55.0439577-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="0ac45131-8296-4b1c-9e85-c3e5a55ef6c9" />
+    <UnitTestResult executionId="9cf9bfbb-d123-4704-a741-615ab784ab41" testId="e3ebe2f3-b6d2-4986-db7c-b26689dc1ef9" testName="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_H264_MP4_DirectPlay" computerName="GAMING" duration="00:00:00.0009256" startTime="2026-01-30T02:50:55.0581700-08:00" endTime="2026-01-30T02:50:55.0581701-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9cf9bfbb-d123-4704-a741-615ab784ab41" />
+    <UnitTestResult executionId="4e364fd9-b0a6-4aa1-af3f-d9643949a225" testId="9f6ec8c0-6fa5-f8cc-c1d0-47327489b55b" testName="SoftMedia.Server.Tests.UnitTest1.Test1" computerName="GAMING" duration="00:00:00.0013967" startTime="2026-01-30T02:50:55.0077375-08:00" endTime="2026-01-30T02:50:55.0077376-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4e364fd9-b0a6-4aa1-af3f-d9643949a225" />
+    <UnitTestResult executionId="88997414-3171-41b2-a032-0d49bdf41ef2" testId="406dff53-0f2a-da62-68da-f4fde4c19d95" testName="SoftMedia.Server.Tests.Services.HlsManifestServiceTests.GenerateMasterPlaylist_ShouldInjectSubtitle_WhenPathProvided" computerName="GAMING" duration="00:00:00.0368504" startTime="2026-01-30T02:50:55.0338148-08:00" endTime="2026-01-30T02:50:55.0338149-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="88997414-3171-41b2-a032-0d49bdf41ef2" />
+    <UnitTestResult executionId="efd1f048-c5ab-43a4-983d-5c2c5d02aef9" testId="8643963b-4022-235d-489d-f82c7de7c284" testName="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_MaxTranscodeResolution_Original_AllowsDirectPlay" computerName="GAMING" duration="00:00:00.0009657" startTime="2026-01-30T02:50:55.0591721-08:00" endTime="2026-01-30T02:50:55.0591722-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="efd1f048-c5ab-43a4-983d-5c2c5d02aef9" />
+    <UnitTestResult executionId="d199ba10-d504-4775-9ad2-392414b733a5" testId="2e39933b-e418-45d5-ffc4-84313368cf9f" testName="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_AV1_Transcode_To_H264" computerName="GAMING" duration="00:00:00.0009310" startTime="2026-01-30T02:50:55.0638961-08:00" endTime="2026-01-30T02:50:55.0638962-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d199ba10-d504-4775-9ad2-392414b733a5" />
+    <UnitTestResult executionId="78a9e1ed-49a9-44d1-9c01-21f34d760ad1" testId="dde37448-cc75-f2cd-cc12-b5a3c6a5d25d" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(fileName: &quot;Breaking Bad S01E01 Pilot&quot;, expectedShow: &quot;Breaking Bad&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;Pilot&quot;)" computerName="GAMING" duration="00:00:00.0001551" startTime="2026-01-30T02:50:55.0284735-08:00" endTime="2026-01-30T02:50:55.0284735-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="78a9e1ed-49a9-44d1-9c01-21f34d760ad1" />
+    <UnitTestResult executionId="0baf3cde-3e7b-42d3-9832-fd17a6abc545" testId="164e8392-f9d4-67db-8775-ae2900d1592f" testName="SoftMedia.Server.Tests.StreamControllerTests.GetStream_ReturnsForbid_WhenServiceThrowsUnauthorized" computerName="GAMING" duration="00:00:00.0011170" startTime="2026-01-30T02:50:55.0451177-08:00" endTime="2026-01-30T02:50:55.0451178-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="0baf3cde-3e7b-42d3-9832-fd17a6abc545" />
+    <UnitTestResult executionId="ad7f3416-027d-411d-9fff-eb011add1d5d" testId="931d4d36-709c-0731-e17a-fb5e13e9014f" testName="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;Game of Thrones&quot;, expected: &quot;Game of Thrones&quot;)" computerName="GAMING" duration="00:00:00.0057536" startTime="2026-01-30T02:50:55.0078023-08:00" endTime="2026-01-30T02:50:55.0078023-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ad7f3416-027d-411d-9fff-eb011add1d5d" />
+    <UnitTestResult executionId="d553cca4-df51-4454-b2bb-74d5ec88b22c" testId="fe56f6d4-9e7e-20ea-7b62-761d1de91eb6" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSxExFormat(fileName: &quot;Breaking Bad 1x01 Pilot&quot;, expectedShow: &quot;Breaking Bad&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;Pilot&quot;)" computerName="GAMING" duration="00:00:00.0147779" startTime="2026-01-30T02:50:55.0201946-08:00" endTime="2026-01-30T02:50:55.0201946-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d553cca4-df51-4454-b2bb-74d5ec88b22c" />
+    <UnitTestResult executionId="df832a6a-b35a-4b5f-bbf5-8b399a51e9e3" testId="091c0ec8-66ff-f7f9-9d62-42718958d8db" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseMiniSeriesPatterns(fileName: &quot;Episode 01 The Beginning&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;The Beginning&quot;)" computerName="GAMING" duration="00:00:00.0107224" startTime="2026-01-30T02:50:55.0386944-08:00" endTime="2026-01-30T02:50:55.0386945-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="df832a6a-b35a-4b5f-bbf5-8b399a51e9e3" />
+    <UnitTestResult executionId="f45e7a15-4b01-4de9-8f41-5f75c09736ab" testId="4b29d871-7b8c-9986-249f-0ae9244cc4e5" testName="SoftMedia.Server.Tests.Services.MediaProbeServiceTests.ProbeMediaAsync_ReturnsNull_WhenProcessFails" computerName="GAMING" duration="00:00:00.0006522" startTime="2026-01-30T02:50:55.0532363-08:00" endTime="2026-01-30T02:50:55.0532364-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f45e7a15-4b01-4de9-8f41-5f75c09736ab" />
+    <UnitTestResult executionId="afd30db0-3593-4d16-81e2-603179964bab" testId="c776e354-9ead-f1a7-c9f4-179e1f14430a" testName="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_HDR_Client_SupportsHDR_DirectPlay" computerName="GAMING" duration="00:00:00.0009000" startTime="2026-01-30T02:50:55.0610097-08:00" endTime="2026-01-30T02:50:55.0610098-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="afd30db0-3593-4d16-81e2-603179964bab" />
+    <UnitTestResult executionId="5424f3c5-a6ce-48c2-af06-85f4353e6d62" testId="387e3df1-1d57-db31-70c5-3e4c46f403da" testName="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests.BuildTranscodeArgumentsAsync_Av1_UsesFmp4" computerName="GAMING" duration="00:00:00.0009039" startTime="2026-01-30T02:50:55.0498493-08:00" endTime="2026-01-30T02:50:55.0498494-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5424f3c5-a6ce-48c2-af06-85f4353e6d62" />
+    <UnitTestResult executionId="cca2d635-c093-453e-adba-c01935238848" testId="73574ce3-efc0-9a70-98a0-9c693ed14d34" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseMiniSeriesPatterns(fileName: &quot;01 First Episode&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;First Episode&quot;)" computerName="GAMING" duration="00:00:00.0048131" startTime="2026-01-30T02:50:55.0468423-08:00" endTime="2026-01-30T02:50:55.0468424-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="cca2d635-c093-453e-adba-c01935238848" />
+    <UnitTestResult executionId="388e18d7-cd7d-4dfd-a2da-d97bdcdf8f61" testId="c537bc0f-1e41-c773-78e8-137c4e17fe01" testName="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_EnforcesMaxTranscodeResolution_GlobalLimit" computerName="GAMING" duration="00:00:00.0013902" startTime="2026-01-30T02:50:55.0545216-08:00" endTime="2026-01-30T02:50:55.0545217-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="388e18d7-cd7d-4dfd-a2da-d97bdcdf8f61" />
+    <UnitTestResult executionId="356a1e32-fdc4-4849-9e50-a530f7d0b3b3" testId="4a4207c3-a66f-24a9-ab96-2ec8e663916b" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(fileName: &quot;The Office US S02E03&quot;, expectedShow: &quot;The Office US&quot;, expectedSeason: 2, expectedEpisode: 3, expectedTitle: &quot;&quot;)" computerName="GAMING" duration="00:00:00.0001482" startTime="2026-01-30T02:50:55.0280626-08:00" endTime="2026-01-30T02:50:55.0280626-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="356a1e32-fdc4-4849-9e50-a530f7d0b3b3" />
+    <UnitTestResult executionId="26764f82-3c63-4231-a77a-adc23d8ecf9b" testId="26db1c68-86ba-b48f-2f2e-1327ecdbb950" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(fileName: &quot;Game.of.Thrones.S00E02.Inside.the.Episode&quot;, expectedShow: &quot;Game of Thrones&quot;, expectedSeason: 0, expectedEpisode: 2, expectedTitle: &quot;Inside the Episode&quot;)" computerName="GAMING" duration="00:00:00.0004456" startTime="2026-01-30T02:50:55.0304099-08:00" endTime="2026-01-30T02:50:55.0304100-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="26764f82-3c63-4231-a77a-adc23d8ecf9b">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Strings differ&#xD;
+                     ↓ (pos 10)&#xD;
+Expected: "Inside the Episode"&#xD;
+Actual:   "Inside the"</Message>
+          <StackTrace>   at SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(String fileName, String expectedShow, Int32 expectedSeason, Int32 expectedEpisode, String expectedTitle) in C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\FileNameParserTests.cs:line 93&#xD;
+   at InvokeStub_FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(Object, Span`1)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="d3df0cca-79e8-4f35-9a4a-2aede0b47e4d" testId="322fb210-9fce-41bc-88ef-a2622e416d36" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(fileName: &quot;Game.of.Thrones.S08E06.The.Iron.Throne&quot;, expectedShow: &quot;Game of Thrones&quot;, expectedSeason: 8, expectedEpisode: 6, expectedTitle: &quot;The Iron Throne&quot;)" computerName="GAMING" duration="00:00:00.0001566" startTime="2026-01-30T02:50:55.0287957-08:00" endTime="2026-01-30T02:50:55.0287958-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d3df0cca-79e8-4f35-9a4a-2aede0b47e4d">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Strings differ&#xD;
+                   ↓ (pos 8)&#xD;
+Expected: "The Iron Throne"&#xD;
+Actual:   "The Iron"</Message>
+          <StackTrace>   at SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(String fileName, String expectedShow, Int32 expectedSeason, Int32 expectedEpisode, String expectedTitle) in C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\FileNameParserTests.cs:line 63&#xD;
+   at InvokeStub_FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(Object, Span`1)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="2bd05997-c052-4fa3-807e-8431cf3515e4" testId="690718fb-1c5a-5420-92eb-85ec9d9a40a2" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSxExFormat(fileName: &quot;The.Office.2x03.The.Injury&quot;, expectedShow: &quot;The Office&quot;, expectedSeason: 2, expectedEpisode: 3, expectedTitle: &quot;The Injury&quot;)" computerName="GAMING" duration="00:00:00.0010754" startTime="2026-01-30T02:50:55.0279106-08:00" endTime="2026-01-30T02:50:55.0279107-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2bd05997-c052-4fa3-807e-8431cf3515e4">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Strings differ&#xD;
+              ↓ (pos 3)&#xD;
+Expected: "The Injury"&#xD;
+Actual:   "The"</Message>
+          <StackTrace>   at SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSxExFormat(String fileName, String expectedShow, Int32 expectedSeason, Int32 expectedEpisode, String expectedTitle) in C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\FileNameParserTests.cs:line 77&#xD;
+   at InvokeStub_FileNameParserTests.ParseTvEpisode_ShouldParseSxExFormat(Object, Span`1)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="6e370d0f-f1eb-44a7-99bd-16ec2bbcf33d" testId="4a54947f-4e07-a378-48b4-95d4042091be" testName="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldUseEmbeddedTags_WhenAvailable" computerName="GAMING" duration="00:00:01.0051766" startTime="2026-01-30T02:51:02.0833764-08:00" endTime="2026-01-30T02:51:02.0833766-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="6e370d0f-f1eb-44a7-99bd-16ec2bbcf33d" />
+    <UnitTestResult executionId="1e787826-a2f5-4513-8e6f-8f6d65f6659c" testId="e8262691-42f5-387b-955a-bf5246c82e90" testName="SoftMedia.Server.Tests.Services.MediaProbeServiceTests.ProbeMediaAsync_ParsesValidJsonCorrectly" computerName="GAMING" duration="00:00:00.0555982" startTime="2026-01-30T02:50:55.0525370-08:00" endTime="2026-01-30T02:50:55.0525371-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1e787826-a2f5-4513-8e6f-8f6d65f6659c" />
+    <UnitTestResult executionId="9283ec1d-e549-4c08-aba5-677dbbdf2af9" testId="3a781ebc-e514-27bf-bdae-a4fabb98f25f" testName="SoftMedia.Server.Tests.Services.RecommendationServiceTests.GetNextEpisodeAsync_NoHistory_ReturnsFirstEpisode" computerName="GAMING" duration="00:00:00.4396570" startTime="2026-01-30T02:50:55.4366759-08:00" endTime="2026-01-30T02:50:55.4366760-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9283ec1d-e549-4c08-aba5-677dbbdf2af9" />
+    <UnitTestResult executionId="1e6795dd-7c3e-4443-a1d3-12b3501637b2" testId="b2ab359b-689c-8f20-de68-02b2f7f31e27" testName="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldSelectCorrectAlbum_FromMultipleResults" computerName="GAMING" duration="00:00:00.0010410" startTime="2026-01-30T02:50:56.0468575-08:00" endTime="2026-01-30T02:50:56.0468576-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1e6795dd-7c3e-4443-a1d3-12b3501637b2" />
+    <UnitTestResult executionId="40f95ab1-7fd8-4104-9d85-811bc600bfb0" testId="a5f3d8dd-a4b3-2666-2b08-9424ad792cfd" testName="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;Fallout.2024.2160p.AMZN.WEB-DL&quot;, expected: &quot;Fallout&quot;)" computerName="GAMING" duration="00:00:00.0000497" startTime="2026-01-30T02:50:55.0079654-08:00" endTime="2026-01-30T02:50:55.0079656-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="40f95ab1-7fd8-4104-9d85-811bc600bfb0" />
+    <UnitTestResult executionId="d698beee-563a-432a-977f-03c078c451cb" testId="12c0a4c0-2456-7a4b-2e6d-ff90157d0c7c" testName="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldHandleNull" computerName="GAMING" duration="00:00:00.0000427" startTime="2026-01-30T02:50:55.0477668-08:00" endTime="2026-01-30T02:50:55.0477669-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d698beee-563a-432a-977f-03c078c451cb" />
+    <UnitTestResult executionId="68778e32-2763-448d-80e7-1c8052e795a8" testId="da008ffb-28cf-d992-1c75-abadb15f7c24" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSxExFormat(fileName: &quot;Friends 5x12&quot;, expectedShow: &quot;Friends&quot;, expectedSeason: 5, expectedEpisode: 12, expectedTitle: &quot;&quot;)" computerName="GAMING" duration="00:00:00.0000802" startTime="2026-01-30T02:50:55.0280257-08:00" endTime="2026-01-30T02:50:55.0280258-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="68778e32-2763-448d-80e7-1c8052e795a8" />
+    <UnitTestResult executionId="1685319b-bbb9-469f-8d0e-5f8a1e347842" testId="9f2c50a5-2ab1-54a5-e5ac-dc02607c9c87" testName="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldUseReleaseGroupPoster_WhenAvailable" computerName="GAMING" duration="00:00:01.0128152" startTime="2026-01-30T02:50:57.0599992-08:00" endTime="2026-01-30T02:50:57.0599994-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1685319b-bbb9-469f-8d0e-5f8a1e347842" />
+    <UnitTestResult executionId="1fc1276c-ed4d-4e1a-a900-7149fa5d48b7" testId="1a41c746-383d-9ab2-fb2f-27e29898b2a0" testName="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests.BuildTranscodeArgumentsAsync_NvidiaHevc_ReturnsNvenc" computerName="GAMING" duration="00:00:00.0006886" startTime="2026-01-30T02:50:55.0524601-08:00" endTime="2026-01-30T02:50:55.0524602-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1fc1276c-ed4d-4e1a-a900-7149fa5d48b7" />
+    <UnitTestResult executionId="17724c30-7b1e-4167-a983-65aa2eff99fe" testId="9d9c75d8-8a1a-a2ff-ae1a-009090d72a1d" testName="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests.BuildTranscodeArgumentsAsync_SubtitleOverlay_ExtractsAndFilters" computerName="GAMING" duration="00:00:00.0018487" startTime="2026-01-30T02:50:55.0517341-08:00" endTime="2026-01-30T02:50:55.0517342-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="17724c30-7b1e-4167-a983-65aa2eff99fe" />
+    <UnitTestResult executionId="e7803a2a-469e-4f0b-afea-d4d81f2677a6" testId="363b58d5-7bf5-fd4d-7f2e-69084db99c8b" testName="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldIgnoreComplexDiscFolder" computerName="GAMING" duration="00:00:01.0040357" startTime="2026-01-30T02:50:58.0654426-08:00" endTime="2026-01-30T02:50:58.0654429-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e7803a2a-469e-4f0b-afea-d4d81f2677a6" />
+    <UnitTestResult executionId="64a89d1b-35a7-491b-ace9-d219c13286ea" testId="7b83ba9f-996c-af97-82d3-40b33d755516" testName="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldCleanTrackTitle_BeforeSearching" computerName="GAMING" duration="00:00:01.0019882" startTime="2026-01-30T02:51:01.0779016-08:00" endTime="2026-01-30T02:51:01.0779018-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="64a89d1b-35a7-491b-ace9-d219c13286ea" />
+    <UnitTestResult executionId="2fa5714b-94e2-406d-8945-3f72276a8b1d" testId="8bf2d7d6-1ec7-562b-0cc2-57fa06eee898" testName="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldCleanEmbeddedTags_BeforeSearching" computerName="GAMING" duration="00:00:01.0068504" startTime="2026-01-30T02:50:59.0725941-08:00" endTime="2026-01-30T02:50:59.0725943-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2fa5714b-94e2-406d-8945-3f72276a8b1d" />
+    <UnitTestResult executionId="61f2b004-bc43-4457-8ebe-f83e0c428305" testId="f6e53535-ed2e-ffee-f779-a539ea148f31" testName="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_AppliesMaxResolution_From_RequestedQuality" computerName="GAMING" duration="00:00:00.0008626" startTime="2026-01-30T02:50:55.0600717-08:00" endTime="2026-01-30T02:50:55.0600718-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="61f2b004-bc43-4457-8ebe-f83e0c428305" />
+    <UnitTestResult executionId="c861064f-e15c-4b45-9971-ee1feabec241" testId="ce2681ae-a014-4492-3ca1-41f84c105b75" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_S00E01_ShouldReturnSeasonZero" computerName="GAMING" duration="00:00:00.0002846" startTime="2026-01-30T02:50:55.0477077-08:00" endTime="2026-01-30T02:50:55.0477078-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c861064f-e15c-4b45-9971-ee1feabec241">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Strings differ&#xD;
+                  ↓ (pos 7)&#xD;
+Expected: "Special Episode"&#xD;
+Actual:   "Special"</Message>
+          <StackTrace>   at SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_S00E01_ShouldReturnSeasonZero() in C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\FileNameParserTests.cs:line 105&#xD;
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="ec2b5e78-2e0e-4ad7-af7a-ca4cea5a61f9" testId="61fcb755-97c0-bf8b-c1f1-411f5eb48e58" testName="SoftMedia.Server.Tests.Services.RecommendationServiceTests.GetNextEpisodeAsync_WatchedFirst_ReturnsSecond" computerName="GAMING" duration="00:00:00.0314037" startTime="2026-01-30T02:50:55.4681434-08:00" endTime="2026-01-30T02:50:55.4681436-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ec2b5e78-2e0e-4ad7-af7a-ca4cea5a61f9" />
+    <UnitTestResult executionId="244471dc-bee9-404b-ac05-8f80e32c9a0e" testId="789c04d5-9a92-af91-e240-047b23146035" testName="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;Band of Brothers - Complete Mini Series 2001 BluRa&quot;···, expected: &quot;Band of Brothers&quot;)" computerName="GAMING" duration="00:00:00.0000573" startTime="2026-01-30T02:50:55.0080009-08:00" endTime="2026-01-30T02:50:55.0080009-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="244471dc-bee9-404b-ac05-8f80e32c9a0e" />
+    <UnitTestResult executionId="0a1c4dbf-5aa9-41cc-a906-60ae30c6b5d6" testId="53295b7c-3689-9830-9da6-21b55eb1b165" testName="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;House.of.the.Dragon.S01.2160p.MAX.WEB-DL&quot;, expected: &quot;House of the Dragon S01&quot;)" computerName="GAMING" duration="00:00:00.0000496" startTime="2026-01-30T02:50:55.0079826-08:00" endTime="2026-01-30T02:50:55.0079827-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="0a1c4dbf-5aa9-41cc-a906-60ae30c6b5d6" />
+    <UnitTestResult executionId="8af6edd6-aed7-4bbc-9bd6-7b0d51f5c935" testId="d995d8f1-485b-cc89-1d7a-e01f705e84f4" testName="SoftMedia.Server.Tests.MetadataAggregatorTests.EnrichMediaItemAsync_ShouldFetchFromFallback_WhenPrimaryLacksArt" computerName="GAMING" duration="00:00:00.0766490" startTime="2026-01-30T02:50:55.0735855-08:00" endTime="2026-01-30T02:50:55.0735856-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8af6edd6-aed7-4bbc-9bd6-7b0d51f5c935" />
+    <UnitTestResult executionId="e853a29d-cd29-4df8-8f20-a6769da01c67" testId="1c623dcd-7df6-c46e-43ac-46244928631e" testName="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;The Hitchhikers Guide To The Galaxy - Remastered M&quot;···, expected: &quot;The Hitchhikers Guide To The Galaxy&quot;)" computerName="GAMING" duration="00:00:00.0000425" startTime="2026-01-30T02:50:55.0129971-08:00" endTime="2026-01-30T02:50:55.0129971-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e853a29d-cd29-4df8-8f20-a6769da01c67" />
+    <UnitTestResult executionId="74bfaddf-f30f-4534-bd46-924ad8198ba0" testId="95fb3475-f75d-885f-87c8-b919fc1ffe7b" testName="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_HDR_NonHDR_Client_Transcodes" computerName="GAMING" duration="00:00:00.0008181" startTime="2026-01-30T02:50:55.0629275-08:00" endTime="2026-01-30T02:50:55.0629276-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="74bfaddf-f30f-4534-bd46-924ad8198ba0" />
+    <UnitTestResult executionId="c0e43aa3-7d07-4490-9190-500a58f9b102" testId="834f2074-99be-b478-43a3-74b8f77306d6" testName="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_MaxTranscodeResolution_ForcesTranscode_NoDirectPlay" computerName="GAMING" duration="00:00:00.0561201" startTime="2026-01-30T02:50:55.0530823-08:00" endTime="2026-01-30T02:50:55.0530824-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c0e43aa3-7d07-4490-9190-500a58f9b102" />
+    <UnitTestResult executionId="171286d3-3458-4d05-9ab3-c9b8cb12166b" testId="00da0704-850b-97d0-e4e5-68c576dd1516" testName="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_AppliesServerBitrateLimit" computerName="GAMING" duration="00:00:00.0026318" startTime="2026-01-30T02:50:55.0571974-08:00" endTime="2026-01-30T02:50:55.0571975-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="171286d3-3458-4d05-9ab3-c9b8cb12166b" />
+    <UnitTestResult executionId="4ed46ae9-e314-4885-a8b7-7548410f63e8" testId="9530fbe6-5cc9-e879-232a-81e26676c360" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseMiniSeriesPatterns(fileName: &quot;Part 1 Introduction&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;Introduction&quot;)" computerName="GAMING" duration="00:00:00.0000637" startTime="2026-01-30T02:50:55.0469467-08:00" endTime="2026-01-30T02:50:55.0469468-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4ed46ae9-e314-4885-a8b7-7548410f63e8" />
+    <UnitTestResult executionId="3fc806f7-787b-4db5-8c99-1e489afd7197" testId="a8910fbd-fb25-86d3-2472-e3f5df41ab5f" testName="SoftMedia.Server.Tests.StreamControllerTests.GetStream_ReturnsNotFound_WhenServiceReturnsNull" computerName="GAMING" duration="00:00:00.0006206" startTime="2026-01-30T02:50:55.0457713-08:00" endTime="2026-01-30T02:50:55.0457714-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3fc806f7-787b-4db5-8c99-1e489afd7197" />
+    <UnitTestResult executionId="594d97f8-b952-4a3f-8cb6-96c511123ba2" testId="1a88f3d7-1691-451e-2ec1-46be5fe7bdbd" testName="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldMatchAlbum_WhenLocalNameIsLonger" computerName="GAMING" duration="00:00:00.0009920" startTime="2026-01-30T02:50:57.0610959-08:00" endTime="2026-01-30T02:50:57.0610960-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="594d97f8-b952-4a3f-8cb6-96c511123ba2" />
+    <UnitTestResult executionId="cbee52b6-4ce6-4b81-8fa5-e6f806b9f7c5" testId="dddbab35-c9af-38fa-eb6f-443c73d272ae" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseMiniSeriesPatterns(fileName: &quot;E01 Pilot&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;Pilot&quot;)" computerName="GAMING" duration="00:00:00.0032586" startTime="2026-01-30T02:50:55.0419932-08:00" endTime="2026-01-30T02:50:55.0419934-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="cbee52b6-4ce6-4b81-8fa5-e6f806b9f7c5" />
+    <UnitTestResult executionId="f281e8a4-b8e1-4bb0-8483-946ec8794eec" testId="b2d61f18-eebe-bb7d-5137-93f3dd86de2d" testName="SoftMedia.Server.Tests.Services.RecommendationServiceTests.GetNextEpisodeAsync_Incomplete_ReturnsResume" computerName="GAMING" duration="00:00:00.0089887" startTime="2026-01-30T02:50:55.4771942-08:00" endTime="2026-01-30T02:50:55.4771944-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f281e8a4-b8e1-4bb0-8483-946ec8794eec" />
+    <UnitTestResult executionId="1012b339-1077-4390-8d1a-6d56c224b974" testId="95461c6c-a8aa-befa-9a51-e051d00902ed" testName="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests.BuildTranscodeArgumentsAsync_BasicSettings_ReturnsLibx264" computerName="GAMING" duration="00:00:00.0005966" startTime="2026-01-30T02:50:55.0530991-08:00" endTime="2026-01-30T02:50:55.0530992-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1012b339-1077-4390-8d1a-6d56c224b974" />
+    <UnitTestResult executionId="88892662-b2dd-4bca-9063-be81c93946bb" testId="b9bcb33d-e82e-15c8-4764-f8e2699943af" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(fileName: &quot;The Office S00E03 Behind the Scenes&quot;, expectedShow: &quot;The Office&quot;, expectedSeason: 0, expectedEpisode: 3, expectedTitle: &quot;Behind the Scenes&quot;)" computerName="GAMING" duration="00:00:00.0001841" startTime="2026-01-30T02:50:55.0304615-08:00" endTime="2026-01-30T02:50:55.0304615-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="88892662-b2dd-4bca-9063-be81c93946bb" />
+    <UnitTestResult executionId="abfe9f7b-fd55-4562-ba31-20e37ecc5c33" testId="75d06f1d-ccf8-b23f-7619-716870d4304b" testName="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldReturnEmptyForUnrecognizedFormat" computerName="GAMING" duration="00:00:00.0000715" startTime="2026-01-30T02:50:55.0470274-08:00" endTime="2026-01-30T02:50:55.0470275-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="abfe9f7b-fd55-4562-ba31-20e37ecc5c33" />
+    <UnitTestResult executionId="44b88da2-749f-47f0-8b32-8228854211e8" testId="06143cdf-f572-6941-078b-e6446c5c60aa" testName="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldHandleEmptyString" computerName="GAMING" duration="00:00:00.0000277" startTime="2026-01-30T02:50:55.0478112-08:00" endTime="2026-01-30T02:50:55.0478112-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="44b88da2-749f-47f0-8b32-8228854211e8" />
+    <UnitTestResult executionId="6c60c218-9653-4ac0-ade2-2093984b3e4f" testId="3f5eb306-e9e6-206e-2138-6a3bbdbc4f52" testName="SoftMedia.Server.Tests.Services.HlsManifestServiceTests.GenerateMasterPlaylist_ShouldInjectToken" computerName="GAMING" duration="00:00:00.0005888" startTime="2026-01-30T02:50:55.0344569-08:00" endTime="2026-01-30T02:50:55.0344571-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="6c60c218-9653-4ac0-ade2-2093984b3e4f" />
+    <UnitTestResult executionId="b2bc0517-4983-4767-84d5-1796f428e140" testId="f0533828-6e90-aac2-fab9-b46f5edceaba" testName="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_HEVC_MKV_Remux" computerName="GAMING" duration="00:00:00.0010242" startTime="2026-01-30T02:50:55.0620637-08:00" endTime="2026-01-30T02:50:55.0620637-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b2bc0517-4983-4767-84d5-1796f428e140" />
+    <UnitTestResult executionId="43a990b9-4f32-4241-be2b-12d1fa556497" testId="99ce1198-379b-5c87-6b29-dcb742925670" testName="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests.BuildTranscodeArgumentsAsync_WithSeek_AddsSsArgument" computerName="GAMING" duration="00:00:00.0519677" startTime="2026-01-30T02:50:55.0489060-08:00" endTime="2026-01-30T02:50:55.0489061-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="43a990b9-4f32-4241-be2b-12d1fa556497" />
+    <UnitTestResult executionId="ddb7c239-5c36-4cc4-a0da-fe7657af7687" testId="4b5dfcb1-b1c8-3a9b-2089-bd4858f85b10" testName="SoftMedia.Server.Tests.DiagnosisTests.DiagnoseMissingArt" computerName="GAMING" duration="00:00:00.0010000" startTime="2026-01-30T02:50:55.0057519-08:00" endTime="2026-01-30T02:50:55.0057654-08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="NotExecuted" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ddb7c239-5c36-4cc4-a0da-fe7657af7687">
+      <Output>
+        <ErrorInfo>
+          <Message>Use for manual diagnosis only</Message>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;House.of.the.Dragon.S01.2160p.MAX.WEB-DL&quot;, expected: &quot;House of the Dragon S01&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="53295b7c-3689-9830-9da6-21b55eb1b165">
+      <Execution id="0a1c4dbf-5aa9-41cc-a906-60ae30c6b5d6" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="CleanShowName_ShouldExtractCleanTitle" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;Breaking Bad 2008 1080p BluRay&quot;, expected: &quot;Breaking Bad&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="d2f8327d-0443-435e-5e7f-49d4a5cb8342">
+      <Execution id="b2c28f6c-b3d2-4706-a515-5745730e1149" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="CleanShowName_ShouldExtractCleanTitle" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests.BuildTranscodeArgumentsAsync_SubtitleOverlay_ExtractsAndFilters" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="9d9c75d8-8a1a-a2ff-ae1a-009090d72a1d">
+      <Execution id="17724c30-7b1e-4167-a983-65aa2eff99fe" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests" name="BuildTranscodeArgumentsAsync_SubtitleOverlay_ExtractsAndFilters" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.HlsManifestServiceTests.GenerateMasterPlaylist_ShouldInjectToken" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="3f5eb306-e9e6-206e-2138-6a3bbdbc4f52">
+      <Execution id="6c60c218-9653-4ac0-ade2-2093984b3e4f" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.HlsManifestServiceTests" name="GenerateMasterPlaylist_ShouldInjectToken" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(fileName: &quot;Breaking Bad S01E01 Pilot&quot;, expectedShow: &quot;Breaking Bad&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;Pilot&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="dde37448-cc75-f2cd-cc12-b5a3c6a5d25d">
+      <Execution id="78a9e1ed-49a9-44d1-9c01-21f34d760ad1" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseStandardSxxExxFormat" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;Band of Brothers - Complete Mini Series 2001 BluRa&quot;···, expected: &quot;Band of Brothers&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="789c04d5-9a92-af91-e240-047b23146035">
+      <Execution id="244471dc-bee9-404b-ac05-8f80e32c9a0e" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="CleanShowName_ShouldExtractCleanTitle" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.RecommendationServiceTests.GetNextEpisodeAsync_Incomplete_ReturnsResume" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="b2d61f18-eebe-bb7d-5137-93f3dd86de2d">
+      <Execution id="f281e8a4-b8e1-4bb0-8483-946ec8794eec" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.RecommendationServiceTests" name="GetNextEpisodeAsync_Incomplete_ReturnsResume" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldCleanTrackTitle_BeforeSearching" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="7b83ba9f-996c-af97-82d3-40b33d755516">
+      <Execution id="64a89d1b-35a7-491b-ace9-d219c13286ea" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.MusicBrainzProviderTests" name="FetchMetadataAsync_ShouldCleanTrackTitle_BeforeSearching" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldHandleEmptyString" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="06143cdf-f572-6941-078b-e6446c5c60aa">
+      <Execution id="44b88da2-749f-47f0-8b32-8228854211e8" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="CleanShowName_ShouldHandleEmptyString" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.RecommendationServiceTests.GetNextEpisodeAsync_WatchedFirst_ReturnsSecond" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="61fcb755-97c0-bf8b-c1f1-411f5eb48e58">
+      <Execution id="ec2b5e78-2e0e-4ad7-af7a-ca4cea5a61f9" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.RecommendationServiceTests" name="GetNextEpisodeAsync_WatchedFirst_ReturnsSecond" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.MediaProbeServiceTests.ProbeMediaAsync_ReturnsNull_WhenProcessFails" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="4b29d871-7b8c-9986-249f-0ae9244cc4e5">
+      <Execution id="f45e7a15-4b01-4de9-8f41-5f75c09736ab" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.MediaProbeServiceTests" name="ProbeMediaAsync_ReturnsNull_WhenProcessFails" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldIgnoreComplexDiscFolder" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="363b58d5-7bf5-fd4d-7f2e-69084db99c8b">
+      <Execution id="e7803a2a-469e-4f0b-afea-d4d81f2677a6" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.MusicBrainzProviderTests" name="FetchMetadataAsync_ShouldIgnoreComplexDiscFolder" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.StreamControllerTests.GetStream_ReturnsNotFound_WhenServiceReturnsNull" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="a8910fbd-fb25-86d3-2472-e3f5df41ab5f">
+      <Execution id="3fc806f7-787b-4db5-8c99-1e489afd7197" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.StreamControllerTests" name="GetStream_ReturnsNotFound_WhenServiceReturnsNull" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.UnitTest1.Test1" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="9f6ec8c0-6fa5-f8cc-c1d0-47327489b55b">
+      <Execution id="4e364fd9-b0a6-4aa1-af3f-d9643949a225" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.UnitTest1" name="Test1" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;Fallout.2024.2160p.AMZN.WEB-DL&quot;, expected: &quot;Fallout&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="a5f3d8dd-a4b3-2666-2b08-9424ad792cfd">
+      <Execution id="40f95ab1-7fd8-4104-9d85-811bc600bfb0" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="CleanShowName_ShouldExtractCleanTitle" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_HDR_NonHDR_Client_Transcodes" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="95fb3475-f75d-885f-87c8-b919fc1ffe7b">
+      <Execution id="74bfaddf-f30f-4534-bd46-924ad8198ba0" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.StreamPlanServiceTests" name="ComputeStreamPlan_HDR_NonHDR_Client_Transcodes" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldReturnEmptyForUnrecognizedFormat" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="75d06f1d-ccf8-b23f-7619-716870d4304b">
+      <Execution id="abfe9f7b-fd55-4562-ba31-20e37ecc5c33" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldReturnEmptyForUnrecognizedFormat" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_H264_MP4_DirectPlay" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="e3ebe2f3-b6d2-4986-db7c-b26689dc1ef9">
+      <Execution id="9cf9bfbb-d123-4704-a741-615ab784ab41" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.StreamPlanServiceTests" name="ComputeStreamPlan_H264_MP4_DirectPlay" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldUseEmbeddedTags_WhenAvailable" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="4a54947f-4e07-a378-48b4-95d4042091be">
+      <Execution id="6e370d0f-f1eb-44a7-99bd-16ec2bbcf33d" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.MusicBrainzProviderTests" name="FetchMetadataAsync_ShouldUseEmbeddedTags_WhenAvailable" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldSelectCorrectAlbum_FromMultipleResults" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="b2ab359b-689c-8f20-de68-02b2f7f31e27">
+      <Execution id="1e6795dd-7c3e-4443-a1d3-12b3501637b2" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.MusicBrainzProviderTests" name="FetchMetadataAsync_ShouldSelectCorrectAlbum_FromMultipleResults" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;The Office US 2005&quot;, expected: &quot;The Office US&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="b6bb4d3a-4942-99ca-7abe-ed56bddb9f2a">
+      <Execution id="1b06c6b1-e615-4bab-b3d7-da11cb4a35f9" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="CleanShowName_ShouldExtractCleanTitle" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.DiagnosisTests.DiagnoseMissingArt" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="4b5dfcb1-b1c8-3a9b-2089-bd4858f85b10">
+      <Execution id="ddb7c239-5c36-4cc4-a0da-fe7657af7687" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.DiagnosisTests" name="DiagnoseMissingArt" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(fileName: &quot;Game.of.Thrones.S08E06.The.Iron.Throne&quot;, expectedShow: &quot;Game of Thrones&quot;, expectedSeason: 8, expectedEpisode: 6, expectedTitle: &quot;The Iron Throne&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="322fb210-9fce-41bc-88ef-a2622e416d36">
+      <Execution id="d3df0cca-79e8-4f35-9a4a-2aede0b47e4d" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseStandardSxxExxFormat" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_HEVC_MKV_Remux" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="f0533828-6e90-aac2-fab9-b46f5edceaba">
+      <Execution id="b2bc0517-4983-4767-84d5-1796f428e140" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.StreamPlanServiceTests" name="ComputeStreamPlan_HEVC_MKV_Remux" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseMiniSeriesPatterns(fileName: &quot;01 First Episode&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;First Episode&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="73574ce3-efc0-9a70-98a0-9c693ed14d34">
+      <Execution id="cca2d635-c093-453e-adba-c01935238848" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseMiniSeriesPatterns" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.StreamControllerTests.GetStream_ReturnsPhysicalFile_WhenValid" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="902d9987-f058-3f19-1e91-243650b7b712">
+      <Execution id="0ac45131-8296-4b1c-9e85-c3e5a55ef6c9" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.StreamControllerTests" name="GetStream_ReturnsPhysicalFile_WhenValid" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_EnforcesMaxTranscodeResolution_GlobalLimit" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="c537bc0f-1e41-c773-78e8-137c4e17fe01">
+      <Execution id="388e18d7-cd7d-4dfd-a2da-d97bdcdf8f61" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.StreamPlanServiceTests" name="ComputeStreamPlan_EnforcesMaxTranscodeResolution_GlobalLimit" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests.BuildTranscodeArgumentsAsync_NvidiaHevc_ReturnsNvenc" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="1a41c746-383d-9ab2-fb2f-27e29898b2a0">
+      <Execution id="1fc1276c-ed4d-4e1a-a900-7149fa5d48b7" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests" name="BuildTranscodeArgumentsAsync_NvidiaHevc_ReturnsNvenc" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSxExFormat(fileName: &quot;Breaking Bad 1x01 Pilot&quot;, expectedShow: &quot;Breaking Bad&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;Pilot&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="fe56f6d4-9e7e-20ea-7b62-761d1de91eb6">
+      <Execution id="d553cca4-df51-4454-b2bb-74d5ec88b22c" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseSxExFormat" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_S00E01_ShouldReturnSeasonZero" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="ce2681ae-a014-4492-3ca1-41f84c105b75">
+      <Execution id="c861064f-e15c-4b45-9971-ee1feabec241" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_S00E01_ShouldReturnSeasonZero" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_AppliesServerBitrateLimit" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="00da0704-850b-97d0-e4e5-68c576dd1516">
+      <Execution id="171286d3-3458-4d05-9ab3-c9b8cb12166b" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.StreamPlanServiceTests" name="ComputeStreamPlan_AppliesServerBitrateLimit" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldHandleHyphenatedTitles" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="4357fb0a-f3cf-5a22-8df0-d8932ca643dd">
+      <Execution id="5fcd255c-8a2e-401b-8084-7ed58966f0a2" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.MusicBrainzProviderTests" name="FetchMetadataAsync_ShouldHandleHyphenatedTitles" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.RecommendationServiceTests.GetNextEpisodeAsync_NoHistory_ReturnsFirstEpisode" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="3a781ebc-e514-27bf-bdae-a4fabb98f25f">
+      <Execution id="9283ec1d-e549-4c08-aba5-677dbbdf2af9" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.RecommendationServiceTests" name="GetNextEpisodeAsync_NoHistory_ReturnsFirstEpisode" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(fileName: &quot;Breaking.Bad.S01E01.Pilot&quot;, expectedShow: &quot;Breaking Bad&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;Pilot&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="b2ab25d2-fc22-2194-7542-4aca18d58e6a">
+      <Execution id="3ac73a66-69ce-4fdd-b0e5-3baafdc151bf" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseStandardSxxExxFormat" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.StreamControllerTests.GetStream_ReturnsForbid_WhenServiceThrowsUnauthorized" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="164e8392-f9d4-67db-8775-ae2900d1592f">
+      <Execution id="0baf3cde-3e7b-42d3-9832-fd17a6abc545" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.StreamControllerTests" name="GetStream_ReturnsForbid_WhenServiceThrowsUnauthorized" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests.BuildTranscodeArgumentsAsync_Av1_UsesFmp4" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="387e3df1-1d57-db31-70c5-3e4c46f403da">
+      <Execution id="5424f3c5-a6ce-48c2-af06-85f4353e6d62" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests" name="BuildTranscodeArgumentsAsync_Av1_UsesFmp4" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(fileName: &quot;Game.of.Thrones.S00E02.Inside.the.Episode&quot;, expectedShow: &quot;Game of Thrones&quot;, expectedSeason: 0, expectedEpisode: 2, expectedTitle: &quot;Inside the Episode&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="26db1c68-86ba-b48f-2f2e-1327ecdbb950">
+      <Execution id="26764f82-3c63-4231-a77a-adc23d8ecf9b" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseSeason0Specials" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseMiniSeriesPatterns(fileName: &quot;Episode 01 The Beginning&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;The Beginning&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="091c0ec8-66ff-f7f9-9d62-42718958d8db">
+      <Execution id="df832a6a-b35a-4b5f-bbf5-8b399a51e9e3" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseMiniSeriesPatterns" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseMiniSeriesPatterns(fileName: &quot;E01 Pilot&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;Pilot&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="dddbab35-c9af-38fa-eb6f-443c73d272ae">
+      <Execution id="cbee52b6-4ce6-4b81-8fa5-e6f806b9f7c5" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseMiniSeriesPatterns" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSxExFormat(fileName: &quot;The.Office.2x03.The.Injury&quot;, expectedShow: &quot;The Office&quot;, expectedSeason: 2, expectedEpisode: 3, expectedTitle: &quot;The Injury&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="690718fb-1c5a-5420-92eb-85ec9d9a40a2">
+      <Execution id="2bd05997-c052-4fa3-807e-8431cf3515e4" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseSxExFormat" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(fileName: &quot;The Office S00E03 Behind the Scenes&quot;, expectedShow: &quot;The Office&quot;, expectedSeason: 0, expectedEpisode: 3, expectedTitle: &quot;Behind the Scenes&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="b9bcb33d-e82e-15c8-4764-f8e2699943af">
+      <Execution id="88892662-b2dd-4bca-9063-be81c93946bb" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseSeason0Specials" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_AV1_Transcode_To_H264" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="2e39933b-e418-45d5-ffc4-84313368cf9f">
+      <Execution id="d199ba10-d504-4775-9ad2-392414b733a5" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.StreamPlanServiceTests" name="ComputeStreamPlan_AV1_Transcode_To_H264" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.MetadataAggregatorTests.EnrichMediaItemAsync_ShouldFetchFromFallback_WhenPrimaryLacksArt" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="d995d8f1-485b-cc89-1d7a-e01f705e84f4">
+      <Execution id="8af6edd6-aed7-4bbc-9bd6-7b0d51f5c935" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.MetadataAggregatorTests" name="EnrichMediaItemAsync_ShouldFetchFromFallback_WhenPrimaryLacksArt" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_HDR_Client_SupportsHDR_DirectPlay" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="c776e354-9ead-f1a7-c9f4-179e1f14430a">
+      <Execution id="afd30db0-3593-4d16-81e2-603179964bab" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.StreamPlanServiceTests" name="ComputeStreamPlan_HDR_Client_SupportsHDR_DirectPlay" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldMatchAlbum_WhenLocalNameIsLonger" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="1a88f3d7-1691-451e-2ec1-46be5fe7bdbd">
+      <Execution id="594d97f8-b952-4a3f-8cb6-96c511123ba2" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.MusicBrainzProviderTests" name="FetchMetadataAsync_ShouldMatchAlbum_WhenLocalNameIsLonger" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_MaxTranscodeResolution_ForcesTranscode_NoDirectPlay" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="834f2074-99be-b478-43a3-74b8f77306d6">
+      <Execution id="c0e43aa3-7d07-4490-9190-500a58f9b102" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.StreamPlanServiceTests" name="ComputeStreamPlan_MaxTranscodeResolution_ForcesTranscode_NoDirectPlay" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldHandleNull" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="12c0a4c0-2456-7a4b-2e6d-ff90157d0c7c">
+      <Execution id="d698beee-563a-432a-977f-03c078c451cb" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="CleanShowName_ShouldHandleNull" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldIgnoreDiscFolder_AndFindCorrectAlbum" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="551fa35b-f711-538f-7c0d-1e12a936041c">
+      <Execution id="0c26f672-cdc1-4521-9bd3-8e52339e1ee5" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.MusicBrainzProviderTests" name="FetchMetadataAsync_ShouldIgnoreDiscFolder_AndFindCorrectAlbum" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_MaxTranscodeResolution_Original_AllowsDirectPlay" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="8643963b-4022-235d-489d-f82c7de7c284">
+      <Execution id="efd1f048-c5ab-43a4-983d-5c2c5d02aef9" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.StreamPlanServiceTests" name="ComputeStreamPlan_MaxTranscodeResolution_Original_AllowsDirectPlay" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSxExFormat(fileName: &quot;Friends 5x12&quot;, expectedShow: &quot;Friends&quot;, expectedSeason: 5, expectedEpisode: 12, expectedTitle: &quot;&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="da008ffb-28cf-d992-1c75-abadb15f7c24">
+      <Execution id="68778e32-2763-448d-80e7-1c8052e795a8" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseSxExFormat" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;Game of Thrones&quot;, expected: &quot;Game of Thrones&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="931d4d36-709c-0731-e17a-fb5e13e9014f">
+      <Execution id="ad7f3416-027d-411d-9fff-eb011add1d5d" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="CleanShowName_ShouldExtractCleanTitle" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(fileName: &quot;The Office US S02E03&quot;, expectedShow: &quot;The Office US&quot;, expectedSeason: 2, expectedEpisode: 3, expectedTitle: &quot;&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="4a4207c3-a66f-24a9-ab96-2ec8e663916b">
+      <Execution id="356a1e32-fdc4-4849-9e50-a530f7d0b3b3" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseStandardSxxExxFormat" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests.BuildTranscodeArgumentsAsync_BasicSettings_ReturnsLibx264" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="95461c6c-a8aa-befa-9a51-e051d00902ed">
+      <Execution id="1012b339-1077-4390-8d1a-6d56c224b974" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests" name="BuildTranscodeArgumentsAsync_BasicSettings_ReturnsLibx264" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldCleanEmbeddedTags_BeforeSearching" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="8bf2d7d6-1ec7-562b-0cc2-57fa06eee898">
+      <Execution id="2fa5714b-94e2-406d-8945-3f72276a8b1d" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.MusicBrainzProviderTests" name="FetchMetadataAsync_ShouldCleanEmbeddedTags_BeforeSearching" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.CleanShowName_ShouldExtractCleanTitle(input: &quot;The Hitchhikers Guide To The Galaxy - Remastered M&quot;···, expected: &quot;The Hitchhikers Guide To The Galaxy&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="1c623dcd-7df6-c46e-43ac-46244928631e">
+      <Execution id="e853a29d-cd29-4df8-8f20-a6769da01c67" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="CleanShowName_ShouldExtractCleanTitle" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.StreamPlanServiceTests.ComputeStreamPlan_AppliesMaxResolution_From_RequestedQuality" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="f6e53535-ed2e-ffee-f779-a539ea148f31">
+      <Execution id="61f2b004-bc43-4457-8ebe-f83e0c428305" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.StreamPlanServiceTests" name="ComputeStreamPlan_AppliesMaxResolution_From_RequestedQuality" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.MediaProbeServiceTests.ProbeMediaAsync_ParsesValidJsonCorrectly" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="e8262691-42f5-387b-955a-bf5246c82e90">
+      <Execution id="1e787826-a2f5-4513-8e6f-8f6d65f6659c" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.MediaProbeServiceTests" name="ProbeMediaAsync_ParsesValidJsonCorrectly" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.MusicBrainzProviderTests.FetchMetadataAsync_ShouldUseReleaseGroupPoster_WhenAvailable" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="9f2c50a5-2ab1-54a5-e5ac-dc02607c9c87">
+      <Execution id="1685319b-bbb9-469f-8d0e-5f8a1e347842" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.MusicBrainzProviderTests" name="FetchMetadataAsync_ShouldUseReleaseGroupPoster_WhenAvailable" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(fileName: &quot;Breaking.Bad.S00E01.Pilot.Unaired&quot;, expectedShow: &quot;Breaking Bad&quot;, expectedSeason: 0, expectedEpisode: 1, expectedTitle: &quot;Pilot Unaired&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="675c629d-d9dc-fdec-c6f8-e131b5ab03a3">
+      <Execution id="77ff90d8-b755-43bb-8f7a-29024fedea90" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseSeason0Specials" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.HlsManifestServiceTests.GenerateMasterPlaylist_ShouldInjectSubtitle_WhenPathProvided" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="406dff53-0f2a-da62-68da-f4fde4c19d95">
+      <Execution id="88997414-3171-41b2-a032-0d49bdf41ef2" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.HlsManifestServiceTests" name="GenerateMasterPlaylist_ShouldInjectSubtitle_WhenPathProvided" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests.BuildTranscodeArgumentsAsync_WithSeek_AddsSsArgument" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="99ce1198-379b-5c87-6b29-dcb742925670">
+      <Execution id="43a990b9-4f32-4241-be2b-12d1fa556497" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.Services.TranscodeProfileBuilderTests" name="BuildTranscodeArgumentsAsync_WithSeek_AddsSsArgument" />
+    </UnitTest>
+    <UnitTest name="SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseMiniSeriesPatterns(fileName: &quot;Part 1 Introduction&quot;, expectedSeason: 1, expectedEpisode: 1, expectedTitle: &quot;Introduction&quot;)" storage="c:\users\admin\documents\coding2\softmedia\src\softmedia.server.tests\bin\debug\net8.0\softmedia.server.tests.dll" id="9530fbe6-5cc9-e879-232a-81e26676c360">
+      <Execution id="4ed46ae9-e314-4885-a8b7-7548410f63e8" />
+      <TestMethod codeBase="C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\bin\Debug\net8.0\SoftMedia.Server.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SoftMedia.Server.Tests.FileNameParserTests" name="ParseTvEpisode_ShouldParseMiniSeriesPatterns" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="b2ab25d2-fc22-2194-7542-4aca18d58e6a" executionId="3ac73a66-69ce-4fdd-b0e5-3baafdc151bf" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b6bb4d3a-4942-99ca-7abe-ed56bddb9f2a" executionId="1b06c6b1-e615-4bab-b3d7-da11cb4a35f9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d2f8327d-0443-435e-5e7f-49d4a5cb8342" executionId="b2c28f6c-b3d2-4706-a515-5745730e1149" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="551fa35b-f711-538f-7c0d-1e12a936041c" executionId="0c26f672-cdc1-4521-9bd3-8e52339e1ee5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="675c629d-d9dc-fdec-c6f8-e131b5ab03a3" executionId="77ff90d8-b755-43bb-8f7a-29024fedea90" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4357fb0a-f3cf-5a22-8df0-d8932ca643dd" executionId="5fcd255c-8a2e-401b-8084-7ed58966f0a2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="902d9987-f058-3f19-1e91-243650b7b712" executionId="0ac45131-8296-4b1c-9e85-c3e5a55ef6c9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e3ebe2f3-b6d2-4986-db7c-b26689dc1ef9" executionId="9cf9bfbb-d123-4704-a741-615ab784ab41" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="9f6ec8c0-6fa5-f8cc-c1d0-47327489b55b" executionId="4e364fd9-b0a6-4aa1-af3f-d9643949a225" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="406dff53-0f2a-da62-68da-f4fde4c19d95" executionId="88997414-3171-41b2-a032-0d49bdf41ef2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8643963b-4022-235d-489d-f82c7de7c284" executionId="efd1f048-c5ab-43a4-983d-5c2c5d02aef9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2e39933b-e418-45d5-ffc4-84313368cf9f" executionId="d199ba10-d504-4775-9ad2-392414b733a5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="dde37448-cc75-f2cd-cc12-b5a3c6a5d25d" executionId="78a9e1ed-49a9-44d1-9c01-21f34d760ad1" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="164e8392-f9d4-67db-8775-ae2900d1592f" executionId="0baf3cde-3e7b-42d3-9832-fd17a6abc545" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="931d4d36-709c-0731-e17a-fb5e13e9014f" executionId="ad7f3416-027d-411d-9fff-eb011add1d5d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="fe56f6d4-9e7e-20ea-7b62-761d1de91eb6" executionId="d553cca4-df51-4454-b2bb-74d5ec88b22c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="091c0ec8-66ff-f7f9-9d62-42718958d8db" executionId="df832a6a-b35a-4b5f-bbf5-8b399a51e9e3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4b29d871-7b8c-9986-249f-0ae9244cc4e5" executionId="f45e7a15-4b01-4de9-8f41-5f75c09736ab" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c776e354-9ead-f1a7-c9f4-179e1f14430a" executionId="afd30db0-3593-4d16-81e2-603179964bab" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="387e3df1-1d57-db31-70c5-3e4c46f403da" executionId="5424f3c5-a6ce-48c2-af06-85f4353e6d62" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="73574ce3-efc0-9a70-98a0-9c693ed14d34" executionId="cca2d635-c093-453e-adba-c01935238848" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c537bc0f-1e41-c773-78e8-137c4e17fe01" executionId="388e18d7-cd7d-4dfd-a2da-d97bdcdf8f61" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4a4207c3-a66f-24a9-ab96-2ec8e663916b" executionId="356a1e32-fdc4-4849-9e50-a530f7d0b3b3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="26db1c68-86ba-b48f-2f2e-1327ecdbb950" executionId="26764f82-3c63-4231-a77a-adc23d8ecf9b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="322fb210-9fce-41bc-88ef-a2622e416d36" executionId="d3df0cca-79e8-4f35-9a4a-2aede0b47e4d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="690718fb-1c5a-5420-92eb-85ec9d9a40a2" executionId="2bd05997-c052-4fa3-807e-8431cf3515e4" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4a54947f-4e07-a378-48b4-95d4042091be" executionId="6e370d0f-f1eb-44a7-99bd-16ec2bbcf33d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e8262691-42f5-387b-955a-bf5246c82e90" executionId="1e787826-a2f5-4513-8e6f-8f6d65f6659c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="3a781ebc-e514-27bf-bdae-a4fabb98f25f" executionId="9283ec1d-e549-4c08-aba5-677dbbdf2af9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b2ab359b-689c-8f20-de68-02b2f7f31e27" executionId="1e6795dd-7c3e-4443-a1d3-12b3501637b2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a5f3d8dd-a4b3-2666-2b08-9424ad792cfd" executionId="40f95ab1-7fd8-4104-9d85-811bc600bfb0" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="12c0a4c0-2456-7a4b-2e6d-ff90157d0c7c" executionId="d698beee-563a-432a-977f-03c078c451cb" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="da008ffb-28cf-d992-1c75-abadb15f7c24" executionId="68778e32-2763-448d-80e7-1c8052e795a8" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="9f2c50a5-2ab1-54a5-e5ac-dc02607c9c87" executionId="1685319b-bbb9-469f-8d0e-5f8a1e347842" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1a41c746-383d-9ab2-fb2f-27e29898b2a0" executionId="1fc1276c-ed4d-4e1a-a900-7149fa5d48b7" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="9d9c75d8-8a1a-a2ff-ae1a-009090d72a1d" executionId="17724c30-7b1e-4167-a983-65aa2eff99fe" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="363b58d5-7bf5-fd4d-7f2e-69084db99c8b" executionId="e7803a2a-469e-4f0b-afea-d4d81f2677a6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="7b83ba9f-996c-af97-82d3-40b33d755516" executionId="64a89d1b-35a7-491b-ace9-d219c13286ea" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8bf2d7d6-1ec7-562b-0cc2-57fa06eee898" executionId="2fa5714b-94e2-406d-8945-3f72276a8b1d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f6e53535-ed2e-ffee-f779-a539ea148f31" executionId="61f2b004-bc43-4457-8ebe-f83e0c428305" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ce2681ae-a014-4492-3ca1-41f84c105b75" executionId="c861064f-e15c-4b45-9971-ee1feabec241" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="61fcb755-97c0-bf8b-c1f1-411f5eb48e58" executionId="ec2b5e78-2e0e-4ad7-af7a-ca4cea5a61f9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="789c04d5-9a92-af91-e240-047b23146035" executionId="244471dc-bee9-404b-ac05-8f80e32c9a0e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="53295b7c-3689-9830-9da6-21b55eb1b165" executionId="0a1c4dbf-5aa9-41cc-a906-60ae30c6b5d6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d995d8f1-485b-cc89-1d7a-e01f705e84f4" executionId="8af6edd6-aed7-4bbc-9bd6-7b0d51f5c935" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1c623dcd-7df6-c46e-43ac-46244928631e" executionId="e853a29d-cd29-4df8-8f20-a6769da01c67" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="95fb3475-f75d-885f-87c8-b919fc1ffe7b" executionId="74bfaddf-f30f-4534-bd46-924ad8198ba0" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="834f2074-99be-b478-43a3-74b8f77306d6" executionId="c0e43aa3-7d07-4490-9190-500a58f9b102" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="00da0704-850b-97d0-e4e5-68c576dd1516" executionId="171286d3-3458-4d05-9ab3-c9b8cb12166b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="9530fbe6-5cc9-e879-232a-81e26676c360" executionId="4ed46ae9-e314-4885-a8b7-7548410f63e8" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a8910fbd-fb25-86d3-2472-e3f5df41ab5f" executionId="3fc806f7-787b-4db5-8c99-1e489afd7197" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1a88f3d7-1691-451e-2ec1-46be5fe7bdbd" executionId="594d97f8-b952-4a3f-8cb6-96c511123ba2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="dddbab35-c9af-38fa-eb6f-443c73d272ae" executionId="cbee52b6-4ce6-4b81-8fa5-e6f806b9f7c5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b2d61f18-eebe-bb7d-5137-93f3dd86de2d" executionId="f281e8a4-b8e1-4bb0-8483-946ec8794eec" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="95461c6c-a8aa-befa-9a51-e051d00902ed" executionId="1012b339-1077-4390-8d1a-6d56c224b974" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b9bcb33d-e82e-15c8-4764-f8e2699943af" executionId="88892662-b2dd-4bca-9063-be81c93946bb" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="75d06f1d-ccf8-b23f-7619-716870d4304b" executionId="abfe9f7b-fd55-4562-ba31-20e37ecc5c33" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="06143cdf-f572-6941-078b-e6446c5c60aa" executionId="44b88da2-749f-47f0-8b32-8228854211e8" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="3f5eb306-e9e6-206e-2138-6a3bbdbc4f52" executionId="6c60c218-9653-4ac0-ade2-2093984b3e4f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f0533828-6e90-aac2-fab9-b46f5edceaba" executionId="b2bc0517-4983-4767-84d5-1796f428e140" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="99ce1198-379b-5c87-6b29-dcb742925670" executionId="43a990b9-4f32-4241-be2b-12d1fa556497" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4b5dfcb1-b1c8-3a9b-2089-bd4858f85b10" executionId="ddb7c239-5c36-4cc4-a0da-fe7657af7687" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="62" executed="61" passed="55" failed="6" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.13)&#xD;
+[xUnit.net 00:00:00.10]   Discovering: SoftMedia.Server.Tests&#xD;
+[xUnit.net 00:00:00.12]   Discovered:  SoftMedia.Server.Tests&#xD;
+[xUnit.net 00:00:00.12]   Starting:    SoftMedia.Server.Tests&#xD;
+[xUnit.net 00:00:00.15]       Use for manual diagnosis only&#xD;
+Test 'SoftMedia.Server.Tests.DiagnosisTests.DiagnoseMissingArt' was skipped in the test run.&#xD;
+[xUnit.net 00:00:00.18]       Assert.Equal() Failure: Strings differ&#xD;
+[xUnit.net 00:00:00.18]                     ↓ (pos 3)&#xD;
+[xUnit.net 00:00:00.18]       Expected: "The Injury"&#xD;
+[xUnit.net 00:00:00.18]       Actual:   "The"&#xD;
+[xUnit.net 00:00:00.18]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.18]         C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\FileNameParserTests.cs(77,0): at SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSxExFormat(String fileName, String expectedShow, Int32 expectedSeason, Int32 expectedEpisode, String expectedTitle)&#xD;
+[xUnit.net 00:00:00.18]            at InvokeStub_FileNameParserTests.ParseTvEpisode_ShouldParseSxExFormat(Object, Span`1)&#xD;
+[xUnit.net 00:00:00.18]            at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)&#xD;
+[xUnit.net 00:00:00.18]       Assert.Equal() Failure: Strings differ&#xD;
+[xUnit.net 00:00:00.18]                  ↓ (pos 0)&#xD;
+[xUnit.net 00:00:00.18]       Expected: "Pilot"&#xD;
+[xUnit.net 00:00:00.18]       Actual:   ""&#xD;
+[xUnit.net 00:00:00.18]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.18]         C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\FileNameParserTests.cs(63,0): at SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(String fileName, String expectedShow, Int32 expectedSeason, Int32 expectedEpisode, String expectedTitle)&#xD;
+[xUnit.net 00:00:00.18]            at InvokeStub_FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(Object, Span`1)&#xD;
+[xUnit.net 00:00:00.18]            at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)&#xD;
+[xUnit.net 00:00:00.18]       Assert.Equal() Failure: Strings differ&#xD;
+[xUnit.net 00:00:00.18]                          ↓ (pos 8)&#xD;
+[xUnit.net 00:00:00.18]       Expected: "The Iron Throne"&#xD;
+[xUnit.net 00:00:00.18]       Actual:   "The Iron"&#xD;
+[xUnit.net 00:00:00.18]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.18]         C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\FileNameParserTests.cs(63,0): at SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(String fileName, String expectedShow, Int32 expectedSeason, Int32 expectedEpisode, String expectedTitle)&#xD;
+[xUnit.net 00:00:00.18]            at InvokeStub_FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(Object, Span`1)&#xD;
+[xUnit.net 00:00:00.18]            at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)&#xD;
+[xUnit.net 00:00:00.18]       Assert.Equal() Failure: Strings differ&#xD;
+[xUnit.net 00:00:00.18]                       ↓ (pos 5)&#xD;
+[xUnit.net 00:00:00.18]       Expected: "Pilot Unaired"&#xD;
+[xUnit.net 00:00:00.18]       Actual:   "Pilot"&#xD;
+[xUnit.net 00:00:00.18]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.18]         C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\FileNameParserTests.cs(93,0): at SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(String fileName, String expectedShow, Int32 expectedSeason, Int32 expectedEpisode, String expectedTitle)&#xD;
+[xUnit.net 00:00:00.18]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+[xUnit.net 00:00:00.18]            at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)&#xD;
+[xUnit.net 00:00:00.18]       Assert.Equal() Failure: Strings differ&#xD;
+[xUnit.net 00:00:00.18]                            ↓ (pos 10)&#xD;
+[xUnit.net 00:00:00.18]       Expected: "Inside the Episode"&#xD;
+[xUnit.net 00:00:00.18]       Actual:   "Inside the"&#xD;
+[xUnit.net 00:00:00.18]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.18]         C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\FileNameParserTests.cs(93,0): at SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(String fileName, String expectedShow, Int32 expectedSeason, Int32 expectedEpisode, String expectedTitle)&#xD;
+[xUnit.net 00:00:00.18]            at InvokeStub_FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(Object, Span`1)&#xD;
+[xUnit.net 00:00:00.18]            at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)&#xD;
+[xUnit.net 00:00:00.20]       Assert.Equal() Failure: Strings differ&#xD;
+[xUnit.net 00:00:00.20]                         ↓ (pos 7)&#xD;
+[xUnit.net 00:00:00.20]       Expected: "Special Episode"&#xD;
+[xUnit.net 00:00:00.20]       Actual:   "Special"&#xD;
+[xUnit.net 00:00:00.20]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.20]         C:\Users\Admin\Documents\coding2\SoftMedia\src\SoftMedia.Server.Tests\FileNameParserTests.cs(105,0): at SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_S00E01_ShouldReturnSeasonZero()&#xD;
+[xUnit.net 00:00:00.20]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+[xUnit.net 00:00:00.20]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:07.24]   Finished:    SoftMedia.Server.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="GAMING" outcome="Warning" timestamp="2026-01-30T02:50:55.0124653-08:00">
+        <Text>[xUnit.net 00:00:00.15]     SoftMedia.Server.Tests.DiagnosisTests.DiagnoseMissingArt [SKIP]</Text>
+      </RunInfo>
+      <RunInfo computerName="GAMING" outcome="Error" timestamp="2026-01-30T02:50:55.0267124-08:00">
+        <Text>[xUnit.net 00:00:00.18]     SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSxExFormat(fileName: "The.Office.2x03.The.Injury", expectedShow: "The Office", expectedSeason: 2, expectedEpisode: 3, expectedTitle: "The Injury") [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="GAMING" outcome="Error" timestamp="2026-01-30T02:50:55.0282687-08:00">
+        <Text>[xUnit.net 00:00:00.18]     SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(fileName: "Breaking.Bad.S01E01.Pilot", expectedShow: "Breaking Bad", expectedSeason: 1, expectedEpisode: 1, expectedTitle: "Pilot") [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="GAMING" outcome="Error" timestamp="2026-01-30T02:50:55.0286199-08:00">
+        <Text>[xUnit.net 00:00:00.18]     SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseStandardSxxExxFormat(fileName: "Game.of.Thrones.S08E06.The.Iron.Throne", expectedShow: "Game of Thrones", expectedSeason: 8, expectedEpisode: 6, expectedTitle: "The Iron Throne") [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="GAMING" outcome="Error" timestamp="2026-01-30T02:50:55.0290428-08:00">
+        <Text>[xUnit.net 00:00:00.18]     SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(fileName: "Breaking.Bad.S00E01.Pilot.Unaired", expectedShow: "Breaking Bad", expectedSeason: 0, expectedEpisode: 1, expectedTitle: "Pilot Unaired") [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="GAMING" outcome="Error" timestamp="2026-01-30T02:50:55.0375205-08:00">
+        <Text>[xUnit.net 00:00:00.18]     SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_ShouldParseSeason0Specials(fileName: "Game.of.Thrones.S00E02.Inside.the.Episode", expectedShow: "Game of Thrones", expectedSeason: 0, expectedEpisode: 2, expectedTitle: "Inside the Episode") [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="GAMING" outcome="Error" timestamp="2026-01-30T02:50:55.0475635-08:00">
+        <Text>[xUnit.net 00:00:00.20]     SoftMedia.Server.Tests.FileNameParserTests.ParseTvEpisode_S00E01_ShouldReturnSeasonZero [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

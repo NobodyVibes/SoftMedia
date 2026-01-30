@@ -2,6 +2,8 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Moq;
 using SoftMedia.Server.Services;
+using SoftMedia.Server.Services.Media;
+using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Abstractions;
 using Xunit;
 

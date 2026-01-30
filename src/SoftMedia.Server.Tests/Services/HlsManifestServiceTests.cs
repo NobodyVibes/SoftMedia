@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using SoftMedia.Server.Services;
 using System.Text;
+using SoftMedia.Server.Services.Transcoding;
 using Xunit;
 
 namespace SoftMedia.Server.Tests.Services;

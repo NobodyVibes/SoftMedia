@@ -4,6 +4,9 @@ using Microsoft.Extensions.Logging;
 using SoftMedia.Server.Services;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.DTOs;
+using SoftMedia.Server.Services.Media;
+using SoftMedia.Server.Services.Transcoding;
+using SoftMedia.Server.Services.Infrastructure;
 
 namespace SoftMedia.Server.Tests.Services;
 

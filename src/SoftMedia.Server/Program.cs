@@ -19,6 +19,11 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddIdentityServices(builder.Configuration);
 builder.Services.AddMediaServices();
 builder.Services.AddBackgroundServices();
+builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.IStreamSecurityService, SoftMedia.Server.Services.Security.StreamSecurityService>();
+builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.ILibraryService, SoftMedia.Server.Services.Media.LibraryService>();
+builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.IMediaRepository, SoftMedia.Server.Services.Infrastructure.MediaRepository>();
+builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.ILibraryRepository, SoftMedia.Server.Services.Infrastructure.LibraryRepository>();
+builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.IMediaService, SoftMedia.Server.Services.Media.MediaService>();
 
 // SignalR for real-time updates
 builder.Services.AddSignalR();

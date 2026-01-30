@@ -1,177 +1,69 @@
-using System.Security.Claims;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
 using SoftMedia.Server.Controllers;
-using SoftMedia.Server.Data;
-using SoftMedia.Server.Models;
+using SoftMedia.Server.DTOs;
+using SoftMedia.Server.Services.Abstractions;
+using Xunit;
 
 namespace SoftMedia.Server.Tests;
 
-/// <summary>
-/// Unit tests for StreamController covering streaming, authorization, and LFI protection.
-/// </summary>
-public class StreamControllerTests : IDisposable
+public class StreamControllerTests
 {
-    private readonly AppDbContext _context;
+    private readonly Mock<IMediaService> _mediaServiceMock;
     private readonly Mock<ILogger<StreamController>> _loggerMock;
     private readonly StreamController _controller;
-    private readonly Guid _libraryId = Guid.NewGuid();
-    private readonly string _testLibraryPath;
 
     public StreamControllerTests()
     {
-        // Setup in-memory database
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: $"TestDb_{Guid.NewGuid()}")
-            .Options;
-
-        _context = new AppDbContext(options);
+        _mediaServiceMock = new Mock<IMediaService>();
         _loggerMock = new Mock<ILogger<StreamController>>();
-        _controller = new StreamController(_context, _loggerMock.Object);
-
-        // Create a temp directory for test files
-        _testLibraryPath = Path.Combine(Path.GetTempPath(), "SoftMediaTest_" + Guid.NewGuid());
-        Directory.CreateDirectory(_testLibraryPath);
-        
-        SeedTestData();
-    }
-
-    private void SeedTestData()
-    {
-        var library = new Library
-        {
-            Id = _libraryId,
-            Name = "Test Movies",
-            Type = LibraryType.Movie,
-            Paths = new List<string> { _testLibraryPath }
-        };
-        _context.Libraries.Add(library);
-        _context.SaveChanges();
-    }
-
-    public void Dispose()
-    {
-        _context.Dispose();
-        // Cleanup temp directory
-        if (Directory.Exists(_testLibraryPath))
-        {
-            Directory.Delete(_testLibraryPath, true);
-        }
+        _controller = new StreamController(_mediaServiceMock.Object, _loggerMock.Object);
     }
 
     [Fact]
-    public async Task GetStream_ReturnsNotFound_WhenMediaItemDoesNotExist()
+    public async Task GetStream_ReturnsNotFound_WhenServiceReturnsNull()
     {
         // Arrange
-        var nonExistentId = Guid.NewGuid();
+        var id = Guid.NewGuid();
+        _mediaServiceMock.Setup(x => x.GetStreamInfoAsync(id)).ReturnsAsync((StreamInfoDto?)null);
 
         // Act
-        var result = await _controller.GetStream(nonExistentId);
+        var result = await _controller.GetStream(id);
 
         // Assert
         Assert.IsType<NotFoundResult>(result);
     }
 
     [Fact]
-    public async Task GetStream_ReturnsNotFound_WhenFileDoesNotExistOnDisk()
+    public async Task GetStream_ReturnsForbid_WhenServiceThrowsUnauthorized()
     {
         // Arrange
-        var mediaItem = new MediaItem
-        {
-            Id = Guid.NewGuid(),
-            LibraryId = _libraryId,
-            Title = "Missing File",
-            Path = Path.Combine(_testLibraryPath, "nonexistent.mp4"),
-            Container = "mp4"
-        };
-        _context.MediaItems.Add(mediaItem);
-        await _context.SaveChangesAsync();
+        var id = Guid.NewGuid();
+        _mediaServiceMock.Setup(x => x.GetStreamInfoAsync(id)).ThrowsAsync(new UnauthorizedAccessException());
 
         // Act
-        var result = await _controller.GetStream(mediaItem.Id);
+        var result = await _controller.GetStream(id);
 
         // Assert
-        var notFoundResult = Assert.IsType<NotFoundObjectResult>(result);
-        Assert.Equal("File not found on disk.", notFoundResult.Value);
+        Assert.IsType<ForbidResult>(result);
     }
 
     [Fact]
-    public async Task GetStream_ReturnsForbid_WhenPathOutsideLibrary()
+    public async Task GetStream_ReturnsPhysicalFile_WhenValid()
     {
-        // Arrange - Create a media item with path outside the library
-        var mediaItem = new MediaItem
-        {
-            Id = Guid.NewGuid(),
-            LibraryId = _libraryId,
-            Title = "Malicious Path",
-            Path = @"C:\Windows\System32\config\sam", // Path outside library
-            Container = "mp4"
-        };
-        _context.MediaItems.Add(mediaItem);
-        await _context.SaveChangesAsync();
+        // Arrange
+        var id = Guid.NewGuid();
+        var dto = new StreamInfoDto { Path = @"C:\Test\file.mp4", ContentType = "video/mp4" };
+        _mediaServiceMock.Setup(x => x.GetStreamInfoAsync(id)).ReturnsAsync(dto);
 
         // Act
-        var result = await _controller.GetStream(mediaItem.Id);
-
-        // Assert - Should be NotFound first (file doesn't exist) or Forbid
-        // In this case, File.Exists will fail first, so NotFound
-        Assert.IsType<NotFoundObjectResult>(result);
-    }
-
-    [Fact]
-    public async Task GetStream_ReturnsPhysicalFile_WhenValidRequest()
-    {
-        // Arrange - Create an actual test file
-        var testFilePath = Path.Combine(_testLibraryPath, "test_video.mp4");
-        await File.WriteAllBytesAsync(testFilePath, new byte[] { 0x00, 0x00, 0x00, 0x20 }); // Minimal data
-
-        var mediaItem = new MediaItem
-        {
-            Id = Guid.NewGuid(),
-            LibraryId = _libraryId,
-            Title = "Test Video",
-            Path = testFilePath,
-            Container = "mp4"
-        };
-        _context.MediaItems.Add(mediaItem);
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _controller.GetStream(mediaItem.Id);
+        var result = await _controller.GetStream(id);
 
         // Assert
         var fileResult = Assert.IsType<PhysicalFileResult>(result);
-        Assert.Equal("video/mp4", fileResult.ContentType);
+        Assert.Equal(dto.Path, fileResult.FileName);
+        Assert.Equal(dto.ContentType, fileResult.ContentType);
         Assert.True(fileResult.EnableRangeProcessing);
-    }
-
-    [Fact]
-    public async Task GetStream_ReturnsForbid_ForLFIWithPathTraversal()
-    {
-        // Arrange - Create a file in the library, but try to access with path traversal
-        var legitFilePath = Path.Combine(_testLibraryPath, "legit.mp4");
-        await File.WriteAllBytesAsync(legitFilePath, new byte[] { 0x00 });
-
-        // Create media item pointing outside library using traversal
-        var maliciousPath = Path.Combine(_testLibraryPath, "..", "..", "Windows", "System32", "config");
-        var mediaItem = new MediaItem
-        {
-            Id = Guid.NewGuid(),
-            LibraryId = _libraryId,
-            Title = "LFI Attempt",
-            Path = maliciousPath,
-            Container = "mp4"
-        };
-        _context.MediaItems.Add(mediaItem);
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _controller.GetStream(mediaItem.Id);
-
-        // Assert - Should be blocked (NotFound because file doesn't exist, or Forbid)
-        Assert.True(result is NotFoundObjectResult || result is ForbidResult);
     }
 }

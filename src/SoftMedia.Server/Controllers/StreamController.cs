@@ -1,8 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using SoftMedia.Server.Data;
-using SoftMedia.Server.Helpers;
+using SoftMedia.Server.Services.Abstractions;
 
 namespace SoftMedia.Server.Controllers;
 
@@ -14,12 +12,14 @@ namespace SoftMedia.Server.Controllers;
 [Route("api/v1/[controller]")]
 public class StreamController : ControllerBase
 {
-    private readonly AppDbContext _context;
+    private readonly IMediaService _mediaService;
     private readonly ILogger<StreamController> _logger;
 
-    public StreamController(AppDbContext context, ILogger<StreamController> logger)
+    public StreamController(
+        IMediaService mediaService,
+        ILogger<StreamController> logger)
     {
-        _context = context;
+        _mediaService = mediaService;
         _logger = logger;
     }
 
@@ -31,36 +31,21 @@ public class StreamController : ControllerBase
     [HttpHead("{id}")]
     public async Task<IActionResult> GetStream(Guid id)
     {
-        // Fetch item with Library for path validation
-        var item = await _context.MediaItems
-            .Include(m => m.Library)
-            .FirstOrDefaultAsync(m => m.Id == id);
-
-        if (item?.Library == null)
+        try
         {
-            return NotFound();
+            var streamInfo = await _mediaService.GetStreamInfoAsync(id);
+
+            if (streamInfo == null)
+            {
+                return NotFound();
+            }
+
+            // Serve the file with Range processing enabled (HTTP 206 Partial Content)
+            return PhysicalFile(streamInfo.Path, streamInfo.ContentType, enableRangeProcessing: true);
         }
-
-        if (!System.IO.File.Exists(item.Path))
+        catch (UnauthorizedAccessException)
         {
-            _logger.LogWarning("File not found on disk: {Path}", item.Path);
-            return NotFound("File not found on disk.");
-        }
-
-        // Security: LFI Protection - verify file path is within authorized library directories
-        var canonicalPath = Path.GetFullPath(item.Path);
-        var isAuthorized = item.Library.Paths.Any(p =>
-            canonicalPath.StartsWith(Path.GetFullPath(p), StringComparison.OrdinalIgnoreCase));
-
-        if (!isAuthorized)
-        {
-            _logger.LogWarning("LFI attempt blocked: {Path}", item.Path);
             return Forbid();
         }
-
-        var mimeType = MimeTypeResolver.GetMimeType(item.Path);
-        
-        // Serve the file with Range processing enabled (HTTP 206 Partial Content)
-        return PhysicalFile(item.Path, mimeType, enableRangeProcessing: true);
     }
 }

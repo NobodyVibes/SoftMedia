@@ -23,17 +23,20 @@ public class LibrariesController : ControllerBase
     private readonly ILibraryScanQueueService _scanQueueService;
     private readonly ImageCacheService _imageCacheService;
     private readonly LibraryWatcher _libraryWatcher;
+    private readonly ILibraryService _libraryService;
 
     public LibrariesController(
         AppDbContext context, 
         ILibraryScanQueueService scanQueueService,
         ImageCacheService imageCacheService,
-        LibraryWatcher libraryWatcher)
+        LibraryWatcher libraryWatcher,
+        ILibraryService libraryService)
     {
         _context = context;
         _scanQueueService = scanQueueService;
         _imageCacheService = imageCacheService;
         _libraryWatcher = libraryWatcher;
+        _libraryService = libraryService;
     }
 
     [HttpGet]
@@ -246,48 +249,9 @@ public class LibrariesController : ControllerBase
     [HttpGet("{id}/genres")]
     public async Task<ActionResult<IEnumerable<string>>> GetLibraryGenres(Guid id)
     {
-        var library = await _context.Libraries.FindAsync(id);
-        if (library == null)
-        {
-            return NotFound("Library not found.");
-        }
-
-        // Get all MetadataJson values for items in this library
-        var metadataJsons = await _context.MediaItems
-            .AsNoTracking()
-            .Where(m => m.LibraryId == id && m.MetadataJson != null)
-            .Select(m => m.MetadataJson)
-            .ToListAsync();
-
-        var allGenres = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var json in metadataJsons)
-        {
-            if (string.IsNullOrEmpty(json)) continue;
-
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(json);
-                if (doc.RootElement.TryGetProperty("genres", out var genresElement) &&
-                    genresElement.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    foreach (var genre in genresElement.EnumerateArray())
-                    {
-                        var genreStr = genre.GetString();
-                        if (!string.IsNullOrWhiteSpace(genreStr))
-                        {
-                            allGenres.Add(genreStr.Trim());
-                        }
-                    }
-                }
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                // Skip invalid JSON
-            }
-        }
-
-        return Ok(allGenres.OrderBy(g => g));
+        // Use Service for complex logic
+        var genres = await _libraryService.GetLibraryGenresAsync(id);
+        return Ok(genres);
     }
 
     [HttpGet("{id}/items")]
@@ -304,143 +268,26 @@ public class LibrariesController : ControllerBase
         [FromQuery] bool? watched = null,
         [FromQuery] string? viewMode = null)
     {
-        var library = await _context.Libraries.FindAsync(id);
-        if (library == null)
-        {
-            return NotFound("Library not found.");
-        }
-
         var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         Guid userGuid = userIdClaim != null ? Guid.Parse(userIdClaim) : Guid.Empty;
 
-        var query = _context.MediaItems.AsNoTracking().Where(m => m.LibraryId == id);
-
-        // TV Library: Show only Series
-        if (library.Type == LibraryType.TV)
+        var filter = new LibraryItemFilter
         {
-            query = query.Where(m => m.Type == MediaType.Series);
-        }
-        // Music Library: Handle View Modes
-        else if (library.Type == LibraryType.Music)
-        {
-            if (viewMode == "artists")
-            {
-                query = query.Where(m => m.Type == MediaType.Artist);
-            }
-            else if (viewMode == "albums")
-            {
-                query = query.Where(m => m.Type == MediaType.Album);
-            }
-            else // Default to Songs/Tracks or Albums depending on preference? Let's default to Albums for now as it's cleaner, or Songs?
-                 // Actually, usually "Songs" view shows all tracks.
-            {
-                // If no view mode, maybe default to Albums? Or Songs?
-                // Let's default to Albums if not specified, or handle "songs" explicitly.
-                if (viewMode == "songs")
-                {
-                    query = query.Where(m => m.Type == MediaType.Audio);
-                }
-                else 
-                {
-                    // Default to Albums for Music library root
-                    query = query.Where(m => m.Type == MediaType.Album);
-                }
-            }
-        }
-
-        // Join with User Interactions
-        var joinedQuery = from m in query
-                          join umi in _context.UserMediaInteractions.AsNoTracking()
-                            on new { MediaItemId = m.Id, UserId = userGuid } equals new { umi.MediaItemId, umi.UserId } into umis
-                          from umi in umis.DefaultIfEmpty()
-                          select new { Media = m, Interaction = umi };
-
-        // Filtering
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            joinedQuery = joinedQuery.Where(x => x.Media.Title.ToLower().Contains(search.ToLower()));
-        }
-
-        if (year.HasValue)
-        {
-            joinedQuery = joinedQuery.Where(x => x.Media.Year == year.Value);
-        }
-
-        if (!string.IsNullOrWhiteSpace(genre))
-        {
-            // Simple JSON string match for SQLite
-            joinedQuery = joinedQuery.Where(x => x.Media.MetadataJson != null && x.Media.MetadataJson.Contains(genre));
-        }
-
-        if (minRating.HasValue)
-        {
-            // Filter by User Rating - only items with an interaction that has a rating >= minRating
-            joinedQuery = joinedQuery.Where(x => x.Interaction != null && x.Interaction.Rating >= minRating.Value);
-        }
-
-        if (isFavorite.HasValue)
-        {
-            if (isFavorite.Value)
-            {
-                // Show only favorites - must have interaction and be favorited
-                joinedQuery = joinedQuery.Where(x => x.Interaction != null && x.Interaction.IsFavorite == true);
-            }
-            else
-            {
-                // Show non-favorites - no interaction or not favorited
-                joinedQuery = joinedQuery.Where(x => x.Interaction == null || x.Interaction.IsFavorite == false);
-            }
-        }
-
-        if (watched.HasValue)
-        {
-            if (watched.Value)
-            {
-                // Show only watched - must have interaction and be watched
-                joinedQuery = joinedQuery.Where(x => x.Interaction != null && x.Interaction.IsWatched == true);
-            }
-            else
-            {
-                // Show unwatched - no interaction or not watched
-                joinedQuery = joinedQuery.Where(x => x.Interaction == null || x.Interaction.IsWatched == false);
-            }
-        }
-
-        // Sorting
-        joinedQuery = sortBy?.ToLower() switch
-        {
-            "title" => joinedQuery.OrderBy(x => x.Media.Title),
-            "dateadded" => joinedQuery.OrderByDescending(x => x.Media.DateAdded),
-            "year" => joinedQuery.OrderByDescending(x => x.Media.Year),
-            "rating" => joinedQuery.OrderByDescending(x => x.Interaction.Rating), // User Rating
-            _ => joinedQuery.OrderBy(x => x.Media.Title)
-        };
-
-        var totalCount = await joinedQuery.CountAsync();
-        var items = await joinedQuery
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync();
-
-        var dtos = items.Select(x => 
-        {
-            var dto = MediaItemDto.FromMediaItem(x.Media, "/api/v1/image/proxy");
-            if (x.Interaction != null)
-            {
-                dto.UserRating = x.Interaction.Rating;
-                dto.IsFavorite = x.Interaction.IsFavorite;
-                dto.Watched = x.Interaction.IsWatched;
-            }
-            return dto;
-        }).ToList();
-
-        return new PagedResult<MediaItemDto>
-        {
-            Items = dtos,
-            TotalCount = totalCount,
             Page = page,
-            PageSize = pageSize
+            PageSize = pageSize,
+            Search = search,
+            SortBy = sortBy,
+            Genre = genre,
+            Year = year,
+            MinRating = minRating,
+            IsFavorite = isFavorite,
+            Watched = watched,
+            ViewMode = viewMode,
+            UserId = userGuid
         };
+
+        var result = await _libraryService.GetLibraryItemsAsync(id, filter);
+        return Ok(result);
     }
 
     [HttpGet("series/{seriesId}/episodes")]
@@ -485,129 +332,8 @@ public class LibrariesController : ControllerBase
     [HttpGet("series/{seriesId}/seasons")]
     public async Task<ActionResult<IEnumerable<object>>> GetSeriesSeasons(Guid seriesId)
     {
-        // Fetch the series entity to get cached season poster URLs from its metadata
-        var series = await _context.MediaItems.AsNoTracking()
-            .FirstOrDefaultAsync(m => m.Id == seriesId && m.Type == MediaType.Series);
-
-        // Parse series metadata to extract cached season posters
-        Dictionary<int, string>? cachedSeasonPosters = null;
-        if (series != null && !string.IsNullOrEmpty(series.MetadataJson))
-        {
-            try
-            {
-                var seriesMeta = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(series.MetadataJson);
-                if (seriesMeta != null && seriesMeta.TryGetValue("seasons", out var seasonsObj) && 
-                    seasonsObj is System.Text.Json.JsonElement seasonsArray)
-                {
-                    cachedSeasonPosters = new Dictionary<int, string>();
-                    foreach (var s in seasonsArray.EnumerateArray())
-                    {
-                        if (s.TryGetProperty("number", out var numProp) && 
-                            s.TryGetProperty("poster", out var posterProp) &&
-                            posterProp.ValueKind != System.Text.Json.JsonValueKind.Null)
-                        {
-                            var num = numProp.GetInt32();
-                            var poster = posterProp.GetString();
-                            if (!string.IsNullOrEmpty(poster))
-                                cachedSeasonPosters[num] = poster;
-                        }
-                    }
-                }
-            }
-            catch { }
-        }
-
-        // Fetch Season entities 
-        var seasons = await _context.MediaItems.AsNoTracking()
-            .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Season)
-            .OrderBy(m => m.SeasonNumber)
-            .ToListAsync();
-
-        if (seasons.Count == 0)
-        {
-            // Fallback for legacy/non-migrated data: Use distinct query
-            var seasonNumbers = await _context.MediaItems.AsNoTracking()
-                .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode)
-                .Select(m => m.SeasonNumber ?? 1)
-                .Distinct()
-                .OrderBy(s => s)
-                .ToListAsync();
-
-            if (seasonNumbers.Count > 0)
-            {
-                return Ok(seasonNumbers.Select(num => new { 
-                    number = num, 
-                    poster = cachedSeasonPosters?.TryGetValue(num, out var cp) == true ? cp : null, 
-                    episodeCount = _context.MediaItems.Count(e => e.SeriesId == seriesId && e.SeasonNumber == num && e.Type == MediaType.Episode),
-                    premiereDate = (string?)null
-                }));
-            }
-        }
-
-        var result = new List<object>();
-
-        foreach (var season in seasons)
-        {
-            string? poster = null;
-            string? premiereDate = null;
-            int? episodeCount = null;
-
-            // First check cached posters from series metadata (this is where BackgroundImageCacheService stores them)
-            if (cachedSeasonPosters?.TryGetValue(season.SeasonNumber ?? 0, out var cachedPoster) == true)
-            {
-                poster = cachedPoster;
-            }
-            // Fall back to season entity metadata
-            else if (!string.IsNullOrEmpty(season.MetadataJson))
-            {
-                try
-                {
-                    var meta = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(season.MetadataJson);
-                    if (meta != null && meta.TryGetValue("poster", out var p) && p != null)
-                    {
-                        var posterUrl = p.ToString();
-                        if (!string.IsNullOrEmpty(posterUrl))
-                        {
-                            if (posterUrl.StartsWith("/cache/"))
-                                poster = posterUrl;
-                            else if (posterUrl.StartsWith("http"))
-                                poster = $"/api/v1/image/proxy?url={Uri.EscapeDataString(posterUrl)}";
-                        }
-                    }
-                }
-                catch { }
-            }
-
-            // Extract other metadata from season entity
-            if (!string.IsNullOrEmpty(season.MetadataJson))
-            {
-                try
-                {
-                    var meta = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(season.MetadataJson);
-                    if (meta != null)
-                    {
-                        if (meta.TryGetValue("premiereDate", out var pd) && pd != null) premiereDate = pd.ToString();
-                        if (meta.TryGetValue("episodeCount", out var ec) && ec is System.Text.Json.JsonElement el && el.ValueKind == System.Text.Json.JsonValueKind.Number) episodeCount = el.GetInt32();
-                    }
-                }
-                catch { }
-            }
-
-            // Real-time episode count is more accurate
-            var realCount = await _context.MediaItems.CountAsync(e => e.SeriesId == seriesId && e.SeasonNumber == season.SeasonNumber && e.Type == MediaType.Episode);
-            
-            result.Add(new
-            {
-                id = season.Id,
-                number = season.SeasonNumber,
-                poster = poster,
-                episodeCount = realCount > 0 ? realCount : episodeCount,
-                premiereDate = premiereDate,
-                overview = season.Overview
-            });
-        }
-
-        return Ok(result);
+        var seasons = await _libraryService.GetSeriesSeasonsAsync(seriesId);
+        return Ok(seasons);
     }
 
     [HttpGet("artists/{artistId}/albums")]

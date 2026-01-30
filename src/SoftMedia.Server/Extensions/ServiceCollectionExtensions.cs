@@ -98,6 +98,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IFFmpegService, FFmpegService>();
         services.AddScoped<IStreamPlanService, StreamPlanService>();
         services.AddSingleton<IProcessController, ProcessController>();
+        services.AddSingleton<ITranscodeSessionManager, TranscodeSessionManager>();
+        services.AddSingleton<IHlsService, HlsService>();
         services.AddSingleton<TranscodeService>();
         services.AddSingleton<IBinaryLocationService, BinaryLocationService>();
         services.AddSingleton<IMediaProbeService, MediaProbeService>();
@@ -109,6 +111,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IHlsManifestService, HlsManifestService>();
         services.AddScoped<IRecommendationService, RecommendationService>();
         services.AddScoped<IMusicImageService, MusicImageService>();
+        services.AddScoped<IMediaRetrievalService, MediaRetrievalService>();
         
         // System / Infrastructure
         services.AddScoped<ISettingsService, SettingsService>();

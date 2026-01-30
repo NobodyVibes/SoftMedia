@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 
+using SoftMedia.Server.Services.Transcoding.Models;
+
 namespace SoftMedia.Server.Services.Infrastructure;
 
 /// <summary>

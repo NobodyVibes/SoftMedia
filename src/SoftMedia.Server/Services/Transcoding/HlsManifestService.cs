@@ -39,7 +39,7 @@ public class HlsManifestService : IHlsManifestService
         
         if (hasSubtitles && content.Contains("#EXTM3U"))
         {
-            // Insert subtitle track definition
+            // Insert subtitle track definition and link it to the video stream
             var subtitleQueryParts = new List<string>();
             if (!string.IsNullOrEmpty(token)) subtitleQueryParts.Add($"token={token}");
             if (subTrackIndex.HasValue) subtitleQueryParts.Add($"sub={subTrackIndex.Value}");
@@ -49,9 +49,21 @@ public class HlsManifestService : IHlsManifestService
             rewrittenContent.AppendLine("#EXTM3U");
             rewrittenContent.AppendLine($"#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Subtitles\",DEFAULT=YES,AUTOSELECT=YES,URI=\"{subtitleUrl}\"");
             
-            // Append rest of content
-            var restOfContent = content.Replace("#EXTM3U", "").TrimStart();
-            rewrittenContent.Append(restOfContent);
+            // Process the rest of the lines to inject SUBTITLES attribute into stream info
+            using var lineReader = new StringReader(content.Replace("#EXTM3U", "").TrimStart());
+            string? line;
+            while ((line = lineReader.ReadLine()) != null)
+            {
+                if (line.StartsWith("#EXT-X-STREAM-INF:") && !line.Contains("SUBTITLES="))
+                {
+                    // Append SUBTITLES attribute to link video stream to the subtitle group
+                    rewrittenContent.AppendLine($"{line},SUBTITLES=\"subs\"");
+                }
+                else
+                {
+                    rewrittenContent.AppendLine(line);
+                }
+            }
         }
         else
         {

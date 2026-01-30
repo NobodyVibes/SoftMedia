@@ -9,6 +9,7 @@ using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Scanning;
 using SoftMedia.Server.Services.Transcoding;
+using SoftMedia.Server.Services.Transcoding.Models;
 
 namespace SoftMedia.Server.Controllers;
 
@@ -147,6 +148,7 @@ public class TranscodeController : ControllerBase
     [HttpGet("{id}/master.m3u8")]
     public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null, [FromQuery] string? resolution = null, [FromQuery] string? codec = null, [FromQuery] bool? hdr = null, [FromQuery] int? audio = null, [FromQuery] int? bitrate = null)
     {
+        if (sub.HasValue && sub.Value < 0) sub = null;
 
         try
         {
@@ -226,6 +228,8 @@ public class TranscodeController : ControllerBase
     [HttpGet("{id}/{segment}")]
     public IActionResult GetSegment(Guid id, string segment, [FromQuery] int? sub = null)
     {
+        if (sub.HasValue && sub.Value < 0) sub = null;
+
         try
         {
             var userId = GetUserId();
@@ -261,6 +265,8 @@ public class TranscodeController : ControllerBase
     [HttpGet("{id}/init.mp4")]
     public IActionResult GetInitSegment(Guid id, [FromQuery] int? sub = null)
     {
+        if (sub.HasValue && sub.Value < 0) sub = null;
+
         try
         {
             var userId = GetUserId();
@@ -290,6 +296,8 @@ public class TranscodeController : ControllerBase
     [HttpGet("{id}/subtitles.vtt")]
     public IActionResult GetSubtitlesVtt(Guid id, [FromQuery] int? sub = null)
     {
+        if (sub.HasValue && sub.Value < 0) sub = null;
+
         try
         {
             var userId = GetUserId();
@@ -321,6 +329,8 @@ public class TranscodeController : ControllerBase
     [HttpPost("{id}/pause")]
     public IActionResult Pause(Guid id, [FromQuery] int? sub = null)
     {
+        if (sub.HasValue && sub.Value < 0) sub = null;
+
         try
         {
             var userId = GetUserId();
@@ -354,6 +364,8 @@ public class TranscodeController : ControllerBase
     [HttpPost("{id}/resume")]
     public IActionResult Resume(Guid id, [FromQuery] int? sub = null)
     {
+        if (sub.HasValue && sub.Value < 0) sub = null;
+
         try
         {
             var userId = GetUserId();
@@ -388,6 +400,8 @@ public class TranscodeController : ControllerBase
     [HttpDelete("{id}")]
     public IActionResult StopTranscode(Guid id, [FromQuery] int? sub = null, [FromQuery] bool all = false)
     {
+        if (sub.HasValue && sub.Value < 0) sub = null;
+
         try
         {
             var userId = GetUserId();
@@ -431,6 +445,8 @@ public class TranscodeController : ControllerBase
     [HttpPost("{id}/debug")]
     public async Task<IActionResult> GetPlaybackDebug(Guid id, [FromBody] ClientCapabilities? clientCaps, [FromQuery] int? sub = null)
     {
+        if (sub.HasValue && sub.Value < 0) sub = null;
+
         try
         {
             var userId = GetUserId();

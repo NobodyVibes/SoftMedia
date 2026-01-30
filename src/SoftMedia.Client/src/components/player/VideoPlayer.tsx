@@ -570,7 +570,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 let finalUrl = plan.url;
 
                 // Append params for Transcode/Remux (HLS)
+                // Append params for Transcode/Remux (HLS)
                 if (needsTranscode) {
+                    console.log(`[StreamPlan] Transcode. Sub: ${selectedSubtitleTrack}, Audio: ${selectedAudioTrack}`);
                     if (selectedSubtitleTrack !== null) {
                         finalUrl += `&sub=${selectedSubtitleTrack}`;
                     }
@@ -580,6 +582,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     if (startPosition > 0) {
                         finalUrl += `&seek=${Math.floor(startPosition)}`;
                     }
+                    console.log(`[StreamPlan] Final URL: ${finalUrl}`);
                 } else {
                     setSeekOffset(0); // Reset offset for direct play
                 }

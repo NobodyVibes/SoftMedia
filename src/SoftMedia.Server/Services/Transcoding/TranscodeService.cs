@@ -3,91 +3,9 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Transcoding.Models;
 
 namespace SoftMedia.Server.Services.Transcoding;
-
-
-/// <summary>
-/// Key for tracking unique transcode sessions (mediaId + userId + subtitle track combination)
-/// </summary>
-public record TranscodeSessionKey(Guid MediaId, Guid UserId, int? SubtitleTrackIndex);
-
-/// <summary>
-/// Transcode state for throttling state machine.
-/// Simplified model: FFmpeg is either actively transcoding or suspended.
-/// </summary>
-public enum TranscodeState
-{
-    /// <summary>FFmpeg is actively transcoding segments</summary>
-    Transcoding,
-    /// <summary>FFmpeg is suspended (paused) because buffer is full</summary>
-    Throttled,
-    /// <summary>User paused playback, FFmpeg stopped, segments retained</summary>
-    Dormant,
-    /// <summary>Session ended, cleanup complete</summary>
-    Completed
-}
-
-/// <summary>
-/// Represents an active transcode session with throttling state
-/// </summary>
-public class TranscodeSession
-{
-    public TranscodeSessionKey Key { get; init; } = null!;
-    public Guid UserId { get; init; }
-    public string InputPath { get; init; } = string.Empty;
-    public Process? Process { get; set; }
-    public TranscodeState State { get; set; } = TranscodeState.Transcoding;
-    public bool IsSuspended { get; set; } = false;  // Tracks if FFmpeg process is currently suspended
-    public double? SeekPosition { get; set; }  // Starting seek position for this session
-    public int LatestSegmentIndex { get; set; } = 0;
-    public int ClientSegmentIndex { get; set; } = 0;
-    public DateTime LastClientRequestTime { get; set; } = DateTime.UtcNow;
-    public DateTime SessionStartTime { get; init; } = DateTime.UtcNow;
-    public bool IsPaused { get; set; } = false;
-    public int CrashRetryCount { get; set; } = 0;
-    public string SessionDirectory { get; init; } = string.Empty;
-    
-    /// <summary>
-    /// Path to extracted WebVTT subtitle file for sidecar delivery (null if no subtitles selected)
-    /// </summary>
-    public string? SubtitleVttPath { get; set; }
-    
-    /// <summary>
-    /// Language code of the selected subtitle track (for HLS manifest)
-    /// </summary>
-    public string? SubtitleLanguage { get; set; }
-    
-    /// <summary>
-    /// True if the selected subtitle is bitmap-based (PGS, VOBSUB) and requires burn-in
-    /// </summary>
-    public bool IsBitmapSubtitle { get; set; } = false;
-    
-    /// <summary>
-    /// Target resolution for transcoding (e.g., "720p", "1080p", "4k", "original")
-    /// </summary>
-    public string? TargetResolution { get; set; }
-    
-    /// <summary>
-    /// Target video codec for transcoding (e.g., "h264", "hevc", "av1")
-    /// </summary>
-    public string? TargetCodec { get; set; }
-    
-    /// <summary>
-    /// Whether to preserve HDR (skip tone mapping)
-    /// </summary>
-    public bool PreserveHdr { get; set; }
-    
-    /// <summary>
-    /// Selected audio track index (null = use default audio track)
-    /// </summary>
-    public int? AudioTrackIndex { get; set; }
-
-    /// <summary>
-    /// Maximum bitrate limit in kbps (null = unlimited)
-    /// </summary>
-    public int? MaxBitrate { get; set; }
-}
 
 /// <summary>
 /// Manages video transcoding sessions with throttling support.
@@ -98,8 +16,8 @@ public class TranscodeService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TranscodeService> _logger;
     private readonly IProcessController _processController;
-    private readonly ConcurrentDictionary<TranscodeSessionKey, TranscodeSession> _activeSessions = new();
-    private readonly ConcurrentDictionary<TranscodeSessionKey, SemaphoreSlim> _sessionLocks = new();
+    private readonly ITranscodeSessionManager _sessionManager;
+    private readonly IHlsService _hlsService;
     private readonly string _tempDir;
 
     // Throttling thresholds (in seconds of buffer)
@@ -115,12 +33,31 @@ public class TranscodeService
         IServiceScopeFactory scopeFactory, 
         ILogger<TranscodeService> logger, 
         IProcessController processController,
+        ITranscodeSessionManager sessionManager,
+        IHlsService hlsService,
         IConfiguration config)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _processController = processController;
+        _sessionManager = sessionManager;
+        _hlsService = hlsService;
         _tempDir = Path.Combine(Directory.GetCurrentDirectory(), "transcode-temp");
+        
+        // Clean up temp directory on startup to remove stale sessions from previous runs
+        if (Directory.Exists(_tempDir))
+        {
+            try 
+            {
+                Directory.Delete(_tempDir, true);
+                _logger.LogInformation("Cleaned up temp transcode directory: {Dir}", _tempDir);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Failed to clean up temp directory on startup: {Message}", ex.Message);
+            }
+        }
+        
         if (!Directory.Exists(_tempDir))
         {
             Directory.CreateDirectory(_tempDir);
@@ -145,28 +82,22 @@ public class TranscodeService
     /// <summary>
     /// Get all active sessions (for monitoring service)
     /// </summary>
-    public IEnumerable<TranscodeSession> GetAllSessions() => _activeSessions.Values;
+    public IEnumerable<TranscodeSession> GetAllSessions() => _sessionManager.GetAllSessions();
 
     /// <summary>
     /// Get a specific session by key
     /// </summary>
-    public TranscodeSession? GetSession(TranscodeSessionKey key)
-    {
-        _activeSessions.TryGetValue(key, out var session);
-        return session;
-    }
+    public TranscodeSession? GetSession(TranscodeSessionKey key) => _sessionManager.GetSession(key);
     
     /// <summary>
     /// Get a specific session by media/user/subtitle combination
     /// </summary>
-    public TranscodeSession? GetSession(Guid mediaId, Guid userId, int? subtitleTrackIndex)
-    {
-        var key = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex);
-        return GetSession(key);
-    }
+    public TranscodeSession? GetSession(Guid mediaId, Guid userId, int? subtitleTrackIndex) => 
+        _sessionManager.GetSession(mediaId, userId, subtitleTrackIndex);
 
     /// <summary>
     /// Extract segment index from filename like "seg_042.ts" or "seg_042.m4s"
+    /// Kept static for compatibility, logic duplicated from HlsService for now.
     /// </summary>
     public static int ExtractSegmentIndex(string segmentName)
     {
@@ -177,70 +108,13 @@ public class TranscodeService
     /// <summary>
     /// Get the latest segment index from disk
     /// </summary>
-    public int GetLatestSegmentIndex(string sessionDir)
-    {
-        if (!Directory.Exists(sessionDir)) return 0;
-        // Check for both .ts and .m4s segments (fMP4 uses .m4s)
-        var tsFiles = Directory.GetFiles(sessionDir, "seg_*.ts");
-        var m4sFiles = Directory.GetFiles(sessionDir, "seg_*.m4s");
-        var files = tsFiles.Concat(m4sFiles).ToArray();
-        return files
-            .Select(f => ExtractSegmentIndex(Path.GetFileName(f)))
-            .Where(i => i >= 0)
-            .DefaultIfEmpty(0)
-            .Max();
-    }
+    public int GetLatestSegmentIndex(string sessionDir) => _hlsService.GetLatestSegmentIndex(sessionDir);
 
     /// <summary>
     /// Parse the HLS playlist to get actual cumulative duration up to segmentCount segments.
-    /// This is more accurate than assuming fixed 6s segments since actual durations vary (4-10s).
     /// </summary>
-    public double GetActualPlaylistDuration(string sessionDir, int segmentCount)
-    {
-        var playlistPath = Path.Combine(sessionDir, "master.m3u8");
-        if (!File.Exists(playlistPath))
-        {
-            // Fallback to fixed estimate
-            _logger.LogWarning("Playlist not found, using estimated duration for {Count} segments", segmentCount);
-            return segmentCount * HlsSegmentDurationSeconds;
-        }
-
-        try
-        {
-            var lines = File.ReadAllLines(playlistPath);
-            double totalDuration = 0;
-            int currentSegmentIndex = 0;
-            
-            foreach (var line in lines)
-            {
-                // Parse #EXTINF:duration, lines
-                if (line.StartsWith("#EXTINF:"))
-                {
-                    var durationStr = line.Substring(8).Split(',')[0];
-                    if (double.TryParse(durationStr, System.Globalization.NumberStyles.Float, 
-                        System.Globalization.CultureInfo.InvariantCulture, out var duration))
-                    {
-                        // Only count segments up to the requested count
-                        if (currentSegmentIndex < segmentCount)
-                        {
-                            totalDuration += duration;
-                        }
-                        currentSegmentIndex++;
-                    }
-                }
-            }
-            
-            _logger.LogDebug("Parsed playlist: {Count} segments, total duration {Duration}s", 
-                segmentCount, totalDuration);
-            
-            return totalDuration > 0 ? totalDuration : segmentCount * HlsSegmentDurationSeconds;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to parse playlist for duration, using estimate");
-            return segmentCount * HlsSegmentDurationSeconds;
-        }
-    }
+    public double GetActualPlaylistDuration(string sessionDir, int segmentCount) => 
+        _hlsService.GetActualPlaylistDuration(sessionDir, segmentCount);
 
     /// <summary>
     /// Calculate buffer in seconds
@@ -256,7 +130,8 @@ public class TranscodeService
     /// </summary>
     public void UpdateClientPosition(TranscodeSessionKey key, int segmentIndex)
     {
-        if (_activeSessions.TryGetValue(key, out var session))
+        var session = _sessionManager.GetSession(key);
+        if (session != null)
         {
             session.ClientSegmentIndex = segmentIndex;
             session.LastClientRequestTime = DateTime.UtcNow;
@@ -271,7 +146,8 @@ public class TranscodeService
     /// </summary>
     public bool SetPaused(TranscodeSessionKey key, Guid userId, bool isPaused)
     {
-        if (_activeSessions.TryGetValue(key, out var session))
+        var session = _sessionManager.GetSession(key);
+        if (session != null)
         {
             // Validate ownership
             if (session.UserId != userId)
@@ -304,6 +180,12 @@ public class TranscodeService
         int? audioTrack = null,
         int? maxBitrate = null)
     {
+        // Sanitize subtitle track index: if negative, treat as null (disabled)
+        if (subtitleTrackIndex.HasValue && subtitleTrackIndex.Value < 0)
+        {
+            subtitleTrackIndex = null;
+        }
+
         // Check concurrent transcode limit from settings
         using (var scope = _scopeFactory.CreateScope())
         {
@@ -312,7 +194,7 @@ public class TranscodeService
             
             if (maxConcurrent > 0)
             {
-                var activeCount = _activeSessions.Count(s => s.Value.State != TranscodeState.Dormant && s.Value.State != TranscodeState.Completed);
+                var activeCount = _sessionManager.GetAllSessions().Count(s => s.State != TranscodeState.Dormant && s.State != TranscodeState.Completed);
                 if (activeCount >= maxConcurrent)
                 {
                     _logger.LogWarning("Max concurrent transcodes ({Max}) reached, rejecting new session for {MediaId}", 
@@ -323,30 +205,64 @@ public class TranscodeService
         }
         
         var sessionKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex);
-        var sessionLock = _sessionLocks.GetOrAdd(sessionKey, _ => new SemaphoreSlim(1, 1));
         
-        await sessionLock.WaitAsync();
-        try
+        using (await _sessionManager.AcquireLockAsync(sessionKey))
         {
             // Check if session already exists
-            if (_activeSessions.TryGetValue(sessionKey, out var existingSession))
+            var existingSession = _sessionManager.GetSession(sessionKey);
+            if (existingSession != null)
             {
-
                 // Verify the session directory still exists (could have been cleaned up)
                 if (Directory.Exists(existingSession.SessionDirectory))
                 {
-                    // Check if seek position changed - if so, restart the transcode
-                    if (existingSession.SeekPosition != seekPosition)
+                    // Check for parameter changes that require a restart
+                    bool parametersChanged = false;
+                    var restartReason = "";
+
+                    // Normalize resolution for comparison (handle nulls as "original")
+                    var newResolution = resolution ?? "original";
+                    if (!string.Equals(existingSession.TargetResolution, newResolution, StringComparison.OrdinalIgnoreCase))
                     {
-                        _logger.LogInformation("Seek position changed from {OldSeek} to {NewSeek} for {MediaId}, restarting transcode",
-                            existingSession.SeekPosition, seekPosition, mediaId);
+                        parametersChanged = true;
+                        restartReason = $"Resolution changed from {existingSession.TargetResolution} to {newResolution}";
+                    }
+                    else if (existingSession.TargetCodec != codec) // Nulls match nulls
+                    {
+                        parametersChanged = true;
+                        restartReason = $"Codec changed from {existingSession.TargetCodec ?? "auto"} to {codec ?? "auto"}";
+                    }
+                    else if (existingSession.PreserveHdr != (preserveHdr ?? false))
+                    {
+                        parametersChanged = true;
+                        restartReason = $"HDR preference changed from {existingSession.PreserveHdr} to {preserveHdr ?? false}";
+                    }
+                    else if (existingSession.AudioTrackIndex != audioTrack)
+                    {
+                         parametersChanged = true;
+                         restartReason = $"Audio track changed from {existingSession.AudioTrackIndex} to {audioTrack}";
+                    }
+                    else if (existingSession.MaxBitrate != maxBitrate)
+                    {
+                         parametersChanged = true;
+                         restartReason = $"Max bitrate changed from {existingSession.MaxBitrate} to {maxBitrate}";
+                    }
+                    // Check seek position last
+                    else if (existingSession.SeekPosition != seekPosition)
+                    {
+                         parametersChanged = true;
+                         restartReason = $"Seek position changed from {existingSession.SeekPosition} to {seekPosition}";
+                    }
+
+                    if (parametersChanged)
+                    {
+                        _logger.LogInformation("{Reason} for {MediaId}, restarting transcode", restartReason, mediaId);
                         await StopSessionInternalAsync(existingSession, sessionKey);
                     }
                     else
                     {
-                        _logger.LogDebug("Transcode session already active for {MediaId}", mediaId);
+                        _logger.LogDebug("Transcode session already active and valid for {MediaId}", mediaId);
                         
-                        // Check if subtitles were requested but not extracted (e.g., session from before fix)
+                        // Check if subtitles were requested but not extracted (logic retained from original)
                         if (subtitleTrackIndex.HasValue && existingSession.SubtitleVttPath == null && !existingSession.IsBitmapSubtitle)
                         {
                             _logger.LogInformation("Existing session missing subtitles, checking codec for {MediaId}", mediaId);
@@ -394,19 +310,18 @@ public class TranscodeService
                 {
                     // Session directory was cleaned up, remove stale session and restart
                     _logger.LogInformation("Session directory missing for {MediaId}, restarting transcode", mediaId);
-                    _activeSessions.TryRemove(sessionKey, out _);
+                    // Use TryRemoveSession to discard stale session
+                    _sessionManager.TryRemoveSession(sessionKey, out _);
                 }
             }
 
-            var sessionDir = GetSessionDir(mediaId, userId, subtitleTrackIndex);
+            var baseSessionDir = GetSessionDir(mediaId, userId, subtitleTrackIndex);
+            // Append timestamp to ensure unique directory for every session (prevents filesystem race conditions on restart)
+            var sessionDir = $"{baseSessionDir}_{DateTime.UtcNow.Ticks}";
             
-            // Clean up any existing session directory
-            if (Directory.Exists(sessionDir))
-            {
-                try { Directory.Delete(sessionDir, true); }
-                catch (Exception ex) { _logger.LogWarning(ex, "Could not clean up existing session dir: {Dir}", sessionDir); }
-            }
-
+            // Clean up any *stale* directories from previous runs that might be lingering
+            // (Optional cleanup of old versions of this session)
+            
             // Create session object
             var session = new TranscodeSession
             {
@@ -491,7 +406,7 @@ public class TranscodeService
             }
 
             session.Process = process;
-            _activeSessions.TryAdd(sessionKey, session);
+            _sessionManager.TryAddSession(session);
             
             _logger.LogInformation("Session {MediaId} added to active sessions. SubtitleVttPath={Path}",
                 mediaId, session.SubtitleVttPath ?? "null");
@@ -501,22 +416,15 @@ public class TranscodeService
             
             return session;
         }
-        finally
-        {
-            sessionLock.Release();
-        }
     }
 
     /// <summary>
     /// Suspend the FFmpeg process for a session (throttle when buffer is full).
-    /// Does NOT kill the process - uses OS-level suspension so it can resume exactly where it left off.
     /// </summary>
     public bool SuspendSession(TranscodeSessionKey key)
     {
-        if (!_activeSessions.TryGetValue(key, out var session))
-        {
-            return false;
-        }
+        var session = _sessionManager.GetSession(key);
+        if (session == null) return false;
 
         if (session.Process == null || session.Process.HasExited)
         {
@@ -547,14 +455,11 @@ public class TranscodeService
 
     /// <summary>
     /// Resume a suspended FFmpeg process (when buffer runs low).
-    /// The process continues exactly where it left off - no segment overlap.
     /// </summary>
     public bool ResumeSession(TranscodeSessionKey key)
     {
-        if (!_activeSessions.TryGetValue(key, out var session))
-        {
-            return false;
-        }
+        var session = _sessionManager.GetSession(key);
+        if (session == null) return false;
 
         if (session.Process == null || session.Process.HasExited)
         {
@@ -582,7 +487,6 @@ public class TranscodeService
         
         return success;
     }
-
 
     /// <summary>
     /// Start FFmpeg process with current session settings
@@ -639,13 +543,15 @@ public class TranscodeService
     /// <summary>
     /// Get the HLS playlist for a transcode session.
     /// </summary>
+    /// <summary>
+    /// Get the HLS playlist for a transcode session.
+    /// </summary>
     public Stream? GetPlaylist(Guid mediaId, Guid userId, int? subtitleTrackIndex = null)
     {
-        var sessionDir = GetSessionDir(mediaId, userId, subtitleTrackIndex);
-        var playlistPath = Path.Combine(sessionDir, "master.m3u8");
-        if (File.Exists(playlistPath))
+        var session = GetSession(mediaId, userId, subtitleTrackIndex);
+        if (session != null && Directory.Exists(session.SessionDirectory))
         {
-            return new FileStream(playlistPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            return _hlsService.GetPlaylistStream(session.SessionDirectory);
         }
         return null;
     }
@@ -655,35 +561,24 @@ public class TranscodeService
     /// </summary>
     public Stream? GetSegment(Guid mediaId, Guid userId, string segmentName, int? subtitleTrackIndex = null)
     {
-        // Validate segment name pattern (security)
-        if (!SegmentPattern.IsMatch(segmentName))
+        var session = GetSession(mediaId, userId, subtitleTrackIndex);
+        if (session != null && Directory.Exists(session.SessionDirectory))
         {
-            _logger.LogWarning("Invalid segment name rejected: {Name}", segmentName);
-            return null;
+            return _hlsService.GetSegmentStream(session.SessionDirectory, segmentName);
         }
-
-        var sessionDir = GetSessionDir(mediaId, userId, subtitleTrackIndex);
-        var segmentPath = Path.Combine(sessionDir, segmentName);
-        if (File.Exists(segmentPath))
-        {
-            return new FileStream(segmentPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        }
-        return null;
+        return null; // Or handle as 404
     }
 
     /// <summary>
     /// Get the fMP4 initialization segment (init.mp4) for a transcode session.
-    /// This is required for fMP4/CMAF HLS playback.
     /// </summary>
     public Stream? GetInitSegment(Guid mediaId, Guid userId, int? subtitleTrackIndex = null)
     {
-        var sessionDir = GetSessionDir(mediaId, userId, subtitleTrackIndex);
-        var initPath = Path.Combine(sessionDir, "init.mp4");
-        if (File.Exists(initPath))
+        var session = GetSession(mediaId, userId, subtitleTrackIndex);
+        if (session != null && Directory.Exists(session.SessionDirectory))
         {
-            return new FileStream(initPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            return _hlsService.GetInitSegmentStream(session.SessionDirectory);
         }
-        _logger.LogWarning("Init segment not found at {Path}", initPath);
         return null;
     }
 
@@ -694,7 +589,7 @@ public class TranscodeService
     {
         var sessionKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex);
         
-        if (_activeSessions.TryRemove(sessionKey, out var session))
+        if (_sessionManager.TryRemoveSession(sessionKey, out var session))
         {
             StopSession(session, deleteFiles);
         }
@@ -705,10 +600,15 @@ public class TranscodeService
     /// </summary>
     public void StopAllTranscodesForUser(Guid mediaId, Guid userId)
     {
-        var keysToRemove = _activeSessions.Keys.Where(k => k.MediaId == mediaId && k.UserId == userId).ToList();
+        var allSessions = _sessionManager.GetAllSessions();
+        var keysToRemove = allSessions
+            .Where(s => s.Key.MediaId == mediaId && s.Key.UserId == userId)
+            .Select(s => s.Key)
+            .ToList();
+
         foreach (var key in keysToRemove)
         {
-            if (_activeSessions.TryRemove(key, out var session))
+            if (_sessionManager.TryRemoveSession(key, out var session))
             {
                 StopSession(session, deleteFiles: true);
             }
@@ -720,7 +620,8 @@ public class TranscodeService
     /// </summary>
     public void EnterDormantState(TranscodeSessionKey key)
     {
-        if (_activeSessions.TryGetValue(key, out var session))
+        var session = _sessionManager.GetSession(key);
+        if (session != null)
         {
             // Stop process but keep files
             if (session.Process != null && !session.Process.HasExited)
@@ -747,7 +648,7 @@ public class TranscodeService
     /// </summary>
     public void DeleteDormantSession(TranscodeSessionKey key)
     {
-        if (_activeSessions.TryRemove(key, out var session))
+        if (_sessionManager.TryRemoveSession(key, out var session))
         {
             StopSession(session, deleteFiles: true);
             _logger.LogInformation("Dormant session {MediaId} deleted", key.MediaId);
@@ -761,7 +662,7 @@ public class TranscodeService
     private async Task StopSessionInternalAsync(TranscodeSession session, TranscodeSessionKey sessionKey)
     {
         StopSession(session, deleteFiles: true);
-        _activeSessions.TryRemove(sessionKey, out _);
+        _sessionManager.TryRemoveSession(sessionKey, out _);
         await Task.Delay(100); // Brief delay for filesystem to settle
     }
 

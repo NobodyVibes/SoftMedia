@@ -151,8 +151,9 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
         }
 
         // --- 10-BIT / HDR HANDLING ---
-        bool skipTonemapping = settings.PreserveHDR && is10Bit;
-        bool useToneMappingPipeline = is10Bit && settings.HardwareAcceleration.ToLower() == "nvidia" && !skipTonemapping;
+        bool isHdr = probe != null && IsHdr(probe.ColorTransfer);
+        bool skipTonemapping = settings.PreserveHDR && isHdr;
+        bool useToneMappingPipeline = isHdr && settings.HardwareAcceleration.ToLower() == "nvidia" && !skipTonemapping;
         
         if (skipTonemapping)
         {
@@ -201,7 +202,18 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
         
         if (!useToneMappingPipeline)
         {
-             scaleFilter = GetScaleFilter(settings.MaxResolution, hasSubtitleOverlay, settings.HardwareAcceleration);
+            // Determine if we should preserve 10-bit depth (p010) for SDR content
+            // Only if input is 10-bit and output codec supports it (HEVC/AV1)
+            var c = settings.OutputVideoCodec.ToLower();
+            bool codecSupports10Bit = c.Contains("av1") || c.Contains("hevc") || c == "libx265";
+            bool shouldPreserve10Bit = is10Bit && codecSupports10Bit;
+
+             scaleFilter = GetScaleFilter(settings.MaxResolution, hasSubtitleOverlay, settings.HardwareAcceleration, shouldPreserve10Bit);
+             
+             if (shouldPreserve10Bit && !string.IsNullOrEmpty(scaleFilter) && scaleFilter.Contains("p010"))
+             {
+                 _logger.LogInformation("Preserving 10-bit depth (p010) for 10-bit SDR content");
+             }
         }
         
         if (hasSubtitleOverlay)
@@ -210,12 +222,36 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             
             if (IsBitmapSubtitleCodec(subtitleCodec))
             {
-                filterChain.Append($"[0:v][0:{subtitleTrackIndex ?? 0}]overlay");
+                // Use scale2ref to ensure subtitles are scaled to match video resolution
+                // This prevents "tiny subtitles" when overlaying SD subtitles (e.g. DVD) on HD/4K video
+                // [0:s][0:v]scale2ref=flags=bicubic[subs][vid]
+                // - [0:s] is the subtitle stream
+                // - [0:v] is the video stream (reference)
+                // - scale2ref scales the FIRST input ([0:s]) to match the SECOND input ([0:v])
+                // - outputs [subs] (scaled subtitles) and [vid] (original video passed through)
+                
+                filterChain.Append($"[0:{subtitleTrackIndex}][0:v]scale2ref=flags=bicubic[subs][vid];");
+                
+                // Now verify if we need to scale the VIDEO itself (e.g. 4K -> 1080p)
+                // We must apply scaling to the [vid] output from scale2ref
+                string videoLabel = "[vid]";
                 
                 if (!string.IsNullOrEmpty(scaleFilter))
                 {
-                    filterChain.Append(scaleFilter);
+                    // scaleFilter format is usually "-vf "scale=..."" or just filter chain part "scale=..."
+                    // We need just the filter part, e.g. "scale=1920:-2"
+                    // And we need to chain it: [vid]scale=...[vscaled]
+                    
+                    // Cleanup scaleFilter to get just the filter command
+                    var cleanScale = scaleFilter.Replace("-vf ", "").Replace("\"", "").Trim();
+                    if (cleanScale.StartsWith(",")) cleanScale = cleanScale.Substring(1);
+                    
+                    filterChain.Append($"{videoLabel}{cleanScale}[vscaled];");
+                    videoLabel = "[vscaled]";
                 }
+                
+                // Finally overlay subtitles onto video
+                filterChain.Append($"{videoLabel}[subs]overlay");
                 
                 filterChain.Append("[v]");
                 
@@ -331,8 +367,14 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
     {
         if (string.IsNullOrEmpty(pixelFormat)) return false;
         return pixelFormat.Contains("p10") || 
+               pixelFormat.Contains("p010") ||
                pixelFormat.Contains("10le") || 
                (colorTransfer != null && (colorTransfer.Contains("smpte2084") || colorTransfer.Contains("arib-std-b67")));
+    }
+
+    private bool IsHdr(string? colorTransfer)
+    {
+        return colorTransfer != null && (colorTransfer.Contains("smpte2084") || colorTransfer.Contains("arib-std-b67"));
     }
 
     private string GetHardwareDecodeOptions(string hwAccel, bool hasSubtitleOverlay)
@@ -434,16 +476,17 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
         return $"-c:v libx264 -preset {settings.Preset} -crf {settings.CRF} -pix_fmt yuv420p {bitrateArgs}{keyframeFlags}";
     }
 
-    private string GetScaleFilter(string maxResolution, bool hasSubtitleOverlay, string hwAccel)
+    private string GetScaleFilter(string maxResolution, bool hasSubtitleOverlay, string hwAccel, bool preserve10Bit = false)
     {
         if (hwAccel.ToLower() == "nvidia" && !hasSubtitleOverlay)
         {
+            string format = preserve10Bit ? "p010" : "nv12";
             var scaleCuda = maxResolution.ToLower() switch
             {
-                "720p" => "scale_cuda=1280:-2:format=nv12",
-                "1080p" => "scale_cuda=1920:-2:format=nv12",
-                "4k" => "scale_cuda=3840:-2:format=nv12",
-                _ => "scale_cuda=format=nv12" 
+                "720p" => $"scale_cuda=1280:-2:format={format}",
+                "1080p" => $"scale_cuda=1920:-2:format={format}",
+                "4k" => $"scale_cuda=3840:-2:format={format}",
+                _ => $"scale_cuda=format={format}" 
             };
             
             return $"-vf \"{scaleCuda}\" ";

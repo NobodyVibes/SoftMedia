@@ -3,7 +3,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
+using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Media;
 
 namespace SoftMedia.Server.Controllers;
 
@@ -13,22 +15,15 @@ namespace SoftMedia.Server.Controllers;
 public class MediaController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IMediaRetrievalService _mediaRetrievalService;
 
-    public MediaController(AppDbContext context)
+    public MediaController(AppDbContext context, IMediaRetrievalService mediaRetrievalService)
     {
         _context = context;
+        _mediaRetrievalService = mediaRetrievalService;
     }
 
-    private Guid GetUserId()
-    {
-        var idClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier);
-        if (idClaim == null || !Guid.TryParse(idClaim.Value, out var userId))
-        {
-            // Fallback or throw? For now, we assume authorized due to [Authorize]
-            throw new UnauthorizedAccessException("Invalid user ID");
-        }
-        return userId;
-    }
+
 
     [HttpGet("{id}")]
     public async Task<ActionResult<MediaItemDto>> GetMediaItem(Guid id)
@@ -47,7 +42,7 @@ public class MediaController : ControllerBase
         UserMediaInteraction? interaction = null;
         try 
         {
-            var userId = GetUserId();
+            var userId = User.GetUserId();
             interaction = await _context.UserMediaInteractions
                 .FirstOrDefaultAsync(x => x.UserId == userId && x.MediaItemId == id);
         }
@@ -62,84 +57,20 @@ public class MediaController : ControllerBase
     [HttpGet("recent")]
     public async Task<ActionResult<IEnumerable<MediaItemDto>>> GetRecentMedia([FromQuery] int limit = 20, [FromQuery] string? type = null)
     {
-        IQueryable<MediaItem> query = _context.MediaItems;
-
-        if (!string.IsNullOrEmpty(type) && Enum.TryParse<LibraryType>(type, true, out var libraryType))
+        LibraryType? libraryType = null;
+        if (!string.IsNullOrEmpty(type) && Enum.TryParse<LibraryType>(type, true, out var parsedType))
         {
-            var libraryIds = await _context.Libraries
-                .Where(l => l.Type == libraryType)
-                .Select(l => l.Id)
-                .ToListAsync();
-
-            query = query.Where(m => libraryIds.Contains(m.LibraryId));
+            libraryType = parsedType;
         }
 
-        // Fetch more items than limit to allow for collapsing episodes/tracks into series/albums
-        var rawLimit = limit * 5;
-        
-        var rawItems = await query
-            .Include(m => m.Series)
-            .Include(m => m.Album)
-            .OrderByDescending(m => m.DateAdded)
-            .Take(rawLimit)
-            .ToListAsync();
-
-        var distinctItems = new List<MediaItem>();
-        var seenSeries = new HashSet<Guid>();
-        var seenAlbums = new HashSet<Guid>();
-
-        foreach (var item in rawItems)
-        {
-            if (distinctItems.Count >= limit) break;
-
-            if (item.Type == MediaType.Episode && item.Series != null)
-            {
-                if (!seenSeries.Contains(item.Series.Id))
-                {
-                    distinctItems.Add(item.Series);
-                    seenSeries.Add(item.Series.Id);
-                }
-            }
-            else if (item.Type == MediaType.Audio && item.Album != null)
-            {
-                if (!seenAlbums.Contains(item.Album.Id))
-                {
-                     distinctItems.Add(item.Album);
-                     seenAlbums.Add(item.Album.Id);
-                }
-            }
-            else
-            {
-                // For base Series/Album items, we also check if we've already added them via an episode/track
-                if (item.Type == MediaType.Series)
-                {
-                    if (!seenSeries.Contains(item.Id))
-                    {
-                        distinctItems.Add(item);
-                        seenSeries.Add(item.Id);
-                    }
-                }
-                else if (item.Type == MediaType.Album)
-                {
-                    if (!seenAlbums.Contains(item.Id))
-                    {
-                        distinctItems.Add(item);
-                        seenAlbums.Add(item.Id);
-                    }
-                }
-                else
-                {
-                    distinctItems.Add(item);
-                }
-            }
-        }
+        var distinctItems = await _mediaRetrievalService.GetRecentMediaAsync(limit, libraryType);
 
         // Batch fetch interactions for all distinct items
         var itemIds = distinctItems.Select(x => x.Id).ToList();
         var interactions = new Dictionary<Guid, UserMediaInteraction>();
         try
         {
-             var userId = GetUserId();
+             var userId = User.GetUserId();
              var interactionList = await _context.UserMediaInteractions
                  .Where(x => x.UserId == userId && itemIds.Contains(x.MediaItemId))
                  .ToListAsync();

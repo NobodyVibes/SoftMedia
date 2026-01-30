@@ -1,0 +1,17 @@
+C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests\obj\Debug\net9.0\.NETCoreApp,Version=v9.0.AssemblyAttributes.cs(4,12): error CS0579: Duplicate 'global::System.Runtime.Versioning.TargetFrameworkAttribute' attribute [C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests.csproj]
+C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests\obj\Debug\net9.0\SoftMedia.Tests.AssemblyInfo.cs(13,12): error CS0579: Duplicate 'System.Reflection.AssemblyCompanyAttribute' attribute [C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests.csproj]
+C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests\obj\Debug\net9.0\SoftMedia.Tests.AssemblyInfo.cs(14,12): error CS0579: Duplicate 'System.Reflection.AssemblyConfigurationAttribute' attribute [C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests.csproj]
+C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests\obj\Debug\net9.0\SoftMedia.Tests.AssemblyInfo.cs(15,12): error CS0579: Duplicate 'System.Reflection.AssemblyFileVersionAttribute' attribute [C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests.csproj]
+C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests\obj\Debug\net9.0\SoftMedia.Tests.AssemblyInfo.cs(16,12): error CS0579: Duplicate 'System.Reflection.AssemblyInformationalVersionAttribute' attribute [C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests.csproj]
+C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests\obj\Debug\net9.0\SoftMedia.Tests.AssemblyInfo.cs(17,12): error CS0579: Duplicate 'System.Reflection.AssemblyProductAttribute' attribute [C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests.csproj]
+C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests\obj\Debug\net9.0\SoftMedia.Tests.AssemblyInfo.cs(18,12): error CS0579: Duplicate 'System.Reflection.AssemblyTitleAttribute' attribute [C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests.csproj]
+C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests\obj\Debug\net9.0\SoftMedia.Tests.AssemblyInfo.cs(19,12): error CS0579: Duplicate 'System.Reflection.AssemblyVersionAttribute' attribute [C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests.csproj]
+C:\Users\Admin\Documents\coding2\SoftMedia\tests\obj\Debug\net9.0\.NETCoreApp,Version=v9.0.AssemblyAttributes.cs(4,12): error CS0579: Duplicate 'global::System.Runtime.Versioning.TargetFrameworkAttribute' attribute [C:\Users\Admin\Documents\coding2\SoftMedia\tests\SoftMedia.Tests.csproj]
+
+Build FAILED.
+    0 Warning(s)
+    9 Error(s)
+
+Time Elapsed 00:00:01.46
+
+Workload updates are available. Run `dotnet workload list` for more information.

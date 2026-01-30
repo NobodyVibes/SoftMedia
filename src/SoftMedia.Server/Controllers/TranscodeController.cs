@@ -1,6 +1,6 @@
 using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
-using SoftMedia.Server.Services.Identity;
+
 using SoftMedia.Server.Services.Transcoding;
 using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Abstractions;
@@ -10,7 +10,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Services.Media;
-using SoftMedia.Server.Services.Scanning;
+
 using SoftMedia.Server.Services.Transcoding.Models;
 
 namespace SoftMedia.Server.Controllers;

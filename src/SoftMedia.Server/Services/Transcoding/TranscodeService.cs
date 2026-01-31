@@ -11,7 +11,7 @@ namespace SoftMedia.Server.Services.Transcoding;
 /// Manages video transcoding sessions with throttling support.
 /// Registered as Singleton to maintain process tracking across all HTTP requests.
 /// </summary>
-public class TranscodeService
+public class TranscodeService : ITranscodeService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TranscodeService> _logger;

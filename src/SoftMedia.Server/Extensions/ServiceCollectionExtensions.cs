@@ -101,6 +101,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITranscodeSessionManager, TranscodeSessionManager>();
         services.AddSingleton<IHlsService, HlsService>();
         services.AddSingleton<TranscodeService>();
+        services.AddSingleton<ITranscodeService>(sp => sp.GetRequiredService<TranscodeService>());
+        services.AddScoped<ITranscodeSessionService, TranscodeSessionService>();
+        services.AddScoped<IStreamResultService, StreamResultService>();
         services.AddSingleton<IBinaryLocationService, BinaryLocationService>();
         services.AddSingleton<IMediaProbeService, MediaProbeService>();
         services.AddSingleton<IFileSystem, FileSystem>();

@@ -44,6 +44,33 @@ public class MetadataAggregator
             var json = await _metadataRouter.FetchMetadataAsync(item, type);
             if (string.IsNullOrEmpty(json)) return;
 
+            // MERGE Logic: Preserve existing technical metadata (chapters, creditsStart)
+            if (!string.IsNullOrEmpty(item.MetadataJson))
+            {
+                try
+                {
+                    var existing = JsonSerializer.Deserialize<Dictionary<string, object>>(item.MetadataJson);
+                    var newMeta = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
+
+                    if (existing != null && newMeta != null)
+                    {
+                        // Update existing with new values (External metadata wins for promoted fields)
+                        foreach (var kvp in newMeta)
+                        {
+                            existing[kvp.Key] = kvp.Value;
+                        }
+                        
+                        // Re-serialize
+                        json = JsonSerializer.Serialize(existing);
+                    }
+                }
+                catch
+                {
+                    // If merge fails, fall back to overwrite but log warning
+                    _logger.LogWarning("Failed to merge metadata for {Title}, overwriting.", item.Title);
+                }
+            }
+
             item.MetadataJson = json;
 
             await ProcessMetadataJsonAsync(item, json, deferImageCaching, refreshImages);

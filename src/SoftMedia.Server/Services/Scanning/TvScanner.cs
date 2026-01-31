@@ -339,7 +339,9 @@ public class TvScanner : BaseMediaScanner
                 {
                     if (s.TryGetProperty("number", out var n) && n.GetInt32() == seasonNum)
                     {
-                        var meta = new Dictionary<string, object>();
+                        var meta = !string.IsNullOrEmpty(season.MetadataJson) 
+                            ? JsonSerializer.Deserialize<Dictionary<string, object>>(season.MetadataJson) ?? new Dictionary<string, object>()
+                            : new Dictionary<string, object>();
 
                         if (s.TryGetProperty("poster", out var p) && p.ValueKind != JsonValueKind.Null)
                             meta["poster"] = p.GetString() ?? string.Empty;
@@ -424,7 +426,9 @@ public class TvScanner : BaseMediaScanner
 
                 if (s == seasonNum && e == episodeNum)
                 {
-                    var epMeta = new Dictionary<string, object>();
+                    var epMeta = !string.IsNullOrEmpty(episode.MetadataJson) 
+                         ? JsonSerializer.Deserialize<Dictionary<string, object>>(episode.MetadataJson) ?? new Dictionary<string, object>()
+                         : new Dictionary<string, object>();
 
                     // Extract still image URL
                     if (ep.TryGetProperty("still", out var stillProp) && stillProp.ValueKind != JsonValueKind.Null)

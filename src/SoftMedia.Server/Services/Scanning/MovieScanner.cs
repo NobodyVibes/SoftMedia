@@ -6,6 +6,9 @@ using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Metadata;
+using System.Text.Json;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace SoftMedia.Server.Services.Scanning;
 
@@ -82,6 +85,31 @@ public class MovieScanner : BaseMediaScanner
                 movie.AudioCodec = probe.AudioCodec;
                 movie.Resolution = probe.Resolution;
                 movie.Container = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
+
+                // Persist technical metadata (chapters/credits)
+                var meta = !string.IsNullOrEmpty(movie.MetadataJson)
+                    ? JsonSerializer.Deserialize<Dictionary<string, object>>(movie.MetadataJson) ?? new Dictionary<string, object>()
+                    : new Dictionary<string, object>();
+                
+                bool metaModified = false;
+
+                if (probe.CreditsStart.HasValue)
+                {
+                    meta["creditsStart"] = probe.CreditsStart.Value;
+                    metaModified = true;
+                }
+
+                if (probe.Chapters != null && probe.Chapters.Count > 0)
+                {
+                    var chaptersList = probe.Chapters.Select(c => new { startTime = c.StartTime, title = c.Title }).ToList();
+                    meta["chapters"] = chaptersList;
+                    metaModified = true;
+                }
+
+                if (metaModified)
+                {
+                    movie.MetadataJson = JsonSerializer.Serialize(meta);
+                }
             }
 
             if (isNew)

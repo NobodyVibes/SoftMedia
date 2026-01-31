@@ -1,4 +1,5 @@
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Models;
 
 namespace SoftMedia.Server.Services.Security;
 
@@ -27,10 +28,12 @@ public class StreamSecurityService : IStreamSecurityService
                 var canonicalLibPath = Path.GetFullPath(libPath);
                 
                 // Ensure the library path ends with a separator to prevent partial matches 
-                // (e.g., "C:\Media" matching "C:\MediaDocs")
-                // Although StartsWith comparison usually handles this if we are careful, 
-                // getting full path is the most important part.
-                
+                // unless it is the root drive
+                if (!canonicalLibPath.EndsWith(Path.DirectorySeparatorChar.ToString()))
+                {
+                    canonicalLibPath += Path.DirectorySeparatorChar;
+                }
+
                 if (canonicalFilePath.StartsWith(canonicalLibPath, StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
@@ -45,5 +48,38 @@ public class StreamSecurityService : IStreamSecurityService
             _logger.LogError(ex, "Error validating path security for file '{FilePath}'.", filePath);
             return false;
         }
+    }
+
+    public MediaAccessResult ValidateMediaAccess(MediaItem item)
+    {
+        if (item == null) 
+        {
+            return MediaAccessResult.FileNotFound; // Logic: Item not found implies file interaction impossible
+        }
+
+        if (item.Library == null)
+        {
+             _logger.LogWarning("Validation failed: Media item {Id} has no associated library.", item.Id);
+             return MediaAccessResult.FileNotFound; // Treat broken library link as not found
+        }
+        
+        if (string.IsNullOrEmpty(item.Path))
+        {
+             return MediaAccessResult.FileNotFound;
+        }
+
+        if (!File.Exists(item.Path))
+        {
+            _logger.LogWarning("Validation failed: File not found on disk: {Path}", item.Path);
+            return MediaAccessResult.FileNotFound;
+        }
+
+        if (!IsPathAuthorized(item.Path, item.Library.Paths))
+        {
+            _logger.LogWarning("Validation failed: LFI attempt blocked for {Path}", item.Path);
+            return MediaAccessResult.Unauthorized;
+        }
+
+        return MediaAccessResult.Allowed;
     }
 }

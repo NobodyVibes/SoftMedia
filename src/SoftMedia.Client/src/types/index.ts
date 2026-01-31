@@ -104,5 +104,21 @@ export interface FileWatcherIssue {
     lastChecked: string;
     libraryId: string;
     libraryName: string;
+
     canRetry: boolean;
+}
+
+// Player Types
+export interface TrackInfo {
+    index: number;
+    type: string;
+    language?: string;
+    title?: string;
+    codec?: string;
+    isDefault: boolean;
+}
+
+export interface TracksResponse {
+    audioTracks: TrackInfo[];
+    subtitleTracks: TrackInfo[];
 }

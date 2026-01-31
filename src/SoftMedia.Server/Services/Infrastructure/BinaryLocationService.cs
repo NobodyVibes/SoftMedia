@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
+using System.Runtime.InteropServices;
 
 namespace SoftMedia.Server.Services.Infrastructure;
 
@@ -31,18 +32,17 @@ public class BinaryLocationService : IBinaryLocationService
                 _logger.LogDebug("Resolved ffmpeg path from configuration: {Path}", configPath);
                 return configPath;
             }
-            _logger.LogWarning("Configured FFmpeg path not found: {Path}", configPath);
+            _logger.LogWarning("Configured FFmpeg path not found: {Path}. Falling back to discovery.", configPath);
         }
 
-        // 2. Fallback to hardcoded candidates
+        // 2. Check bundled/relative locations
+        var executableName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ffmpeg.exe" : "ffmpeg";
         var candidates = new[]
         {
-            Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg-bin", "ffmpeg.exe"),
-            Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg.exe"),
-            @"C:\Program Files\ffmpeg-2024-06-27-git-9a3bc59a38-full_build\bin\ffmpeg.exe",
-            @"C:\ffmpeg\bin\ffmpeg.exe",
-            @"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
-            @"C:\ProgramData\chocolatey\bin\ffmpeg.exe",
+            Path.Combine(Directory.GetCurrentDirectory(), executableName),
+            Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg-bin", executableName),
+            Path.Combine(Directory.GetCurrentDirectory(), "Tools", executableName),
+            Path.Combine(Directory.GetCurrentDirectory(), "bin", executableName)
         };
 
         foreach (var candidate in candidates)
@@ -54,7 +54,8 @@ public class BinaryLocationService : IBinaryLocationService
             }
         }
 
-        _logger.LogDebug("ffmpeg not found in common locations, falling back to 'ffmpeg' command.");
+        // 3. Fallback to System PATH
+        _logger.LogDebug("ffmpeg not found in common locations, falling back to system PATH 'ffmpeg'.");
         return "ffmpeg";
     }
 
@@ -69,18 +70,17 @@ public class BinaryLocationService : IBinaryLocationService
                 _logger.LogDebug("Resolved ffprobe path from configuration: {Path}", configPath);
                 return configPath;
             }
-            _logger.LogWarning("Configured FFprobe path not found: {Path}", configPath);
+            _logger.LogWarning("Configured FFprobe path not found: {Path}. Falling back to discovery.", configPath);
         }
 
-        // 2. Fallback to hardcoded candidates
+        // 2. Check bundled/relative locations
+        var executableName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ffprobe.exe" : "ffprobe";
         var candidates = new[]
         {
-            Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg-bin", "ffprobe.exe"),
-            Path.Combine(Directory.GetCurrentDirectory(), "ffprobe.exe"),
-            @"C:\Program Files\ffmpeg-2024-06-27-git-9a3bc59a38-full_build\bin\ffprobe.exe",
-            @"C:\ffmpeg\bin\ffprobe.exe",
-            @"C:\Program Files\ffmpeg\bin\ffprobe.exe",
-            @"C:\ProgramData\chocolatey\bin\ffprobe.exe",
+            Path.Combine(Directory.GetCurrentDirectory(), executableName),
+            Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg-bin", executableName),
+            Path.Combine(Directory.GetCurrentDirectory(), "Tools", executableName),
+            Path.Combine(Directory.GetCurrentDirectory(), "bin", executableName)
         };
 
         foreach (var candidate in candidates)
@@ -92,7 +92,8 @@ public class BinaryLocationService : IBinaryLocationService
             }
         }
 
-        _logger.LogDebug("ffprobe not found in common locations, falling back to 'ffprobe' command.");
+        // 3. Fallback to System PATH
+        _logger.LogDebug("ffprobe not found in common locations, falling back to system PATH 'ffprobe'.");
         return "ffprobe";
     }
 }

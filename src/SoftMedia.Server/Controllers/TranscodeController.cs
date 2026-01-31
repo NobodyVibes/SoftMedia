@@ -12,6 +12,8 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Services.Media;
 
 using SoftMedia.Server.Services.Transcoding.Models;
+using SoftMedia.Server.Extensions;
+using SoftMedia.Server.Models;
 
 namespace SoftMedia.Server.Controllers;
 
@@ -33,6 +35,7 @@ public class TranscodeController : ControllerBase
     private readonly IHlsManifestService _hlsManifestService;
     private readonly ITranscodeDebugService _debugService;
     private readonly IVideoPreviewService _videoPreviewService;
+    private readonly IStreamSecurityService _streamSecurityService;
 
     public TranscodeController(
         TranscodeService transcodeService, 
@@ -42,6 +45,7 @@ public class TranscodeController : ControllerBase
         IHlsManifestService hlsManifestService,
         ITranscodeDebugService debugService,
         IVideoPreviewService videoPreviewService,
+        IStreamSecurityService streamSecurityService,
         ILogger<TranscodeController> logger)
     {
         _transcodeService = transcodeService;
@@ -51,6 +55,7 @@ public class TranscodeController : ControllerBase
         _hlsManifestService = hlsManifestService;
         _debugService = debugService;
         _videoPreviewService = videoPreviewService;
+        _streamSecurityService = streamSecurityService;
         _logger = logger;
     }
 
@@ -89,34 +94,21 @@ public class TranscodeController : ControllerBase
                 return NotFound("Media item not found");
             }
 
-            // Security: Verify file exists
-            if (!System.IO.File.Exists(mediaItem.Path))
+            // Centralized Security Check (Exists + LFI)
+            var accessResult = _streamSecurityService.ValidateMediaAccess(mediaItem);
+            if (accessResult == MediaAccessResult.FileNotFound)
             {
                 _logger.LogWarning("Stream plan requested for missing file: {Path}", mediaItem.Path);
                 return NotFound("File not found on disk.");
             }
-
-            // Security: LFI Protection - verify path is within authorized library directories
-            var canonicalPath = Path.GetFullPath(mediaItem.Path);
-            var isAuthorized = mediaItem.Library.Paths.Any(p =>
-                canonicalPath.StartsWith(Path.GetFullPath(p), StringComparison.OrdinalIgnoreCase));
-
-            if (!isAuthorized)
+            if (accessResult == MediaAccessResult.Unauthorized)
             {
                 _logger.LogWarning("LFI attempt blocked in stream plan: {Path}", mediaItem.Path);
                 return Forbid();
             }
 
             // Get token from query or authorization header
-            var token = Request.Query["token"].ToString();
-            if (string.IsNullOrEmpty(token))
-            {
-                var authHeader = Request.Headers["Authorization"].ToString();
-                if (authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-                {
-                    token = authHeader.Substring(7);
-                }
-            }
+            var token = Request.GetToken();
 
             // Compute optimal stream plan
             var plan = await _streamPlanService.ComputeStreamPlanAsync(id, mediaItem, capabilities, token);
@@ -170,19 +162,14 @@ public class TranscodeController : ControllerBase
                 return NotFound("Media item not found");
             }
 
-            // Security: Verify file exists
-            if (!System.IO.File.Exists(mediaItem.Path))
+            // Centralized Security Check (Exists + LFI)
+            var accessResult = _streamSecurityService.ValidateMediaAccess(mediaItem);
+            if (accessResult == MediaAccessResult.FileNotFound)
             {
                 _logger.LogWarning("Transcode requested for missing file: {Path}", mediaItem.Path);
                 return NotFound("File not found on disk.");
             }
-
-            // Security: LFI Protection - verify path is within authorized library directories
-            var canonicalPath = Path.GetFullPath(mediaItem.Path);
-            var isAuthorized = mediaItem.Library.Paths.Any(p =>
-                canonicalPath.StartsWith(Path.GetFullPath(p), StringComparison.OrdinalIgnoreCase));
-
-            if (!isAuthorized)
+            if (accessResult == MediaAccessResult.Unauthorized)
             {
                 _logger.LogWarning("LFI attempt blocked in transcode: {Path}", mediaItem.Path);
                 return Forbid();
@@ -201,7 +188,7 @@ public class TranscodeController : ControllerBase
             }
 
             // Read and rewrite M3U8 to inject token AND subtitle track into segment URLs
-            var token = Request.Query["token"].ToString();
+            var token = Request.GetToken();
             
             if (string.IsNullOrEmpty(token))
             {

@@ -2,12 +2,13 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import Hls from 'hls.js';
 import { type MediaItem } from '../../types';
+import { useTrackSelection } from '../../hooks/useTrackSelection';
 import { useAuthStore } from '../../store/authStore';
 import { NextEpisodeOverlay, type NextEpisodeInfo } from './NextEpisodeOverlay';
 import { PlayerDebugPanel } from './PlayerDebugPanel';
+import { ProgressBar } from './ProgressBar';
 import { useMediaCapabilities, createCapabilitiesWithOverrides } from '../../hooks/useMediaCapabilities';
 import { useLocalPreferences } from '../../hooks/useLocalPreferences';
-import { normalizeLanguage } from '../../lib/utils';
 
 
 
@@ -16,19 +17,7 @@ interface VideoPlayerProps {
     src: string;
 }
 
-interface TrackInfo {
-    index: number;
-    type: string;
-    language?: string;
-    title?: string;
-    codec?: string;
-    isDefault: boolean;
-}
 
-interface TracksResponse {
-    audioTracks: TrackInfo[];
-    subtitleTracks: TrackInfo[];
-}
 
 interface StreamPlan {
     method: 'DirectPlay' | 'Remux' | 'Transcode';
@@ -54,7 +43,7 @@ const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const hlsRef = useRef<Hls | null>(null);
-    const progressRef = useRef<HTMLDivElement>(null);
+    const seekTargetRef = useRef<number | null>(null); // Track where user drags to
     const containerRef = useRef<HTMLDivElement>(null);
     const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const seekAfterLoadRef = useRef<number>(0); // Position to seek to after HLS reloads
@@ -68,7 +57,6 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     // Resume position from server (loaded on mount)
     const [resumePosition, setResumePosition] = useState<number>(0);
     const [hasLoadedProgress, setHasLoadedProgress] = useState(false);
-    const [hasLoadedSubtitlePref, setHasLoadedSubtitlePref] = useState(false); // Track if subtitle preference loaded
     const [isSubtitleChange, setIsSubtitleChange] = useState(false); // Track if subtitle just changed
 
     const [src, setSrc] = useState<string>('');
@@ -94,23 +82,14 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
 
     // Track selection state
-    const [audioTracks, setAudioTracks] = useState<TrackInfo[]>([]);
-    const [subtitleTracks, setSubtitleTracks] = useState<TrackInfo[]>([]);
-    const [selectedAudioTrack, setSelectedAudioTrack] = useState<number | null>(null);
-    const [selectedSubtitleTrack, setSelectedSubtitleTrack] = useState<number | null>(null);
+
     const [showTrackMenu, setShowTrackMenu] = useState(false);
 
     // Duration from FFprobe (when not in metadata)
     const [probedDuration, setProbedDuration] = useState<number>(0);
 
-    // Progress bar drag/hover state
-    const [isDragging, setIsDragging] = useState(false);
-    const [hoverTime, setHoverTime] = useState<number | null>(null);
-    const [hoverPosition, setHoverPosition] = useState<number>(0);
-
     // Frame preview for scrubber
     const [framePreviewUrl, setFramePreviewUrl] = useState<string | null>(null);
-    const [frameLoaded, setFrameLoaded] = useState(false);
     const wasPlayingBeforeDragRef = useRef(false);
     const frameDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -148,6 +127,20 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     // Get user's local preferences (including default streaming quality)
     const { preferences: localPrefs } = useLocalPreferences();
+
+    // Track selection state (managed by hook)
+    const {
+        audioTracks,
+        subtitleTracks,
+        selectedAudioTrack,
+        selectedSubtitleTrack,
+        setSelectedAudioTrack,
+        setSelectedSubtitleTrack
+    } = useTrackSelection({
+        item,
+        token,
+        localPrefs
+    });
 
     // Get actual duration from media item metadata (in seconds)
     const getActualDuration = useCallback((): number => {
@@ -382,21 +375,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     };
 
     // Helper to get storage key for "Last Used" track
-    const getLastUsedKey = (type: 'audio' | 'subtitle') => {
-        const userId = useAuthStore.getState().user?.id || 'guest';
-        const contentId = item.seriesId || item.id; // Share prefs across series
-        return `sm_last_track_${userId}_${contentId}_${type}`;
-    };
-
-    // Save "Last Used" track to local storage (Device/User specific)
-    const saveLastUsedTrack = (type: 'audio' | 'subtitle', index: number) => {
-        try {
-            console.log(`[Player] Saving last used ${type}: ${index}`);
-            localStorage.setItem(getLastUsedKey(type), index.toString());
-        } catch (e) {
-            console.error('Failed to save last used track:', e);
-        }
-    };
+    // MOVED usage to hook, but we still use LAST USED logic? 
+    // Wait, the hook handles saving layout.
+    // So saveLastUsedTrack and getLastUsedKey can be removed from here.
 
     // Keyboard shortcuts
     useEffect(() => {
@@ -464,7 +445,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     // Determine playback strategy based on backend plan
     // Wait for progress, subtitle preference, AND capability detection to be loaded before starting
     useEffect(() => {
-        if (!token || !hasLoadedProgress || !hasLoadedSubtitlePref || isDetectingCapabilities) return;
+        if (!token || !hasLoadedProgress || isDetectingCapabilities) return;
 
         let isMounted = true;
 
@@ -648,130 +629,14 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
         return () => { isMounted = false; };
 
-    }, [item, token, selectedSubtitleTrack, selectedAudioTrack, resumePosition, hasLoadedProgress, hasLoadedSubtitlePref, isSubtitleChange, forceStartFromBeginning, isDetectingCapabilities, mediaCapabilities, selectedQuality]);
+    }, [item, token, selectedSubtitleTrack, selectedAudioTrack, resumePosition, hasLoadedProgress, isSubtitleChange, forceStartFromBeginning, isDetectingCapabilities, mediaCapabilities, selectedQuality]);
 
 
 
-    // Fetch audio and subtitle tracks, and apply hierarchal selection logic
-    useEffect(() => {
-        if (!token || !item.id) return;
-
-        const fetchTracks = async () => {
-            try {
-                const response = await fetch(`/api/media/${item.id}/tracks`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
-                if (response.ok) {
-                    const data: TracksResponse = await response.json();
-                    const audioTracks = data.audioTracks || [];
-                    const subtitleTracks = data.subtitleTracks || [];
-
-                    setAudioTracks(audioTracks);
-                    setSubtitleTracks(subtitleTracks);
-
-                    const userId = useAuthStore.getState().user?.id || 'guest';
-                    const contentId = item.seriesId || item.id;
-                    const audioKey = `sm_last_track_${userId}_${contentId}_audio`;
-                    const subKey = `sm_last_track_${userId}_${contentId}_subtitle`;
-
-                    // --- STRICT HIERARCHY LOGIC ---
-
-                    // 1. Determine Audio Track
-                    let targetAudioIndex = -1;
-
-                    // Priority 1: Last Used (Per User/Device)
-                    const lastAudio = localStorage.getItem(audioKey);
-                    if (lastAudio !== null) {
-                        const idx = parseInt(lastAudio);
-                        // Verify track exists
-                        if (audioTracks.some(t => t.index === idx)) {
-                            targetAudioIndex = idx;
-                            console.log(`[Player] Using Last Used Audio: ${idx}`);
-                        }
-                    }
-
-                    // Priority 2: Global Preference (Native/Device)
-                    if (targetAudioIndex === -1 && localPrefs.audioLanguage !== 'original') {
-                        // Find matching track
-                        const match = audioTracks.find(t =>
-                            normalizeLanguage(t.language) === normalizeLanguage(localPrefs.audioLanguage)
-                        );
-                        if (match) {
-                            targetAudioIndex = match.index;
-                            console.log(`[Player] Using Global Audio Pref: ${match.language}`);
-                        }
-                    }
-
-                    // Priority 3: Default Flag / First Track
-                    if (targetAudioIndex === -1) {
-                        const defaultTrack = audioTracks.find(t => t.isDefault);
-                        targetAudioIndex = defaultTrack ? defaultTrack.index : (audioTracks[0]?.index ?? -1);
-                        console.log(`[Player] Using Default/First Audio: ${targetAudioIndex}`);
-                    }
-
-                    // 2. Determine Subtitle Track
-                    let targetSubIndex = -1; // Default to OFF (-1)
-
-                    // Priority 1: Last Used
-                    const lastSub = localStorage.getItem(subKey);
-                    if (lastSub !== null) {
-                        const idx = parseInt(lastSub);
-                        // Verify track exists (or is -1 for off)
-                        if (idx === -1 || subtitleTracks.some(t => t.index === idx)) {
-                            targetSubIndex = idx;
-                            console.log(`[Player] Using Last Used Subtitle: ${idx}`);
-                        }
-                    } else {
-                        // Priority 2: Global Preference & Auto-Select
-                        const prefLang = localPrefs.subtitleLanguage;
-                        console.log(`[Player] Subtitle Logic - Pref: ${prefLang}`);
-
-                        if (prefLang !== 'off') {
-                            const match = subtitleTracks.find(t =>
-                                normalizeLanguage(t.language) === normalizeLanguage(prefLang)
-                            );
-
-                            if (match) {
-                                // If a subtitle language is set, treat it as "Always On" unless manually turned off later
-                                // This simplifies logic: If I picked "English", I want English.
-                                targetSubIndex = match.index;
-                                console.log(`[Player] Using Global Subtitle Pref: ${match.language}`);
-                            } else {
-                                console.log(`[Player] No matching subtitle track found for ${prefLang}`);
-                            }
-                        }
-                    }
-
-                    setSelectedAudioTrack(targetAudioIndex);
-                    setSelectedSubtitleTrack(targetSubIndex);
-                }
-            } catch (err) {
-                console.error('Failed to fetch tracks:', err);
-            } finally {
-                setHasLoadedSubtitlePref(true);
-            }
-        };
-
-        fetchTracks();
-    }, [item.id, item.seriesId, token, localPrefs.audioLanguage, localPrefs.subtitleLanguage]);
+    // Track fetching logic moved to useTrackSelection hook
 
 
-    // Save "Last Used" preferences whenever tracks change
-    useEffect(() => {
-        if (!item.id) return;
 
-        const userId = useAuthStore.getState().user?.id || 'guest';
-        const contentId = item.seriesId || item.id;
-        const audioKey = `sm_last_track_${userId}_${contentId}_audio`;
-        const subKey = `sm_last_track_${userId}_${contentId}_subtitle`;
-
-        if (selectedAudioTrack !== null) {
-            localStorage.setItem(audioKey, selectedAudioTrack.toString());
-        }
-        if (selectedSubtitleTrack !== null) {
-            localStorage.setItem(subKey, selectedSubtitleTrack.toString());
-        }
-    }, [selectedAudioTrack, selectedSubtitleTrack, item.id, item.seriesId]);
 
     // Setup HLS.js or native playback
     useEffect(() => {
@@ -1314,20 +1179,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     };
 
     // Find the chapter that contains a given time (returns the most recent chapter before that time)
-    const getChapterAtTime = useCallback((time: number): string | null => {
-        if (!item.chapters || item.chapters.length === 0) return null;
 
-        // Find the last chapter that starts before or at this time
-        let currentChapter: string | null = null;
-        for (const chapter of item.chapters) {
-            if (chapter.startTime <= time) {
-                currentChapter = chapter.title || 'Chapter';
-            } else {
-                break;
-            }
-        }
-        return currentChapter;
-    }, [item.chapters]);
 
     // Get current chapter index based on playback position
     const getCurrentChapterIndex = useCallback((): number => {
@@ -1400,77 +1252,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         navigate(`/play/${targetId}`);
     };
 
-    // Progress bar mouse handlers for drag and hover
-    const getTimeFromMouseEvent = (e: React.MouseEvent<HTMLDivElement> | MouseEvent): number => {
-        if (!progressRef.current || displayDuration <= 0) return 0;
-        const rect = progressRef.current.getBoundingClientRect();
-        const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        return percent * displayDuration;
-    };
-
-    const handleProgressMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-        // Prevent default browser drag behavior (shows cancel cursor)
-        e.preventDefault();
-
-        // Remember if video was playing before drag
-        wasPlayingBeforeDragRef.current = isPlaying;
-
-        // Pause video during drag
-        if (videoRef.current && isPlaying) {
-            videoRef.current.pause();
-        }
-
-        setIsDragging(true);
-        const time = getTimeFromMouseEvent(e);
-        setHoverTime(time);
-
-        if (progressRef.current) {
-            const rect = progressRef.current.getBoundingClientRect();
-            setHoverPosition(e.clientX - rect.left);
-        }
-
-        // Fetch frame preview (debounced)
-        fetchFramePreview(time);
-    };
-
-    const handleProgressMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!progressRef.current) return;
-        const rect = progressRef.current.getBoundingClientRect();
-        setHoverPosition(e.clientX - rect.left);
-        const time = getTimeFromMouseEvent(e);
-        setHoverTime(time);
-
-        // Only fetch frame preview while dragging
-        if (isDragging) {
-            fetchFramePreview(time);
-        }
-    };
-
-    const handleProgressMouseLeave = () => {
-        if (!isDragging) {
-            setHoverTime(null);
-            setFramePreviewUrl(null);
-        }
-    };
-
-    // Fetch frame preview with debouncing
-    const fetchFramePreview = useCallback((time: number) => {
-        if (frameDebounceRef.current) {
-            clearTimeout(frameDebounceRef.current);
-        }
-
-        frameDebounceRef.current = setTimeout(() => {
-            if (!token) return;
-
-            // Reset loaded state for new URL
-            setFrameLoaded(false);
-
-            const url = `/api/transcode/${item.id}/frame?time=${time.toFixed(1)}&token=${token}`;
-            setFramePreviewUrl(url);
-        }, 100); // 100ms debounce - fast but prevents excessive requests
-    }, [token, item.id]);
-
-    // Helper that performs the actual seek (used by both click and drag)
+    // Helper that performs the actual seek (Restored)
     const handleSeekToTime = (seekTime: number) => {
         if (!videoRef.current || displayDuration <= 0) return;
 
@@ -1522,54 +1304,13 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         }
     };
 
-    // Global mouse handlers for drag (to handle drag outside progress bar)
-    useEffect(() => {
-        if (!isDragging) return;
+    // Progress bar mouse handlers for drag and hover
 
-        const handleGlobalMouseMove = (e: MouseEvent) => {
-            const time = getTimeFromMouseEvent(e);
-            setHoverTime(time);
-            if (progressRef.current) {
-                const rect = progressRef.current.getBoundingClientRect();
-                setHoverPosition(e.clientX - rect.left);
-            }
-            // Fetch frame preview while dragging (don't seek yet)
-            fetchFramePreview(time);
-        };
-
-        const handleGlobalMouseUp = (e: MouseEvent) => {
-            // Seek to final position
-            const seekTime = getTimeFromMouseEvent(e);
-            handleSeekToTime(seekTime);
-
-            // Resume playback if was playing before drag
-            if (wasPlayingBeforeDragRef.current && videoRef.current) {
-                videoRef.current.play();
-            }
-
-            // Clean up
-            setIsDragging(false);
-            setHoverTime(null);
-            setFramePreviewUrl(null);
-            setFrameLoaded(false);
-            if (frameDebounceRef.current) {
-                clearTimeout(frameDebounceRef.current);
-            }
-        };
-
-        window.addEventListener('mousemove', handleGlobalMouseMove);
-        window.addEventListener('mouseup', handleGlobalMouseUp);
-
-        return () => {
-            window.removeEventListener('mousemove', handleGlobalMouseMove);
-            window.removeEventListener('mouseup', handleGlobalMouseUp);
-        };
-    }, [isDragging, displayDuration, isTranscoding, token, seekOffset, currentTime, selectedSubtitleTrack, fetchFramePreview]);
 
     // Progress bar percentages
     // Calculate displayed time including seek offset (for when transcoding starts from non-zero position)
     const displayedTime = currentTime + seekOffset;
-    const progressPercent = displayDuration > 0 ? (displayedTime / displayDuration) * 100 : 0;
+
 
     // For HLS streams, buffer is relative to current stream position, need to add seekOffset
     const displayedBuffered = isTranscoding ? bufferedTime + seekOffset : bufferedTime;
@@ -1682,109 +1423,39 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         }`}
                 >
                     {/* Progress Bar */}
-                    <div className="relative mb-3">
-                        {/* Hover/Drag Tooltip - shows frame preview, time and chapter */}
-                        {hoverTime !== null && progressRef.current && (
-                            <div
-                                className="absolute bottom-full mb-2 transform -translate-x-1/2 pointer-events-none z-10 flex flex-col items-center"
-                                style={{ left: Math.max(80, Math.min(hoverPosition, progressRef.current.getBoundingClientRect().width - 80)) }}
-                            >
-                                {/* Frame preview thumbnail (shown while dragging) */}
-                                {isDragging && framePreviewUrl && (
-                                    <div className="mb-2 rounded overflow-hidden shadow-lg border border-white/20 bg-black/80 min-w-40 min-h-24 flex items-center justify-center">
-                                        <img
-                                            src={framePreviewUrl}
-                                            alt="Frame preview"
-                                            className="w-40 h-auto"
-                                            onLoad={() => {
-                                                setFrameLoaded(true);
-                                            }}
-                                            onError={() => {
-                                            }}
-                                        />
-                                    </div>
-                                )}
-                                {/* Loading placeholder only when no frame has loaded yet */}
-                                {isDragging && !framePreviewUrl && !frameLoaded && (
-                                    <div className="mb-2 w-40 h-24 bg-black/80 rounded flex items-center justify-center border border-white/20">
-                                        <div className="text-white/50 text-xs">Loading...</div>
-                                    </div>
-                                )}
-                                {/* Time and chapter label */}
-                                <div className="bg-black/90 text-white text-sm px-2 py-1 rounded whitespace-nowrap">
-                                    <span className="font-medium">{formatTime(hoverTime)}</span>
-                                    {getChapterAtTime(hoverTime) && (
-                                        <span className="text-gray-300 ml-2">- {getChapterAtTime(hoverTime)}</span>
-                                    )}
-                                </div>
-                            </div>
-                        )}
+                    <ProgressBar
+                        currentTime={displayedTime}
+                        duration={displayDuration}
+                        bufferedPercent={bufferedPercent}
+                        chapters={item.chapters}
+                        creditsStart={item.creditsStart}
+                        framePreviewUrl={framePreviewUrl}
+                        onSeek={(time) => {
+                            seekTargetRef.current = time;
+                            // Fetch frame preview while dragging
+                            if (frameDebounceRef.current) clearTimeout(frameDebounceRef.current);
+                            frameDebounceRef.current = setTimeout(() => {
+                                if (!token) return;
+                                const url = `/api/transcode/${item.id}/frame?time=${time.toFixed(1)}&token=${token}`;
+                                setFramePreviewUrl(url);
+                            }, 100);
+                        }}
+                        onSeekStart={() => {
+                            wasPlayingBeforeDragRef.current = !videoRef.current?.paused;
+                            videoRef.current?.pause();
+                        }}
+                        onSeekEnd={() => {
+                            setFramePreviewUrl(null);
+                            if (seekTargetRef.current !== null) {
+                                handleSeekToTime(seekTargetRef.current);
+                                seekTargetRef.current = null;
+                            }
 
-                        {/* Progress bar track */}
-                        <div
-                            ref={progressRef}
-                            className="relative w-full h-1.5 bg-white/20 rounded-full cursor-pointer group/progress hover:h-2.5 transition-all"
-                            onMouseDown={handleProgressMouseDown}
-                            onMouseMove={handleProgressMouseMove}
-                            onMouseLeave={handleProgressMouseLeave}
-                        >
-                            {/* Buffered progress */}
-                            <div
-                                className="absolute top-0 left-0 h-full bg-white/30 rounded-full pointer-events-none"
-                                style={{ width: `${Math.min(bufferedPercent, 100)}%` }}
-                            />
-                            {/* Played progress */}
-                            <div
-                                className="absolute top-0 left-0 h-full bg-blue-500 rounded-full pointer-events-none"
-                                style={{ width: `${Math.min(progressPercent, 100)}%` }}
-                            />
-
-                            {/* Chapter markers - render ALL chapters with tooltips */}
-                            {item.chapters && displayDuration > 0 && item.chapters.map((chapter, idx) => {
-                                const isCredits = chapter.title?.toLowerCase().includes('credit') ||
-                                    chapter.title?.toLowerCase().includes('end') ||
-                                    chapter.title?.toLowerCase().includes('outro');
-                                return (
-                                    <div
-                                        key={idx}
-                                        className="absolute top-0 h-full group/chapter"
-                                        style={{ left: `${(chapter.startTime / displayDuration) * 100}%` }}
-                                    >
-                                        {/* Visible marker line */}
-                                        <div className={`w-0.5 h-full ${isCredits ? 'bg-yellow-400/80' : 'bg-white/60'}`} />
-                                        {/* Larger invisible hit area for hover */}
-                                        <div className="absolute top-0 -left-2 w-4 h-full cursor-pointer" />
-                                        {/* Chapter tooltip on hover */}
-                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-black/90 text-white text-xs px-2 py-1 rounded whitespace-nowrap opacity-0 group-hover/chapter:opacity-100 transition-opacity pointer-events-none">
-                                            {chapter.title || 'Chapter'} ({formatTime(chapter.startTime)})
-                                        </div>
-                                    </div>
-                                );
-                            })}
-
-                            {/* Fallback: Single creditsStart marker */}
-                            {!item.chapters && item.creditsStart && displayDuration > 0 && (
-                                <div
-                                    className="absolute top-0 h-full w-0.5 bg-yellow-400/80"
-                                    style={{ left: `${(item.creditsStart / displayDuration) * 100}%` }}
-                                />
-                            )}
-
-                            {/* Scrubber ball - always visible, draggable */}
-                            {(() => {
-                                // During drag, ball follows mouse position; otherwise shows playback position
-                                const ballPercent = isDragging && hoverTime !== null && displayDuration > 0
-                                    ? (hoverTime / displayDuration) * 100
-                                    : progressPercent;
-                                return (
-                                    <div
-                                        className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-blue-500 rounded-full shadow-lg cursor-grab active:cursor-grabbing border-2 border-white transition-transform hover:scale-110"
-                                        style={{ left: `calc(${Math.min(ballPercent, 100)}% - 8px)` }}
-                                    />
-                                );
-                            })()}
-                        </div>
-                    </div>
+                            if (wasPlayingBeforeDragRef.current) {
+                                videoRef.current?.play().catch(() => { });
+                            }
+                        }}
+                    />
 
                     {/* Controls row - [Time] | [Navigation] | [Settings] */}
                     <div className="flex items-center justify-between gap-2">
@@ -1959,11 +1630,11 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                                             setCurrentTime(0);
                                                             setSeekOffset(Math.floor(capturedPosition));
                                                             setIsSubtitleChange(true);
-                                                            setSelectedSubtitleTrack(null);
+                                                            setSelectedSubtitleTrack(-1);
                                                             setShowTrackMenu(false);
-                                                            saveLastUsedTrack('subtitle', -1); // Save "off" preference
+
                                                         }}
-                                                        className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedSubtitleTrack === null ? 'text-blue-400' : 'text-white'}`}
+                                                        className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedSubtitleTrack === -1 ? 'text-blue-400' : 'text-white'}`}
                                                     >
                                                         Off
                                                     </button>
@@ -1980,7 +1651,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                                                 setIsSubtitleChange(true);
                                                                 setSelectedSubtitleTrack(track.index);
                                                                 setShowTrackMenu(false);
-                                                                saveLastUsedTrack('subtitle', track.index); // Save index
+
                                                             }}
                                                             className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedSubtitleTrack === track.index ? 'text-blue-400' : 'text-white'}`}
                                                         >
@@ -2000,7 +1671,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                                             key={track.index}
                                                             onClick={() => {
                                                                 setSelectedAudioTrack(track.index);
-                                                                saveLastUsedTrack('audio', track.index); // Save index
+
                                                                 setShowTrackMenu(false);
                                                             }}
                                                             className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedAudioTrack === track.index ? 'text-blue-400' : 'text-white'}`}

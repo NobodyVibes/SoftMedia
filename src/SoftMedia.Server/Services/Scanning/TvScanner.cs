@@ -151,6 +151,32 @@ public class TvScanner : BaseMediaScanner
                 episode.AudioCodec = probe.AudioCodec;
                 episode.Resolution = probe.Resolution;
                 episode.Container = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
+
+                // Persist technical metadata (chapters/credits)
+                var meta = !string.IsNullOrEmpty(episode.MetadataJson)
+                    ? JsonSerializer.Deserialize<Dictionary<string, object>>(episode.MetadataJson) ?? new Dictionary<string, object>()
+                    : new Dictionary<string, object>();
+                
+                bool metaModified = false;
+
+                if (probe.CreditsStart.HasValue)
+                {
+                    meta["creditsStart"] = probe.CreditsStart.Value;
+                    metaModified = true;
+                }
+
+                if (probe.Chapters != null && probe.Chapters.Count > 0)
+                {
+                    // Serialize as anonymous objects to get camelCase keys expected by DTO
+                    var chaptersList = probe.Chapters.Select(c => new { startTime = c.StartTime, title = c.Title }).ToList();
+                    meta["chapters"] = chaptersList;
+                    metaModified = true;
+                }
+
+                if (metaModified)
+                {
+                    episode.MetadataJson = JsonSerializer.Serialize(meta);
+                }
             }
 
             // Populate episode metadata from series (still image, summary, airdate)

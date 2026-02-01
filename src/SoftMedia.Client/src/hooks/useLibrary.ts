@@ -41,3 +41,18 @@ export const useRecentMedia = (limit: number = 20, type?: string) => {
         queryFn: () => libraryService.getRecent(limit, type),
     });
 };
+
+export const useLibraryRecent = (libraryId: string) => {
+    return useQuery({
+        queryKey: ['libraryRecent', libraryId],
+        queryFn: () => libraryService.getRecentlyAddedForLibrary(libraryId),
+        enabled: !!libraryId,
+    });
+};
+
+export const useHeroItems = () => {
+    return useQuery({
+        queryKey: ['heroItems'],
+        queryFn: libraryService.getHeroItems,
+    });
+};

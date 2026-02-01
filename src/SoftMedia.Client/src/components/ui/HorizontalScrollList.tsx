@@ -107,18 +107,20 @@ export default function HorizontalScrollList({
     };
 
     return (
-        <div className="relative group/scroll flex flex-col">
-            {/* Container with arrow buttons */}
-            <div className="flex items-center gap-2 relative z-10 w-full">
-                {/* Left Arrow */}
+        <div className="relative group/scroll flex flex-col w-full overflow-visible">
+            {/* Scrollable Content Container */}
+            <div className="relative flex items-center w-full overflow-visible">
+                {/* Left Arrow Overlay */}
                 {showArrows && (
-                    <button
-                        onClick={() => scroll('left')}
-                        className={`flex-shrink-0 w-10 h-10 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-white transition-all hover:bg-violet-600 hover:border-violet-400 opacity-0 group-hover/scroll:opacity-100 relative z-[100] ${canScrollLeft ? '' : 'pointer-events-none !opacity-0'}`}
-                        aria-label="Scroll left"
-                    >
-                        <ChevronLeft className="w-5 h-5" />
-                    </button>
+                    <div className="absolute left-0 top-0 bottom-0 z-[60] flex items-center pointer-events-none">
+                        <button
+                            onClick={() => scroll('left')}
+                            className={`w-12 h-20 bg-black/60 backdrop-blur-md flex items-center justify-center text-white transition-all hover:bg-violet-600 pointer-events-auto opacity-0 group-hover/scroll:opacity-100 rounded-r-xl border-r border-t border-b border-white/10 ${canScrollLeft ? '' : '!opacity-0 !pointer-events-none'}`}
+                            aria-label="Scroll left"
+                        >
+                            <ChevronLeft className="w-8 h-8" />
+                        </button>
+                    </div>
                 )}
 
                 {/* Scrollable Content */}
@@ -131,21 +133,23 @@ export default function HorizontalScrollList({
                     {children}
                 </div>
 
-                {/* Right Arrow */}
+                {/* Right Arrow Overlay */}
                 {showArrows && (
-                    <button
-                        onClick={() => scroll('right')}
-                        className={`flex-shrink-0 w-10 h-10 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-white transition-all hover:bg-violet-600 hover:border-violet-400 opacity-0 group-hover/scroll:opacity-100 relative z-[100] ${canScrollRight ? '' : 'pointer-events-none !opacity-0'}`}
-                        aria-label="Scroll right"
-                    >
-                        <ChevronRight className="w-5 h-5" />
-                    </button>
+                    <div className="absolute right-0 top-0 bottom-0 z-[60] flex items-center pointer-events-none">
+                        <button
+                            onClick={() => scroll('right')}
+                            className={`w-12 h-20 bg-black/60 backdrop-blur-md flex items-center justify-center text-white transition-all hover:bg-violet-600 pointer-events-auto opacity-0 group-hover/scroll:opacity-100 rounded-l-xl border-l border-t border-b border-white/10 ${canScrollRight ? '' : '!opacity-0 !pointer-events-none'}`}
+                            aria-label="Scroll right"
+                        >
+                            <ChevronRight className="w-8 h-8" />
+                        </button>
+                    </div>
                 )}
             </div>
 
             {/* Interactive Slider Bar */}
             {showSlider && (
-                <div className="px-6 w-full mt-2 relative z-[100]">
+                <div className="px-6 w-full mt-12 relative z-[100]">
                     <div
                         ref={sliderRef}
                         onClick={handleSliderClick}

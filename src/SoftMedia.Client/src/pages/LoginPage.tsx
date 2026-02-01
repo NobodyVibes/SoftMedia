@@ -112,6 +112,7 @@ export default function LoginPage() {
                                     value={username}
                                     onChange={(e) => setUsername(e.target.value)}
                                     required
+                                    autoComplete="username"
                                     className="bg-black/20 border-white/10 focus:border-primary/50 text-white placeholder:text-gray-500"
                                 />
                             </div>
@@ -124,6 +125,7 @@ export default function LoginPage() {
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                     required
+                                    autoComplete="current-password"
                                     className="bg-black/20 border-white/10 focus:border-primary/50 text-white placeholder:text-gray-500"
                                 />
                             </div>
@@ -171,6 +173,7 @@ export default function LoginPage() {
                                     value={newPassword}
                                     onChange={(e) => setNewPassword(e.target.value)}
                                     required
+                                    autoComplete="new-password"
                                     className="bg-black/20 border-white/10 focus:border-primary/50 text-white placeholder:text-gray-500"
                                 />
                             </div>
@@ -182,6 +185,7 @@ export default function LoginPage() {
                                     value={confirmPassword}
                                     onChange={(e) => setConfirmPassword(e.target.value)}
                                     required
+                                    autoComplete="new-password"
                                     className="bg-black/20 border-white/10 focus:border-primary/50 text-white placeholder:text-gray-500"
                                 />
                             </div>

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Abstractions;
 
 namespace SoftMedia.Server.Services.Scanning;
 
@@ -308,7 +309,20 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
                 await orchestrator.ScanLibraryAsync(job.LibraryId, progress, stoppingToken);
                 
                 // Mark as complete using the LAST captured progress (guaranteed synchronous)
+                
+                // Mark as complete using the LAST captured progress (guaranteed synchronous)
                 CompleteJob(job.Id, lastProgress.NewCount, lastProgress.UpdatedCount, lastProgress.SkippedCount, job.ErrorCount);
+
+                // Update Currently Added Cache
+                try
+                {
+                    var libraryService = scope.ServiceProvider.GetRequiredService<ILibraryService>();
+                    await libraryService.UpdateRecentlyAddedCacheAsync(job.LibraryId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to update recently added cache for library {LibraryId}", job.LibraryId);
+                }
             }
             else if (job.Type == LibraryScanJobType.MetadataRefresh)
             {

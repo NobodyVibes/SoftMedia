@@ -23,7 +23,9 @@ public class ImageController : ControllerBase
         "coverartarchive.org",
         "archive.org",
         "upload.wikimedia.org",
-        "commons.wikimedia.org"
+        "commons.wikimedia.org",
+        "m.media-amazon.com",
+        "ia.media-imdb.com"
     };
     
     // Allowed content types

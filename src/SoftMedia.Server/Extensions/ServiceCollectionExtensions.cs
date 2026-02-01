@@ -8,6 +8,7 @@ using SoftMedia.Server.Services.Scanning;
 using SoftMedia.Server.Services.Transcoding;
 using SoftMedia.Server.Services.Metadata;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Background;
 using SoftMedia.Server.Hubs;
 using SoftMedia.Server.Helpers;
 
@@ -116,6 +117,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IRecommendationService, RecommendationService>();
         services.AddScoped<IMusicImageService, MusicImageService>();
         services.AddScoped<IMediaRetrievalService, MediaRetrievalService>();
+        services.AddScoped<IUserMediaInteractionService, UserMediaInteractionService>();
         
         // System / Infrastructure
         services.AddScoped<ISettingsService, SettingsService>();
@@ -155,6 +157,7 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<ThrottleMonitorService>();
         services.AddSingleton<MetadataRefreshService>();
         services.AddHostedService(sp => sp.GetRequiredService<MetadataRefreshService>());
+        services.AddHostedService<HeroCacheWorker>();
 
         return services;
     }

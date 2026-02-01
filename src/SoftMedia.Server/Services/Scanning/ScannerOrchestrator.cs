@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Abstractions;
 
 namespace SoftMedia.Server.Services.Scanning;
 
@@ -99,5 +100,15 @@ public class ScannerOrchestrator : IScannerOrchestrator
         }
 
         await scanner.ProcessSingleFileAsync(filePath, library, cancellationToken);
+
+        try
+        {
+            var libraryService = scope.ServiceProvider.GetRequiredService<ILibraryService>();
+            await libraryService.UpdateRecentlyAddedCacheAsync(libraryId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update recently added cache for library {LibraryId}", libraryId);
+        }
     }
 }

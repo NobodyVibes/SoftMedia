@@ -6,6 +6,7 @@ using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Media;
+using SoftMedia.Server.Services.Abstractions;
 
 namespace SoftMedia.Server.Controllers;
 
@@ -16,11 +17,16 @@ public class MediaController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IMediaRetrievalService _mediaRetrievalService;
+    private readonly IRecommendationService _recommendationService;
 
-    public MediaController(AppDbContext context, IMediaRetrievalService mediaRetrievalService)
+    public MediaController(
+        AppDbContext context, 
+        IMediaRetrievalService mediaRetrievalService,
+        IRecommendationService recommendationService)
     {
         _context = context;
         _mediaRetrievalService = mediaRetrievalService;
+        _recommendationService = recommendationService;
     }
 
 
@@ -52,6 +58,40 @@ public class MediaController : ControllerBase
         }
 
         return MediaItemDto.FromMediaItem(item, "/api/v1/image/proxy", interaction);
+    }
+
+    [HttpGet("hero")]
+    public async Task<ActionResult<IEnumerable<MediaItemDto>>> GetHeroItems()
+    {
+        var dtos = (await _recommendationService.GetHeroItemsAsync()).ToList();
+        
+        // Hydrate with user-specific data
+        try
+        {
+            var userId = User.GetUserId();
+            var itemIds = dtos.Select(d => d.Id).ToList();
+            var interactions = await _context.UserMediaInteractions
+                .AsNoTracking()
+                .Where(x => x.UserId == userId && itemIds.Contains(x.MediaItemId))
+                .ToDictionaryAsync(x => x.MediaItemId);
+
+            foreach (var dto in dtos)
+            {
+                if (interactions.TryGetValue(dto.Id, out var interaction))
+                {
+                    dto.PersonalRating = interaction.Rating;
+                    dto.IsFavorite = interaction.IsFavorite;
+                    dto.Watched = interaction.IsWatched;
+                    dto.PlaybackPosition = interaction.PlaybackPosition;
+                }
+            }
+        }
+        catch
+        {
+            // Fallback to average only if user/interaction fails
+        }
+
+        return Ok(dtos);
     }
 
     [HttpGet("recent")]

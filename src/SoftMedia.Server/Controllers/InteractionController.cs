@@ -17,12 +17,18 @@ public class InteractionController : ControllerBase
     private readonly AppDbContext _context;
     private readonly ILogger<InteractionController> _logger;
     private readonly IRecommendationService _recommendationService;
+    private readonly IUserMediaInteractionService _interactionService;
 
-    public InteractionController(AppDbContext context, ILogger<InteractionController> logger, IRecommendationService recommendationService)
+    public InteractionController(
+        AppDbContext context, 
+        ILogger<InteractionController> logger, 
+        IRecommendationService recommendationService,
+        IUserMediaInteractionService interactionService)
     {
         _context = context;
         _logger = logger;
         _recommendationService = recommendationService;
+        _interactionService = interactionService;
     }
 
     private Guid GetUserId()
@@ -39,29 +45,7 @@ public class InteractionController : ControllerBase
     public async Task<IActionResult> RateMedia(Guid mediaId, [FromBody] RateRequest request)
     {
         var userId = GetUserId();
-        var interaction = await _context.UserMediaInteractions
-            .FirstOrDefaultAsync(x => x.UserId == userId && x.MediaItemId == mediaId);
-
-        if (interaction == null)
-        {
-            interaction = new UserMediaInteraction
-            {
-                UserId = userId,
-                MediaItemId = mediaId
-            };
-            _context.UserMediaInteractions.Add(interaction);
-        }
-
-        interaction.Rating = request.Rating;
-        await _context.SaveChangesAsync();
-
-        // Local community rating calculation (preserved for future use, but not overwriting external metadata)
-        var mediaItem = await _context.MediaItems.FindAsync(mediaId);
-        if (mediaItem != null)
-        {
-            await _context.SaveChangesAsync();
-        }
-
+        await _interactionService.RateMediaAsync(userId, mediaId, request.Rating);
         return Ok();
     }
 
@@ -69,22 +53,7 @@ public class InteractionController : ControllerBase
     public async Task<IActionResult> ToggleFavorite(Guid mediaId, [FromBody] FavoriteRequest request)
     {
         var userId = GetUserId();
-        var interaction = await _context.UserMediaInteractions
-            .FirstOrDefaultAsync(x => x.UserId == userId && x.MediaItemId == mediaId);
-
-        if (interaction == null)
-        {
-            interaction = new UserMediaInteraction
-            {
-                UserId = userId,
-                MediaItemId = mediaId
-            };
-            _context.UserMediaInteractions.Add(interaction);
-        }
-
-        interaction.IsFavorite = request.IsFavorite;
-        await _context.SaveChangesAsync();
-
+        await _interactionService.ToggleFavoriteAsync(userId, mediaId, request.IsFavorite);
         return Ok();
     }
 
@@ -92,55 +61,15 @@ public class InteractionController : ControllerBase
     public async Task<IActionResult> MarkWatched(Guid mediaId, [FromBody] WatchedRequest request)
     {
         var userId = GetUserId();
-        var interaction = await _context.UserMediaInteractions
-            .FirstOrDefaultAsync(x => x.UserId == userId && x.MediaItemId == mediaId);
-
-        if (interaction == null)
-        {
-            interaction = new UserMediaInteraction
-            {
-                UserId = userId,
-                MediaItemId = mediaId
-            };
-            _context.UserMediaInteractions.Add(interaction);
-        }
-
-        interaction.IsWatched = request.Watched;
-        if (request.Watched)
-        {
-            interaction.LastPlayed = DateTime.UtcNow;
-            // Reset playback position when marked as watched so it starts from beginning next time
-            interaction.PlaybackPosition = 0;
-        }
-        
-        await _context.SaveChangesAsync();
-
+        await _interactionService.MarkWatchedAsync(userId, mediaId, request.Watched);
         return Ok();
     }
-
-    // Maintenance endpoint removed after execution
 
     [HttpPost("{mediaId}/progress")]
     public async Task<IActionResult> UpdateProgress(Guid mediaId, [FromBody] ProgressRequest request)
     {
         var userId = GetUserId();
-        var interaction = await _context.UserMediaInteractions
-            .FirstOrDefaultAsync(x => x.UserId == userId && x.MediaItemId == mediaId);
-
-        if (interaction == null)
-        {
-            interaction = new UserMediaInteraction
-            {
-                UserId = userId,
-                MediaItemId = mediaId
-            };
-            _context.UserMediaInteractions.Add(interaction);
-        }
-
-        interaction.PlaybackPosition = request.Position;
-        interaction.LastPlayed = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
-
+        await _interactionService.UpdateProgressAsync(userId, mediaId, request.Position);
         return Ok();
     }
 
@@ -148,8 +77,7 @@ public class InteractionController : ControllerBase
     public async Task<ActionResult<ProgressResponse>> GetProgress(Guid mediaId)
     {
         var userId = GetUserId();
-        var interaction = await _context.UserMediaInteractions
-            .FirstOrDefaultAsync(x => x.UserId == userId && x.MediaItemId == mediaId);
+        var interaction = await _interactionService.GetInteractionAsync(userId, mediaId);
 
         return Ok(new ProgressResponse
         {

@@ -3,6 +3,7 @@ export interface Library {
     name: string;
     type: 'Movie' | 'TV' | 'Music' | 'Book' | 'Game' | 'Photo';
     paths: string[];
+    order: number;
 }
 
 export interface MediaItem {
@@ -29,6 +30,7 @@ export interface MediaItem {
     resolution?: string;
     metadata?: Record<string, any>;
     userRating?: number;
+    personalRating?: number;
     isFavorite?: boolean;
     watched?: boolean;
     type?: MediaType;
@@ -51,15 +53,17 @@ export interface Chapter {
 }
 
 export const MediaType = {
-    Movie: 0,
-    Series: 1,
-    Episode: 2,
-    Audio: 3,
-    Book: 4,
-    Game: 5,
-    Photo: 6,
-    Artist: 7,
-    Album: 8
+    Movie: 'Movie',
+    Series: 'Series',
+    Episode: 'Episode',
+    Audio: 'Audio',
+    Book: 'Book',
+    Game: 'Game',
+    Photo: 'Photo',
+    Season: 'Season',
+    Artist: 'Artist',
+    Album: 'Album',
+    Track: 'Track'
 } as const;
 
 export type MediaType = typeof MediaType[keyof typeof MediaType];

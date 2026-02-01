@@ -1,5 +1,5 @@
 import { type MediaItem } from '../../types';
-import { Star, Trophy, DollarSign, Film, Clock, Pen } from 'lucide-react';
+import { Trophy, DollarSign, Film, Pen } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
 
 interface MovieDetailViewProps {
@@ -17,9 +17,6 @@ export default function MovieDetailView({ item }: MovieDetailViewProps) {
     const studio = metadata.studio || metadata.production as string;
     const awards = metadata.awards as string;
     const boxOffice = metadata.boxOffice as string;
-    const imdbRating = metadata.imdbRating as number;
-    const runtime = metadata.runtime as string;
-    const imdbId = metadata.imdbId as string;
 
     // Get background poster
     const backgroundPoster = item.posterPath || item.backdropPath || null;
@@ -43,29 +40,6 @@ export default function MovieDetailView({ item }: MovieDetailViewProps) {
             )}
 
             <div className="space-y-8 relative z-10">
-                {/* IMDb Rating & Runtime Row */}
-                {(imdbRating || runtime) && (
-                    <div className="flex flex-wrap items-center gap-4">
-                        {imdbRating && (
-                            <a
-                                href={imdbId ? `https://www.imdb.com/title/${imdbId}` : '#'}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/20 border border-amber-500/30 hover:bg-amber-500/30 transition-colors"
-                            >
-                                <Star className="w-5 h-5 text-amber-400 fill-current" />
-                                <span className="text-lg font-bold text-amber-400">{imdbRating.toFixed(1)}</span>
-                                <span className="text-sm text-amber-400/70">IMDb</span>
-                            </a>
-                        )}
-                        {runtime && (
-                            <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10">
-                                <Clock className="w-4 h-4 text-gray-400" />
-                                <span className="text-gray-300">{runtime}</span>
-                            </div>
-                        )}
-                    </div>
-                )}
 
                 {/* Cast Grid */}
                 {cast.length > 0 && (

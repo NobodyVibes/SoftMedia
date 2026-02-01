@@ -127,6 +127,13 @@ public class LibrariesController : ControllerBase
         return Ok(genres);
     }
 
+    [HttpGet("{id}/recent")]
+    public async Task<ActionResult<IEnumerable<MediaItemDto>>> GetRecentlyAdded(Guid id)
+    {
+        var items = await _libraryService.GetRecentlyAddedAsync(id, GetUserId());
+        return Ok(items);
+    }
+
     [HttpGet("{id}/items")]
     public async Task<ActionResult<PagedResult<MediaItemDto>>> GetLibraryItems(
         Guid id, 

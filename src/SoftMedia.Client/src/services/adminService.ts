@@ -22,5 +22,12 @@ export const adminService = {
      */
     async clearIssue(path: string): Promise<void> {
         await api.delete('/admin/file-watcher-issues', { params: { path } });
+    },
+
+    /**
+     * Manually triggers an update of the hero section cache.
+     */
+    async refreshHeroCache(): Promise<void> {
+        await api.post('/admin/hero-cache/refresh');
     }
 };

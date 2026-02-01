@@ -1,37 +1,30 @@
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useLibraries, useRecentMedia } from '../hooks/useLibrary';
+import { useLibraries, useLibraryRecent, useHeroItems } from '../hooks/useLibrary';
 import api from '../services/api';
 import HeroSection from '../components/ui/HeroSection';
 import MediaRow from '../components/ui/MediaRow';
-import { type Library } from '../types';
+import { type Library, type MediaItem, MediaType } from '../types';
 
 /**
- * Internal component to handle fetching and rendering a "Recently Added" row for a specific media type.
- * This keeps the main HomePage clean and modular.
+ * Component to handle fetching and rendering a "Recently Added" row for a specific library.
  */
-function RecentlyAddedRow({
-    type,
-    libraries
+function LibraryRecentRow({
+    library
 }: {
-    type: Library['type'],
-    libraries: Library[]
+    library: Library
 }) {
-    const { data: recentItems, isLoading } = useRecentMedia(10, type === 'TV' ? 'TV' : type);
+    const { data: recentItems, isLoading } = useLibraryRecent(library.id);
 
     if (isLoading || !recentItems || recentItems.length === 0) return null;
 
-    // Find the primary library of this type for the "View All" link
-    const libraryId = libraries.find(l => l.type === type)?.id;
-
-    // Customize title based on type
-    const title = type === 'TV' ? 'Recently Added TV Shows' : `Recently Added ${type}s`;
-
     return (
         <MediaRow
-            title={title}
-            items={recentItems}
-            libraryType={type}
-            viewAllLink={libraryId ? `/libraries/${libraryId}` : undefined}
+            key={library.id}
+            title={`Recently Added ${library.name}`}
+            items={recentItems || []}
+            viewAllLink={`/library/${library.id}`}
+            libraryType={library.type}
         />
     );
 }
@@ -40,67 +33,61 @@ const MEDIA_TYPE_ORDER: Library['type'][] = ['Movie', 'TV', 'Music', 'Book', 'Ga
 
 export default function HomePage() {
     const { data: libraries } = useLibraries();
-    const { data: recentMovies } = useRecentMedia(10, 'Movie');
-
-    // Hero content: Use first recent movie as the primary highlight
-    const heroItem = recentMovies?.[0];
-
-    // Determine which media types we have libraries for (excluding Photos)
-    const availableTypes = Array.from(new Set(
-        libraries?.map(l => l.type).filter(type => type !== 'Photo' && MEDIA_TYPE_ORDER.includes(type))
-    )).sort((a, b) => MEDIA_TYPE_ORDER.indexOf(a) - MEDIA_TYPE_ORDER.indexOf(b));
-
+    const { data: heroItems, isLoading: heroLoading } = useHeroItems();
     const navigate = useNavigate();
 
-    const handlePlay = async () => {
-        if (!heroItem) return;
+    // Determine which libraries to show (excluding Photos and unknown types)
+    const sortedLibraries = useMemo(() => {
+        return libraries
+            ?.filter(l => l.type !== 'Photo' && MEDIA_TYPE_ORDER.includes(l.type))
+            .sort((a, b) => {
+                const typeDiff = MEDIA_TYPE_ORDER.indexOf(a.type) - MEDIA_TYPE_ORDER.indexOf(b.type);
+                if (typeDiff !== 0) return typeDiff;
+                return a.order - b.order;
+            });
+    }, [libraries]);
 
-        if (heroItem.type === 1) { // 1 is Series in the MediaType enum from index.ts
+    const handlePlay = async (item: MediaItem) => {
+        if (!item) return;
+
+        if (item.type === MediaType.Series) { // Use MediaType enum
             try {
-                const response = await api.get(`/series/${heroItem.id}/next-episode`);
+                const response = await api.get(`/series/${item.id}/next-episode`);
                 const nextEpisode = response.data;
                 navigate(`/play/${nextEpisode.episodeId}`);
             } catch (error) {
                 console.error('[HomePage] Failed to fetch next episode for hero item:', error);
-                navigate(`/media/${heroItem.id}`);
+                navigate(`/media/${item.id}`);
             }
         } else {
-            navigate(`/play/${heroItem.id}`);
+            navigate(`/play/${item.id}`);
         }
     };
 
-    const handleMoreInfo = () => {
-        if (!heroItem) return;
-        navigate(`/media/${heroItem.id}`);
+    const handleMoreInfo = (item: MediaItem) => {
+        if (!item) return;
+        navigate(`/media/${item.id}`);
     };
 
     return (
         <div className="pb-20">
             {/* Hero Section */}
-            {heroItem && (
-                <HeroSection
-                    title={heroItem.title}
-                    description={heroItem.description || ''}
-                    imageUrl={heroItem.backdropPath || ''}
-                    posterUrl={heroItem.posterPath || ''}
-                    year={heroItem.year}
-                    rating={heroItem.rating}
-                    duration={heroItem.duration}
-                    communityRating={heroItem.communityRating}
-                    userRating={heroItem.userRating}
-                    onPlay={handlePlay}
-                    onMoreInfo={handleMoreInfo}
-                />
-            )}
+            <HeroSection
+                items={heroItems || []}
+                isLoading={heroLoading}
+                onPlay={handlePlay}
+                onMoreInfo={handleMoreInfo}
+            />
 
-            {/* Dynamic Recently Added Rows */}
-            {libraries && availableTypes.map(type => (
-                <RecentlyAddedRow
-                    key={type}
-                    type={type}
-                    libraries={libraries}
-                />
-            ))}
+            {/* Dynamic Recently Added Rows per Library */}
+            <div className="flex flex-col gap-8">
+                {sortedLibraries?.map(library => (
+                    <LibraryRecentRow
+                        key={library.id}
+                        library={library}
+                    />
+                ))}
+            </div>
         </div>
     );
 }

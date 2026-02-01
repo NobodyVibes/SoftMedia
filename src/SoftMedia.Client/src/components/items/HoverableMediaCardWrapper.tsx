@@ -19,10 +19,11 @@ export default function HoverableMediaCardWrapper({
     setHoveredId,
     // baseWidth and expandedWidth are available but not currently used
     // They are part of the prop interface for future flexibility
-    baseWidth: _baseWidth = 180,
+    // Unified dimensions for 100% parity across Home and Library
+    baseWidth: _baseWidth = 192,
     expandedWidth: _expandedWidth,
     height,
-    width = '100%',
+    width = 192,
     libraryType
 }: HoverableMediaCardWrapperProps) {
     const isHovered = hoveredId === item.id;
@@ -31,7 +32,8 @@ export default function HoverableMediaCardWrapper({
         item.type === MediaType.Artist ||
         item.type === MediaType.Album;
 
-    const finalHeight = height ?? (isAudio ? 290 : 380);
+    // Fixed heights to prevent info-area squashing
+    const finalHeight = height ?? (isAudio ? 300 : 400);
 
     return (
         <motion.div

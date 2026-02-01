@@ -1,10 +1,10 @@
 import { type ReactNode } from 'react';
-import { ArrowLeft, Play, Heart, Share2, Eye } from 'lucide-react';
+import { ArrowLeft, Play, Heart, Share2, Eye, Star } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
-import { type MediaItem } from '../../types';
+import { type MediaItem, MediaType } from '../../types';
 import QualityBadge from '../ui/QualityBadge';
 import { StarRating } from '../ui/StarRating';
 import { cn } from '../../lib/utils';
@@ -106,34 +106,62 @@ export default function MediaDetailLayout({ item, children, onPlay }: MediaDetai
                                 {item.title}
                             </h1>
 
-                            <div className="flex flex-wrap items-center gap-6 text-sm md:text-base text-gray-300 mb-6">
-                                <div className="flex flex-col gap-1">
+                            {/* Secondary Metadata Row */}
+                            <div className="flex flex-wrap items-center gap-6 mb-6 font-medium text-gray-200">
+                                {item.year && (
+                                    <span className="text-lg">{item.year}</span>
+                                )}
+                                {item.type === MediaType.Series && item.rating && (
+                                    <span className="px-2 py-0.5 border border-gray-500/30 bg-gray-500/10 rounded text-xs font-bold text-gray-400 uppercase tracking-wider">
+                                        {item.rating}
+                                    </span>
+                                )}
+                                {item.duration && (
+                                    <span className="text-lg">{item.duration}</span>
+                                )}
+                                {item.type !== MediaType.Series && item.rating && (
+                                    <span className="px-2 py-0.5 border border-gray-500/30 bg-gray-500/10 rounded text-xs font-bold text-gray-400 uppercase tracking-wider">
+                                        {item.rating}
+                                    </span>
+                                )}
+                                {item.quality && (
+                                    <QualityBadge quality={item.quality} />
+                                )}
+                            </div>
+
+                            {/* Consolidated Ratings Section */}
+                            <div className="flex flex-wrap items-center gap-4 mb-8">
+                                {/* IMDb Rating */}
+                                {item.communityRating && (
+                                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-yellow-400/10 border border-yellow-400/20">
+                                        <Star className="w-5 h-5 text-yellow-400 fill-current" />
+                                        <div className="flex flex-col leading-none">
+                                            <span className="text-lg font-bold text-yellow-400">{item.communityRating.toFixed(1)}</span>
+                                            <span className="text-[10px] uppercase tracking-wider text-yellow-400/70 font-bold">IMDb</span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* SoftMedia Average Rating */}
+                                {item.userRating && (
+                                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-500/10 border border-violet-500/20">
+                                        <Star className="w-5 h-5 text-violet-500 fill-current" />
+                                        <div className="flex flex-col leading-none">
+                                            <span className="text-lg font-bold text-violet-500">{item.userRating.toFixed(1)}</span>
+                                            <span className="text-[10px] uppercase tracking-wider text-violet-500/70 font-bold">SoftMedia</span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Personal Rating */}
+                                <div className="flex flex-col gap-1 p-2 rounded-xl bg-white/5 border border-white/10">
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-500 font-bold ml-1">Your Rating</span>
                                     <StarRating
-                                        rating={item.userRating ?? 0}
+                                        rating={item.personalRating ?? 0}
                                         onChange={(r) => rateMutation.mutate(r)}
                                         size={20}
                                         max={10}
                                     />
-                                    <span className="text-xs text-gray-500 font-medium ml-1">
-                                        Community: {item.communityRating ? item.communityRating.toFixed(1) : 'N/A'}
-                                    </span>
-                                </div>
-
-                                <div className="flex items-center gap-4">
-                                    {item.year && (
-                                        <span className="font-semibold text-white">{item.year}</span>
-                                    )}
-                                    {item.rating && (
-                                        <span className="px-2 py-0.5 border border-blue-500/30 bg-blue-500/10 rounded text-xs font-bold text-blue-200">
-                                            {item.rating}
-                                        </span>
-                                    )}
-                                    {item.duration && (
-                                        <span>{item.duration}</span>
-                                    )}
-                                    {item.quality && (
-                                        <QualityBadge quality={item.quality} />
-                                    )}
                                 </div>
                             </div>
 

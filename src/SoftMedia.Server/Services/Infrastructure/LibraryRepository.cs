@@ -73,7 +73,11 @@ public class LibraryRepository : ILibraryRepository
             };
         }
 
-        var query = _context.MediaItems.AsNoTracking().Where(m => m.LibraryId == libraryId);
+        var query = _context.MediaItems
+            .AsNoTracking()
+            .Include(m => m.Series)
+            .Include(m => m.Album)
+            .Where(m => m.LibraryId == libraryId);
 
         // TV Library: Show only Series
         if (library.Type == LibraryType.TV)

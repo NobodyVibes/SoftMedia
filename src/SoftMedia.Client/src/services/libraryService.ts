@@ -38,6 +38,16 @@ export const libraryService = {
         return response.data;
     },
 
+    getRecentlyAddedForLibrary: async (libraryId: string): Promise<MediaItem[]> => {
+        const response = await api.get<MediaItem[]>(`/libraries/${libraryId}/recent`);
+        return response.data;
+    },
+
+    getHeroItems: async (): Promise<MediaItem[]> => {
+        const response = await api.get<MediaItem[]>('/media/hero');
+        return response.data;
+    },
+
     create: async (library: { name: string; type: string; paths: string[] }): Promise<Library> => {
         const response = await api.post<Library>('/libraries', library);
         return response.data;

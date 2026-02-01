@@ -18,6 +18,7 @@ public class MediaItemDto
     public string Path { get; set; } = string.Empty;
     public int? Year { get; set; }
     public DateTime DateAdded { get; set; }
+    public MediaType Type { get; set; }
     
     public string? PosterPath { get; set; }
     public string? BackdropPath { get; set; }
@@ -38,7 +39,8 @@ public class MediaItemDto
     public List<ChapterDto>? Chapters { get; set; }
 
     // User Interaction
-    public int? UserRating { get; set; }
+    public double? UserRating { get; set; } // Now represents the SoftMedia Average
+    public int? PersonalRating { get; set; } // The logged-in user's individual rating
     public bool IsFavorite { get; set; }
     public bool Watched { get; set; }
     public double? PlaybackPosition { get; set; } // Resume position in seconds
@@ -64,24 +66,26 @@ public class MediaItemDto
             Resolution = item.Resolution,
             SeriesId = item.SeriesId,
             SeasonNumber = item.SeasonNumber,
-            EpisodeNumber = item.EpisodeNumber
+            EpisodeNumber = item.EpisodeNumber,
+            Type = item.Type
         };
 
         // Map user interaction if available
         if (interaction != null)
         {
-            dto.UserRating = interaction.Rating;
+            dto.PersonalRating = interaction.Rating;
             dto.IsFavorite = interaction.IsFavorite;
             dto.Watched = interaction.IsWatched;
         }
+
+        // Map pre-calculated internal average to UserRating
+        dto.UserRating = item.InternalRating;
 
             // Map promoted properties
             dto.Year = item.Year;
             dto.Description = item.Overview;
             dto.CommunityRating = item.CommunityRating;
-            
-            // Initialize Rating as null, ensuring it only gets populated from external sources
-            dto.Rating = null; 
+            dto.Rating = item.ContentRating;
 
             // Fallback to MetadataJson for extra fields or if promoted fields are null (migration scenario)
             if (!string.IsNullOrEmpty(item.MetadataJson))
@@ -104,17 +108,20 @@ public class MediaItemDto
                             dto.Description = descObj.ToString();
                         }
 
-                        if (metadata.TryGetValue("rating", out var ratingObj))
+                        // Map content rating from JSON if model property is null
+                        if (string.IsNullOrEmpty(dto.Rating))
                         {
-                            var rStr = ratingObj.ToString();
-                            // If it looks like a numeric score (contains dot or is just digits), check if it belongs in CommunityRating
-                            if (dto.CommunityRating == null && double.TryParse(rStr, out var rScore))
+                            if (metadata.TryGetValue("contentRating", out var crObj))
                             {
-                                dto.CommunityRating = rScore;
+                                dto.Rating = crObj.ToString();
                             }
-                            else
+                            else if (metadata.TryGetValue("rating", out var ratingObj))
                             {
-                                dto.Rating = rStr;
+                                var rStr = ratingObj.ToString();
+                                if (!double.TryParse(rStr, out _))
+                                {
+                                    dto.Rating = rStr;
+                                }
                             }
                         }
 

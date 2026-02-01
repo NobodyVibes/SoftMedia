@@ -21,15 +21,18 @@ public class AdminController : ControllerBase
     private readonly LibraryWatcher _libraryWatcher;
     private readonly ILogger<AdminController> _logger;
     private readonly IEnumerable<IMetadataProvider> _providers;
+    private readonly IRecommendationService _recommendationService;
 
     public AdminController(
         LibraryWatcher libraryWatcher, 
         ILogger<AdminController> logger,
-        IEnumerable<IMetadataProvider> providers)
+        IEnumerable<IMetadataProvider> providers,
+        IRecommendationService recommendationService)
     {
         _libraryWatcher = libraryWatcher;
         _logger = logger;
         _providers = providers;
+        _recommendationService = recommendationService;
     }
 
     /// <summary>
@@ -105,6 +108,16 @@ public class AdminController : ControllerBase
             isExhausted,
             resetTimeUtc = DateTime.UtcNow.Date.AddDays(1).ToString("yyyy-MM-ddTHH:mm:ssZ")
         });
+    }
+
+    /// <summary>
+    /// Manually triggers an update of the hero section cache.
+    /// </summary>
+    [HttpPost("hero-cache/refresh")]
+    public async Task<IActionResult> RefreshHeroCache()
+    {
+        await _recommendationService.UpdateHeroCacheAsync();
+        return Ok(new { success = true, message = "Hero cache refresh completed" });
     }
 }
 

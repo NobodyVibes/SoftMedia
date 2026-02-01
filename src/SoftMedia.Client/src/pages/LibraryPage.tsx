@@ -118,9 +118,10 @@ export default function LibraryPage() {
             <div className="flex-1 px-8 pt-8 pb-10">
                 {/* CSS Grid for fixed positions - prevents reflow on hover */}
                 <div
-                    className="grid gap-8"
+                    className="grid"
                     style={{
-                        gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))'
+                        gridTemplateColumns: 'repeat(auto-fill, 192px)',
+                        gap: '2rem' // gap-8
                     }}
                 >
                     {allItems.map((item: MediaItem) => (

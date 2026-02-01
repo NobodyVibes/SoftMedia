@@ -45,6 +45,17 @@ public class MediaItem
     public double? CommunityRating { get; set; }
     public string? ContentRating { get; set; }
 
+    /// <summary>
+    /// Average rating of all users on this SoftMedia server.
+    /// This is pre-calculated on write to ensure high performance for hero sections and cards.
+    /// </summary>
+    public double? InternalRating { get; set; }
+
+    /// <summary>
+    /// Total number of users who have rated this item.
+    /// </summary>
+    public int InternalRatingCount { get; set; }
+
     // Type-Specific Metadata (JSON)
     public string? MetadataJson { get; set; }
 

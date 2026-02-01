@@ -17,10 +17,10 @@ export default function MediaRow({ title, items, viewAllLink, libraryType }: Med
     if (!items || items.length === 0) return null;
 
     return (
-        <div className="mb-12 group/row relative z-10 overflow-x-hidden">
+        <div className="mb-8 group/row relative z-10 transition-[z-index] duration-0 hover:z-50">
             {/* Section Header */}
-            <div className="flex items-center justify-between mb-4 px-6">
-                <h2 className="text-2xl font-bold text-white">
+            <div className="flex items-center justify-between mb-16 px-6 relative z-10">
+                <h2 className="text-2xl font-bold text-white tracking-tight">
                     {title}
                 </h2>
                 {viewAllLink && (
@@ -34,22 +34,30 @@ export default function MediaRow({ title, items, viewAllLink, libraryType }: Med
                 )}
             </div>
 
-            <HorizontalScrollList
-                className="py-24 px-24 -mx-18 items-center"
-                gap="gap-8"
-            >
-                {items.map((item) => (
-                    <div key={item.id} className="flex-shrink-0" style={{ width: '180px' }}>
-                        <HoverableMediaCardWrapper
-                            item={item}
-                            hoveredId={hoveredId}
-                            setHoveredId={setHoveredId}
-                            libraryType={libraryType}
-                            width="100%"
-                        />
-                    </div>
-                ))}
-            </HorizontalScrollList>
+            <div className="relative overflow-visible">
+                <HorizontalScrollList
+                    className="-my-24 py-24"
+                    gap="gap-8"
+                >
+                    {/* Scroll Spacer for edge-to-edge alignment */}
+                    <div className="flex-shrink-0 w-6 h-1" />
+
+                    {items.map((item) => (
+                        <div key={item.id} className="flex-shrink-0" style={{ width: '192px' }}>
+                            <HoverableMediaCardWrapper
+                                item={item}
+                                hoveredId={hoveredId}
+                                setHoveredId={setHoveredId}
+                                libraryType={libraryType}
+                                width="100%"
+                            />
+                        </div>
+                    ))}
+
+                    {/* Scroll Spacer for edge-to-edge alignment */}
+                    <div className="flex-shrink-0 w-6 h-1" />
+                </HorizontalScrollList>
+            </div>
         </div>
     );
 }

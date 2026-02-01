@@ -24,4 +24,8 @@ public interface ILibraryService
     Task<LibraryScanJob> ScanLibraryAsync(Guid id);
     IEnumerable<LibraryScanJob> GetScanQueue();
     LibraryScanJob? GetScanJobStatus(Guid jobId);
+
+    // Caching
+    Task UpdateRecentlyAddedCacheAsync(Guid libraryId);
+    Task<IEnumerable<MediaItemDto>> GetRecentlyAddedAsync(Guid libraryId, Guid userId);
 }

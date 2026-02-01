@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useLayoutEffect, useMemo, memo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Play, ListMusic, Heart, Check, Clock, Star } from 'lucide-react';
 import { type MediaItem, MediaType } from '../../types';
@@ -19,32 +19,46 @@ function LoadingImage({
     className?: string;
     fallback?: React.ReactNode;
 }) {
-    const [loaded, setLoaded] = useState(false);
-    const [error, setError] = useState(false);
+    const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>(src ? 'loading' : 'error');
 
-    // Reset state when src changes
-    useEffect(() => {
-        setLoaded(false);
-        setError(false);
+    // Immediate check for cached images
+    useLayoutEffect(() => {
+        if (!src) {
+            setStatus('error');
+            return;
+        }
+
+        const img = new Image();
+        img.src = src;
+
+        if (img.complete) {
+            if (img.naturalWidth === 0) {
+                setStatus('error');
+            } else {
+                setStatus('loaded');
+            }
+        } else {
+            setStatus('loading');
+        }
     }, [src]);
 
-    if (!src || error) {
+    if (!src || status === 'error') {
         return fallback ? <>{fallback}</> : null;
     }
 
     return (
-        <div className="relative w-full h-full">
+        <div className="relative w-full h-full overflow-hidden">
             {/* Skeleton placeholder - visible while loading */}
-            {!loaded && (
-                <div className="absolute inset-0 bg-gradient-to-br from-gray-800 via-gray-700 to-gray-800 animate-pulse" />
+            {status === 'loading' && (
+                <div className="absolute inset-0 bg-gradient-to-br from-gray-800 via-gray-700 to-gray-800 animate-pulse z-10" />
             )}
             {/* Actual image with fade-in */}
             <img
                 src={src}
                 alt={alt}
-                className={`${className} transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
-                onLoad={() => setLoaded(true)}
-                onError={() => setError(true)}
+                className={`${className} transition-opacity duration-500 ${status === 'loaded' ? 'opacity-100' : 'opacity-0'}`}
+                onLoad={() => setStatus('loaded')}
+                onError={() => setStatus('error')}
                 loading="lazy"
             />
         </div>
@@ -57,31 +71,35 @@ interface MediaCardProps {
     enableHoverScale?: boolean;
 }
 
-export default function MediaCard({ item, libraryType }: MediaCardProps) {
+export default memo(function MediaCard({ item, libraryType }: MediaCardProps) {
     const navigate = useNavigate();
     const { playTrack, addToQueue } = useAudioStore();
-    const primaryGenre = item.genres?.[0] || 'Drama';
-    // Use the shared genre gradient or a default pleasing gradient
-    const glowGradient = getGenreGradient(primaryGenre);
 
-    const isAudio = libraryType === 'Music' ||
+    // Memoize constant property calculations
+    const primaryGenre = useMemo(() => item.genres?.[0] || 'Drama', [item.genres]);
+    const glowGradient = useMemo(() => getGenreGradient(primaryGenre), [primaryGenre]);
+
+    const isAudio = useMemo(() =>
+        libraryType === 'Music' ||
         item.type === MediaType.Audio ||
         item.type === MediaType.Artist ||
-        item.type === MediaType.Album;
+        item.type === MediaType.Album,
+        [libraryType, item.type]);
     const isMovie = libraryType === 'Movie' || item.type === MediaType.Movie;
     // For TV: if it has an episodeNumber, it's an episode; otherwise treat as a series
     const isTVEpisode = (libraryType === 'TV' && !!item.episodeNumber) || item.type === MediaType.Episode;
     const isTVSeries = (libraryType === 'TV' && !item.episodeNumber) || item.type === MediaType.Series;
 
     // Logic for "New" Badge (14 days threshold)
-    const isNew = (() => {
+    // Memoize derived flags
+    const isNew = useMemo(() => {
         if (!item.dateAdded) return false;
         const added = new Date(item.dateAdded);
         const now = new Date();
         const diffTime = Math.abs(now.getTime() - added.getTime());
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
         return diffDays <= 14;
-    })();
+    }, [item.dateAdded]);
 
     const handlePlay = async (e: React.MouseEvent) => {
         e.preventDefault();
@@ -218,8 +236,8 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
 
                 {/* Info Section */}
                 <div className="flex-1 p-3 flex flex-col justify-between bg-[#1a1d21] relative z-30 group-hover/card:bg-[#202328] transition-colors duration-300">
-                    <div className="flex flex-col gap-1">
-                        <h3 className="text-gray-100 font-bold text-[0.95rem] leading-tight line-clamp-2 group-hover/card:text-white transition-colors" title={item.title}>
+                    <div className="flex flex-col gap-1.5">
+                        <h3 className="text-gray-100 font-bold text-[1rem] leading-tight line-clamp-2 group-hover/card:text-white transition-colors tracking-tight" title={item.title}>
                             {item.title}
                         </h3>
 
@@ -233,25 +251,39 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
                                 </span>
                             )}
 
-                            {(isMovie || isTVSeries || isTVEpisode) ? (
+                            {(isMovie || isTVSeries || isTVEpisode || libraryType === 'Game' || libraryType === 'Book') ? (
                                 <div className="flex items-center gap-1.5">
-                                    {item.communityRating && item.communityRating > 0 && (
-                                        <div className="flex items-center gap-1 px-1.5 py-[1px] bg-yellow-500/10 border border-yellow-500/30 rounded-[4px] text-yellow-500">
+                                    {/* Personal Rating (Yellow Star) - Individual User's Rating */}
+                                    {item.personalRating && item.personalRating > 0 && (
+                                        <div className="flex items-center gap-1 px-1.5 py-[1px] bg-yellow-500/10 border border-yellow-500/30 rounded-[4px] text-yellow-500" title="Your Rating">
+                                            <Star className="w-2.5 h-2.5 fill-current" />
+                                            <span className="text-[10px] font-bold tracking-tight">
+                                                {item.personalRating}
+                                            </span>
+                                        </div>
+                                    )}
+
+                                    {/* Community Rating (Yellow Star) - If no personal rating exists */}
+                                    {!item.personalRating && item.communityRating && item.communityRating > 0 && (
+                                        <div className="flex items-center gap-1 px-1.5 py-[1px] bg-yellow-500/10 border border-yellow-500/30 rounded-[4px] text-yellow-500" title="Community Rating">
                                             <Star className="w-2.5 h-2.5 fill-current" />
                                             <span className="text-[10px] font-bold tracking-tight">
                                                 {item.communityRating.toFixed(1)}
                                             </span>
                                         </div>
                                     )}
+
+                                    {/* SoftMedia Average (Violet Star) */}
                                     {item.userRating && item.userRating > 0 && (
-                                        <div className="flex items-center gap-1 px-1.5 py-[1px] bg-violet-500/10 border border-violet-500/30 rounded-[4px] text-violet-400">
+                                        <div className="flex items-center gap-1 px-1.5 py-[1px] bg-violet-500/10 border border-violet-500/30 rounded-[4px] text-violet-400" title="SoftMedia Average">
                                             <Star className="w-2.5 h-2.5 fill-current" />
                                             <span className="text-[10px] font-bold tracking-tight">
-                                                {item.userRating}
+                                                {item.userRating % 1 === 0 ? item.userRating : item.userRating.toFixed(1)}
                                             </span>
                                         </div>
                                     )}
-                                    {!item.communityRating && !item.userRating && (
+
+                                    {!item.communityRating && !item.userRating && !item.personalRating && (
                                         <div className="flex items-center gap-1 px-1.5 py-[1px] border border-white/5 bg-white/5 rounded-[4px]">
                                             <Star className="w-2.5 h-2.5 text-gray-600" />
                                             <span className="text-[10px] text-gray-500 font-semibold tracking-wide">
@@ -261,19 +293,26 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
                                     )}
                                 </div>
                             ) : (
-                                // Original fallback for other types (Music, etc)
+                                // Music types or fallback
                                 <>
-                                    {item.userRating ? (
-                                        <div className="flex items-center gap-1 px-1.5 py-[1px] border border-yellow-500/30 bg-yellow-500/10 rounded-[4px]">
-                                            <Star className="w-2.5 h-2.5 text-yellow-500 fill-current" />
-                                            <span className="text-[10px] text-yellow-500 font-bold tracking-wide">
-                                                {item.userRating}
+                                    {item.personalRating ? (
+                                        <div className="flex items-center gap-1 px-1.5 py-[1px] border border-yellow-500/30 bg-yellow-500/10 rounded-[4px] text-yellow-500" title="Your Rating">
+                                            <Star className="w-2.5 h-2.5 fill-current" />
+                                            <span className="text-[10px] font-bold tracking-wide">
+                                                {item.personalRating}
+                                            </span>
+                                        </div>
+                                    ) : item.userRating ? (
+                                        <div className="flex items-center gap-1 px-1.5 py-[1px] border border-violet-500/30 bg-violet-500/10 rounded-[4px] text-violet-400" title="SoftMedia Average">
+                                            <Star className="w-2.5 h-2.5 fill-current" />
+                                            <span className="text-[10px] font-bold tracking-wide">
+                                                {item.userRating % 1 === 0 ? item.userRating : item.userRating.toFixed(1)}
                                             </span>
                                         </div>
                                     ) : item.communityRating ? (
-                                        <div className="flex items-center gap-1 px-1.5 py-[1px] border border-white/10 bg-white/5 rounded-[4px]">
-                                            <Star className="w-2.5 h-2.5 text-gray-400 fill-current" />
-                                            <span className="text-[10px] text-gray-400 font-semibold tracking-wide">
+                                        <div className="flex items-center gap-1 px-1.5 py-[1px] border border-yellow-500/30 bg-yellow-500/10 rounded-[4px] text-yellow-500" title="Community Rating">
+                                            <Star className="w-2.5 h-2.5 fill-current" />
+                                            <span className="text-[10px] font-bold tracking-wide">
                                                 {item.communityRating.toFixed(1)}
                                             </span>
                                         </div>
@@ -326,4 +365,4 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
             {CardContent}
         </Link>
     );
-}
+});

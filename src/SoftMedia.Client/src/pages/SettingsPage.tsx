@@ -329,6 +329,16 @@ export default function SettingsPage() {
         onError: () => toast.error('Failed to start library scan'),
     });
 
+    const refreshHeroCacheMutation = useMutation({
+        mutationFn: adminService.refreshHeroCache,
+        onSuccess: () => {
+            toast.success(t('Hero cache refresh completed'));
+        },
+        onError: () => {
+            toast.error(t('Failed to refresh hero cache'));
+        }
+    });
+
     const handleSave = () => {
         updateMutation.mutate(localSettings);
     };
@@ -493,6 +503,21 @@ export default function SettingsPage() {
                                 <label className="text-sm font-medium text-gray-300">{t(formatSettingLabel(fileWatcher.key))}</label>
                             </div>
                             {fileWatcher.description && <p className="text-xs text-gray-500">{t(fileWatcher.description)}</p>}
+
+                            {/* Manual Hero Cache Refresh Button */}
+                            <div className="mt-4 pt-4 border-t border-white/5">
+                                <button
+                                    onClick={() => refreshHeroCacheMutation.mutate()}
+                                    disabled={refreshHeroCacheMutation.isPending}
+                                    className="flex items-center gap-2 px-4 py-2 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 rounded-lg transition-all text-sm font-semibold border border-violet-500/30 disabled:opacity-50"
+                                >
+                                    <RefreshCw className={cn("w-4 h-4", refreshHeroCacheMutation.isPending && "animate-spin")} />
+                                    {refreshHeroCacheMutation.isPending ? t('Refreshing Hero Cache...') : t('Update Hero Cache')}
+                                </button>
+                                <p className="text-[10px] text-gray-500 mt-2">
+                                    {t('Forces the hero section on the home page to update immediately.')}
+                                </p>
+                            </div>
                         </div>
                     )}
 

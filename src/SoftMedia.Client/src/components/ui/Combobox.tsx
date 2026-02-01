@@ -78,6 +78,7 @@ export function Combobox({ value, onChange, options, placeholder, className }: C
                     )}
                 />
                 <button
+                    type="button"
                     onClick={() => {
                         if (isOpen) {
                             setIsOpen(false);

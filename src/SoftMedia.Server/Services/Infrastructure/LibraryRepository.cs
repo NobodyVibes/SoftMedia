@@ -15,6 +15,52 @@ public class LibraryRepository : ILibraryRepository
         _context = context;
     }
 
+    public async Task<Library?> GetByIdAsync(Guid id)
+    {
+        return await _context.Libraries.FindAsync(id);
+    }
+
+    public async Task<IEnumerable<Library>> GetAllAsync()
+    {
+        return await _context.Libraries.OrderBy(l => l.Order).ToListAsync();
+    }
+
+    public async Task AddAsync(Library library)
+    {
+        _context.Libraries.Add(library);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task UpdateAsync(Library library)
+    {
+        _context.Libraries.Update(library);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task UpdateRangeAsync(IEnumerable<Library> libraries)
+    {
+        _context.Libraries.UpdateRange(libraries);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task DeleteAsync(Library library)
+    {
+        _context.Libraries.Remove(library);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task<bool> ExistsAsync(Guid id)
+    {
+        return await _context.Libraries.AnyAsync(l => l.Id == id);
+    }
+
+    public async Task<bool> IsPathUsedAsync(string path)
+    {
+        // For SQLite with JSON conversion, fetching and checking in memory is reliable and efficient for small sets
+        var libraries = await _context.Libraries.AsNoTracking().ToListAsync();
+        return libraries.Any(l => l.Paths.Contains(path));
+    }
+
     public async Task<PagedResult<(MediaItem Media, UserMediaInteraction? Interaction)>> GetLibraryItemsAsync(Guid libraryId, LibraryItemFilter filter)
     {
         var library = await _context.Libraries.FindAsync(libraryId);
@@ -129,7 +175,7 @@ public class LibraryRepository : ILibraryRepository
             .ToListAsync();
             
         // Map anonymous type to Tuple (Entity, Interaction)
-        var resultItems = items.Select(x => (x.Media, x.Interaction)).ToList();
+        var resultItems = items.Select(x => (x.Media, (UserMediaInteraction?)x.Interaction)).ToList();
 
         return new PagedResult<(MediaItem Media, UserMediaInteraction? Interaction)>
         {

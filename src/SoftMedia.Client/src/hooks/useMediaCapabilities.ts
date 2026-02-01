@@ -29,6 +29,8 @@ export interface ClientCapabilities {
     requestedQuality?: string;
     /** Index of the subtitle track to be burned in (if any) */
     subtitleTrackIndex?: number | null;
+    /** Unique identifier for this specific playback stream */
+    streamId?: string;
 }
 
 
@@ -289,7 +291,7 @@ export function useMediaCapabilities(): {
  */
 export function createCapabilitiesWithOverrides(
     baseCapabilities: ClientCapabilities,
-    overrides: Partial<Pick<ClientCapabilities, 'maxBitrate' | 'maxResolution' | 'requestedQuality' | 'subtitleTrackIndex'>>
+    overrides: Partial<Pick<ClientCapabilities, 'maxBitrate' | 'maxResolution' | 'requestedQuality' | 'subtitleTrackIndex' | 'streamId'>>
 ): ClientCapabilities {
     return {
         ...baseCapabilities,
@@ -297,6 +299,7 @@ export function createCapabilitiesWithOverrides(
         maxResolution: overrides.maxResolution ?? baseCapabilities.maxResolution,
         requestedQuality: overrides.requestedQuality ?? baseCapabilities.requestedQuality,
         subtitleTrackIndex: overrides.subtitleTrackIndex ?? baseCapabilities.subtitleTrackIndex,
+        streamId: overrides.streamId ?? baseCapabilities.streamId,
     };
 }
 

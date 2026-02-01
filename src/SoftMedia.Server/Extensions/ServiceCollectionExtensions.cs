@@ -72,6 +72,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMediaScanner, MusicScanner>();
         services.AddScoped<IMediaScanner, TvScanner>();
         services.AddScoped<IMediaScanner, MovieScanner>();
+        services.AddScoped<IMediaScanner, GameScanner>();
         
         // Metadata Providers
         services.AddHttpClient<WikidataProvider>();

@@ -111,6 +111,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const [playerToast, setPlayerToast] = useState<{ message: string; type: 'info' | 'success' } | null>(null);
     const lastToastStatusRef = useRef<'hdr' | 'tonemapped' | null>(null);
 
+    // Unique Stream ID to isolate transcode sessions per playback instance
+    const [streamId] = useState(() => Math.random().toString(36).substring(2, 11));
+
     const handleDismissToast = useCallback(() => {
         setPlayerToast(null);
     }, []);
@@ -479,7 +482,8 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 requestedQuality: effectiveQuality,
                 maxBitrate: effectiveMaxBitrate,
                 maxResolution: effectiveMaxResolution,
-                subtitleTrackIndex: selectedSubtitleTrack
+                subtitleTrackIndex: selectedSubtitleTrack,
+                streamId: streamId
             });
 
             console.log('[StreamPlan] Quality - selected:', selectedQuality, 'default:', localPrefs.defaultStreamingQuality, 'effective:', effectiveQuality);
@@ -564,7 +568,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     // Delete previous transcode session to start fresh
                     if (isSubtitleChange && startPosition > 0) {
                         setIsSubtitleChange(false);
-                        fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' }).catch(() => { });
+                        fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, { method: 'DELETE' }).catch(() => { });
                     }
                 }
                 // Priority 4: Resume position for fresh loads
@@ -689,7 +693,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     // Add WebVTT subtitle track directly if subtitles are selected
                     // This approach works better than HLS manifest subtitles for single VTT files
                     if (selectedSubtitleTrack !== null && token) {
-                        const subtitleUrl = `/api/transcode/${item.id}/subtitles.vtt?token=${token}&sub=${selectedSubtitleTrack}`;
+                        const subtitleUrl = `/api/transcode/${item.id}/subtitles.vtt?token=${token}&sub=${selectedSubtitleTrack}&sid=${streamId}`;
                         console.log(`Adding subtitle track: ${subtitleUrl}`);
 
                         // Remove any existing track elements
@@ -780,7 +784,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             }
             // Explicitly stop transcode when leaving the player
             if (isTranscoding && token && item.id) {
-                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, {
+                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, {
                     method: 'DELETE'
                 }).catch(() => { /* Ignore cleanup errors */ });
             }
@@ -840,7 +844,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
             // Clean up transcode session before navigating
             if (isTranscoding) {
-                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, {
+                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, {
                     method: 'DELETE'
                 }).catch(() => { });
             }
@@ -887,7 +891,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
             // Clean up transcode session before navigating
             if (isTranscoding) {
-                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, {
+                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, {
                     method: 'DELETE'
                 }).catch(() => { });
             }
@@ -914,7 +918,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
             // Clean up transcode session
             if (isTranscoding) {
-                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, {
+                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, {
                     method: 'DELETE'
                 }).catch(() => { });
             }
@@ -1003,7 +1007,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             console.log('Video ended event fired');
             // Signal backend to clean up transcode session when video ends
             if (isTranscoding && token && item.id) {
-                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, {
+                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, {
                     method: 'DELETE'
                 }).catch(() => { });
             }
@@ -1245,7 +1249,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         // Clean up transcode session before navigating
         if (isTranscoding && token && item.id) {
             try {
-                await fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' });
+                await fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, { method: 'DELETE' });
             } catch { /* Ignore cleanup errors */ }
         }
 
@@ -1267,10 +1271,10 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             seekAfterLoadRef.current = seekTime;
             setSeekOffset(Math.floor(seekTime));
 
-            fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' })
+            fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, { method: 'DELETE' })
                 .catch(() => { });
 
-            let hlsUrl = `/api/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}`;
+            let hlsUrl = `/api/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}&sid=${streamId}`;
             if (selectedSubtitleTrack !== null) {
                 hlsUrl += `&sub=${selectedSubtitleTrack}`;
             }
@@ -1287,10 +1291,10 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 seekAfterLoadRef.current = seekTime;
                 setSeekOffset(Math.floor(seekTime));
 
-                fetch(`/api/transcode/${item.id}?all=true&token=${token}`, { method: 'DELETE' })
+                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, { method: 'DELETE' })
                     .catch(() => { });
 
-                let hlsUrl = `/api/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}`;
+                let hlsUrl = `/api/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}&sid=${streamId}`;
                 if (selectedSubtitleTrack !== null) {
                     hlsUrl += `&sub=${selectedSubtitleTrack}`;
                 }
@@ -1794,6 +1798,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 <PlayerDebugPanel
                     mediaId={item.id}
                     token={token}
+                    streamId={streamId}
                     subtitleTrack={selectedSubtitleTrack}
                     clientCapabilities={mediaCapabilities}
                     onClose={() => setShowDebugPanel(false)}

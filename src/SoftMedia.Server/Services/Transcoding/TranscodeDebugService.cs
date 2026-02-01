@@ -60,8 +60,8 @@ public class TranscodeDebugService : ITranscodeDebugService
         
         // Get source media info
         using var scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var mediaItem = await dbContext.MediaItems.FindAsync(mediaId);
+        var repository = scope.ServiceProvider.GetRequiredService<IMediaRepository>();
+        var mediaItem = await repository.GetByIdAsync(mediaId);
         
         // Compute Stream Plan (Backend Decision Logic)
         var streamPlan = await _streamPlanService.ComputeStreamPlanAsync(mediaId, mediaItem, clientCaps ?? new ClientCapabilities(), null);

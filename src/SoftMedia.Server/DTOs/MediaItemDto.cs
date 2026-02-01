@@ -106,7 +106,21 @@ public class MediaItemDto
 
                         if (metadata.TryGetValue("rating", out var ratingObj))
                         {
-                            dto.Rating = ratingObj.ToString();
+                            var rStr = ratingObj.ToString();
+                            // If it looks like a numeric score (contains dot or is just digits), check if it belongs in CommunityRating
+                            if (dto.CommunityRating == null && double.TryParse(rStr, out var rScore))
+                            {
+                                dto.CommunityRating = rScore;
+                            }
+                            else
+                            {
+                                dto.Rating = rStr;
+                            }
+                        }
+
+                        if (dto.CommunityRating == null && metadata.TryGetValue("imdbRating", out var imdbRatingObj) && double.TryParse(imdbRatingObj.ToString(), out var imdbScore))
+                        {
+                            dto.CommunityRating = imdbScore;
                         }
 
                         if (metadata.TryGetValue("poster", out var posterObj))

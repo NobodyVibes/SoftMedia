@@ -67,11 +67,12 @@ public class TranscodeService : ITranscodeService
     /// <summary>
     /// Get the session directory for a specific transcode session
     /// </summary>
-    public string GetSessionDir(Guid mediaId, Guid userId, int? subtitleTrackIndex)
+    public string GetSessionDir(Guid mediaId, Guid userId, int? subtitleTrackIndex, string? sid = null)
     {
         var suffix = subtitleTrackIndex.HasValue ? $"_sub{subtitleTrackIndex.Value}" : "";
-        // Include userId to isolate transcode sessions per user
-        return Path.Combine(_tempDir, $"{mediaId}_{userId}{suffix}");
+        var streamSuffix = !string.IsNullOrEmpty(sid) ? $"_{sid}" : "";
+        // Include userId and sid to isolate transcode sessions per stream
+        return Path.Combine(_tempDir, $"{mediaId}_{userId}{suffix}{streamSuffix}");
     }
 
     /// <summary>
@@ -92,8 +93,8 @@ public class TranscodeService : ITranscodeService
     /// <summary>
     /// Get a specific session by media/user/subtitle combination
     /// </summary>
-    public TranscodeSession? GetSession(Guid mediaId, Guid userId, int? subtitleTrackIndex) => 
-        _sessionManager.GetSession(mediaId, userId, subtitleTrackIndex);
+    public TranscodeSession? GetSession(Guid mediaId, Guid userId, int? subtitleTrackIndex, string? sid = null) => 
+        _sessionManager.GetSession(mediaId, userId, subtitleTrackIndex, sid);
 
     /// <summary>
     /// Extract segment index from filename like "seg_042.ts" or "seg_042.m4s"
@@ -179,7 +180,8 @@ public class TranscodeService : ITranscodeService
         bool? preserveHdr = null,
         int? audioTrack = null,
         int? maxBitrate = null,
-        bool? burnSubtitles = null)
+        bool? burnSubtitles = null,
+        string? sid = null)
     {
         // Sanitize subtitle track index: if negative, treat as null (disabled)
         if (subtitleTrackIndex.HasValue && subtitleTrackIndex.Value < 0)
@@ -205,7 +207,7 @@ public class TranscodeService : ITranscodeService
             }
         }
         
-        var sessionKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex);
+        var sessionKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex, sid);
         
         using (await _sessionManager.AcquireLockAsync(sessionKey))
         {
@@ -321,7 +323,7 @@ public class TranscodeService : ITranscodeService
                 }
             }
 
-            var baseSessionDir = GetSessionDir(mediaId, userId, subtitleTrackIndex);
+            var baseSessionDir = GetSessionDir(mediaId, userId, subtitleTrackIndex, sid);
             // Append timestamp to ensure unique directory for every session (prevents filesystem race conditions on restart)
             var sessionDir = $"{baseSessionDir}_{DateTime.UtcNow.Ticks}";
             
@@ -575,12 +577,9 @@ public class TranscodeService : ITranscodeService
     /// <summary>
     /// Get the HLS playlist for a transcode session.
     /// </summary>
-    /// <summary>
-    /// Get the HLS playlist for a transcode session.
-    /// </summary>
-    public Stream? GetPlaylist(Guid mediaId, Guid userId, int? subtitleTrackIndex = null)
+    public Stream? GetPlaylist(Guid mediaId, Guid userId, int? subtitleTrackIndex = null, string? sid = null)
     {
-        var session = GetSession(mediaId, userId, subtitleTrackIndex);
+        var session = GetSession(mediaId, userId, subtitleTrackIndex, sid);
         if (session != null && Directory.Exists(session.SessionDirectory))
         {
             return _hlsService.GetPlaylistStream(session.SessionDirectory);
@@ -591,9 +590,9 @@ public class TranscodeService : ITranscodeService
     /// <summary>
     /// Get a segment file from a transcode session.
     /// </summary>
-    public Stream? GetSegment(Guid mediaId, Guid userId, string segmentName, int? subtitleTrackIndex = null)
+    public Stream? GetSegment(Guid mediaId, Guid userId, string segmentName, int? subtitleTrackIndex = null, string? sid = null)
     {
-        var session = GetSession(mediaId, userId, subtitleTrackIndex);
+        var session = GetSession(mediaId, userId, subtitleTrackIndex, sid);
         if (session != null && Directory.Exists(session.SessionDirectory))
         {
             return _hlsService.GetSegmentStream(session.SessionDirectory, segmentName);
@@ -604,9 +603,9 @@ public class TranscodeService : ITranscodeService
     /// <summary>
     /// Get the fMP4 initialization segment (init.mp4) for a transcode session.
     /// </summary>
-    public Stream? GetInitSegment(Guid mediaId, Guid userId, int? subtitleTrackIndex = null)
+    public Stream? GetInitSegment(Guid mediaId, Guid userId, int? subtitleTrackIndex = null, string? sid = null)
     {
-        var session = GetSession(mediaId, userId, subtitleTrackIndex);
+        var session = GetSession(mediaId, userId, subtitleTrackIndex, sid);
         if (session != null && Directory.Exists(session.SessionDirectory))
         {
             return _hlsService.GetInitSegmentStream(session.SessionDirectory);
@@ -615,11 +614,24 @@ public class TranscodeService : ITranscodeService
     }
 
     /// <summary>
+    /// Get the sidecar VTT subtitles if available.
+    /// </summary>
+    public Stream? GetSubtitlesVtt(Guid mediaId, Guid userId, int? subtitleTrackIndex = null, string? sid = null)
+    {
+        var session = GetSession(mediaId, userId, subtitleTrackIndex, sid);
+        if (session != null && !string.IsNullOrEmpty(session.SubtitleVttPath) && System.IO.File.Exists(session.SubtitleVttPath))
+        {
+            return System.IO.File.OpenRead(session.SubtitleVttPath);
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Stop a specific transcode session and clean up.
     /// </summary>
-    public void StopTranscode(Guid mediaId, Guid userId, int? subtitleTrackIndex = null, bool deleteFiles = true)
+    public void StopTranscode(Guid mediaId, Guid userId, int? subtitleTrackIndex = null, bool deleteFiles = true, string? sid = null)
     {
-        var sessionKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex);
+        var sessionKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex, sid);
         
         if (_sessionManager.TryRemoveSession(sessionKey, out var session))
         {

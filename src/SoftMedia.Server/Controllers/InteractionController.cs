@@ -55,22 +55,10 @@ public class InteractionController : ControllerBase
         interaction.Rating = request.Rating;
         await _context.SaveChangesAsync();
 
-        // Recalculate average rating
-        var ratings = await _context.UserMediaInteractions
-            .Where(x => x.MediaItemId == mediaId && x.Rating != null)
-            .Select(x => x.Rating)
-            .ToListAsync();
-
-        double? communityRating = null;
-        if (ratings.Any())
-        {
-            communityRating = ratings.Average(r => r ?? 0);
-        }
-
+        // Local community rating calculation (preserved for future use, but not overwriting external metadata)
         var mediaItem = await _context.MediaItems.FindAsync(mediaId);
         if (mediaItem != null)
         {
-            mediaItem.CommunityRating = communityRating;
             await _context.SaveChangesAsync();
         }
 

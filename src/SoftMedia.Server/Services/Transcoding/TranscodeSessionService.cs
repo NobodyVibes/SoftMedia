@@ -14,29 +14,29 @@ public class TranscodeSessionService : ITranscodeSessionService
         _logger = logger;
     }
 
-    public void UpdateClientPosition(Guid mediaId, Guid userId, int? sub, string segment)
+    public void UpdateClientPosition(Guid mediaId, Guid userId, int? sub, string segment, string? sid = null)
     {
         var segmentIndex = TranscodeService.ExtractSegmentIndex(segment);
         if (segmentIndex >= 0)
         {
-            var sessionKey = new TranscodeSessionKey(mediaId, userId, sub);
+            var sessionKey = new TranscodeSessionKey(mediaId, userId, sub, sid);
             _transcodeService.UpdateClientPosition(sessionKey, segmentIndex);
         }
     }
 
-    public TranscodeSessionResult PauseSession(Guid mediaId, Guid userId, int? sub)
+    public TranscodeSessionResult PauseSession(Guid mediaId, Guid userId, int? sub, string? sid = null)
     {
-        return SetPaused(mediaId, userId, sub, true);
+        return SetPaused(mediaId, userId, sub, true, sid);
     }
 
-    public TranscodeSessionResult ResumeSession(Guid mediaId, Guid userId, int? sub)
+    public TranscodeSessionResult ResumeSession(Guid mediaId, Guid userId, int? sub, string? sid = null)
     {
-        return SetPaused(mediaId, userId, sub, false);
+        return SetPaused(mediaId, userId, sub, false, sid);
     }
 
-    private TranscodeSessionResult SetPaused(Guid mediaId, Guid userId, int? sub, bool isPaused)
+    private TranscodeSessionResult SetPaused(Guid mediaId, Guid userId, int? sub, bool isPaused, string? sid = null)
     {
-        var sessionKey = new TranscodeSessionKey(mediaId, userId, sub);
+        var sessionKey = new TranscodeSessionKey(mediaId, userId, sub, sid);
         
         if (!_transcodeService.SetPaused(sessionKey, userId, isPaused: isPaused))
         {
@@ -54,9 +54,9 @@ public class TranscodeSessionService : ITranscodeSessionService
         return TranscodeSessionResult.Success;
     }
 
-    public void StopSession(Guid mediaId, Guid userId, int? sub)
+    public void StopSession(Guid mediaId, Guid userId, int? sub, string? sid = null)
     {
-        _transcodeService.StopTranscode(mediaId, userId, sub);
+        _transcodeService.StopTranscode(mediaId, userId, sub, sid: sid);
     }
 
     public void StopAllSessions(Guid mediaId, Guid userId)

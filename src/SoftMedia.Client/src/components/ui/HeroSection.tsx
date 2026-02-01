@@ -4,10 +4,13 @@ import { motion } from 'framer-motion';
 interface HeroSectionProps {
     title: string;
     description: string;
-    imageUrl: string;
+    imageUrl: string; // Backdrop image (landscape)
+    posterUrl?: string; // Poster image (portrait)
     year?: number;
     rating?: string;
     duration?: string | number;
+    communityRating?: number;
+    userRating?: number;
     onPlay?: () => void;
     onMoreInfo?: () => void;
 }
@@ -16,123 +19,164 @@ export default function HeroSection({
     title,
     description,
     imageUrl,
+    posterUrl,
     year,
     rating,
     duration,
+    communityRating,
+    userRating,
     onPlay,
     onMoreInfo
 }: HeroSectionProps) {
+    // Determine if we should show a poster card (usually when backdrop is missing or low quality)
+    const hasBackdrop = imageUrl && !imageUrl.includes('poster');
+    const showPosterCard = !hasBackdrop && posterUrl;
+
     return (
-        <div className="relative w-full h-[600px] -mx-6 -mt-6 mb-12 overflow-hidden group">
-            {/* Background Image with Parallax Effect */}
+        <div className="relative w-full h-[500px] -mx-6 mb-12 overflow-hidden group">
+            {/* Background Layer: Either a sharp backdrop or a heavily blurred poster */}
             <motion.div
-                className="absolute inset-0 bg-cover bg-center scale-105"
-                style={{ backgroundImage: `url(${imageUrl})` }}
+                className={`absolute inset-0 bg-cover bg-center scale-105 ${!hasBackdrop ? 'blur-3xl opacity-40' : ''}`}
+                style={{ backgroundImage: `url(${imageUrl || posterUrl})` }}
                 initial={{ scale: 1.05 }}
                 animate={{ scale: 1.08 }}
                 transition={{ duration: 10, repeat: Infinity, repeatType: "reverse" }}
             />
 
-            {/* Multi-layer Gradient Overlays */}
-            <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent" />
-            <div className="absolute inset-0 bg-gradient-to-r from-background via-background/60 to-transparent" />
-            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-background" />
+            {/* Multi-layer Gradient Overlays for depth */}
+            <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent pointer-events-none" />
+            <div className="absolute inset-0 bg-gradient-to-r from-background via-background/40 to-transparent pointer-events-none" />
 
-            {/* Vignette Effect */}
-            <div className="absolute inset-0 shadow-[inset_0_0_200px_rgba(0,0,0,0.8)]" />
+            {/* Ambient Color Overlay (enhances colors when backdrop is missing) */}
+            {!hasBackdrop && (
+                <div className="absolute inset-0 bg-violet-900/10 mix-blend-overlay pointer-events-none" />
+            )}
 
             {/* Content Container */}
-            <div className="absolute inset-0 flex flex-col justify-end px-12 pb-16 max-w-4xl">
-                {/* Metadata Pills */}
-                <motion.div
-                    className="flex items-center gap-3 mb-4"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.2 }}
-                >
-                    {year && (
-                        <span className="text-white/80 text-lg font-semibold tracking-wide">
-                            {year}
-                        </span>
+            <div className="absolute inset-0 flex items-center px-12 pb-8">
+                <div className="flex gap-12 items-end w-full max-w-7xl">
+                    {/* Sharp Poster Card Overlay (shown when backdrop is missing) */}
+                    {showPosterCard && (
+                        <motion.div
+                            className="hidden md:block w-64 aspect-[2/3] shrink-0 rounded-2xl overflow-hidden shadow-2xl border border-white/10 relative z-10"
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: 0.2 }}
+                        >
+                            <img src={posterUrl} alt={title} className="w-full h-full object-cover" />
+                            <div className="absolute inset-0 ring-1 ring-inset ring-white/20 rounded-2xl" />
+                        </motion.div>
                     )}
-                    {rating && (
-                        <span className="px-3 py-1 bg-white/20 backdrop-blur-md border border-white/30 rounded-md text-sm font-bold text-white">
-                            {rating}
-                        </span>
-                    )}
-                    {duration && (
-                        <span className="text-white/80 text-lg">
-                            {duration}
-                        </span>
-                    )}
-                    <div className="flex items-center gap-1 text-yellow-400">
-                        <Star size={18} fill="currentColor" />
-                        <span className="text-white font-bold">8.2</span>
+
+                    <div className="flex flex-col justify-end flex-1 pb-4">
+                        {/* Metadata Pills */}
+                        <motion.div
+                            className="flex items-center gap-4 mb-4"
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.2 }}
+                        >
+                            {year && (
+                                <span className="text-white/80 text-lg font-semibold tracking-wide">
+                                    {year}
+                                </span>
+                            )}
+                            {rating && (
+                                <span className="px-3 py-1 bg-white/10 backdrop-blur-md border border-white/20 rounded-md text-sm font-bold text-white">
+                                    {rating}
+                                </span>
+                            )}
+                            {duration && (
+                                <span className="text-white/80 text-lg">
+                                    {duration}
+                                </span>
+                            )}
+
+                            <div className="flex items-center gap-3">
+                                {communityRating && communityRating > 0 && (
+                                    <div className="flex items-center gap-1.5 px-2 py-1 bg-black/30 backdrop-blur-md border border-white/10 rounded-lg text-yellow-400">
+                                        <Star size={16} fill="currentColor" />
+                                        <span className="text-white text-sm font-bold">
+                                            <span className="text-gray-400 font-medium mr-1.5 uppercase tracking-tighter text-xs">IMDB</span>
+                                            {communityRating.toFixed(1)}
+                                        </span>
+                                    </div>
+                                )}
+
+                                {userRating && userRating > 0 && (
+                                    <div className="flex items-center gap-1.5 px-2 py-1 bg-violet-500/20 backdrop-blur-md border border-violet-500/30 rounded-lg text-violet-400">
+                                        <Star size={16} fill="currentColor" />
+                                        <span className="text-white text-sm font-bold">
+                                            <span className="text-violet-300 font-medium mr-1.5 uppercase tracking-tighter text-xs">SoftMedia</span>
+                                            {userRating}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                        </motion.div>
+
+                        {/* Title */}
+                        <motion.h1
+                            className="text-5xl lg:text-7xl font-black text-white mb-6 leading-tight drop-shadow-2xl"
+                            style={{
+                                textShadow: '0 4px 20px rgba(0,0,0,0.8), 0 0 40px rgba(99,102,241,0.2)'
+                            }}
+                            initial={{ opacity: 0, y: 30 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.3 }}
+                        >
+                            {title}
+                        </motion.h1>
+
+                        {/* Description */}
+                        <motion.p
+                            className="text-gray-200 text-lg mb-8 line-clamp-3 max-w-2xl leading-relaxed drop-shadow-lg font-medium"
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.4 }}
+                        >
+                            {description}
+                        </motion.p>
+
+                        {/* Action Buttons */}
+                        <motion.div
+                            className="flex items-center gap-4"
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.5 }}
+                        >
+                            <motion.button
+                                onClick={onPlay}
+                                className="group/btn relative px-8 py-3 bg-white rounded-lg font-bold text-lg text-black overflow-hidden shadow-2xl"
+                                whileHover={{ scale: 1.05 }}
+                                whileTap={{ scale: 0.95 }}
+                            >
+                                <div className="absolute inset-0 bg-gradient-to-r from-white to-gray-100" />
+                                <div className="absolute inset-0 bg-white opacity-0 group-hover/btn:opacity-20 transition-opacity" />
+                                <div className="relative flex items-center gap-3">
+                                    <Play fill="currentColor" size={20} />
+                                    <span>Play Now</span>
+                                </div>
+                            </motion.button>
+
+                            <motion.button
+                                onClick={onMoreInfo}
+                                className="group/btn relative px-8 py-3 bg-white/10 backdrop-blur-xl border border-white/20 rounded-lg font-bold text-lg text-white overflow-hidden shadow-xl"
+                                whileHover={{ scale: 1.05, backgroundColor: 'rgba(255,255,255,0.15)' }}
+                                whileTap={{ scale: 0.95 }}
+                            >
+                                <div className="relative flex items-center gap-3">
+                                    <Info size={20} />
+                                    <span>More Info</span>
+                                </div>
+                            </motion.button>
+                        </motion.div>
                     </div>
-                </motion.div>
-
-                {/* Title */}
-                <motion.h1
-                    className="text-7xl font-black text-white mb-6 leading-tight drop-shadow-2xl"
-                    style={{
-                        textShadow: '0 4px 20px rgba(0,0,0,0.8), 0 0 60px rgba(99,102,241,0.3)'
-                    }}
-                    initial={{ opacity: 0, y: 30 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.3 }}
-                >
-                    {title}
-                </motion.h1>
-
-                {/* Description */}
-                <motion.p
-                    className="text-gray-200 text-lg mb-8 line-clamp-3 max-w-2xl leading-relaxed drop-shadow-lg font-medium"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.4 }}
-                >
-                    {description}
-                </motion.p>
-
-                {/* Action Buttons */}
-                <motion.div
-                    className="flex items-center gap-4"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.5 }}
-                >
-                    <motion.button
-                        onClick={onPlay}
-                        className="group/btn relative px-10 py-4 bg-white rounded-lg font-bold text-lg text-black overflow-hidden shadow-2xl"
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.95 }}
-                    >
-                        <div className="absolute inset-0 bg-gradient-to-r from-white to-gray-100" />
-                        <div className="absolute inset-0 bg-white opacity-0 group-hover/btn:opacity-20 transition-opacity" />
-                        <div className="relative flex items-center gap-3">
-                            <Play fill="currentColor" size={24} />
-                            <span>Play Now</span>
-                        </div>
-                        {/* Glow Effect */}
-                        <div className="absolute inset-0 opacity-0 group-hover/btn:opacity-100 transition-opacity duration-300 blur-xl bg-white/50" />
-                    </motion.button>
-
-                    <motion.button
-                        onClick={onMoreInfo}
-                        className="group/btn relative px-10 py-4 bg-white/10 backdrop-blur-xl border-2 border-white/30 rounded-lg font-bold text-lg text-white overflow-hidden shadow-xl"
-                        whileHover={{ scale: 1.05, backgroundColor: 'rgba(255,255,255,0.15)' }}
-                        whileTap={{ scale: 0.95 }}
-                    >
-                        <div className="relative flex items-center gap-3">
-                            <Info size={24} />
-                            <span>More Info</span>
-                        </div>
-                    </motion.button>
-                </motion.div>
+                </div>
             </div>
 
             {/* Bottom Fade */}
-            <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background to-transparent" />
+            <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background to-transparent pointer-events-none" />
         </div>
     );
 }

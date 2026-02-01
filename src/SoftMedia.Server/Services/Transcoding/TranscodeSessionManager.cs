@@ -16,9 +16,9 @@ public class TranscodeSessionManager : ITranscodeSessionManager
         return session;
     }
 
-    public TranscodeSession? GetSession(Guid mediaId, Guid userId, int? subtitleTrackIndex)
+    public TranscodeSession? GetSession(Guid mediaId, Guid userId, int? subtitleTrackIndex, string? sid = null)
     {
-        var key = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex);
+        var key = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex, sid);
         return GetSession(key);
     }
 

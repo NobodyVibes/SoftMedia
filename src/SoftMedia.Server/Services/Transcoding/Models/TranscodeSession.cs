@@ -5,7 +5,7 @@ namespace SoftMedia.Server.Services.Transcoding.Models;
 /// <summary>
 /// Key for tracking unique transcode sessions (mediaId + userId + subtitle track combination)
 /// </summary>
-public record TranscodeSessionKey(Guid MediaId, Guid UserId, int? SubtitleTrackIndex);
+public record TranscodeSessionKey(Guid MediaId, Guid UserId, int? SubtitleTrackIndex, string? StreamId = null);
 
 /// <summary>
 /// Transcode state for throttling state machine.

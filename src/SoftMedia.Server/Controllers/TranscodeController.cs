@@ -26,7 +26,7 @@ public class TranscodeController : ControllerBase
 {
     private readonly ITranscodeService _transcodeService;
     private readonly IStreamPlanService _streamPlanService;
-    private readonly AppDbContext _context;
+    private readonly IMediaRepository _mediaRepository;
     private readonly ILogger<TranscodeController> _logger;
     private readonly ITranscodeDebugService _debugService;
     private readonly IVideoPreviewService _videoPreviewService;
@@ -39,7 +39,7 @@ public class TranscodeController : ControllerBase
     public TranscodeController(
         ITranscodeService transcodeService, 
         IStreamPlanService streamPlanService,
-        AppDbContext context,
+        IMediaRepository mediaRepository,
         ITranscodeDebugService debugService,
         IVideoPreviewService videoPreviewService,
         IStreamSecurityService streamSecurityService,
@@ -49,7 +49,7 @@ public class TranscodeController : ControllerBase
     {
         _transcodeService = transcodeService;
         _streamPlanService = streamPlanService;
-        _context = context;
+        _mediaRepository = mediaRepository;
         _debugService = debugService;
         _videoPreviewService = videoPreviewService;
         _streamSecurityService = streamSecurityService;
@@ -75,9 +75,7 @@ public class TranscodeController : ControllerBase
         {
             var userId = GetUserId();
 
-            var mediaItem = await _context.MediaItems
-                .Include(m => m.Library)
-                .FirstOrDefaultAsync(m => m.Id == id);
+            var mediaItem = await _mediaRepository.GetByIdWithLibraryAsync(id);
 
             if (mediaItem?.Library == null) return NotFound("Media item not found");
 
@@ -103,13 +101,13 @@ public class TranscodeController : ControllerBase
     }
 
     [HttpGet("{id}/master.m3u8")]
-    public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null, [FromQuery] string? resolution = null, [FromQuery] string? codec = null, [FromQuery] bool? hdr = null, [FromQuery] int? audio = null, [FromQuery] int? bitrate = null, [FromQuery] bool? burnSubtitles = null)
+    public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null, [FromQuery] string? resolution = null, [FromQuery] string? codec = null, [FromQuery] bool? hdr = null, [FromQuery] int? audio = null, [FromQuery] int? bitrate = null, [FromQuery] bool? burnSubtitles = null, [FromQuery] string? sid = null)
     {
         if (sub.HasValue && sub.Value < 0) sub = null;
         try
         {
             var userId = GetUserId();
-            var mediaItem = await _context.MediaItems.Include(m => m.Library).FirstOrDefaultAsync(m => m.Id == id);
+            var mediaItem = await _mediaRepository.GetByIdWithLibraryAsync(id);
             
             if (mediaItem?.Library == null) return NotFound("Media item not found");
 
@@ -119,10 +117,10 @@ public class TranscodeController : ControllerBase
 
             _logger.LogInformation("Starting transcode for media {Id} (user={UserId})", id, userId);
             
-            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr, audioTrack: audio, maxBitrate: bitrate, burnSubtitles: burnSubtitles);
+            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr, audioTrack: audio, maxBitrate: bitrate, burnSubtitles: burnSubtitles, sid: sid);
 
             var token = Request.GetToken();
-            return await _streamResultService.GenerateMasterPlaylistResultAsync(id, userId, sub, token);
+            return await _streamResultService.GenerateMasterPlaylistResultAsync(id, userId, sub, token, sid);
         }
         catch (Exception ex)
         {
@@ -132,27 +130,27 @@ public class TranscodeController : ControllerBase
     }
 
     [HttpGet("{id}/{segment}")]
-    public IActionResult GetSegment(Guid id, string segment, [FromQuery] int? sub = null)
+    public IActionResult GetSegment(Guid id, string segment, [FromQuery] int? sub = null, [FromQuery] string? sid = null)
     {
         if (sub.HasValue && sub.Value < 0) sub = null;
         try
         {
             var userId = GetUserId();
             // Throttling Logic delegated to service
-            _sessionService.UpdateClientPosition(id, userId, sub, segment);
-            return _streamResultService.GetSegmentResult(id, userId, sub, segment);
+            _sessionService.UpdateClientPosition(id, userId, sub, segment, sid);
+            return _streamResultService.GetSegmentResult(id, userId, sub, segment, sid);
         }
         catch (UnauthorizedAccessException) { return Unauthorized(); }
     }
 
     [HttpGet("{id}/init.mp4")]
-    public IActionResult GetInitSegment(Guid id, [FromQuery] int? sub = null)
+    public IActionResult GetInitSegment(Guid id, [FromQuery] int? sub = null, [FromQuery] string? sid = null)
     {
         if (sub.HasValue && sub.Value < 0) sub = null;
         try
         {
             var userId = GetUserId();
-            return _streamResultService.GetInitSegmentResult(id, userId, sub);
+            return _streamResultService.GetInitSegmentResult(id, userId, sub, sid);
         }
         catch (UnauthorizedAccessException) { return Unauthorized(); }
         catch (Exception ex)
@@ -163,13 +161,13 @@ public class TranscodeController : ControllerBase
     }
 
     [HttpGet("{id}/subtitles.vtt")]
-    public IActionResult GetSubtitlesVtt(Guid id, [FromQuery] int? sub = null)
+    public IActionResult GetSubtitlesVtt(Guid id, [FromQuery] int? sub = null, [FromQuery] string? sid = null)
     {
         if (sub.HasValue && sub.Value < 0) sub = null;
         try
         {
             var userId = GetUserId();
-            return _streamResultService.GetSubtitleResult(id, userId, sub);
+            return _streamResultService.GetSubtitleResult(id, userId, sub, sid);
         }
         catch (UnauthorizedAccessException) { return Unauthorized(); }
         catch (Exception ex)
@@ -180,51 +178,51 @@ public class TranscodeController : ControllerBase
     }
 
     [HttpPost("{id}/pause")]
-    public IActionResult Pause(Guid id, [FromQuery] int? sub = null)
+    public IActionResult Pause(Guid id, [FromQuery] int? sub = null, [FromQuery] string? sid = null)
     {
         if (sub.HasValue && sub.Value < 0) sub = null;
         try
         {
-            var result = _sessionService.PauseSession(id, GetUserId(), sub);
+            var result = _sessionService.PauseSession(id, GetUserId(), sub, sid);
             return ResultToActionResult(result);
         }
         catch (UnauthorizedAccessException) { return Unauthorized(); }
     }
 
     [HttpPost("{id}/resume")]
-    public IActionResult Resume(Guid id, [FromQuery] int? sub = null)
+    public IActionResult Resume(Guid id, [FromQuery] int? sub = null, [FromQuery] string? sid = null)
     {
         if (sub.HasValue && sub.Value < 0) sub = null;
         try
         {
-            var result = _sessionService.ResumeSession(id, GetUserId(), sub);
+            var result = _sessionService.ResumeSession(id, GetUserId(), sub, sid);
             return ResultToActionResult(result);
         }
         catch (UnauthorizedAccessException) { return Unauthorized(); }
     }
 
     [HttpDelete("{id}")]
-    public IActionResult StopTranscode(Guid id, [FromQuery] int? sub = null, [FromQuery] bool all = false)
+    public IActionResult StopTranscode(Guid id, [FromQuery] int? sub = null, [FromQuery] bool all = false, [FromQuery] string? sid = null)
     {
         if (sub.HasValue && sub.Value < 0) sub = null;
         try
         {
             var userId = GetUserId();
             if (all) _sessionService.StopAllSessions(id, userId);
-            else _sessionService.StopSession(id, userId, sub);
+            else _sessionService.StopSession(id, userId, sub, sid);
             return Ok();
         }
         catch (UnauthorizedAccessException) { return Unauthorized(); }
     }
 
     [HttpPost("{id}/stop")]
-    public IActionResult StopTranscodePost(Guid id, [FromQuery] int? sub = null, [FromQuery] bool all = false)
+    public IActionResult StopTranscodePost(Guid id, [FromQuery] int? sub = null, [FromQuery] bool all = false, [FromQuery] string? sid = null)
     {
-        return StopTranscode(id, sub, all);
+        return StopTranscode(id, sub, all, sid);
     }
 
     [HttpPost("{id}/debug")]
-    public async Task<IActionResult> GetPlaybackDebug(Guid id, [FromBody] ClientCapabilities? clientCaps, [FromQuery] int? sub = null)
+    public async Task<IActionResult> GetPlaybackDebug(Guid id, [FromBody] ClientCapabilities? clientCaps, [FromQuery] int? sub = null, [FromQuery] string? sid = null)
     {
         try
         {

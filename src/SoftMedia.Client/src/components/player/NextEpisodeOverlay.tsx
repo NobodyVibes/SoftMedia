@@ -93,7 +93,6 @@ export function NextEpisodeOverlay({
     // Handle rating change
     const handleRating = useCallback((newRating: number) => {
         setRating(newRating);
-        setIsPaused(true); // Pause countdown while rating
         onRateCurrent(newRating);
     }, [onRateCurrent]);
 
@@ -252,8 +251,8 @@ export function NextEpisodeOverlay({
                                     className="w-full h-full object-cover"
                                 />
                             ) : (
-                                <div className="w-full h-full flex items-center justify-center text-gray-400">
-                                    <Play size={24} />
+                                <div className="flex h-full w-full items-center justify-center bg-slate-800 text-slate-500">
+                                    <span className="text-2xl font-thin opacity-50">?</span>
                                 </div>
                             )}
                         </div>

@@ -10,6 +10,11 @@ public interface IMediaRepository
     Task<MediaItem?> GetByIdWithLibraryAsync(Guid id);
 
     /// <summary>
+    /// Retrieves a MediaItem by ID.
+    /// </summary>
+    Task<MediaItem?> GetByIdAsync(Guid id);
+
+    /// <summary>
     /// Retrieves all Season items for a specific Series, ordered by season number.
     /// </summary>
     Task<IEnumerable<MediaItem>> GetSeriesSeasonsAsync(Guid seriesId);
@@ -28,4 +33,25 @@ public interface IMediaRepository
     /// Checks if a MediaItem exists.
     /// </summary>
     Task<bool> ExistsAsync(Guid id);
+
+    Task<IEnumerable<(MediaItem Media, UserMediaInteraction? Interaction)>> GetSeriesEpisodesWithInteractionsAsync(Guid seriesId, Guid userId);
+    Task<IEnumerable<(MediaItem Media, UserMediaInteraction? Interaction)>> GetArtistAlbumsWithInteractionsAsync(Guid artistId, Guid userId);
+    Task<IEnumerable<(MediaItem Media, UserMediaInteraction? Interaction)>> GetAlbumTracksWithInteractionsAsync(Guid albumId, Guid userId);
+    
+    Task<IEnumerable<(Guid Id, MediaType Type)>> GetMediaIdsAndTypesByLibraryAsync(Guid libraryId);
+
+    /// <summary>
+    /// Retrieves recent media items, optionally filtered by library type.
+    /// </summary>
+    Task<IEnumerable<MediaItem>> GetRecentMediaAsync(int limit, LibraryType? type);
+
+    /// <summary>
+    /// Retrieves all episodes for a series.
+    /// </summary>
+    Task<IEnumerable<MediaItem>> GetEpisodesAsync(Guid seriesId);
+
+    /// <summary>
+    /// Retrieves multiple media items by ID.
+    /// </summary>
+    Task<IEnumerable<MediaItem>> GetByIdsAsync(IEnumerable<Guid> ids);
 }

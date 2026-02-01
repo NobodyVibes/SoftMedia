@@ -20,9 +20,9 @@ public class StreamResultService : IStreamResultService
         _logger = logger;
     }
 
-    public async Task<IActionResult> GenerateMasterPlaylistResultAsync(Guid mediaId, Guid userId, int? sub, string? token)
+    public async Task<IActionResult> GenerateMasterPlaylistResultAsync(Guid mediaId, Guid userId, int? sub, string? token, string? sid = null)
     {
-        var stream = _transcodeService.GetPlaylist(mediaId, userId, sub);
+        var stream = _transcodeService.GetPlaylist(mediaId, userId, sub, sid);
         if (stream == null)
         {
             _logger.LogWarning("Playlist not ready for {Id} - transcoding may still be starting", mediaId);
@@ -38,17 +38,17 @@ public class StreamResultService : IStreamResultService
         // Rewrite path: We consume the stream, so we must dispose it
         using (stream)
         {
-            var session = _transcodeService.GetSession(mediaId, userId, sub);
+            var session = _transcodeService.GetSession(mediaId, userId, sub, sid);
             var subtitleVttPath = session?.SubtitleVttPath;
             
-            var bytes = await _hlsManifestService.GenerateMasterPlaylistAsync(stream, token, mediaId.ToString(), sub, subtitleVttPath);
+            var bytes = await _hlsManifestService.GenerateMasterPlaylistAsync(stream, token, mediaId.ToString(), sub, subtitleVttPath, sid);
             return new FileContentResult(bytes, "application/vnd.apple.mpegurl");
         }
     }
 
-    public IActionResult GetSegmentResult(Guid mediaId, Guid userId, int? sub, string segment)
+    public IActionResult GetSegmentResult(Guid mediaId, Guid userId, int? sub, string segment, string? sid = null)
     {
-        var stream = _transcodeService.GetSegment(mediaId, userId, segment, sub);
+        var stream = _transcodeService.GetSegment(mediaId, userId, segment, sub, sid);
         if (stream == null) return new NotFoundResult();
 
         // Return correct MIME type based on segment extension
@@ -59,9 +59,9 @@ public class StreamResultService : IStreamResultService
         return new FileStreamResult(stream, mimeType);
     }
 
-    public IActionResult GetInitSegmentResult(Guid mediaId, Guid userId, int? sub)
+    public IActionResult GetInitSegmentResult(Guid mediaId, Guid userId, int? sub, string? sid = null)
     {
-        var stream = _transcodeService.GetInitSegment(mediaId, userId, sub);
+        var stream = _transcodeService.GetInitSegment(mediaId, userId, sub, sid);
         if (stream == null) 
         {
             _logger.LogWarning("Init segment not found for {Id}", mediaId);
@@ -70,17 +70,16 @@ public class StreamResultService : IStreamResultService
         return new FileStreamResult(stream, "video/mp4");
     }
 
-    public IActionResult GetSubtitleResult(Guid mediaId, Guid userId, int? sub)
+    public IActionResult GetSubtitleResult(Guid mediaId, Guid userId, int? sub, string? sid = null)
     {
-        var session = _transcodeService.GetSession(mediaId, userId, sub);
+        var stream = _transcodeService.GetSubtitlesVtt(mediaId, userId, sub, sid);
         
-        if (session?.SubtitleVttPath == null || !File.Exists(session.SubtitleVttPath))
+        if (stream == null)
         {
             _logger.LogWarning("Subtitle file not found for {Id}", mediaId);
             return new NotFoundObjectResult("Subtitle file not available");
         }
         
-        var stream = new FileStream(session.SubtitleVttPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         return new FileStreamResult(stream, "text/vtt");
     }
 }

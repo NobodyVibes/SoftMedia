@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { type MediaItem } from '../../types';
+import { type MediaItem, MediaType } from '../../types';
 import MediaCard from './MediaCard';
 
 interface HoverableMediaCardWrapperProps {
@@ -9,6 +9,7 @@ interface HoverableMediaCardWrapperProps {
     baseWidth?: number;
     expandedWidth?: number;
     height?: number;
+    width?: string | number;
     libraryType?: string;
 }
 
@@ -20,17 +21,24 @@ export default function HoverableMediaCardWrapper({
     // They are part of the prop interface for future flexibility
     baseWidth: _baseWidth = 180,
     expandedWidth: _expandedWidth,
-    height = 380,
+    height,
+    width = '100%',
     libraryType
 }: HoverableMediaCardWrapperProps) {
     const isHovered = hoveredId === item.id;
+    const isAudio = libraryType === 'Music' ||
+        item.type === MediaType.Audio ||
+        item.type === MediaType.Artist ||
+        item.type === MediaType.Album;
+
+    const finalHeight = height ?? (isAudio ? 290 : 380);
 
     return (
         <motion.div
             className="relative"
             style={{
-                width: '100%',
-                height: height,
+                width: width,
+                height: finalHeight,
                 // Maintain original position in grid
                 position: 'relative',
             }}

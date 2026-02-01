@@ -239,6 +239,16 @@ public class MetadataAggregator
             {
                 item.ContentRating = contentRatingObj.ToString();
             }
+
+            // Promote Ratings to CommunityRating column
+            if (metadata.TryGetValue("imdbRating", out var imdbRatingObj) && double.TryParse(imdbRatingObj.ToString(), out var imdbRating))
+            {
+                item.CommunityRating = imdbRating;
+            }
+            else if (metadata.TryGetValue("rating", out var ratingObj) && double.TryParse(ratingObj.ToString(), out var genericRating))
+            {
+                item.CommunityRating = genericRating;
+            }
                 
             if (metadata.TryGetValue("releaseDate", out var releaseDateObj) && DateTime.TryParse(releaseDateObj.ToString(), out var releaseDate))
             {
@@ -268,6 +278,7 @@ public class MetadataAggregator
                             MediaType.Movie => await _imageCacheService.CacheMoviePosterAsync(item.Id, posterUrl),
                             MediaType.Series => await _imageCacheService.CacheSeriesPosterAsync(item.Id, posterUrl),
                             MediaType.Audio => await _imageCacheService.CacheAlbumCoverAsync(item.Id, posterUrl),
+                            MediaType.Game => await _imageCacheService.CacheGamePosterAsync(item.Id, posterUrl),
                             _ => posterUrl
                         };
                         

@@ -14,4 +14,13 @@ public interface ILibraryRepository
     /// Retrieves a list of all unique genres in a library from JSON metadata.
     /// </summary>
     Task<IEnumerable<string>> GetLibraryGenresAsync(Guid libraryId);
+
+    Task<IEnumerable<Library>> GetAllAsync();
+    Task<Library?> GetByIdAsync(Guid id);
+    Task AddAsync(Library library);
+    Task UpdateAsync(Library library);
+    Task UpdateRangeAsync(IEnumerable<Library> libraries);
+    Task DeleteAsync(Library library);
+    Task<bool> ExistsAsync(Guid id);
+    Task<bool> IsPathUsedAsync(string path);
 }

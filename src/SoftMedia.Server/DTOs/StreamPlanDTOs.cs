@@ -66,6 +66,11 @@ public class ClientCapabilities
     /// Index of the subtitle track to be burned in (if any).
     /// </summary>
     public int? SubtitleTrackIndex { get; set; } = null;
+
+    /// <summary>
+    /// Unique identifier for this specific playback stream (to isolate concurrent sessions).
+    /// </summary>
+    public string? StreamId { get; set; } = null;
 }
 
 

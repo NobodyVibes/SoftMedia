@@ -10,7 +10,7 @@ namespace SoftMedia.Server.Services.Transcoding;
 
 public interface IHlsManifestService
 {
-    Task<byte[]> GenerateMasterPlaylistAsync(Stream basePlaylistStream, string token, string? mediaId, int? subTrackIndex, string? subtitleVttPath);
+    Task<byte[]> GenerateMasterPlaylistAsync(Stream basePlaylistStream, string token, string? mediaId, int? subTrackIndex, string? subtitleVttPath, string? sid = null);
 }
 
 public class HlsManifestService : IHlsManifestService
@@ -22,7 +22,7 @@ public class HlsManifestService : IHlsManifestService
         _logger = logger;
     }
 
-    public async Task<byte[]> GenerateMasterPlaylistAsync(Stream basePlaylistStream, string token, string? mediaId, int? subTrackIndex, string? subtitleVttPath)
+    public async Task<byte[]> GenerateMasterPlaylistAsync(Stream basePlaylistStream, string token, string? mediaId, int? subTrackIndex, string? subtitleVttPath, string? sid = null)
     {
         using var reader = new StreamReader(basePlaylistStream, leaveOpen: true);
         var content = await reader.ReadToEndAsync();
@@ -31,6 +31,7 @@ public class HlsManifestService : IHlsManifestService
         var queryParts = new List<string>();
         if (!string.IsNullOrEmpty(token)) queryParts.Add($"token={token}");
         if (subTrackIndex.HasValue) queryParts.Add($"sub={subTrackIndex.Value}");
+        if (!string.IsNullOrEmpty(sid)) queryParts.Add($"sid={sid}");
         var queryString = string.Join("&", queryParts);
         
         var hasSubtitles = !string.IsNullOrEmpty(subtitleVttPath) && File.Exists(subtitleVttPath);
@@ -43,6 +44,7 @@ public class HlsManifestService : IHlsManifestService
             var subtitleQueryParts = new List<string>();
             if (!string.IsNullOrEmpty(token)) subtitleQueryParts.Add($"token={token}");
             if (subTrackIndex.HasValue) subtitleQueryParts.Add($"sub={subTrackIndex.Value}");
+            if (!string.IsNullOrEmpty(sid)) subtitleQueryParts.Add($"sid={sid}");
             
             var subtitleUrl = $"/api/transcode/{mediaId}/subtitles.vtt?{string.Join("&", subtitleQueryParts)}";
             

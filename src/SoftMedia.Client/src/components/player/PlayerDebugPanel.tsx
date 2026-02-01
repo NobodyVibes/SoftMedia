@@ -66,22 +66,15 @@ interface PlayerDebugPanelProps {
     mediaId: string;
     token: string;
     subtitleTrack: number | null;
-    clientCapabilities?: {
-        videoCodecs?: string[];
-        audioCodecs?: string[];
-        supportsHdr?: boolean;
-        maxAudioChannels?: number;
-        maxResolution?: number;
-        requestedQuality?: string;
-    };
+    clientCapabilities?: any;
     onClose: () => void;
+    streamId?: string;
 }
 
 /**
  * Debug panel overlay showing playback decision pipeline.
- * Press 'D' key to toggle this panel during video playback.
  */
-export function PlayerDebugPanel({ mediaId, token, subtitleTrack, clientCapabilities, onClose }: PlayerDebugPanelProps) {
+export function PlayerDebugPanel({ mediaId, token, subtitleTrack, clientCapabilities, onClose, streamId }: PlayerDebugPanelProps) {
     const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -91,9 +84,10 @@ export function PlayerDebugPanel({ mediaId, token, subtitleTrack, clientCapabili
             try {
                 setLoading(true);
                 const subParam = subtitleTrack !== null ? `&sub=${subtitleTrack}` : '';
+                const sidParam = streamId ? `&sid=${streamId}` : '';
 
                 // POST request with client capabilities
-                const response = await fetch(`/api/transcode/${mediaId}/debug?token=${token}${subParam}`, {
+                const response = await fetch(`/api/transcode/${mediaId}/debug?token=${token}${subParam}${sidParam}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(clientCapabilities || {

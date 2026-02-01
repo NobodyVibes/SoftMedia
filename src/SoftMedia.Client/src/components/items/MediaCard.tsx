@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Play, ListMusic, Heart, Check, Clock, Star } from 'lucide-react';
-import { type MediaItem } from '../../types';
+import { type MediaItem, MediaType } from '../../types';
 import QualityBadge from '../ui/QualityBadge';
 import { useAudioStore } from '../../store/audioStore';
 import api from '../../services/api';
@@ -64,11 +64,14 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
     // Use the shared genre gradient or a default pleasing gradient
     const glowGradient = getGenreGradient(primaryGenre);
 
-    const isAudio = libraryType === 'Music';
-    const isMovie = libraryType === 'Movie';
+    const isAudio = libraryType === 'Music' ||
+        item.type === MediaType.Audio ||
+        item.type === MediaType.Artist ||
+        item.type === MediaType.Album;
+    const isMovie = libraryType === 'Movie' || item.type === MediaType.Movie;
     // For TV: if it has an episodeNumber, it's an episode; otherwise treat as a series
-    const isTVEpisode = libraryType === 'TV' && !!item.episodeNumber;
-    const isTVSeries = libraryType === 'TV' && !item.episodeNumber;
+    const isTVEpisode = (libraryType === 'TV' && !!item.episodeNumber) || item.type === MediaType.Episode;
+    const isTVSeries = (libraryType === 'TV' && !item.episodeNumber) || item.type === MediaType.Series;
 
     // Logic for "New" Badge (14 days threshold)
     const isNew = (() => {
@@ -126,7 +129,7 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
             <div className="flex flex-col h-full bg-[#1a1d21]/95 backdrop-blur-sm rounded-xl border border-white/5 overflow-hidden group-hover/card:border-white/20 transition-all duration-300 shadow-lg group-hover/card:shadow-2xl ring-1 ring-black/50">
 
                 {/* Poster Section relative wrapper */}
-                <div className="relative aspect-[2/3] w-full bg-gray-900 overflow-hidden">
+                <div className={`relative ${isAudio ? 'aspect-square' : 'aspect-[2/3]'} w-full bg-gray-900 overflow-hidden`}>
                     {/* Poster Image */}
                     <LoadingImage
                         src={item.posterPath}
@@ -230,27 +233,59 @@ export default function MediaCard({ item, libraryType }: MediaCardProps) {
                                 </span>
                             )}
 
-                            {item.userRating ? (
-                                <div className="flex items-center gap-1 px-1.5 py-[1px] border border-yellow-500/30 bg-yellow-500/10 rounded-[4px]">
-                                    <Star className="w-2.5 h-2.5 text-yellow-500 fill-current" />
-                                    <span className="text-[10px] text-yellow-500 font-bold tracking-wide">
-                                        {item.userRating}
-                                    </span>
-                                </div>
-                            ) : item.communityRating ? (
-                                <div className="flex items-center gap-1 px-1.5 py-[1px] border border-white/10 bg-white/5 rounded-[4px]">
-                                    <Star className="w-2.5 h-2.5 text-gray-400 fill-current" />
-                                    <span className="text-[10px] text-gray-400 font-semibold tracking-wide">
-                                        {item.communityRating.toFixed(1)}
-                                    </span>
+                            {(isMovie || isTVSeries || isTVEpisode) ? (
+                                <div className="flex items-center gap-1.5">
+                                    {item.communityRating && item.communityRating > 0 && (
+                                        <div className="flex items-center gap-1 px-1.5 py-[1px] bg-yellow-500/10 border border-yellow-500/30 rounded-[4px] text-yellow-500">
+                                            <Star className="w-2.5 h-2.5 fill-current" />
+                                            <span className="text-[10px] font-bold tracking-tight">
+                                                {item.communityRating.toFixed(1)}
+                                            </span>
+                                        </div>
+                                    )}
+                                    {item.userRating && item.userRating > 0 && (
+                                        <div className="flex items-center gap-1 px-1.5 py-[1px] bg-violet-500/10 border border-violet-500/30 rounded-[4px] text-violet-400">
+                                            <Star className="w-2.5 h-2.5 fill-current" />
+                                            <span className="text-[10px] font-bold tracking-tight">
+                                                {item.userRating}
+                                            </span>
+                                        </div>
+                                    )}
+                                    {!item.communityRating && !item.userRating && (
+                                        <div className="flex items-center gap-1 px-1.5 py-[1px] border border-white/5 bg-white/5 rounded-[4px]">
+                                            <Star className="w-2.5 h-2.5 text-gray-600" />
+                                            <span className="text-[10px] text-gray-500 font-semibold tracking-wide">
+                                                N/A
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
                             ) : (
-                                <div className="flex items-center gap-1 px-1.5 py-[1px] border border-white/5 bg-white/5 rounded-[4px]">
-                                    <Star className="w-2.5 h-2.5 text-gray-600" />
-                                    <span className="text-[10px] text-gray-500 font-semibold tracking-wide">
-                                        N/A
-                                    </span>
-                                </div>
+                                // Original fallback for other types (Music, etc)
+                                <>
+                                    {item.userRating ? (
+                                        <div className="flex items-center gap-1 px-1.5 py-[1px] border border-yellow-500/30 bg-yellow-500/10 rounded-[4px]">
+                                            <Star className="w-2.5 h-2.5 text-yellow-500 fill-current" />
+                                            <span className="text-[10px] text-yellow-500 font-bold tracking-wide">
+                                                {item.userRating}
+                                            </span>
+                                        </div>
+                                    ) : item.communityRating ? (
+                                        <div className="flex items-center gap-1 px-1.5 py-[1px] border border-white/10 bg-white/5 rounded-[4px]">
+                                            <Star className="w-2.5 h-2.5 text-gray-400 fill-current" />
+                                            <span className="text-[10px] text-gray-400 font-semibold tracking-wide">
+                                                {item.communityRating.toFixed(1)}
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center gap-1 px-1.5 py-[1px] border border-white/5 bg-white/5 rounded-[4px]">
+                                            <Star className="w-2.5 h-2.5 text-gray-600" />
+                                            <span className="text-[10px] text-gray-500 font-semibold tracking-wide">
+                                                N/A
+                                            </span>
+                                        </div>
+                                    )}
+                                </>
                             )}
                         </div>
                     </div>

@@ -15,6 +15,9 @@ interface Season {
 
 interface TVDetailViewProps {
     item: MediaItem;
+    selectedEpisodeId?: string | null;
+    onEpisodeSelect?: (episode: MediaItem) => void;
+    onDefaultQualityItemFound?: (episode: MediaItem) => void;
 }
 
 // Loading image component with skeleton placeholder and fade-in transition
@@ -74,7 +77,7 @@ function LoadingImage({
 
 import HorizontalScrollList from '../ui/HorizontalScrollList';
 
-export default function TVDetailView({ item }: TVDetailViewProps) {
+export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect, onDefaultQualityItemFound }: TVDetailViewProps) {
     const metadata = item.metadata || {};
     const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
     const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards');
@@ -151,6 +154,22 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
         });
     }, [currentEpisodes, item.posterPath]);
 
+    // Find a default quality item (representative episode) if none is selected
+    useEffect(() => {
+        if (!episodes || episodes.length === 0 || !onDefaultQualityItemFound) return;
+
+        // Use the first episode of the first season as the default representative
+        // (assuming episodes are sorted or we find the lowest season/episode)
+        const firstSeasonNum = seasonNumbers[0];
+        if (firstSeasonNum === undefined) return;
+
+        const firstSeasonEpisodes = seasons[firstSeasonNum];
+        if (firstSeasonEpisodes && firstSeasonEpisodes.length > 0) {
+            const representativeEp = firstSeasonEpisodes[0];
+            onDefaultQualityItemFound(representativeEp);
+        }
+    }, [episodes, seasonNumbers, seasons, onDefaultQualityItemFound]);
+
     const getEpisodePoster = (ep: MediaItem) => {
         const epMeta = ep.metadata || {};
         const stillUrl = epMeta.still;
@@ -179,12 +198,30 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
 
     const getResolutionBadge = (ep: MediaItem) => {
         const resolution = ep.resolution || ep.metadata?.resolution;
-        if (!resolution) return null;
-        const res = resolution.toLowerCase();
-        if (res.includes('2160') || res.includes('4k') || res.includes('uhd')) return '4K';
-        if (res.includes('1080')) return 'FHD';
-        if (res.includes('720')) return 'HD';
-        if (res.includes('480') || res.includes('sd')) return 'SD';
+
+        // Use explicit resolution string if available as primary source
+        if (resolution) {
+            const res = resolution.toLowerCase();
+            if (res.includes('2160') || res.includes('4k') || res.includes('uhd')) return '4K';
+            if (res.includes('1080') || res.includes('fhd')) return 'FHD';
+            if (res.includes('720') || res.includes('hd')) return 'HD';
+            if (res.includes('480') || res.includes('sd')) return 'SD';
+        }
+
+        // Fallback to dimensions check for irregular aspect ratios (e.g. 3840x1600)
+        const h = ep.height || ep.metadata?.height || 0;
+        const w = ep.width || ep.metadata?.width || 0;
+
+        if (h >= 4300 || w >= 7600) return '8K';
+        if (h >= 2100 || w >= 3800) return '4K';
+        if (h >= 1400 || w >= 2500) return '1440p';
+        if (h >= 1000 || w >= 1900) return 'FHD';
+        if (h >= 700 || w >= 1260) return 'HD';
+        if (h >= 480 || w >= 840) return '480p';
+        if (h >= 360) return '360p';
+        if (h >= 240) return '240p';
+        return 'SD';
+
         return null;
     };
 
@@ -222,66 +259,76 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
         const resBadge = getResolutionBadge(ep);
         const { resumeSeconds, progressPercent } = getEpisodeProgress(ep);
         const hasProgress = progressPercent > 0 && progressPercent < 100;
+        const isSelected = selectedEpisodeId === ep.id;
 
         return (
-            <Link to={`/play/${ep.id}`} className="group flex-shrink-0 w-72">
-                <div className="relative rounded-xl overflow-hidden bg-white/5 border border-white/10 hover:border-violet-500/50 transition-all hover:shadow-lg hover:shadow-violet-500/10">
-                    <div className="relative aspect-video bg-gradient-to-br from-gray-800 to-gray-900">
-                        <LoadingImage
-                            src={getEpisodePoster(ep)}
-                            alt={ep.title}
-                            className="w-full h-full object-cover"
-                            fallback={
-                                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
-                                    <span className="text-4xl text-gray-600">{ep.episodeNumber}</span>
-                                </div>
-                            }
-                        />
-                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <div className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
+            <div
+                onClick={() => onEpisodeSelect?.(ep)}
+                className={`group flex-shrink-0 w-72 cursor-pointer transition-all rounded-xl border ${isSelected ? 'border-violet-500 bg-white/10 shadow-lg shadow-violet-500/20' : 'bg-white/5 border-white/10 hover:border-violet-500/50 hover:bg-white/10 hover:shadow-lg hover:shadow-violet-500/10'}`}
+            >
+                <div className="relative rounded-xl overflow-hidden aspect-video bg-gradient-to-br from-gray-800 to-gray-900 mx-1 mt-1">
+                    <LoadingImage
+                        src={getEpisodePoster(ep)}
+                        alt={ep.title}
+                        className="w-full h-full object-cover"
+                        fallback={
+                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
+                                <span className="text-4xl text-gray-600">{ep.episodeNumber}</span>
+                            </div>
+                        }
+                    />
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                        <div className="pointer-events-auto">
+                            <Link
+                                to={`/play/${ep.id}`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="flex items-center justify-center w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30 transition-colors"
+                            >
                                 <Play className="w-7 h-7 text-white fill-current" />
-                            </div>
+                            </Link>
                         </div>
-                        {hasProgress && (
-                            <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
-                                <div className="h-full bg-gradient-to-r from-blue-500 to-violet-500" style={{ width: `${progressPercent}%` }} />
-                            </div>
+                    </div>
+                    {hasProgress && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
+                            <div className="h-full bg-gradient-to-r from-blue-500 to-violet-500" style={{ width: `${progressPercent}%` }} />
+                        </div>
+                    )}
+                </div>
+                <div className="p-3">
+                    <h4 className={`text-sm font-medium line-clamp-1 transition-colors ${isSelected ? 'text-violet-400' : 'text-white group-hover:text-violet-400'}`}>
+                        {ep.title}
+                    </h4>
+                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                        <span className="px-2 py-0.5 rounded bg-white/10 text-xs font-bold text-white">E{ep.episodeNumber}</span>
+                        {resBadge && (
+                            <span className={`px-2 py-0.5 rounded text-xs font-bold ${resBadge === '8K' ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white' :
+                                resBadge === '4K' ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white' :
+                                    resBadge === '1440p' ? 'bg-cyan-600 text-white' :
+                                        resBadge === 'FHD' ? 'bg-blue-600 text-white' :
+                                            resBadge === 'HD' ? 'bg-green-600 text-white' : 'bg-gray-600 text-white'
+                                }`}>{resBadge}</span>
+                        )}
+                        {ep.watched && (
+                            <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-green-600 text-xs font-bold text-white">
+                                <Check className="w-3 h-3" />Watched
+                            </span>
                         )}
                     </div>
-                    <div className="p-3">
-                        <h4 className="text-white font-medium text-sm line-clamp-1 group-hover:text-violet-400 transition-colors">
-                            {ep.title}
-                        </h4>
-                        <div className="flex items-center gap-2 mt-2 flex-wrap">
-                            <span className="px-2 py-0.5 rounded bg-white/10 text-xs font-bold text-white">E{ep.episodeNumber}</span>
-                            {resBadge && (
-                                <span className={`px-2 py-0.5 rounded text-xs font-bold ${resBadge === '4K' ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white' :
-                                    resBadge === 'FHD' ? 'bg-blue-600 text-white' :
-                                        resBadge === 'HD' ? 'bg-green-600 text-white' : 'bg-gray-600 text-white'
-                                    }`}>{resBadge}</span>
-                            )}
-                            {ep.watched && (
-                                <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-green-600 text-xs font-bold text-white">
-                                    <Check className="w-3 h-3" />Watched
-                                </span>
-                            )}
-                        </div>
-                        <div className="flex items-center gap-2 mt-1.5 text-xs text-gray-400">
-                            {ep.duration && (
-                                <span>
-                                    {hasProgress && <span className="text-violet-400">{formatTime(resumeSeconds)}</span>}
-                                    {hasProgress ? ' / ' : ''}{ep.duration}
-                                </span>
-                            )}
-                            {ep.userRating && (
-                                <span className="flex items-center gap-1 text-yellow-500">
-                                    <Star className="w-3 h-3 fill-current" />{ep.userRating}
-                                </span>
-                            )}
-                        </div>
+                    <div className="flex items-center gap-2 mt-1.5 text-xs text-gray-400">
+                        {ep.duration && (
+                            <span>
+                                {hasProgress && <span className="text-violet-400">{formatTime(resumeSeconds)}</span>}
+                                {hasProgress ? ' / ' : ''}{ep.duration}
+                            </span>
+                        )}
+                        {ep.userRating && (
+                            <span className="flex items-center gap-1 text-yellow-500">
+                                <Star className="w-3 h-3 fill-current" />{ep.userRating}
+                            </span>
+                        )}
                     </div>
                 </div>
-            </Link>
+            </div>
         );
     };
 
@@ -290,9 +337,13 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
         const resBadge = getResolutionBadge(ep);
         const { resumeSeconds, progressPercent } = getEpisodeProgress(ep);
         const hasProgress = progressPercent > 0 && progressPercent < 100;
+        const isSelected = selectedEpisodeId === ep.id;
 
         return (
-            <Link to={`/play/${ep.id}`} className="group flex items-center gap-4 p-3 rounded-xl bg-white/5 border border-white/10 hover:border-violet-500/50 hover:bg-white/10 transition-all">
+            <div
+                onClick={() => onEpisodeSelect?.(ep)}
+                className={`group flex items-center gap-4 p-3 rounded-xl border transition-all cursor-pointer ${isSelected ? 'border-violet-500 bg-white/10' : 'bg-white/5 border-white/10 hover:border-violet-500/50 hover:bg-white/10'}`}
+            >
                 {/* Thumbnail */}
                 <div className="relative w-40 aspect-video rounded-lg overflow-hidden flex-shrink-0">
                     <LoadingImage
@@ -316,15 +367,17 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                         <span className="px-2 py-0.5 rounded bg-white/10 text-xs font-bold text-white">E{ep.episodeNumber}</span>
-                        <h4 className="text-white font-medium text-sm line-clamp-1 group-hover:text-violet-400 transition-colors">
+                        <h4 className={`font-medium text-sm line-clamp-1 transition-colors ${isSelected ? 'text-violet-400' : 'text-white group-hover:text-violet-400'}`}>
                             {ep.title}
                         </h4>
                     </div>
                     <div className="flex items-center gap-3 mt-1.5">
                         {resBadge && (
-                            <span className={`px-2 py-0.5 rounded text-xs font-bold ${resBadge === '4K' ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white' :
-                                resBadge === 'FHD' ? 'bg-blue-600 text-white' :
-                                    resBadge === 'HD' ? 'bg-green-600 text-white' : 'bg-gray-600 text-white'
+                            <span className={`px-2 py-0.5 rounded text-xs font-bold ${resBadge === '8K' ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white' :
+                                resBadge === '4K' ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white' :
+                                    resBadge === '1440p' ? 'bg-cyan-600 text-white' :
+                                        resBadge === 'FHD' ? 'bg-blue-600 text-white' :
+                                            resBadge === 'HD' ? 'bg-green-600 text-white' : 'bg-gray-600 text-white'
                                 }`}>{resBadge}</span>
                         )}
                         {ep.watched && (
@@ -347,10 +400,14 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
                 </div>
 
                 {/* Play Button */}
-                <div className="w-10 h-10 rounded-full bg-violet-600/20 flex items-center justify-center group-hover:bg-violet-600 transition-colors">
+                <Link
+                    to={`/play/${ep.id}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-10 h-10 rounded-full bg-violet-600/20 flex items-center justify-center group-hover:bg-violet-600 transition-colors"
+                >
                     <Play className="w-5 h-5 text-violet-400 group-hover:text-white fill-current" />
-                </div>
-            </Link>
+                </Link>
+            </div>
         );
     };
 
@@ -483,7 +540,7 @@ export default function TVDetailView({ item }: TVDetailViewProps) {
                                     <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-blue-600/30 to-violet-600/30 border-2 border-white/10 group-hover:border-violet-500/50 transition-all overflow-hidden flex items-center justify-center">
                                         {actor.image ? (
                                             <img
-                                                src={`/api/v1/image/proxy?url=${encodeURIComponent(actor.image)}`}
+                                                src={actor.image.startsWith('/cache/') ? actor.image : `/api/v1/image/proxy?url=${encodeURIComponent(actor.image)}`}
                                                 alt={actor.name}
                                                 className="w-full h-full object-cover"
                                             />

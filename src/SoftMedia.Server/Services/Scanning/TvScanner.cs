@@ -5,6 +5,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Metadata;
 using System.Text.Json;
 
@@ -16,7 +17,7 @@ namespace SoftMedia.Server.Services.Scanning;
 public class TvScanner : BaseMediaScanner
 {
     private readonly IBackgroundImageCacheService _backgroundImageCache;
-    private readonly IMediaProbeService _mediaProbeService;
+    private readonly IMediaAnalysisService _mediaAnalysisService;
 
     // Supported video extensions
     private static readonly string[] VideoExtensions =
@@ -40,11 +41,11 @@ public class TvScanner : BaseMediaScanner
         ILogger<TvScanner> logger,
         IMediaNotificationService notificationService,
         IBackgroundImageCacheService backgroundImageCache,
-        IMediaProbeService mediaProbeService)
+        IMediaAnalysisService mediaAnalysisService)
         : base(scopeFactory, logger, notificationService)
     {
         _backgroundImageCache = backgroundImageCache;
-        _mediaProbeService = mediaProbeService;
+        _mediaAnalysisService = mediaAnalysisService;
     }
 
     /// <summary>
@@ -115,9 +116,6 @@ public class TvScanner : BaseMediaScanner
             // Ensure season exists
             var season = await EnsureSeasonAsync(context, series, seasonNum, library, cancellationToken);
 
-            // Probe media for technical metadata
-            var probe = await _mediaProbeService.ProbeMediaAsync(filePath);
-            
             // Create or update episode
             var isNew = existing == null;
             var episode = existing ?? new MediaItem { LibraryId = library.Id };
@@ -143,41 +141,9 @@ public class TvScanner : BaseMediaScanner
             episode.Size = new FileInfo(filePath).Length;
             episode.DateModified = File.GetLastWriteTimeUtc(filePath);
 
-            // Populate technical metadata
-            if (probe != null)
-            {
-                episode.Duration = probe.Duration;
-                episode.VideoCodec = probe.VideoCodec;
-                episode.AudioCodec = probe.AudioCodec;
-                episode.Resolution = probe.Resolution;
-                episode.Container = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
-
-                // Persist technical metadata (chapters/credits)
-                var meta = !string.IsNullOrEmpty(episode.MetadataJson)
-                    ? JsonSerializer.Deserialize<Dictionary<string, object>>(episode.MetadataJson) ?? new Dictionary<string, object>()
-                    : new Dictionary<string, object>();
-                
-                bool metaModified = false;
-
-                if (probe.CreditsStart.HasValue)
-                {
-                    meta["creditsStart"] = probe.CreditsStart.Value;
-                    metaModified = true;
-                }
-
-                if (probe.Chapters != null && probe.Chapters.Count > 0)
-                {
-                    // Serialize as anonymous objects to get camelCase keys expected by DTO
-                    var chaptersList = probe.Chapters.Select(c => new { startTime = c.StartTime, title = c.Title }).ToList();
-                    meta["chapters"] = chaptersList;
-                    metaModified = true;
-                }
-
-                if (metaModified)
-                {
-                    episode.MetadataJson = JsonSerializer.Serialize(meta);
-                }
-            }
+            // Delegate technical analysis to MediaAnalysisService (Smart Probe)
+            var refreshMode = isNew ? MetadataRefreshMode.Full : MetadataRefreshMode.Missing;
+            await _mediaAnalysisService.AnalyzeAsync(episode, filePath, refreshMode, cancellationToken);
 
             // Populate episode metadata from series (still image, summary, airdate)
             PopulateEpisodeMetadata(episode, series, seasonNum, episodeNum);

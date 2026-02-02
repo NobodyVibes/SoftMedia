@@ -45,11 +45,42 @@ export interface MediaItem {
     // Timecode markers
     creditsStart?: number; // Seconds from start where credits begin
     chapters?: Chapter[]; // All chapter markers
+
+    // Phase 2: Extended Quality Metadata
+    bitDepth?: number; // 8, 10, 12 bit
+    hdrFormat?: string; // "HDR10", "HDR10+", "Dolby Vision", "HLG", null for SDR
+    audioChannels?: number; // Primary audio channel count
+    bitrate?: number; // bits/second
+    frameRate?: number; // fps
+    width?: number; // Video width in pixels
+    height?: number; // Video height in pixels
+    audioTracks?: AudioTrack[]; // All audio tracks
+    subtitleTracks?: SubtitleTrack[]; // All subtitle tracks
 }
 
 export interface Chapter {
     startTime: number;
     title: string;
+}
+
+// Phase 2: Extended track info types
+export interface AudioTrack {
+    index: number;
+    codec?: string;
+    language?: string;
+    channels: number;
+    channelLayout?: string; // "stereo", "5.1", "7.1"
+    title?: string;
+    isDefault: boolean;
+}
+
+export interface SubtitleTrack {
+    index: number;
+    codec?: string; // "srt", "ass", "pgs"
+    language?: string;
+    title?: string;
+    isDefault: boolean;
+    isForced: boolean;
 }
 
 export const MediaType = {

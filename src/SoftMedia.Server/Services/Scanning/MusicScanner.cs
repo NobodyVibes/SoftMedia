@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Media;
 using TagLib;
 
 namespace SoftMedia.Server.Services.Scanning;
@@ -14,6 +15,7 @@ namespace SoftMedia.Server.Services.Scanning;
 public class MusicScanner : BaseMediaScanner
 {
     private readonly IBackgroundImageCacheService _backgroundImageCache;
+    private readonly IMediaAnalysisService _mediaAnalysisService;
 
     // Session caches to avoid duplicate entity creation
     private Dictionary<string, MediaItem> _artistCache = new(StringComparer.OrdinalIgnoreCase);
@@ -48,10 +50,12 @@ public class MusicScanner : BaseMediaScanner
         IServiceScopeFactory scopeFactory,
         ILogger<MusicScanner> logger,
         IMediaNotificationService notificationService,
-        IBackgroundImageCacheService backgroundImageCache)
+        IBackgroundImageCacheService backgroundImageCache,
+        IMediaAnalysisService mediaAnalysisService)
         : base(scopeFactory, logger, notificationService)
     {
         _backgroundImageCache = backgroundImageCache;
+        _mediaAnalysisService = mediaAnalysisService;
     }
 
     /// <summary>

@@ -9,6 +9,7 @@ using SoftMedia.Server.Services.Transcoding;
 using SoftMedia.Server.Services.Metadata;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Background;
+using SoftMedia.Server.Services.Media.Strategies;
 using SoftMedia.Server.Hubs;
 using SoftMedia.Server.Helpers;
 
@@ -95,6 +96,11 @@ public static class ServiceCollectionExtensions
         services.AddScoped<EmbeddedMusicProvider>(); 
         services.AddScoped<MetadataAggregator>();
         services.AddScoped<IMetadataRouter, MetadataRouter>();
+
+        // Media Analysis Strategies (Strategy Pattern for type-specific analysis)
+        services.AddScoped<IMediaAnalysisStrategy, VideoAnalysisStrategy>();
+        services.AddScoped<IMediaAnalysisStrategy, AudioAnalysisStrategy>();
+        services.AddScoped<IMediaAnalysisService, MediaAnalysisService>();
 
         // Media & Transcoding Services
         services.AddScoped<IFFmpegService, FFmpegService>();

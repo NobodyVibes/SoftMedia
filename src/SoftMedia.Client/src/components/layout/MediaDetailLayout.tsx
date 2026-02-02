@@ -6,6 +6,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
 import { type MediaItem, MediaType } from '../../types';
 import QualityBadge from '../ui/QualityBadge';
+import MediaQualityInfo from '../ui/MediaQualityInfo';
 import { StarRating } from '../ui/StarRating';
 import { cn } from '../../lib/utils';
 import { getGenreColors } from '../../lib/genreColors';
@@ -14,9 +15,10 @@ interface MediaDetailLayoutProps {
     item: MediaItem;
     children: ReactNode;
     onPlay?: () => void;
+    qualityItem?: MediaItem | null;
 }
 
-export default function MediaDetailLayout({ item, children, onPlay }: MediaDetailLayoutProps) {
+export default function MediaDetailLayout({ item, children, onPlay, qualityItem }: MediaDetailLayoutProps) {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
 
@@ -93,6 +95,60 @@ export default function MediaDetailLayout({ item, children, onPlay }: MediaDetai
                                 </div>
                             )}
                         </motion.div>
+
+                        {/* Actions Sidebar */}
+                        <motion.div
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.2 }}
+                            className="mt-6 flex flex-col gap-4"
+                        >
+                            <button
+                                onClick={onPlay}
+                                className="relative z-50 w-full flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-violet-600 text-white rounded-xl font-bold shadow-lg shadow-violet-500/40 hover:scale-[1.02] active:scale-95 text-lg opacity-100"
+                            >
+                                <Play className="w-6 h-6 fill-current" />
+                                Play
+                            </button>
+
+                            <div className="flex items-center justify-between px-2">
+                                <button
+                                    onClick={() => favoriteMutation.mutate(!item.isFavorite)}
+                                    className="group"
+                                    title="Favorite"
+                                >
+                                    <div className={cn(
+                                        "p-3 rounded-full transition-all group-hover:scale-110 active:scale-95",
+                                        item.isFavorite
+                                            ? "bg-red-500/20 text-red-500"
+                                            : "bg-white/5 hover:bg-white/10 text-white"
+                                    )}>
+                                        <Heart className={cn("w-5 h-5", item.isFavorite && "fill-current")} />
+                                    </div>
+                                </button>
+
+                                <button
+                                    onClick={() => watchedMutation.mutate(!item.watched)}
+                                    className="group"
+                                    title={item.watched ? "Mark as unwatched" : "Mark as watched"}
+                                >
+                                    <div className={cn(
+                                        "p-3 rounded-full transition-all group-hover:scale-110 active:scale-95",
+                                        item.watched
+                                            ? "bg-green-500/20 text-green-500"
+                                            : "bg-white/5 hover:bg-white/10 text-white"
+                                    )}>
+                                        <Eye className="w-5 h-5" />
+                                    </div>
+                                </button>
+
+                                <button className="group" title="Share">
+                                    <div className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-white transition-all group-hover:scale-110 active:scale-95">
+                                        <Share2 className="w-5 h-5" />
+                                    </div>
+                                </button>
+                            </div>
+                        </motion.div>
                     </div>
 
                     {/* Info Column - Title, Rating, Actions, Description */}
@@ -167,7 +223,7 @@ export default function MediaDetailLayout({ item, children, onPlay }: MediaDetai
 
                             {/* Genres */}
                             {item.genres && item.genres.length > 0 && (
-                                <div className="flex flex-wrap gap-2 mb-8">
+                                <div className="flex flex-wrap gap-2 mb-6">
                                     {item.genres.map(genre => {
                                         const colors = getGenreColors(genre);
                                         return (
@@ -182,45 +238,11 @@ export default function MediaDetailLayout({ item, children, onPlay }: MediaDetai
                                 </div>
                             )}
 
+                            {/* Extended Quality Info */}
+                            <MediaQualityInfo item={qualityItem || item} className="mb-8" />
+
                             {/* Actions */}
-                            <div className="flex flex-wrap gap-4 mb-8">
-                                <button
-                                    onClick={onPlay}
-                                    className="flex items-center gap-2 px-8 py-3 bg-primary hover:bg-primary/90 text-white rounded-full font-bold transition-all shadow-lg shadow-primary/20 hover:scale-105 active:scale-95"
-                                >
-                                    <Play className="w-5 h-5 fill-current" />
-                                    Play
-                                </button>
 
-                                <button
-                                    onClick={() => favoriteMutation.mutate(!item.isFavorite)}
-                                    className={cn(
-                                        "p-3 rounded-full transition-all hover:scale-105 active:scale-95",
-                                        item.isFavorite
-                                            ? "bg-red-500/20 text-red-500 hover:bg-red-500/30"
-                                            : "bg-white/10 hover:bg-white/20 text-white"
-                                    )}
-                                >
-                                    <Heart className={cn("w-5 h-5", item.isFavorite && "fill-current")} />
-                                </button>
-
-                                <button
-                                    onClick={() => watchedMutation.mutate(!item.watched)}
-                                    className={cn(
-                                        "p-3 rounded-full transition-all hover:scale-105 active:scale-95",
-                                        item.watched
-                                            ? "bg-green-500/20 text-green-500 hover:bg-green-500/30"
-                                            : "bg-white/10 hover:bg-white/20 text-white"
-                                    )}
-                                    title={item.watched ? "Mark as unwatched" : "Mark as watched"}
-                                >
-                                    <Eye className="w-5 h-5" />
-                                </button>
-
-                                <button className="p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-all hover:scale-105 active:scale-95">
-                                    <Share2 className="w-5 h-5" />
-                                </button>
-                            </div>
 
                             {/* Description */}
                             {item.description && (

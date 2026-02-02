@@ -1,4 +1,5 @@
 import { useParams, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
 import { type MediaItem } from '../types';
@@ -113,6 +114,30 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
         }
     };
 
+
+    // State for overriding quality info (e.g. for specific episodes)
+    const [qualityItem, setQualityItem] = useState<MediaItem | null>(null);
+    // Separate state for visual selection of episode card
+    const [selectedEpisodeId, setSelectedEpisodeId] = useState<string | null>(null);
+
+    // Reset quality item and selection when main item changes
+    useEffect(() => {
+        setQualityItem(null);
+        setSelectedEpisodeId(null);
+    }, [item.id]);
+
+    const handleEpisodeSelect = (episode: MediaItem) => {
+        setQualityItem(episode);
+        setSelectedEpisodeId(episode.id);
+    };
+
+    const handleDefaultQualityFound = (episode: MediaItem) => {
+        // Only set the quality item if one isn't already selected
+        // ensuring we don't override user selection if they somehow selected faster
+        // AND don't set selectedEpisodeId so no card is highlighted
+        setQualityItem(prev => prev ? prev : episode);
+    };
+
     const renderContent = () => {
         if (!type) return null;
 
@@ -129,7 +154,15 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
         // Fallback or other types
         switch (type) {
             case 'Movie': return <MovieDetailView item={item} />;
-            case 'TV': return <TVDetailView item={item} />;
+            case 'TV':
+                return (
+                    <TVDetailView
+                        item={item}
+                        selectedEpisodeId={selectedEpisodeId}
+                        onEpisodeSelect={handleEpisodeSelect}
+                        onDefaultQualityItemFound={handleDefaultQualityFound}
+                    />
+                );
             case 'Music':
                 // If it's a track (Audio), show MusicDetailView (or maybe AlbumDetailView?)
                 // MusicDetailView was likely for individual tracks or generic music.
@@ -142,7 +175,7 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
     };
 
     return (
-        <MediaDetailLayout item={item} onPlay={handlePlay}>
+        <MediaDetailLayout item={item} onPlay={handlePlay} qualityItem={qualityItem}>
             {renderContent()}
         </MediaDetailLayout>
     );

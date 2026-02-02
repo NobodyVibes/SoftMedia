@@ -48,7 +48,7 @@ public class TVMazeProvider : IMetadataProvider
                     {
                         var tvmazeId = idProp.GetInt32();
                         _logger.LogInformation($"Using cached TVMaze ID for '{title}': {tvmazeId}");
-                        var directUrl = $"https://api.tvmaze.com/shows/{tvmazeId}";
+                        var directUrl = $"https://api.tvmaze.com/shows/{tvmazeId}?embed=cast";
                         try 
                         {
                             var response = await _httpClient.GetStringAsync(directUrl);
@@ -71,15 +71,24 @@ public class TVMazeProvider : IMetadataProvider
                          if (!string.IsNullOrEmpty(imdbId) && imdbId.StartsWith("tt"))
                          {
                              _logger.LogInformation($"Using cached IMDb ID for '{title}': {imdbId}");
+                             // Add embed=cast to lookup (TVMaze redirects, but usually preserves params or we can get ID and refetch)
                              var lookupUrl = $"https://api.tvmaze.com/lookup/shows?imdb={imdbId}";
                              try
                              {
                                  var response = await _httpClient.GetStringAsync(lookupUrl);
-                                 // TVMaze lookup redirects to the show endpoint, so we get the Show object directly
+                                 // The lookup returns the show object directly (following redirect)
+                                 // However, the redirect might drop the 'embed' param if not handled by API.
+                                 // Safe bet: Parse ID from response and refetch with embed if _embedded is missing, 
+                                 // OR just assume lookup returns basic info and we need to refetch.
+                                 // Better: Parse response, get ID, then fetch full info with embed.
                                  using var doc = System.Text.Json.JsonDocument.Parse(response);
-                                 if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Null)
+                                 if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Null && doc.RootElement.TryGetProperty("id", out var idEl))
                                  {
-                                     return await ProcessShowMetadataAsync(doc.RootElement, title);
+                                     var resolvedId = idEl.GetInt32();
+                                     var fullDetailUrl = $"https://api.tvmaze.com/shows/{resolvedId}?embed=cast";
+                                     var fullResponse = await _httpClient.GetStringAsync(fullDetailUrl);
+                                     using var fullDoc = System.Text.Json.JsonDocument.Parse(fullResponse);
+                                     return await ProcessShowMetadataAsync(fullDoc.RootElement, title);
                                  }
                              }
                              catch (Exception ex)
@@ -190,9 +199,16 @@ public class TVMazeProvider : IMetadataProvider
                 return null;
             }
             
-            var root = bestMatch.Value;
+            var matchId = bestMatch.Value.GetProperty("id").GetInt32();
             
-            return await ProcessShowMetadataAsync(root, title);
+            // Fetch full details with cast
+            var detailUrl = $"https://api.tvmaze.com/shows/{matchId}?embed=cast";
+            _logger.LogInformation($"Fetching full details for match ID {matchId}: {detailUrl}");
+            
+            var detailResponse = await _httpClient.GetStringAsync(detailUrl);
+            using var detailDoc = System.Text.Json.JsonDocument.Parse(detailResponse);
+            
+            return await ProcessShowMetadataAsync(detailDoc.RootElement, title);
         }
         catch (Exception ex)
         {
@@ -310,7 +326,13 @@ public class TVMazeProvider : IMetadataProvider
                             }
                         }
 
-                        castList.Add(new { name = name.GetString(), character = characterName, image = personImage });
+                        int? personId = null;
+                        if (person.TryGetProperty("id", out var idProp))
+                        {
+                            personId = idProp.GetInt32();
+                        }
+
+                        castList.Add(new { id = personId, name = name.GetString(), character = characterName, image = personImage });
                     }
                 }
                 metadata["cast"] = castList.Take(10).ToList(); // Top 10

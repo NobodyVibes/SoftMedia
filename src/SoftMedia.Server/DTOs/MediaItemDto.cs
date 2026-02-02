@@ -9,6 +9,33 @@ public class ChapterDto
     public string Title { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// Represents audio track information for display.
+/// </summary>
+public class AudioTrackDto
+{
+    public int Index { get; set; }
+    public string? Codec { get; set; }
+    public string? Language { get; set; }
+    public int Channels { get; set; }
+    public string? ChannelLayout { get; set; }
+    public string? Title { get; set; }
+    public bool IsDefault { get; set; }
+}
+
+/// <summary>
+/// Represents subtitle track information for display.
+/// </summary>
+public class SubtitleTrackDto
+{
+    public int Index { get; set; }
+    public string? Codec { get; set; }
+    public string? Language { get; set; }
+    public string? Title { get; set; }
+    public bool IsDefault { get; set; }
+    public bool IsForced { get; set; }
+}
+
 public class MediaItemDto
 {
     public Guid Id { get; set; }
@@ -46,6 +73,17 @@ public class MediaItemDto
     public double? PlaybackPosition { get; set; } // Resume position in seconds
     public double? Progress { get; set; } // Progress percentage 0-100
 
+    // Phase 2: Extended Quality Metadata
+    public int? BitDepth { get; set; }  // 8, 10, 12 bit
+    public string? HdrFormat { get; set; }  // "HDR10", "Dolby Vision", etc.
+    public int? AudioChannels { get; set; }  // Primary audio channel count
+    public long? Bitrate { get; set; }  // bits/second
+    public double? FrameRate { get; set; }  // fps
+    public int? Width { get; set; }  // Video width
+    public int? Height { get; set; }  // Video height
+    public List<AudioTrackDto>? AudioTracks { get; set; }
+    public List<SubtitleTrackDto>? SubtitleTracks { get; set; }
+
     public Guid? SeriesId { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
@@ -67,8 +105,38 @@ public class MediaItemDto
             SeriesId = item.SeriesId,
             SeasonNumber = item.SeasonNumber,
             EpisodeNumber = item.EpisodeNumber,
-            Type = item.Type
+            Type = item.Type,
+
+            // Phase 2: Extended Quality Metadata
+            BitDepth = item.BitDepth,
+            HdrFormat = item.HdrFormat,
+            AudioChannels = item.AudioChannels,
+            Bitrate = item.Bitrate,
+            FrameRate = item.FrameRate,
+            Width = item.Width,
+            Height = item.Height
         };
+
+        // Deserialize audio tracks JSON if present
+        if (!string.IsNullOrEmpty(item.AudioTracksJson))
+        {
+            try
+            {
+                dto.AudioTracks = System.Text.Json.JsonSerializer.Deserialize<List<AudioTrackDto>>(item.AudioTracksJson);
+            }
+            catch { /* Ignore deserialization errors */ }
+        }
+
+        // Deserialize subtitle tracks JSON if present
+        if (!string.IsNullOrEmpty(item.SubtitleTracksJson))
+        {
+            try
+            {
+                dto.SubtitleTracks = System.Text.Json.JsonSerializer.Deserialize<List<SubtitleTrackDto>>(item.SubtitleTracksJson);
+            }
+            catch { /* Ignore deserialization errors */ }
+        }
+
 
         // Map user interaction if available
         if (interaction != null)

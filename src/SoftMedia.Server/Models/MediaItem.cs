@@ -38,6 +38,17 @@ public class MediaItem
     public string? Resolution { get; set; }
     public double Duration { get; set; } // Seconds
 
+    // Extended Technical Metadata (Phase 2)
+    public int? BitDepth { get; set; }  // 8, 10, 12 bit color depth
+    public string? HdrFormat { get; set; }  // "HDR10", "HDR10+", "Dolby Vision", "HLG", null for SDR
+    public int? AudioChannels { get; set; }  // Primary audio channel count
+    public long? Bitrate { get; set; }  // Overall bitrate in bits/second
+    public double? FrameRate { get; set; }  // Frames per second
+    public int? Width { get; set; }  // Video width in pixels
+    public int? Height { get; set; }  // Video height in pixels
+    public string? AudioTracksJson { get; set; }  // JSON array of AudioTrackInfo
+    public string? SubtitleTracksJson { get; set; }  // JSON array of SubtitleTrackInfo
+
     // Rich Metadata (Promoted from JSON)
     public int? Year { get; set; }
     public DateTime? ReleaseDate { get; set; }

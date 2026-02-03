@@ -27,6 +27,7 @@ const settingsNavTree = [
         children: [
             { id: 'general', label: 'General', path: '/settings/client/general' },
             { id: 'playback-client', label: 'Playback', path: '/settings/client/playback' },
+            { id: 'audio', label: 'Audio', path: '/settings/client/audio' },
         ]
     },
     {

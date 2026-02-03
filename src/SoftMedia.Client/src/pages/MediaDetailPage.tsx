@@ -1,4 +1,4 @@
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Navigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
@@ -150,6 +150,15 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
 
         if (item.type === MediaType.Artist) return <ArtistDetailView item={item} />;
         if (item.type === MediaType.Album) return <AlbumDetailView item={item} />;
+
+        // Track: redirect to album with track highlighted
+        if (item.type === MediaType.Audio || item.type === MediaType.Track) {
+            if (item.albumId) {
+                return <Navigate to={`/media/${item.albumId}?highlight=${item.id}`} replace />;
+            }
+            // Fallback: show basic music detail view if no album
+            return <MusicDetailView item={item} />;
+        }
 
         // Fallback or other types
         switch (type) {

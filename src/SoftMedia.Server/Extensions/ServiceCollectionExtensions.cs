@@ -43,6 +43,7 @@ public static class ServiceCollectionExtensions
                         var path = context.HttpContext.Request.Path;
                         if (path.StartsWithSegments("/api/transcode") || 
                             path.StartsWithSegments("/api/v1/stream") ||
+                            path.StartsWithSegments("/api/v1/audio") ||
                             path.StartsWithSegments("/api/media") ||
                             path.StartsWithSegments("/hubs/media"))
                         {
@@ -105,6 +106,7 @@ public static class ServiceCollectionExtensions
         // Media & Transcoding Services
         services.AddScoped<IFFmpegService, FFmpegService>();
         services.AddScoped<IStreamPlanService, StreamPlanService>();
+        services.AddScoped<IAudioStreamPlanService, AudioStreamPlanService>();
         services.AddSingleton<IProcessController, ProcessController>();
         services.AddSingleton<ITranscodeSessionManager, TranscodeSessionManager>();
         services.AddSingleton<IHlsService, HlsService>();

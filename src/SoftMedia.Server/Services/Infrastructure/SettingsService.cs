@@ -88,6 +88,7 @@ public class SettingsService : ISettingsService
             new() { Key = "MaxStreamingBitrate", Value = "20000", Group = "Streaming", Description = "Maximum bitrate (kbps) for remote streaming. 0 = unlimited." },
             new() { Key = "DefaultStreamingQuality", Value = "auto", Group = "Streaming", Description = "Default quality for new streams (auto, 720p, 1080p, 4k, original)." },
             new() { Key = "DefaultAudioChannels", Value = "auto", Group = "Streaming", Description = "Default audio channel preference (auto, stereo, 5.1, 7.1)." },
+            new() { Key = "MaxAudioStreamingBitrate", Value = "0", Group = "Streaming", Description = "Maximum audio transcode bitrate (kbps). 0 = unlimited. Common: 128, 192, 256, 320." },
             
             // Scanning
             new() { Key = "EnableFileWatcher", Value = "true", Group = "Scanning", Description = "Automatically detect new files and update library. Disable for manual scanning only." },

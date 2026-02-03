@@ -118,6 +118,22 @@ public class MusicScanner : BaseMediaScanner
             track.Size = new FileInfo(filePath).Length;
             track.DateModified = System.IO.File.GetLastWriteTimeUtc(filePath);
 
+            // Store metadata for frontend display (artist name, album name, genre)
+            var metadata = new Dictionary<string, object>
+            {
+                { "artist", artistName },
+                { "album", albumName }
+            };
+            if (!string.IsNullOrEmpty(tag.FirstGenre))
+            {
+                metadata["genre"] = tag.FirstGenre;
+            }
+            if (tag.AlbumArtists.Length > 0 && tag.AlbumArtists[0] != artistName)
+            {
+                metadata["albumArtist"] = tag.AlbumArtists[0];
+            }
+            track.MetadataJson = System.Text.Json.JsonSerializer.Serialize(metadata);
+
             // Audio codec info
             track.AudioCodec = tagFile.Properties.Codecs
                 .FirstOrDefault(c => c is TagLib.ICodec)?.Description ?? "Unknown";

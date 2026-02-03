@@ -349,9 +349,22 @@ export default memo(function MediaCard({ item, libraryType }: MediaCardProps) {
         </div>
     );
 
+    // Albums and Artists should navigate to detail page
+    if (item.type === MediaType.Album || item.type === MediaType.Artist) {
+        return (
+            <Link to={`/media/${item.id}`} className="block group/card relative hover:z-50 h-full">
+                {CardContent}
+            </Link>
+        );
+    }
+
+    // Tracks: click anywhere on card to play (play button also works)
     if (isAudio) {
         return (
-            <div className="block group/card cursor-pointer relative hover:z-50 h-full">
+            <div
+                className="block group/card cursor-pointer relative hover:z-50 h-full"
+                onClick={() => playTrack(item)}
+            >
                 {CardContent}
             </div>
         );

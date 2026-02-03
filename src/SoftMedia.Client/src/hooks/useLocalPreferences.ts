@@ -5,6 +5,8 @@ export interface LocalPreferences {
     defaultStreamingQuality: string;
     maxBitrate: string;
     dataSaverMode: string;
+    // Audio playback settings
+    maxAudioBitrate: string;
     // New fields for Client Settings
     audioLanguage: string;
     subtitleLanguage: string;
@@ -18,6 +20,7 @@ const defaultPreferences: LocalPreferences = {
     defaultStreamingQuality: 'auto',
     maxBitrate: '0', // 0 = unlimited
     dataSaverMode: 'false',
+    maxAudioBitrate: '0', // 0 = original/unlimited
     audioLanguage: 'en',
     subtitleLanguage: 'off',
     autoSelectSubtitle: 'true',

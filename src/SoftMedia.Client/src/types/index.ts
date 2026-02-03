@@ -41,6 +41,7 @@ export interface MediaItem {
     albumId?: string;
     trackNumber?: number;
     discNumber?: number;
+    durationSeconds?: number; // Raw duration in seconds (for audio player)
 
     // Timecode markers
     creditsStart?: number; // Seconds from start where credits begin

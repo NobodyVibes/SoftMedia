@@ -1,4 +1,4 @@
-import { Globe, Volume2, Wifi } from 'lucide-react';
+import { Globe, Music, Volume2, Wifi } from 'lucide-react';
 import { useLocalPreferences } from '../../hooks/useLocalPreferences';
 import { cn } from '../../lib/utils';
 
@@ -87,6 +87,38 @@ export default function ClientSettings({ subsection = 'general' }: ClientSetting
                                     localPrefs.dataSaverMode === 'true' ? "left-7" : "left-1"
                                 )} />
                             </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (subsection === 'audio') {
+        return (
+            <div className="space-y-6">
+                <div className="bg-white/5 rounded-xl p-6 border border-white/10">
+                    <div className="flex items-center gap-3 mb-6">
+                        <Music className="w-5 h-5 text-purple-400" />
+                        <h2 className="text-lg font-semibold text-white">Audio Playback</h2>
+                        <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded-full">This device</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="flex flex-col gap-2">
+                            <label className="text-sm font-medium text-gray-400">Max Audio Quality</label>
+                            <select
+                                value={localPrefs.maxAudioBitrate}
+                                onChange={(e) => updateLocalPref('maxAudioBitrate', e.target.value)}
+                                className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary [&>option]:bg-[#1a1a1a] [&>option]:text-white"
+                            >
+                                <option value="0">Original (Lossless)</option>
+                                <option value="320">320 kbps (High)</option>
+                                <option value="256">256 kbps</option>
+                                <option value="192">192 kbps</option>
+                                <option value="128">128 kbps (Low)</option>
+                            </select>
+                            <p className="text-xs text-gray-500">Lower bitrate saves bandwidth when transcoding is required</p>
                         </div>
                     </div>
                 </div>

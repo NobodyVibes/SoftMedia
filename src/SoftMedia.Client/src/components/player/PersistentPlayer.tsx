@@ -1,134 +1,818 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useAudioStore } from '../../store/audioStore';
-import { Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, Maximize2 } from 'lucide-react';
+import {
+    Play, Pause, SkipForward, SkipBack,
+    Volume2, VolumeX, Shuffle, Repeat, Repeat1,
+    List, X, RotateCcw, RotateCw, ChevronUp, ChevronDown
+} from 'lucide-react';
 import { API_URL } from '../../services/api';
+import { useAuthStore } from '../../store/authStore';
+import { cn } from '../../lib/utils';
+import type { MediaItem } from '../../types';
 
-export const PersistentPlayer: React.FC = () => {
-    const { currentTrack, isPlaying, volume, isMuted, pause, resume, next, previous, setVolume, toggleMute } = useAudioStore();
-    const audioRef = useRef<HTMLAudioElement>(null);
-    const [progress, setProgress] = useState(0);
-    const [duration, setDuration] = useState(0);
+// Preload threshold in seconds before track ends
+const PRELOAD_THRESHOLD = 15;
+// Start crossfade this many seconds before track ends (overlap duration)
+const CROSSFADE_START = 0.15; // 150ms before end
+// Crossfade duration in milliseconds
+const CROSSFADE_DURATION_MS = 100;
 
-    useEffect(() => {
-        if (audioRef.current) {
-            if (isPlaying) {
-                audioRef.current.play().catch(e => console.error("Playback failed", e));
-            } else {
-                audioRef.current.pause();
-            }
-        }
-    }, [isPlaying, currentTrack]);
-
-    useEffect(() => {
-        if (audioRef.current) {
-            audioRef.current.volume = isMuted ? 0 : volume;
-        }
-    }, [volume, isMuted]);
-
-    const handleTimeUpdate = () => {
-        if (audioRef.current) {
-            setProgress(audioRef.current.currentTime);
-            setDuration(audioRef.current.duration || 0);
-        }
-    };
-
-    const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const time = parseFloat(e.target.value);
-        if (audioRef.current) {
-            audioRef.current.currentTime = time;
-            setProgress(time);
-        }
-    };
-
-    const handleEnded = () => {
-        next();
-    };
-
-    if (!currentTrack) return null;
-
-    // Construct stream URL
-    const streamUrl = `${API_URL}/stream/${currentTrack.id}`;
-    const imageUrl = currentTrack.posterPath ? `${API_URL}${currentTrack.posterPath}` : '/placeholder-music.png';
-
-    return (
-        <div className="fixed bottom-0 left-0 right-0 h-20 bg-gray-900 border-t border-gray-800 flex items-center px-4 z-50 shadow-2xl">
-            <audio
-                ref={audioRef}
-                src={streamUrl}
-                onTimeUpdate={handleTimeUpdate}
-                onEnded={handleEnded}
-            />
-
-            {/* Track Info */}
-            <div className="flex items-center w-1/4 min-w-[200px]">
-                <img
-                    src={imageUrl}
-                    alt={currentTrack.title}
-                    className="w-14 h-14 rounded object-cover mr-4 bg-gray-800"
-                />
-                <div className="truncate">
-                    <h4 className="text-white font-medium truncate">{currentTrack.title}</h4>
-                    <p className="text-gray-400 text-sm truncate">{currentTrack.description || 'Unknown Artist'}</p>
-                </div>
-            </div>
-
-            {/* Controls */}
-            <div className="flex-1 flex flex-col items-center justify-center">
-                <div className="flex items-center space-x-6 mb-1">
-                    <button onClick={previous} className="text-gray-400 hover:text-white transition">
-                        <SkipBack size={20} />
-                    </button>
-                    <button
-                        onClick={isPlaying ? pause : resume}
-                        className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition"
-                    >
-                        {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
-                    </button>
-                    <button onClick={next} className="text-gray-400 hover:text-white transition">
-                        <SkipForward size={20} />
-                    </button>
-                </div>
-
-                {/* Progress Bar */}
-                <div className="w-full max-w-md flex items-center space-x-2 text-xs text-gray-400">
-                    <span>{formatTime(progress)}</span>
-                    <input
-                        type="range"
-                        min="0"
-                        max={duration || 100}
-                        value={progress}
-                        onChange={handleSeek}
-                        className="flex-1 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
-                    />
-                    <span>{formatTime(duration)}</span>
-                </div>
-            </div>
-
-            {/* Volume & Extras */}
-            <div className="w-1/4 flex items-center justify-end space-x-4">
-                <button onClick={toggleMute} className="text-gray-400 hover:text-white">
-                    {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
-                </button>
-                <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value={isMuted ? 0 : volume}
-                    onChange={(e) => setVolume(parseFloat(e.target.value))}
-                    className="w-24 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
-                />
-                <button className="text-gray-400 hover:text-white">
-                    <Maximize2 size={18} />
-                </button>
-            </div>
-        </div>
-    );
-};
-
+// Helper to format time
 const formatTime = (seconds: number) => {
-    if (!seconds) return "0:00";
+    if (!seconds || isNaN(seconds)) return "0:00";
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
+
+export const PersistentPlayer: React.FC = () => {
+    const {
+        currentTrack, isPlaying, volume, isMuted,
+        shuffleMode, repeatMode, queue,
+        pause, resume, next, previous,
+        setVolume, toggleMute,
+        toggleShuffle, cycleRepeatMode, jumpToQueueIndex
+    } = useAudioStore();
+
+    // Dual audio elements for true gapless playback
+    const audioARef = useRef<HTMLAudioElement>(null);
+    const audioBRef = useRef<HTMLAudioElement>(null);
+
+    // Track which audio element is currently active (0 = A, 1 = B)
+    const [activePlayer, setActivePlayer] = useState<0 | 1>(0);
+    const activeAudioRef = activePlayer === 0 ? audioARef : audioBRef;
+    const preloadAudioRef = activePlayer === 0 ? audioBRef : audioARef;
+
+    const [progress, setProgress] = useState(0);
+    const [duration, setDuration] = useState(0);
+    const [showQueue, setShowQueue] = useState(false);
+    const [isExpanded, setIsExpanded] = useState(false);
+    const [isPreloaded, setIsPreloaded] = useState(false);
+    const [preloadedTrackId, setPreloadedTrackId] = useState<string | null>(null);
+
+    // Prevent multiple rapid transitions
+    const isTransitioningRef = useRef(false);
+    const crossfadeTriggeredRef = useRef(false);
+
+    // Get auth token for stream URL
+    const getStreamUrl = useCallback((track: MediaItem | null) => {
+        if (!track) return '';
+        const token = useAuthStore.getState().token;
+        return `${API_URL}/stream/${track.id}${token ? `?token=${token}` : ''}`;
+    }, []);
+
+    // Image URL helper
+    const getImageUrl = useCallback((path: string | undefined) => {
+        if (!path) return '/placeholder-music.png';
+        if (path.startsWith('/api/')) return path;
+        if (path.startsWith('http')) return path;
+        return `${API_URL}${path}`;
+    }, []);
+
+    // Memoized stream URL for current track
+    const currentStreamUrl = useMemo(() => getStreamUrl(currentTrack), [currentTrack, getStreamUrl]);
+
+    // Preload the next track onto the inactive audio element
+    const preloadNextTrack = useCallback(() => {
+        const nextTrack = queue[0];
+        if (!nextTrack || !preloadAudioRef.current) return;
+
+        // Don't reload if already preloaded
+        if (preloadedTrackId === nextTrack.id) return;
+
+        const url = getStreamUrl(nextTrack);
+        const preloadEl = preloadAudioRef.current;
+
+        preloadEl.src = url;
+        preloadEl.load();
+        preloadEl.volume = 0; // Start at 0 for crossfade
+
+        setPreloadedTrackId(nextTrack.id);
+        setIsPreloaded(false);
+
+        console.log('[Gapless] Preloading:', nextTrack.title);
+    }, [queue, preloadedTrackId, getStreamUrl, preloadAudioRef]);
+
+    // Handle preload ready
+    const handlePreloadReady = useCallback(() => {
+        setIsPreloaded(true);
+        console.log('[Gapless] Next track ready for instant playback');
+    }, []);
+
+    // Perform overlapping crossfade transition
+    const performCrossfadeTransition = useCallback(() => {
+        if (isTransitioningRef.current) return;
+        isTransitioningRef.current = true;
+
+        const preloadEl = preloadAudioRef.current;
+        const currentEl = activeAudioRef.current;
+
+        if (!preloadEl || !isPreloaded) {
+            isTransitioningRef.current = false;
+            crossfadeTriggeredRef.current = false;
+            next();
+            return;
+        }
+
+        console.log('[Gapless] Starting overlapping crossfade');
+
+        const targetVolume = isMuted ? 0 : volume;
+
+        // Start next track at 0 volume immediately
+        preloadEl.currentTime = 0;
+        preloadEl.volume = 0;
+        preloadEl.play().catch(e => console.error("Transition failed:", e));
+
+        // Crossfade: fade out current, fade in next
+        const fadeSteps = 10;
+        const fadeInterval = CROSSFADE_DURATION_MS / fadeSteps;
+        let step = 0;
+
+        const crossfade = setInterval(() => {
+            step++;
+            const fadeProgress = step / fadeSteps;
+
+            if (currentEl && !isMuted) {
+                currentEl.volume = Math.max(0, targetVolume * (1 - fadeProgress));
+            }
+            if (preloadEl && !isMuted) {
+                preloadEl.volume = Math.min(targetVolume, targetVolume * fadeProgress);
+            }
+
+            if (step >= fadeSteps) {
+                clearInterval(crossfade);
+
+                // Complete the transition
+                if (currentEl) {
+                    currentEl.pause();
+                    currentEl.volume = targetVolume;
+                }
+                if (preloadEl) {
+                    preloadEl.volume = targetVolume;
+                }
+
+                // Swap active player
+                setActivePlayer(prev => prev === 0 ? 1 : 0);
+
+                // Update store
+                next();
+                setIsPreloaded(false);
+                setPreloadedTrackId(null);
+                isTransitioningRef.current = false;
+                crossfadeTriggeredRef.current = false;
+            }
+        }, fadeInterval);
+
+    }, [isPreloaded, preloadAudioRef, activeAudioRef, next, volume, isMuted]);
+
+    // Manual skip with gapless
+    const handleSkipNext = useCallback(() => {
+        if (isPreloaded && queue.length > 0 && !isTransitioningRef.current) {
+            performCrossfadeTransition();
+        } else {
+            next();
+        }
+    }, [isPreloaded, queue, performCrossfadeTransition, next]);
+
+    // Set up the active audio element when track changes
+    useEffect(() => {
+        const activeEl = activeAudioRef.current;
+        if (!activeEl || !currentTrack) return;
+
+        // Only update src if it doesn't match (prevents reload on swap)
+        if (!activeEl.src.includes(currentTrack.id)) {
+            activeEl.src = currentStreamUrl;
+        }
+
+        // Reset crossfade trigger for new track
+        crossfadeTriggeredRef.current = false;
+
+        if (isPlaying) {
+            activeEl.play().catch(e => console.error("Playback failed", e));
+        }
+    }, [currentTrack, currentStreamUrl, activeAudioRef, isPlaying]);
+
+    // Play/pause control
+    useEffect(() => {
+        const activeEl = activeAudioRef.current;
+        if (!activeEl) return;
+
+        if (isPlaying) {
+            activeEl.play().catch(e => console.error("Playback failed", e));
+        } else {
+            activeEl.pause();
+        }
+    }, [isPlaying, activeAudioRef]);
+
+    // Volume control for active element only (preload stays at 0 until crossfade)
+    useEffect(() => {
+        const vol = isMuted ? 0 : volume;
+        const activeEl = activeAudioRef.current;
+        if (activeEl && !isTransitioningRef.current) {
+            activeEl.volume = vol;
+        }
+    }, [volume, isMuted, activeAudioRef]);
+
+    // Handle repeat one mode
+    useEffect(() => {
+        const activeEl = activeAudioRef.current;
+        if (activeEl) {
+            activeEl.loop = repeatMode === 'one';
+        }
+    }, [repeatMode, activeAudioRef]);
+
+    // Preload when queue changes
+    useEffect(() => {
+        if (queue.length > 0 && repeatMode !== 'one') {
+            preloadNextTrack();
+        }
+    }, [queue, repeatMode, preloadNextTrack]);
+
+    // Time update handler - triggers crossfade BEFORE track ends
+    const handleTimeUpdate = useCallback(() => {
+        const activeEl = activeAudioRef.current;
+        if (!activeEl) return;
+
+        const currentTime = activeEl.currentTime;
+        const audioDuration = activeEl.duration || 0;
+        setProgress(currentTime);
+        setDuration(audioDuration);
+
+        // Trigger preload when approaching end
+        if (audioDuration > 0 &&
+            audioDuration - currentTime < PRELOAD_THRESHOLD &&
+            queue.length > 0 &&
+            repeatMode !== 'one') {
+            preloadNextTrack();
+        }
+
+        // Trigger crossfade BEFORE track ends for gapless overlap
+        if (audioDuration > 0 &&
+            audioDuration - currentTime <= CROSSFADE_START &&
+            audioDuration - currentTime > 0 &&
+            isPreloaded &&
+            queue.length > 0 &&
+            repeatMode !== 'one' &&
+            !crossfadeTriggeredRef.current &&
+            !isTransitioningRef.current) {
+
+            crossfadeTriggeredRef.current = true;
+            console.log('[Gapless] Auto-triggering crossfade at', currentTime.toFixed(2), 'of', audioDuration.toFixed(2));
+            performCrossfadeTransition();
+        }
+    }, [activeAudioRef, queue, repeatMode, preloadNextTrack, isPreloaded, performCrossfadeTransition]);
+
+    // Seek handler
+    const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const time = parseFloat(e.target.value);
+        const activeEl = activeAudioRef.current;
+        if (activeEl) {
+            activeEl.currentTime = time;
+            setProgress(time);
+            // Reset crossfade trigger if seeking backward
+            if (time < (duration - CROSSFADE_START)) {
+                crossfadeTriggeredRef.current = false;
+            }
+        }
+    }, [activeAudioRef, duration]);
+
+    // Track ended handler (fallback if crossfade didn't trigger)
+    const handleEnded = useCallback(() => {
+        if (repeatMode === 'one') {
+            const activeEl = activeAudioRef.current;
+            if (activeEl) {
+                activeEl.currentTime = 0;
+                activeEl.play();
+            }
+            return;
+        }
+
+        // Fallback if crossfade didn't happen
+        if (!isTransitioningRef.current) {
+            console.log('[Gapless] Fallback: track ended without crossfade');
+            next();
+        }
+    }, [repeatMode, next, activeAudioRef]);
+
+    // Previous track handler
+    const handlePrevious = useCallback(() => {
+        const activeEl = activeAudioRef.current;
+        if (activeEl && activeEl.currentTime > 3) {
+            activeEl.currentTime = 0;
+            crossfadeTriggeredRef.current = false;
+        } else {
+            previous();
+        }
+    }, [previous, activeAudioRef]);
+
+    // Seek backward 30 seconds
+    const handleSeekBackward = useCallback(() => {
+        const activeEl = activeAudioRef.current;
+        if (activeEl) {
+            activeEl.currentTime = Math.max(0, activeEl.currentTime - 30);
+            crossfadeTriggeredRef.current = false;
+        }
+    }, [activeAudioRef]);
+
+    // Seek forward 30 seconds
+    const handleSeekForward = useCallback(() => {
+        const activeEl = activeAudioRef.current;
+        if (activeEl) {
+            const newTime = activeEl.currentTime + 30;
+            activeEl.currentTime = Math.min(newTime, activeEl.duration || newTime);
+            // Don't reset crossfade trigger for forward seek
+        }
+    }, [activeAudioRef]);
+
+    // Keyboard shortcuts
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+            switch (e.code) {
+                case 'Space':
+                    e.preventDefault();
+                    isPlaying ? pause() : resume();
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    if (e.ctrlKey || e.metaKey) {
+                        handleSkipNext();
+                    } else {
+                        handleSeekForward();
+                    }
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    if (e.ctrlKey || e.metaKey) {
+                        handlePrevious();
+                    } else {
+                        handleSeekBackward();
+                    }
+                    break;
+                case 'KeyM':
+                    e.preventDefault();
+                    toggleMute();
+                    break;
+                case 'KeyS':
+                    if (e.shiftKey) {
+                        e.preventDefault();
+                        toggleShuffle();
+                    }
+                    break;
+                case 'KeyR':
+                    if (e.shiftKey) {
+                        e.preventDefault();
+                        cycleRepeatMode();
+                    }
+                    break;
+                case 'Escape':
+                    if (isExpanded) {
+                        e.preventDefault();
+                        setIsExpanded(false);
+                    }
+                    break;
+                case 'KeyF':
+                    if (e.shiftKey) {
+                        e.preventDefault();
+                        setIsExpanded(prev => !prev);
+                    }
+                    break;
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isPlaying, pause, resume, handleSkipNext, handlePrevious, handleSeekBackward, handleSeekForward, toggleMute, toggleShuffle, cycleRepeatMode, isExpanded]);
+
+    if (!currentTrack) return null;
+
+    const imageUrl = getImageUrl(currentTrack.posterPath);
+    const RepeatIcon = repeatMode === 'one' ? Repeat1 : Repeat;
+
+    return (
+        <>
+            {/* Persistent Audio Elements - outside conditionals to prevent re-mounting */}
+            <audio
+                ref={audioARef}
+                onTimeUpdate={activePlayer === 0 ? handleTimeUpdate : undefined}
+                onEnded={activePlayer === 0 ? handleEnded : undefined}
+                onCanPlayThrough={activePlayer === 1 ? handlePreloadReady : undefined}
+                preload="auto"
+            />
+            <audio
+                ref={audioBRef}
+                onTimeUpdate={activePlayer === 1 ? handleTimeUpdate : undefined}
+                onEnded={activePlayer === 1 ? handleEnded : undefined}
+                onCanPlayThrough={activePlayer === 0 ? handlePreloadReady : undefined}
+                preload="auto"
+            />
+
+            {/* Expanded Fullscreen View */}
+            <AnimatePresence>
+                {isExpanded && (
+                    <motion.div
+                        initial={{ y: "100%" }}
+                        animate={{ y: 0 }}
+                        exit={{ y: "100%" }}
+                        transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                        className="fixed inset-0 z-[100] bg-gradient-to-b from-gray-900 via-gray-900 to-black flex flex-col"
+                    >
+                        {/* Header */}
+                        <div className="flex items-center justify-between p-4">
+                            <button
+                                onClick={() => setIsExpanded(false)}
+                                className="text-gray-400 hover:text-white transition p-2"
+                                title="Minimize (Escape)"
+                            >
+                                <ChevronDown size={28} />
+                            </button>
+                            <div className="text-center">
+                                <p className="text-gray-400 text-sm">Now Playing</p>
+                            </div>
+                            <button
+                                onClick={() => setShowQueue(!showQueue)}
+                                className={cn(
+                                    "p-2 transition relative",
+                                    showQueue ? "text-primary" : "text-gray-400 hover:text-white"
+                                )}
+                            >
+                                <List size={24} />
+                                {queue.length > 0 && (
+                                    <span className="absolute top-0 right-0 bg-primary text-white text-xs w-4 h-4 rounded-full flex items-center justify-center">
+                                        {queue.length > 9 ? '9+' : queue.length}
+                                    </span>
+                                )}
+                            </button>
+                        </div>
+
+                        {/* Main Content */}
+                        <div className="flex-1 flex">
+                            {/* Album Art & Controls */}
+                            <div className={cn(
+                                "flex-1 flex flex-col items-center justify-center px-8 transition-all",
+                                showQueue ? "w-1/2" : "w-full"
+                            )}>
+                                {/* Large Album Art */}
+                                <div className="relative mb-8">
+                                    <img
+                                        src={imageUrl}
+                                        alt={currentTrack.title}
+                                        className="w-72 h-72 md:w-96 md:h-96 rounded-lg object-cover shadow-2xl"
+                                    />
+                                    {isPreloaded && (
+                                        <span className="absolute top-2 right-2 bg-primary/80 text-white text-xs px-2 py-1 rounded">
+                                            Next Ready
+                                        </span>
+                                    )}
+                                </div>
+
+                                {/* Track Info */}
+                                <div className="text-center mb-6 max-w-md">
+                                    <h2 className="text-white text-2xl font-bold truncate">{currentTrack.title}</h2>
+                                    <p className="text-gray-400 text-lg truncate">
+                                        {(currentTrack.metadata?.artist as string) || (currentTrack.metadata?.albumArtist as string) || 'Unknown Artist'}
+                                    </p>
+                                </div>
+
+                                {/* Progress Bar */}
+                                <div className="w-full max-w-lg mb-6">
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max={duration || 100}
+                                        value={progress}
+                                        onChange={handleSeek}
+                                        className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full"
+                                    />
+                                    <div className="flex justify-between text-sm text-gray-400 mt-1">
+                                        <span>{formatTime(progress)}</span>
+                                        <span>{formatTime(duration)}</span>
+                                    </div>
+                                </div>
+
+                                {/* Controls */}
+                                <div className="flex items-center space-x-6">
+                                    <button
+                                        onClick={toggleShuffle}
+                                        className={cn(
+                                            "transition",
+                                            shuffleMode ? "text-primary" : "text-gray-400 hover:text-white"
+                                        )}
+                                        title="Shuffle (Shift+S)"
+                                    >
+                                        <Shuffle size={24} />
+                                    </button>
+
+                                    <button onClick={handlePrevious} className="text-gray-400 hover:text-white transition">
+                                        <SkipBack size={32} />
+                                    </button>
+
+                                    <button
+                                        onClick={handleSeekBackward}
+                                        className="text-gray-400 hover:text-white transition relative"
+                                        title="Seek backward 30s"
+                                    >
+                                        <RotateCcw size={24} />
+                                        <span className="absolute text-[10px] font-bold" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>30</span>
+                                    </button>
+
+                                    <button
+                                        onClick={isPlaying ? pause : resume}
+                                        className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition shadow-lg"
+                                    >
+                                        {isPlaying ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" className="ml-1" />}
+                                    </button>
+
+                                    <button
+                                        onClick={handleSeekForward}
+                                        className="text-gray-400 hover:text-white transition relative"
+                                        title="Seek forward 30s"
+                                    >
+                                        <RotateCw size={24} />
+                                        <span className="absolute text-[10px] font-bold" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>30</span>
+                                    </button>
+
+                                    <button onClick={handleSkipNext} className="text-gray-400 hover:text-white transition">
+                                        <SkipForward size={32} />
+                                    </button>
+
+                                    <button
+                                        onClick={cycleRepeatMode}
+                                        className={cn(
+                                            "transition",
+                                            repeatMode !== 'off' ? "text-primary" : "text-gray-400 hover:text-white"
+                                        )}
+                                        title={`Repeat: ${repeatMode} (Shift+R)`}
+                                    >
+                                        <RepeatIcon size={24} />
+                                    </button>
+                                </div>
+
+                                {/* Volume */}
+                                <div className="flex items-center space-x-3 mt-6">
+                                    <button onClick={toggleMute} className="text-gray-400 hover:text-white">
+                                        {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
+                                    </button>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.01"
+                                        value={isMuted ? 0 : volume}
+                                        onChange={(e) => setVolume(parseFloat(e.target.value))}
+                                        className="w-32 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Inline Queue (when shown) */}
+                            {showQueue && (
+                                <div className="w-80 bg-black/30 border-l border-gray-800 overflow-hidden flex flex-col">
+                                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+                                        <h3 className="text-white font-semibold">Up Next</h3>
+                                        <span className="text-gray-400 text-sm">{queue.length} tracks</span>
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto">
+                                        {queue.length === 0 ? (
+                                            <p className="text-gray-500 text-sm text-center py-8">Queue is empty</p>
+                                        ) : (
+                                            queue.map((track, index) => (
+                                                <div
+                                                    key={`exp-${track.id}-${index}`}
+                                                    onClick={() => jumpToQueueIndex(index)}
+                                                    className={cn(
+                                                        "flex items-center gap-3 px-4 py-3 hover:bg-white/5 cursor-pointer transition",
+                                                        index === 0 && isPreloaded && "bg-primary/10 border-l-2 border-primary"
+                                                    )}
+                                                >
+                                                    <span className="text-gray-500 text-sm w-6">{index + 1}</span>
+                                                    <img
+                                                        src={getImageUrl(track.posterPath)}
+                                                        alt={track.title}
+                                                        className="w-12 h-12 rounded object-cover bg-gray-800"
+                                                    />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-white truncate">{track.title}</p>
+                                                        <p className="text-gray-400 text-sm truncate">
+                                                            {(track.metadata?.artist as string) || 'Unknown'}
+                                                        </p>
+                                                    </div>
+                                                    {index === 0 && isPreloaded && (
+                                                        <span className="text-xs text-primary">Ready</span>
+                                                    )}
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Queue Drawer (collapsed mode only) */}
+            <AnimatePresence>
+                {showQueue && !isExpanded && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 50, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 50, scale: 0.95 }}
+                        transition={{ duration: 0.2 }}
+                        className="fixed bottom-20 right-4 w-80 max-h-96 bg-gray-900 border border-gray-700 rounded-lg shadow-2xl z-50 overflow-hidden"
+                    >
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+                            <h3 className="text-white font-semibold">Up Next</h3>
+                            <button onClick={() => setShowQueue(false)} className="text-gray-400 hover:text-white">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="overflow-y-auto max-h-80">
+                            {queue.length === 0 ? (
+                                <p className="text-gray-500 text-sm text-center py-8">Queue is empty</p>
+                            ) : (
+                                queue.map((track, index) => (
+                                    <div
+                                        key={`${track.id}-${index}`}
+                                        onClick={() => jumpToQueueIndex(index)}
+                                        className={cn(
+                                            "flex items-center gap-3 px-4 py-2 hover:bg-white/5 cursor-pointer transition",
+                                            index === 0 && isPreloaded && "bg-primary/5 border-l-2 border-primary"
+                                        )}
+                                    >
+                                        <span className="text-gray-500 text-xs w-5">{index + 1}</span>
+                                        <img
+                                            src={getImageUrl(track.posterPath)}
+                                            alt={track.title}
+                                            className="w-10 h-10 rounded object-cover bg-gray-800"
+                                        />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-white text-sm truncate">{track.title}</p>
+                                            <p className="text-gray-400 text-xs truncate">
+                                                {(track.metadata?.artist as string) || 'Unknown'}
+                                            </p>
+                                        </div>
+                                        {index === 0 && isPreloaded && (
+                                            <span className="text-xs text-primary">Ready</span>
+                                        )}
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Player Bar (collapsed mode only) */}
+            <AnimatePresence>
+                {!isExpanded && (
+                    <motion.div
+                        initial={{ y: 100 }}
+                        animate={{ y: 0 }}
+                        exit={{ y: 100 }}
+                        transition={{ duration: 0.3 }}
+                        className="fixed bottom-0 left-0 right-0 h-20 bg-gray-900 border-t border-gray-800 flex items-center px-4 z-50 shadow-2xl"
+                    >
+                        {/* Track Info */}
+                        <div className="flex items-center w-1/4 min-w-[200px]">
+                            <img
+                                src={imageUrl}
+                                alt={currentTrack.title}
+                                className="w-14 h-14 rounded object-cover mr-4 bg-gray-800"
+                            />
+                            <div className="truncate">
+                                <h4 className="text-white font-medium truncate">{currentTrack.title}</h4>
+                                <p className="text-gray-400 text-sm truncate">
+                                    {(currentTrack.metadata?.artist as string) || (currentTrack.metadata?.albumArtist as string) || 'Unknown Artist'}
+                                </p>
+                            </div>
+                            {/* Expand Button */}
+                            <button
+                                onClick={() => setIsExpanded(true)}
+                                className="text-gray-400 hover:text-white transition ml-2"
+                                title="Expand (Shift+F)"
+                            >
+                                <ChevronUp size={20} />
+                            </button>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="flex-1 flex flex-col items-center justify-center">
+                            <div className="flex items-center space-x-4 mb-1">
+                                <button
+                                    onClick={toggleShuffle}
+                                    className={cn(
+                                        "transition",
+                                        shuffleMode ? "text-primary" : "text-gray-400 hover:text-white"
+                                    )}
+                                    title="Shuffle (Shift+S)"
+                                >
+                                    <Shuffle size={18} />
+                                </button>
+
+                                <button onClick={handlePrevious} className="text-gray-400 hover:text-white transition">
+                                    <SkipBack size={22} />
+                                </button>
+
+                                {/* Seek Backward 30s */}
+                                <button
+                                    onClick={handleSeekBackward}
+                                    className="text-gray-400 hover:text-white transition relative"
+                                    title="Seek backward 30s"
+                                >
+                                    <RotateCcw size={18} />
+                                    <span className="absolute text-[8px] font-bold" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>30</span>
+                                </button>
+
+                                <button
+                                    onClick={isPlaying ? pause : resume}
+                                    className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition"
+                                >
+                                    {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
+                                </button>
+
+                                {/* Seek Forward 30s */}
+                                <button
+                                    onClick={handleSeekForward}
+                                    className="text-gray-400 hover:text-white transition relative"
+                                    title="Seek forward 30s"
+                                >
+                                    <RotateCw size={18} />
+                                    <span className="absolute text-[8px] font-bold" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>30</span>
+                                </button>
+
+                                <button
+                                    onClick={handleSkipNext}
+                                    className="text-gray-400 hover:text-white transition"
+                                >
+                                    <SkipForward size={22} />
+                                </button>
+
+                                <button
+                                    onClick={cycleRepeatMode}
+                                    className={cn(
+                                        "transition",
+                                        repeatMode !== 'off' ? "text-primary" : "text-gray-400 hover:text-white"
+                                    )}
+                                    title={`Repeat: ${repeatMode} (Shift+R)`}
+                                >
+                                    <RepeatIcon size={18} />
+                                </button>
+                            </div>
+
+                            {/* Progress Bar */}
+                            <div className="w-full max-w-md flex items-center space-x-2 text-xs text-gray-400">
+                                <span>{formatTime(progress)}</span>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max={duration || 100}
+                                    value={progress}
+                                    onChange={handleSeek}
+                                    className="flex-1 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
+                                />
+                                <span>{formatTime(duration)}</span>
+                            </div>
+                        </div>
+
+                        {/* Volume & Extras */}
+                        <div className="w-1/4 flex items-center justify-end space-x-3">
+                            <button
+                                onClick={() => setShowQueue(!showQueue)}
+                                className={cn(
+                                    "transition relative",
+                                    showQueue ? "text-primary" : "text-gray-400 hover:text-white"
+                                )}
+                                title="Queue"
+                            >
+                                <List size={20} />
+                                {queue.length > 0 && (
+                                    <span className="absolute -top-1 -right-1 bg-primary text-white text-xs w-4 h-4 rounded-full flex items-center justify-center">
+                                        {queue.length > 9 ? '9+' : queue.length}
+                                    </span>
+                                )}
+                            </button>
+
+                            <button onClick={toggleMute} className="text-gray-400 hover:text-white">
+                                {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                            </button>
+                            <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                value={isMuted ? 0 : volume}
+                                onChange={(e) => setVolume(parseFloat(e.target.value))}
+                                className="w-24 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
+                            />
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </>
+    );
+};
+
+

@@ -88,6 +88,13 @@ public class MediaItemDto
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
 
+    // Music-specific properties
+    public Guid? ArtistId { get; set; }
+    public Guid? AlbumId { get; set; }
+    public int? TrackNumber { get; set; }
+    public int? DiscNumber { get; set; }
+    public double? DurationSeconds { get; set; }  // Raw duration for audio player
+
     public static MediaItemDto FromMediaItem(MediaItem item, string? imageProxyBaseUrl = null, UserMediaInteraction? interaction = null)
     {
         var dto = new MediaItemDto
@@ -106,6 +113,13 @@ public class MediaItemDto
             SeasonNumber = item.SeasonNumber,
             EpisodeNumber = item.EpisodeNumber,
             Type = item.Type,
+
+            // Music-specific
+            ArtistId = item.ArtistId,
+            AlbumId = item.AlbumId,
+            TrackNumber = item.TrackNumber,
+            DiscNumber = item.DiscNumber,
+            DurationSeconds = item.Duration > 0 ? item.Duration : null,
 
             // Phase 2: Extended Quality Metadata
             BitDepth = item.BitDepth,

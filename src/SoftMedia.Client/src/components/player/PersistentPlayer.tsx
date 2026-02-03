@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { QueueList } from './QueueList';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAudioStore } from '../../store/audioStore';
 import {
@@ -32,7 +33,7 @@ export const PersistentPlayer: React.FC = () => {
         shuffleMode, repeatMode, queue,
         pause, resume, next, previous,
         setVolume, toggleMute,
-        toggleShuffle, cycleRepeatMode, jumpToQueueIndex
+        toggleShuffle, cycleRepeatMode
     } = useAudioStore();
 
     // Dual audio elements for true gapless playback
@@ -574,37 +575,8 @@ export const PersistentPlayer: React.FC = () => {
                                         <h3 className="text-white font-semibold">Up Next</h3>
                                         <span className="text-gray-400 text-sm">{queue.length} tracks</span>
                                     </div>
-                                    <div className="flex-1 overflow-y-auto">
-                                        {queue.length === 0 ? (
-                                            <p className="text-gray-500 text-sm text-center py-8">Queue is empty</p>
-                                        ) : (
-                                            queue.map((track, index) => (
-                                                <div
-                                                    key={`exp-${track.id}-${index}`}
-                                                    onClick={() => jumpToQueueIndex(index)}
-                                                    className={cn(
-                                                        "flex items-center gap-3 px-4 py-3 hover:bg-white/5 cursor-pointer transition",
-                                                        index === 0 && isPreloaded && "bg-primary/10 border-l-2 border-primary"
-                                                    )}
-                                                >
-                                                    <span className="text-gray-500 text-sm w-6">{index + 1}</span>
-                                                    <img
-                                                        src={getImageUrl(track.posterPath)}
-                                                        alt={track.title}
-                                                        className="w-12 h-12 rounded object-cover bg-gray-800"
-                                                    />
-                                                    <div className="flex-1 min-w-0">
-                                                        <p className="text-white truncate">{track.title}</p>
-                                                        <p className="text-gray-400 text-sm truncate">
-                                                            {(track.metadata?.artist as string) || 'Unknown'}
-                                                        </p>
-                                                    </div>
-                                                    {index === 0 && isPreloaded && (
-                                                        <span className="text-xs text-primary">Ready</span>
-                                                    )}
-                                                </div>
-                                            ))
-                                        )}
+                                    <div className="flex-1 overflow-y-auto flex flex-col">
+                                        <QueueList isPreloaded={isPreloaded} />
                                     </div>
                                 </div>
                             )}
@@ -629,37 +601,8 @@ export const PersistentPlayer: React.FC = () => {
                                 <X size={18} />
                             </button>
                         </div>
-                        <div className="overflow-y-auto max-h-80">
-                            {queue.length === 0 ? (
-                                <p className="text-gray-500 text-sm text-center py-8">Queue is empty</p>
-                            ) : (
-                                queue.map((track, index) => (
-                                    <div
-                                        key={`${track.id}-${index}`}
-                                        onClick={() => jumpToQueueIndex(index)}
-                                        className={cn(
-                                            "flex items-center gap-3 px-4 py-2 hover:bg-white/5 cursor-pointer transition",
-                                            index === 0 && isPreloaded && "bg-primary/5 border-l-2 border-primary"
-                                        )}
-                                    >
-                                        <span className="text-gray-500 text-xs w-5">{index + 1}</span>
-                                        <img
-                                            src={getImageUrl(track.posterPath)}
-                                            alt={track.title}
-                                            className="w-10 h-10 rounded object-cover bg-gray-800"
-                                        />
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-white text-sm truncate">{track.title}</p>
-                                            <p className="text-gray-400 text-xs truncate">
-                                                {(track.metadata?.artist as string) || 'Unknown'}
-                                            </p>
-                                        </div>
-                                        {index === 0 && isPreloaded && (
-                                            <span className="text-xs text-primary">Ready</span>
-                                        )}
-                                    </div>
-                                ))
-                            )}
+                        <div className="flex-1 overflow-hidden flex flex-col">
+                            <QueueList isPreloaded={isPreloaded} />
                         </div>
                     </motion.div>
                 )}

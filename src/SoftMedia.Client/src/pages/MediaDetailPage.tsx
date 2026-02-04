@@ -15,6 +15,9 @@ import PhotoDetailView from '../components/details/PhotoDetailView';
 import { useAudioStore } from '../store/audioStore';
 import { MediaType } from '../types';
 import { useMediaHub } from '../hooks/useMediaHub';
+import { Clock, User, Disc } from 'lucide-react';
+import { formatDuration } from '../lib/utils';
+import { Link } from 'react-router-dom';
 
 export default function MediaDetailPage() {
     const { id } = useParams<{ id: string }>();
@@ -70,6 +73,33 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
         staleTime: 1000 * 60 * 5 // Cache for 5 minutes
     });
 
+    // Fetch tracks for Album (for total duration and track count)
+    const { data: albumTracks } = useQuery({
+        queryKey: ['album', item.id, 'tracks'],
+        queryFn: async () => {
+            if (item.type !== MediaType.Album) return null;
+            const response = await api.get<MediaItem[]>(`/libraries/albums/${item.id}/tracks`);
+            return response.data;
+        },
+        enabled: item.type === MediaType.Album,
+        staleTime: 1000 * 60 * 5
+    });
+
+    // Fetch tracks for all of an Artist's albums (for stats)
+    const { data: artistTracks } = useQuery({
+        queryKey: ['artist', item.id, 'all-tracks'],
+        queryFn: async () => {
+            if (item.type !== MediaType.Artist || !artistAlbums || artistAlbums.length === 0) return [];
+            const allTrackPromises = artistAlbums.map(album =>
+                api.get<MediaItem[]>(`/libraries/albums/${album.id}/tracks`)
+            );
+            const responses = await Promise.all(allTrackPromises);
+            return responses.flatMap(r => r.data);
+        },
+        enabled: item.type === MediaType.Artist && !!artistAlbums && artistAlbums.length > 0,
+        staleTime: 1000 * 60 * 5
+    });
+
     const backdropOverride = useMemo(() => {
         // For Albums, use the album cover itself as backdrop
         if (item.type === MediaType.Album && item.posterPath) {
@@ -88,6 +118,57 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
         return null;
     }, [item.type, item.posterPath, artistAlbums]);
 
+    const customMetadata = useMemo(() => {
+        if (item.type === MediaType.Album && albumTracks) {
+            const artistName = (item.metadata?.artist as string) || albumTracks?.[0]?.metadata?.artist as string;
+            const totalDuration = albumTracks.reduce((acc, t) => acc + (t.durationSeconds || 0), 0);
+
+            return (
+                <div className="flex items-center gap-4 text-gray-300">
+                    {item.artistId && artistName && (
+                        <Link
+                            to={`/media/${item.artistId}`}
+                            className="flex items-center gap-2 hover:text-white transition-colors group"
+                        >
+                            <User className="w-4 h-4 text-gray-500 group-hover:text-primary" />
+                            <span className="font-medium group-hover:underline">{artistName}</span>
+                        </Link>
+                    )}
+                    <div className="flex items-center gap-4">
+                        <span className="text-gray-600">•</span>
+                        <span>{albumTracks.length} tracks</span>
+                        <span className="text-gray-600">•</span>
+                        <div className="flex items-center gap-1.5 font-medium text-gray-300">
+                            <Clock className="w-4 h-4 text-gray-500" />
+                            <span>{formatDuration(totalDuration)}</span>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        if (item.type === MediaType.Artist && artistAlbums) {
+            const albumCount = artistAlbums.length;
+            const trackCount = artistTracks?.length || 0;
+
+            return (
+                <div className="flex items-center gap-4 text-gray-300">
+                    <div className="flex items-center gap-2">
+                        <Disc className="w-4 h-4 text-gray-500" />
+                        <span>{albumCount} {albumCount === 1 ? 'album' : 'albums'}</span>
+                    </div>
+                    {trackCount > 0 && (
+                        <>
+                            <span className="text-gray-600">•</span>
+                            <span>{trackCount} tracks</span>
+                        </>
+                    )}
+                </div>
+            );
+        }
+        return null;
+    }, [item, albumTracks, artistAlbums, artistTracks]);
+
     const handlePlay = async () => {
         if (type === 'Music') {
             playTrack(item);
@@ -105,7 +186,6 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
                 const { episodeId, resumePosition } = response.data;
 
                 // Navigate to the episode with resume position
-                // If resumePosition is 0, no need to add query param
                 if (resumePosition > 0) {
                     navigate(`/play/${episodeId}?start=${resumePosition}`);
                 } else {
@@ -113,8 +193,6 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
                 }
             } catch (error) {
                 console.error('Failed to fetch next episode:', error);
-                // Fallback: just navigate to the series page (though this won't work)
-                // In a production app, we'd show a toast notification
                 navigate(`/play/${item.id}`);
             }
         } else {
@@ -122,13 +200,11 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
         }
     };
 
-
-    // State for overriding quality info (e.g. for specific episodes)
+    // State for overriding quality info
     const [qualityItem, setQualityItem] = useState<MediaItem | null>(null);
-    // Separate state for visual selection of episode card
     const [selectedEpisodeId, setSelectedEpisodeId] = useState<string | null>(null);
 
-    // Reset quality item and selection when main item changes
+    // Reset when item changes
     useEffect(() => {
         setQualityItem(null);
         setSelectedEpisodeId(null);
@@ -140,35 +216,22 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
     };
 
     const handleDefaultQualityFound = (episode: MediaItem) => {
-        // Only set the quality item if one isn't already selected
-        // ensuring we don't override user selection if they somehow selected faster
-        // AND don't set selectedEpisodeId so no card is highlighted
         setQualityItem(prev => prev ? prev : episode);
     };
 
     const renderContent = () => {
         if (!type) return null;
 
-        // Use item.type directly if available (it should be from backend)
-        // If item.type is defined, use it. Otherwise fallback to library type.
-        // Note: item.type is an enum number in backend, mapped to number in frontend.
-
-        // Map Library Type string to MediaType enum for fallback
-        // Actually, let's just use item.type if it matches our expectations.
-
         if (item.type === MediaType.Artist) return <ArtistDetailView item={item} />;
         if (item.type === MediaType.Album) return <AlbumDetailView item={item} />;
 
-        // Track: redirect to album with track highlighted
         if (item.type === MediaType.Audio || item.type === MediaType.Track) {
             if (item.albumId) {
                 return <Navigate to={`/media/${item.albumId}?highlight=${item.id}`} replace />;
             }
-            // Fallback: show basic music detail view if no album
             return <MusicDetailView item={item} />;
         }
 
-        // Fallback or other types
         switch (type) {
             case 'Movie': return <MovieDetailView item={item} />;
             case 'TV':
@@ -180,10 +243,7 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
                         onDefaultQualityItemFound={handleDefaultQualityFound}
                     />
                 );
-            case 'Music':
-                // If it's a track (Audio), show MusicDetailView (or maybe AlbumDetailView?)
-                // MusicDetailView was likely for individual tracks or generic music.
-                return <MusicDetailView item={item} />;
+            case 'Music': return <MusicDetailView item={item} />;
             case 'Book': return <BookDetailView item={item} />;
             case 'Game': return <GameDetailView item={item} />;
             case 'Photo': return <PhotoDetailView item={item} />;
@@ -192,7 +252,13 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
     };
 
     return (
-        <MediaDetailLayout item={item} onPlay={handlePlay} qualityItem={qualityItem} backdropOverride={backdropOverride}>
+        <MediaDetailLayout
+            item={item}
+            onPlay={handlePlay}
+            qualityItem={qualityItem}
+            backdropOverride={backdropOverride}
+            customMetadata={customMetadata}
+        >
             {renderContent()}
         </MediaDetailLayout>
     );

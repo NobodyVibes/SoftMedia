@@ -17,9 +17,10 @@ interface MediaDetailLayoutProps {
     onPlay?: () => void;
     qualityItem?: MediaItem | null;
     backdropOverride?: string | null;
+    customMetadata?: React.ReactNode;
 }
 
-export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride }: MediaDetailLayoutProps) {
+export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride, customMetadata }: MediaDetailLayoutProps) {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
 
@@ -81,12 +82,16 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                 </button>
 
                 <div className="flex flex-col lg:flex-row gap-8 lg:gap-12">
-                    {/* Poster Column */}
                     <div className="flex-shrink-0 w-full sm:w-64 md:w-72 lg:w-80 mx-auto lg:mx-0">
                         <motion.div
                             initial={{ opacity: 0, y: 20 }}
                             animate={{ opacity: 1, y: 0 }}
-                            className="rounded-xl overflow-hidden shadow-2xl aspect-[2/3] ring-1 ring-white/10"
+                            className={cn(
+                                "rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10",
+                                (item.type === MediaType.Album || item.type === MediaType.Artist || item.type === MediaType.Audio || item.type === MediaType.Track)
+                                    ? "aspect-square"
+                                    : "aspect-[2/3]"
+                            )}
                         >
                             {item.posterPath ? (
                                 <img
@@ -108,50 +113,61 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                             transition={{ delay: 0.2 }}
                             className="mt-6 flex flex-col gap-4"
                         >
-                            <button
-                                onClick={onPlay}
-                                className="relative z-50 w-full flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-violet-600 text-white rounded-xl font-bold shadow-lg shadow-violet-500/40 hover:scale-[1.02] active:scale-95 text-lg opacity-100"
-                            >
-                                <Play className="w-6 h-6 fill-current" />
-                                Play
-                            </button>
+                            {item.type !== MediaType.Artist && item.type !== MediaType.Album && (
+                                <button
+                                    onClick={onPlay}
+                                    className="relative z-50 w-full flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-violet-600 text-white rounded-xl font-bold shadow-lg shadow-violet-500/40 hover:scale-[1.02] active:scale-95 text-lg opacity-100"
+                                >
+                                    <Play className="w-6 h-6 fill-current" />
+                                    Play
+                                </button>
+                            )}
 
                             <div className="flex items-center justify-between px-2">
-                                <button
-                                    onClick={() => favoriteMutation.mutate(!item.isFavorite)}
-                                    className="group"
-                                    title="Favorite"
-                                >
-                                    <div className={cn(
-                                        "p-3 rounded-full transition-all group-hover:scale-110 active:scale-95",
-                                        item.isFavorite
-                                            ? "bg-red-500/20 text-red-500"
-                                            : "bg-white/5 hover:bg-white/10 text-white"
-                                    )}>
-                                        <Heart className={cn("w-5 h-5", item.isFavorite && "fill-current")} />
-                                    </div>
-                                </button>
+                                {item.type !== MediaType.Artist && item.type !== MediaType.Album && (
+                                    <button
+                                        onClick={() => favoriteMutation.mutate(!item.isFavorite)}
+                                        className="group"
+                                        title="Favorite"
+                                    >
+                                        <div className={cn(
+                                            "p-3 rounded-full transition-all group-hover:scale-110 active:scale-95",
+                                            item.isFavorite
+                                                ? "bg-red-500/20 text-red-500"
+                                                : "bg-white/5 hover:bg-white/10 text-white"
+                                        )}>
+                                            <Heart className={cn("w-5 h-5", item.isFavorite && "fill-current")} />
+                                        </div>
+                                    </button>
+                                )}
 
-                                <button
-                                    onClick={() => watchedMutation.mutate(!item.watched)}
-                                    className="group"
-                                    title={item.watched ? "Mark as unwatched" : "Mark as watched"}
-                                >
-                                    <div className={cn(
-                                        "p-3 rounded-full transition-all group-hover:scale-110 active:scale-95",
-                                        item.watched
-                                            ? "bg-green-500/20 text-green-500"
-                                            : "bg-white/5 hover:bg-white/10 text-white"
-                                    )}>
-                                        <Eye className="w-5 h-5" />
-                                    </div>
-                                </button>
+                                {item.type !== MediaType.Artist &&
+                                    item.type !== MediaType.Album &&
+                                    item.type !== MediaType.Audio &&
+                                    item.type !== MediaType.Track && (
+                                        <button
+                                            onClick={() => watchedMutation.mutate(!item.watched)}
+                                            className="group"
+                                            title={item.watched ? "Mark as unwatched" : "Mark as watched"}
+                                        >
+                                            <div className={cn(
+                                                "p-3 rounded-full transition-all group-hover:scale-110 active:scale-95",
+                                                item.watched
+                                                    ? "bg-green-500/20 text-green-500"
+                                                    : "bg-white/5 hover:bg-white/10 text-white"
+                                            )}>
+                                                <Eye className="w-5 h-5" />
+                                            </div>
+                                        </button>
+                                    )}
 
-                                <button className="group" title="Share">
-                                    <div className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-white transition-all group-hover:scale-110 active:scale-95">
-                                        <Share2 className="w-5 h-5" />
-                                    </div>
-                                </button>
+                                {item.type !== MediaType.Artist && item.type !== MediaType.Album && (
+                                    <button className="group" title="Share">
+                                        <div className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-white transition-all group-hover:scale-110 active:scale-95">
+                                            <Share2 className="w-5 h-5" />
+                                        </div>
+                                    </button>
+                                )}
                             </div>
                         </motion.div>
                     </div>
@@ -172,6 +188,10 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                 {item.year && (
                                     <span className="text-lg">{item.year}</span>
                                 )}
+                                {item.year && customMetadata && (
+                                    <span className="text-gray-600">•</span>
+                                )}
+                                {customMetadata}
                                 {item.type === MediaType.Series && item.rating && (
                                     <span className="px-2 py-0.5 border border-gray-500/30 bg-gray-500/10 rounded text-xs font-bold text-gray-400 uppercase tracking-wider">
                                         {item.rating}

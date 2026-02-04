@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
-import { Play, Shuffle, Clock, User } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
+import { Play, Shuffle, Clock, Heart, Share2 } from 'lucide-react';
 import api from '../../services/api';
 import { type MediaItem } from '../../types';
 import { useAudioStore } from '../../store/audioStore';
@@ -13,7 +13,16 @@ interface AlbumDetailViewProps {
 export default function AlbumDetailView({ item }: AlbumDetailViewProps) {
     const { playPlaylist } = useAudioStore();
     const [searchParams] = useSearchParams();
+    const queryClient = useQueryClient();
     const highlightTrackId = searchParams.get('highlight');
+
+    const favoriteMutation = useMutation({
+        mutationFn: (isFavorite: boolean) => api.post(`/interaction/${item.id}/favorite`, { isFavorite }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['media', item.id] });
+            queryClient.invalidateQueries({ queryKey: ['library'] });
+        }
+    });
 
     const { data: tracks, isLoading } = useQuery({
         queryKey: ['album', item.id, 'tracks'],
@@ -22,9 +31,6 @@ export default function AlbumDetailView({ item }: AlbumDetailViewProps) {
             return response.data;
         }
     });
-
-    // Get artist name from metadata or first track
-    const artistName = (item.metadata?.artist as string) || tracks?.[0]?.metadata?.artist as string;
 
     const handlePlayAlbum = () => {
         if (tracks && tracks.length > 0) {
@@ -46,37 +52,16 @@ export default function AlbumDetailView({ item }: AlbumDetailViewProps) {
         }
     };
 
-    // Calculate total duration using durationSeconds (raw seconds)
-    const totalDuration = tracks?.reduce((acc, track) => acc + (track.durationSeconds || 0), 0) || 0;
-
     if (isLoading) return <div className="text-gray-400">Loading tracks...</div>;
 
     return (
         <div className="space-y-8">
-            {/* Album Info Row */}
-            <div className="flex flex-wrap items-center gap-4">
-                {/* Artist Link */}
-                {item.artistId && artistName && (
-                    <Link
-                        to={`/media/${item.artistId}`}
-                        className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors group"
-                    >
-                        <User className="w-4 h-4 group-hover:text-primary" />
-                        <span className="font-medium group-hover:underline">{artistName}</span>
-                    </Link>
-                )}
-
-                {/* Track Count & Duration */}
-                <div className="text-sm text-gray-500">
-                    {tracks?.length || 0} tracks • {formatDuration(totalDuration)}
-                </div>
-            </div>
-
             {/* Action Buttons */}
             <div className="flex items-center gap-3">
                 <button
                     onClick={handlePlayAlbum}
-                    className="bg-primary hover:bg-primary/80 text-white px-6 py-3 rounded-full font-medium flex items-center gap-2 transition-colors"
+                    disabled={!tracks || tracks.length === 0}
+                    className="bg-gradient-to-r from-blue-600 to-violet-600 disabled:from-gray-600 disabled:to-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-3 rounded-full font-bold flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-95 shadow-lg shadow-violet-500/30"
                 >
                     <Play className="w-5 h-5 fill-current" />
                     Play All
@@ -88,6 +73,29 @@ export default function AlbumDetailView({ item }: AlbumDetailViewProps) {
                     <Shuffle className="w-5 h-5" />
                     Shuffle
                 </button>
+
+                <div className="flex items-center gap-2 ml-2">
+                    <button
+                        onClick={() => favoriteMutation.mutate(!item.isFavorite)}
+                        className="group"
+                        title="Favorite"
+                    >
+                        <div className={cn(
+                            "p-3 rounded-full transition-all group-hover:scale-110 active:scale-95",
+                            item.isFavorite
+                                ? "bg-red-500/20 text-red-500"
+                                : "bg-white/5 hover:bg-white/10 text-white"
+                        )}>
+                            <Heart className={cn("w-5 h-5", item.isFavorite && "fill-current")} />
+                        </div>
+                    </button>
+
+                    <button className="group" title="Share">
+                        <div className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-white transition-all group-hover:scale-110 active:scale-95">
+                            <Share2 className="w-5 h-5" />
+                        </div>
+                    </button>
+                </div>
             </div>
 
             {/* Track List */}

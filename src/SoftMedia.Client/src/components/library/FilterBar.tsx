@@ -1,4 +1,4 @@
-import { Search, Heart } from 'lucide-react';
+import { Search, Heart, RefreshCw } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { useDebounce } from '../../hooks/useDebounce';
 import { cn } from '../../lib/utils';
@@ -17,6 +17,7 @@ interface FilterBarProps {
     showWatchedFilter?: boolean;
     libraryType?: string;
     libraryId?: string;
+    onRescan?: () => void;
 }
 
 // Common styles for select elements
@@ -35,7 +36,8 @@ export function FilterBar({
     onViewModeChange,
     showWatchedFilter,
     libraryType,
-    libraryId
+    libraryId,
+    onRescan
 }: FilterBarProps) {
     const [search, setSearch] = useState('');
     const [genre, setGenre] = useState('');
@@ -238,6 +240,17 @@ export function FilterBar({
                     >
                         <Heart className={cn("w-5 h-5", isFavorite && "fill-current")} />
                     </button>
+
+                    {/* Rescan Button */}
+                    {onRescan && (
+                        <button
+                            onClick={onRescan}
+                            className="p-2 rounded-lg border bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                            title="Rescan Library"
+                        >
+                            <RefreshCw className="w-5 h-5" />
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

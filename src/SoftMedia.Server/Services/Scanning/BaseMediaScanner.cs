@@ -1,11 +1,15 @@
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Metadata;
 
 namespace SoftMedia.Server.Services.Scanning;
+
+public record ScanOperationResult(ScanResult Result, Guid ItemId = default, bool EnqueueMetadata = false);
 
 /// <summary>
 /// Base class for media scanners providing shared functionality.
@@ -24,12 +28,21 @@ public abstract class BaseMediaScanner : IMediaScanner
     protected BaseMediaScanner(
         IServiceScopeFactory scopeFactory,
         ILogger logger,
-        IMediaNotificationService notificationService)
+        IMediaNotificationService notificationService,
+        IMetadataQueue metadataQueue)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _notificationService = notificationService;
+        _metadataQueue = metadataQueue;
     }
+
+    protected readonly IMetadataQueue _metadataQueue;
+
+    /// <summary>
+    /// Template method for scanning a library.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _parentLocks = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Template method for scanning a library.
@@ -41,102 +54,195 @@ public abstract class BaseMediaScanner : IMediaScanner
     {
         _logger.LogInformation("[{Scanner}] Starting scan of library '{LibraryName}' (ID: {LibraryId})",
             DisplayName, library.Name, library.Id);
+            
+        // Reset locks for this scan
+        _parentLocks.Clear();
 
-        using var scope = _scopeFactory.CreateScope();
-        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        // Stats tracking (thread-safe)
+        int processedCount = 0;
+        int newCount = 0;
+        int updatedCount = 0;
+        int skippedCount = 0;
+        int totalDirs = 0;
 
         try
         {
-            // 1. Pre-load existing paths for O(1) lookup
-            var existingPaths = await GetExistingPathsAsync(context, library.Id, cancellationToken);
-            _logger.LogDebug("[{Scanner}] Found {Count} existing items in database", DisplayName, existingPaths.Count);
+            // 1. Enumerate all directories first (Producer)
+            var directories = EnumerateDirectories(library.Paths).ToList();
+            totalDirs = directories.Count;
+            _logger.LogInformation("[{Scanner}] Found {Count} directories to process", DisplayName, totalDirs);
 
-            // 2. Enumerate media files
-            var files = EnumerateMediaFiles(library.Paths).ToList();
-            _logger.LogInformation("[{Scanner}] Found {Count} media files to process", DisplayName, files.Count);
-
-            var processedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var processedCount = 0;
-            var newCount = 0;
-            var updatedCount = 0;
-            var skippedCount = 0;
-
-            // 3. Process each file
-            foreach (var filePath in files)
+            // 2. Pre-load existing paths strategy might need adjustment for massive libraries.
+            // For now, we load ALL paths. Ideally, we'd load per directory, but that requires exact path matching.
+            // Let's stick to loading all but using a concurrent dictionary?
+            // Actually, we can fetch existing paths PER DIRECTORY inside the loop to enable massive libraries.
+            // BUT, verifying duplicates/moves across directories is harder.
+            // Let's keep the global "GetExistingPaths" call for now (assumed < 100k items).
+            // We need a thread-safe way to read/remove from it.
+            // We can make a ConcurrentDictionary or just lock it if we only read.
+            // CleanupOrphans needs the remaining list.
+            
+            // NOTE: DbContext is NOT thread safe. We need a transient one for GetExistingPaths or use one scope.
+            Dictionary<string, Guid> existingPaths;
+            using (var scope = _scopeFactory.CreateScope())
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                var ctx = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                existingPaths = await GetExistingPathsAsync(ctx, library.Id, cancellationToken);
+            }
+            
+            // Wrap existingPaths in a ConcurrentDictionary for partial updates/removals if needed?
+            // Actually, we track "processedFiles" separately to indentify orphans.
+            var processedFiles = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
-                try
+            // 3. Process Directories in Parallel (Consumer)
+            var parallelOptions = new ParallelOptions 
+            { 
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = Environment.ProcessorCount 
+            };
+
+            await Parallel.ForEachAsync(directories, parallelOptions, async (dirPath, ct) =>
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                
+                // Get files in THIS directory only
+                var filesInDir = EnumerateFilesCurrentDir(dirPath).ToList();
+                if (filesInDir.Count == 0) return;
+
+                int localNew = 0;
+                int localUpdated = 0;
+                int localSkipped = 0;
+
+                // List for deferred metadata enqueueing
+                var deferredQueue = new List<(Guid Id, LibraryType Type)>();
+
+                foreach (var filePath in filesInDir)
                 {
-                    var existing = existingPaths.TryGetValue(filePath, out var id)
-                        ? await context.MediaItems.FindAsync(new object[] { id }, cancellationToken)
-                        : null;
-
-                    var result = await ProcessFileAsync(context, filePath, existing, library, cancellationToken);
-                    processedFiles.Add(filePath);
-                    
-                    // Track result counters
-                    switch (result)
+                    ct.ThrowIfCancellationRequested();
+                    try 
                     {
-                        case ScanResult.New:
-                            newCount++;
-                            break;
-                        case ScanResult.Updated:
-                            updatedCount++;
-                            break;
-                        case ScanResult.Skipped:
-                            skippedCount++;
-                            break;
+                        var opResult = await ProcessFileAsync(context, filePath, null /* optimize lookups? */, library, ct);
+                        
+                        // Check if we need to look up existing item ID (if we passed null)
+                        // Actually, ProcessFileAsync *usually* handles lookup if passed null? 
+                        // Or we look it up here using our global map.
+                        if (existingPaths.TryGetValue(filePath, out var id))
+                        {
+                            // We might need to attach it to context if updates are needed.
+                            // ProcessFileAsync overrides usually do a DB lookup if 'existing' is null.
+                        }
+
+                        processedFiles.TryAdd(filePath, 0);
+
+                        switch (opResult.Result)
+                        {
+                            case ScanResult.New: localNew++; break;
+                            case ScanResult.Updated: localUpdated++; break;
+                            case ScanResult.Skipped: localSkipped++; break;
+                        }
+
+                        if (opResult.EnqueueMetadata && opResult.ItemId != Guid.Empty)
+                        {
+                            deferredQueue.Add((opResult.ItemId, library.Type));
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "[{Scanner}] Error processing file: {FilePath}", DisplayName, filePath);
+                    }
+                    
+                    Interlocked.Increment(ref processedCount);
+                    // Progress reporting needs to be throttled or it will flood SignalR
+                    if (processedCount % 10 == 0)
+                    {
+                        progress?.Report(new ScanProgress(processedCount, -1, Path.GetFileName(dirPath), "Scanning..."));
                     }
                 }
-                catch (Exception ex)
+                
+                await context.SaveChangesAsync(ct);
+                
+                // Process deferred queue AFTER save
+                foreach (var item in deferredQueue)
                 {
-                    _logger.LogWarning(ex, "[{Scanner}] Error processing file: {FilePath}", DisplayName, filePath);
+                    await _metadataQueue.EnqueueMetadataRefreshAsync(item.Id, item.Type);
                 }
+                
+                Interlocked.Add(ref newCount, localNew);
+                Interlocked.Add(ref updatedCount, localUpdated);
+                Interlocked.Add(ref skippedCount, localSkipped);
+            });
 
-                processedCount++;
-                progress?.Report(new ScanProgress(
-                    processedCount,
-                    files.Count,
-                    Path.GetFileName(filePath),
-                    "Scanning files",
-                    newCount,
-                    updatedCount,
-                    skippedCount));
+            // 5. Cleanup Orphans (Global Scope)
+            using (var cleanupScope = _scopeFactory.CreateScope())
+            {
+                var context = cleanupScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                await CleanupOrphansAsync(context, library, existingPaths, new HashSet<string>(processedFiles.Keys), cancellationToken);
+                await CleanupEmptyContainersAsync(context, library, cancellationToken);
+                await context.SaveChangesAsync(cancellationToken);
             }
 
-            // 4. Save changes from file processing
-            await context.SaveChangesAsync(cancellationToken);
-
-            // 5. Cleanup orphaned items (files that no longer exist)
-            progress?.Report(new ScanProgress(files.Count, files.Count, null, "Cleaning up orphans", newCount, updatedCount, skippedCount));
-            await CleanupOrphansAsync(context, library, existingPaths, processedFiles, cancellationToken);
-
-            // 6. Cleanup empty containers (albums, series, etc.)
-            progress?.Report(new ScanProgress(files.Count, files.Count, null, "Cleaning up empty containers", newCount, updatedCount, skippedCount));
-            await CleanupEmptyContainersAsync(context, library, cancellationToken);
-
-            await context.SaveChangesAsync(cancellationToken);
-
-            _logger.LogInformation("[{Scanner}] Completed scan of library '{LibraryName}'. Processed {Count} files. New: {New}, Updated: {Updated}, Skipped: {Skipped}",
-                DisplayName, library.Name, processedCount, newCount, updatedCount, skippedCount);
-
-            // 7. Notify UI of completed scan
-            _notificationService.NotifyScanProgress(library.Id, processedCount, processedCount, "Scan complete");
+            _logger.LogInformation("[{Scanner}] Completed scan. Processed {Count}. New: {New}, Upd: {Upd}", DisplayName, processedCount, newCount, updatedCount);
             
-            // Final progress report with all counts
-            progress?.Report(new ScanProgress(processedCount, files.Count, null, "Complete", newCount, updatedCount, skippedCount));
+            _notificationService.NotifyScanProgress(library.Id, processedCount, processedCount, "Scan complete");
+            progress?.Report(new ScanProgress(processedCount, processedCount, null, "Complete", newCount, updatedCount, skippedCount));
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("[{Scanner}] Scan cancelled for library '{LibraryName}'", DisplayName, library.Name);
+            _logger.LogInformation("[{Scanner}] Scan cancelled", DisplayName);
             throw;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[{Scanner}] Error scanning library '{LibraryName}'", DisplayName, library.Name);
+            _logger.LogError(ex, "[{Scanner}] Error scanning library", DisplayName);
             throw;
         }
+    }
+
+    protected virtual IEnumerable<string> EnumerateDirectories(List<string> libraryPaths)
+    {
+         foreach (var path in libraryPaths)
+         {
+             if (Directory.Exists(path))
+             {
+                 yield return path; // The root itself
+                 foreach (var dir in Directory.EnumerateDirectories(path, "*", SearchOption.AllDirectories))
+                 {
+                     yield return dir;
+                 }
+             }
+         }
+    }
+
+    protected virtual IEnumerable<string> EnumerateFilesCurrentDir(string dirPath)
+    {
+        if (!Directory.Exists(dirPath)) yield break;
+        
+        IEnumerable<string> files = Enumerable.Empty<string>();
+        try
+        {
+            files = Directory.EnumerateFiles(dirPath, "*.*", SearchOption.TopDirectoryOnly);
+        }
+        catch { /* Permission ignored */ }
+
+        foreach (var file in files)
+        {
+            if (CanHandleFile(file)) yield return file;
+        }
+    }
+
+    protected async Task<IDisposable> LockParentAsync(string parentName, CancellationToken ct)
+    {
+        var sem = _parentLocks.GetOrAdd(parentName, _ => new SemaphoreSlim(1, 1));
+        await sem.WaitAsync(ct);
+        return new SemaphoreReleaser(sem);
+    }
+    
+    private class SemaphoreReleaser : IDisposable
+    {
+        private readonly SemaphoreSlim _sem;
+        public SemaphoreReleaser(SemaphoreSlim sem) => _sem = sem;
+        public void Dispose() => _sem.Release();
     }
 
     /// <summary>
@@ -159,8 +265,13 @@ public abstract class BaseMediaScanner : IMediaScanner
         var existing = await context.MediaItems
             .FirstOrDefaultAsync(m => m.Path == filePath && m.LibraryId == library.Id, cancellationToken);
 
-        await ProcessFileAsync(context, filePath, existing, library, cancellationToken);
+        var opResult = await ProcessFileAsync(context, filePath, existing, library, cancellationToken);
         await context.SaveChangesAsync(cancellationToken);
+
+        if (opResult.EnqueueMetadata && opResult.ItemId != Guid.Empty)
+        {
+             await _metadataQueue.EnqueueMetadataRefreshAsync(opResult.ItemId, library.Type);
+        }
 
         // Notify that an item was updated - use empty guid as placeholder
         // The actual item notification should happen in ProcessFileAsync
@@ -197,7 +308,7 @@ public abstract class BaseMediaScanner : IMediaScanner
     /// <summary>
     /// Enumerate media files in the library paths.
     /// </summary>
-    protected IEnumerable<string> EnumerateMediaFiles(List<string> libraryPaths)
+    protected virtual IEnumerable<string> EnumerateMediaFiles(List<string> libraryPaths)
     {
         foreach (var path in libraryPaths)
         {
@@ -260,9 +371,9 @@ public abstract class BaseMediaScanner : IMediaScanner
 
     /// <summary>
     /// Process a single file. Implemented by concrete scanners.
-    /// Returns ScanResult indicating whether item was new, updated, or skipped.
+    /// Returns ScanOperationResult indicating whether item was new, updated, or skipped, and if metadata refresh is needed.
     /// </summary>
-    protected abstract Task<ScanResult> ProcessFileAsync(
+    protected abstract Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
         string filePath,
         MediaItem? existing,

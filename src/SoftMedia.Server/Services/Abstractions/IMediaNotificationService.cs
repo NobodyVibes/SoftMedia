@@ -16,6 +16,11 @@ public interface IMediaNotificationService
     void NotifyItemUpdated(Guid mediaId);
 
     /// <summary>
+    /// Notify clients that the "Recently Added" list for a library has been updated.
+    /// </summary>
+    void NotifyLibraryRecentUpdated(Guid libraryId);
+
+    /// <summary>
     /// Notify clients of scan progress for a library.
     /// </summary>
     void NotifyScanProgress(Guid libraryId, int processed, int total, string status);

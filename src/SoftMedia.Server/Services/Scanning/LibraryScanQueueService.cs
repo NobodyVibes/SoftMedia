@@ -290,11 +290,11 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
             if (job.Type == LibraryScanJobType.LibraryScan)
             {
                 // Use new scanner orchestrator with progress adapter
-                var orchestrator = scope.ServiceProvider.GetRequiredService<Scanning.IScannerOrchestrator>();
+                var orchestrator = scope.ServiceProvider.GetRequiredService<IScannerOrchestrator>();
                 
                 // Create synchronous progress adapter (Progress<T> is async and may not fire before CompleteJob)
-                var lastProgress = new Scanning.ScanProgress(0, 0, null, "Starting");
-                var progress = new SyncProgress<Scanning.ScanProgress>(p =>
+                var lastProgress = new ScanProgress(0, 0, null, "Starting");
+                var progress = new SyncProgress<ScanProgress>(p =>
                 {
                     job.Stage = LibraryScanStage.Processing;
                     job.ProcessedFiles = p.ProcessedCount;
@@ -306,7 +306,7 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
                     lastProgress = p;
                 });
                 
-                await orchestrator.ScanLibraryAsync(job.LibraryId, progress, stoppingToken);
+                await orchestrator.ExecuteScanAsync(job.LibraryId, progress, stoppingToken);
                 
                 // Mark as complete using the LAST captured progress (guaranteed synchronous)
                 

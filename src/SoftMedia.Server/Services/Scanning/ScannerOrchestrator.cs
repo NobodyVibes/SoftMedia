@@ -15,15 +15,18 @@ public class ScannerOrchestrator : IScannerOrchestrator
     private readonly IEnumerable<IMediaScanner> _scanners;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ScannerOrchestrator> _logger;
+    private readonly IServiceProvider _serviceProvider;
 
     public ScannerOrchestrator(
         IEnumerable<IMediaScanner> scanners,
         IServiceScopeFactory scopeFactory,
-        ILogger<ScannerOrchestrator> logger)
+        ILogger<ScannerOrchestrator> logger,
+        IServiceProvider serviceProvider)
     {
         _scanners = scanners;
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _serviceProvider = serviceProvider;
     }
 
     /// <inheritdoc/>
@@ -47,6 +50,28 @@ public class ScannerOrchestrator : IScannerOrchestrator
     {
         using var scope = _scopeFactory.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var library = await context.Libraries.FindAsync(new object[] { libraryId }, cancellationToken);
+        
+        if (library == null)
+        {
+            _logger.LogError("Library not found: {LibraryId}", libraryId);
+            return;
+        }
+
+        // Lazy resolve to avoid circular dependency
+        var queue = _serviceProvider.GetRequiredService<ILibraryScanQueueService>();
+        queue.EnqueueScan(libraryId, library.Name);
+        _logger.LogInformation("Enqueued scan for library '{LibraryName}'", library.Name);
+    }
+
+    /// <inheritdoc/>
+    public async Task ExecuteScanAsync(
+        Guid libraryId,
+        IProgress<ScanProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         var library = await context.Libraries.FindAsync(new object[] { libraryId }, cancellationToken);
         if (library == null)
@@ -63,8 +88,8 @@ public class ScannerOrchestrator : IScannerOrchestrator
             return;
         }
 
-        _logger.LogInformation("Using {ScannerName} for library '{LibraryName}'",
-            scanner.DisplayName, library.Name);
+        _logger.LogInformation("Executing scan for library '{LibraryName}' with {ScannerName}",
+            library.Name, scanner.DisplayName);
 
         await scanner.ScanLibraryAsync(library, progress, cancellationToken);
     }

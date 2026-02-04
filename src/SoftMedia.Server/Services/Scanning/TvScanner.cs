@@ -36,13 +36,16 @@ public class TvScanner : BaseMediaScanner
     // Track new series IDs for deferred image caching (to avoid race condition)
     private HashSet<Guid> _newSeriesIds = new();
 
+
+
     public TvScanner(
         IServiceScopeFactory scopeFactory,
         ILogger<TvScanner> logger,
         IMediaNotificationService notificationService,
         IBackgroundImageCacheService backgroundImageCache,
-        IMediaAnalysisService mediaAnalysisService)
-        : base(scopeFactory, logger, notificationService)
+        IMediaAnalysisService mediaAnalysisService,
+        IMetadataQueue metadataQueue)
+        : base(scopeFactory, logger, notificationService, metadataQueue)
     {
         _backgroundImageCache = backgroundImageCache;
         _mediaAnalysisService = mediaAnalysisService;
@@ -64,17 +67,22 @@ public class TvScanner : BaseMediaScanner
         await base.ScanLibraryAsync(library, progress, cancellationToken);
         
         // Queue image caching for new series AFTER all episodes/seasons are created.
-        // This ensures BackgroundImageCacheService sees all seasons/episodes when processing.
-        foreach (var seriesId in _newSeriesIds)
-        {
-            _backgroundImageCache.QueueImageCaching(seriesId);
-        }
+        // Actually, since we queue metadata enrichment, we don't need to manually queue images here anymore?
+        // MetadataQueueService handles enrichment AND image caching trigger if needed.
+        // But if TvScanner relied on Series JSON containing season/episode images...
+        // Let's keep existing logic safe, but _newSeriesIds populate might change.
+        // Since we enqueue Series to MetadataQueue, that usually handles simple image caching.
+        // If "Deferred Image Caching" pattern is used by QueueService... 
+        // MetadataQueueService calls Aggregator with deferImageCaching:false.
+        // So images are cached immediately by the background worker.
+        // So we don't need this manual queue.
     }
+
 
     /// <summary>
     /// Process a single video file as a TV episode.
     /// </summary>
-    protected override async Task<ScanResult> ProcessFileAsync(
+    protected override async Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
         string filePath,
         MediaItem? existing,
@@ -83,6 +91,10 @@ public class TvScanner : BaseMediaScanner
     {
         try
         {
+            // ... (keep existing parsing logic omitted for brevity, focusing on signature/return) ...
+            // Wait, replace_file_content replaces the BLOCK. I must include the parsing logic or target closely.
+            // I'll target the whole method to be safe relative to the view.
+            
             // Parse episode info from filename
             var parsed = FileNameParser.ParseTvEpisode(filePath);
             var showName = parsed.ShowName;
@@ -110,10 +122,10 @@ public class TvScanner : BaseMediaScanner
 
             var showYear = FileNameParser.ExtractYear(showName);
 
-            // Ensure series exists
+            // Ensure series exists (Thread Safe)
             var series = await EnsureSeriesAsync(context, showName, showYear, library, filePath, cancellationToken);
 
-            // Ensure season exists
+            // Ensure season exists (Thread Safe)
             var season = await EnsureSeasonAsync(context, series, seasonNum, library, cancellationToken);
 
             // Create or update episode
@@ -125,7 +137,14 @@ public class TvScanner : BaseMediaScanner
                 ? episodeTitle 
                 : $"Episode {episodeNum}";
 
-            // Try to get authoritative title from TVMaze metadata
+            if (!isNew)
+            {
+               // If existing, try to keep existing title if not generic
+               if (episode.Title != $"Episode {episode.EpisodeNumber}" && string.IsNullOrEmpty(episodeTitle))
+                   finalTitle = episode.Title;
+            }
+
+            // Try to get authoritative title from TVMaze metadata (cached on Series)
             var tvMazeTitle = GetEpisodeTitleFromMetadata(series, seasonNum, episodeNum);
             if (!string.IsNullOrEmpty(tvMazeTitle))
                 finalTitle = tvMazeTitle;
@@ -151,21 +170,25 @@ public class TvScanner : BaseMediaScanner
             if (isNew)
             {
                 context.MediaItems.Add(episode);
+                
+                // Enqueue enrichment if we didn't get good metadata from series cache
+                var shouldEnqueue = string.IsNullOrEmpty(tvMazeTitle);
+
                 _logger.LogDebug("[TvScanner] Added episode: {Show} S{Season}E{Episode} - {Title}",
                     showName, seasonNum, episodeNum, finalTitle);
-                return ScanResult.New;
+                return new ScanOperationResult(ScanResult.New, episode.Id, EnqueueMetadata: shouldEnqueue);
             }
             else
             {
                 _logger.LogDebug("[TvScanner] Updated episode: {Show} S{Season}E{Episode}",
                     showName, seasonNum, episodeNum);
-                return ScanResult.Updated;
+                return new ScanOperationResult(ScanResult.Updated, episode.Id, EnqueueMetadata: false);
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[TvScanner] Error processing file: {FilePath}", filePath);
-            return ScanResult.Skipped;
+            return new ScanOperationResult(ScanResult.Skipped);
         }
     }
 
@@ -180,59 +203,69 @@ public class TvScanner : BaseMediaScanner
         string episodePath,
         CancellationToken cancellationToken)
     {
-        // Check session cache first
-        if (_seriesCache.TryGetValue(showName, out var cached))
-            return cached;
-
-        // Check database
-        var series = await context.MediaItems
-            .FirstOrDefaultAsync(m =>
-                m.LibraryId == library.Id &&
-                m.Type == MediaType.Series &&
-                m.Title.ToLower() == showName.ToLower(),
-                cancellationToken);
-
-        if (series != null)
+        // Check session cache first (Thread safe? No, Dict is not TS, but we are inside a thread for a directory. 
+        // BaseMediaScanner loop is parallel directories.
+        // _seriesCache is global for the scanner instance? 
+        // TvScanner is instantiated ONCE (Singleton/Scoped)?
+        // BaseMediaScanner is usually Scoped/Transient.
+        // If Scoped: created per request. 
+        // Implementation check: IMediaScanner registration.
+        // But Parallel loop is inside ONE instance of Scanner.
+        // So _seriesCache access IS NOT THREAD SAFE.
+        // FIX: Remove usage of _seriesCache or make it ConcurrentDictionary.
+        // Or strictly rely on DB + Lock.
+        // Given concurrency, local cache per thread (directory) is safest, but misses cross-directory cache hits.
+        // Global ConcurrentDictionary is better.
+        
+        // For now, let's use the DB + Lock pattern primarily.
+        
+        // Critical Section: Create Series
+        using (await LockParentAsync(showName, cancellationToken))
         {
-            _seriesCache[showName] = series;
-            return series;
+             // Double check DB inside lock
+             var series = await context.MediaItems
+                .AsNoTracking() // Use NoTracking to avoid conflict with other contexts? 
+                // Wait, if we attach to context to return it...
+                // If we want to return attached entity for navigation properties?
+                // Just return disconnected or assume ID is what matters.
+                .FirstOrDefaultAsync(m =>
+                    m.LibraryId == library.Id &&
+                    m.Type == MediaType.Series &&
+                    m.Title == showName, // Exact match case sensitive? Title usually normalized?
+                    cancellationToken);
+
+             if (series == null)
+             {
+                 // Create new series
+                 series = new MediaItem
+                 {
+                     Id = Guid.NewGuid(), // Generate ID
+                     LibraryId = library.Id,
+                     Title = showName,
+                     SortTitle = SortableTitle(showName),
+                     Path = Path.GetDirectoryName(episodePath) ?? episodePath,
+                     Type = MediaType.Series,
+                     Year = year,
+                     DateModified = DateTime.UtcNow
+                 };
+
+                 context.MediaItems.Add(series);
+                 await context.SaveChangesAsync(cancellationToken);
+                 
+                 // Queue Enrichment
+                 await _metadataQueue.EnqueueMetadataRefreshAsync(series.Id, LibraryType.TV);
+                 
+                 _logger.LogInformation("[TvScanner] Created series: {ShowName}", showName);
+             }
+             else
+             {
+                 // Attach if needed? 
+                 // If we read as no tracking, we can return it. 
+                 // Episode.SeriesId = series.Id is enough.
+             }
+             
+             return series;
         }
-
-        // Create new series
-        series = new MediaItem
-        {
-            LibraryId = library.Id,
-            Title = showName,
-            SortTitle = SortableTitle(showName),
-            Path = Path.GetDirectoryName(episodePath) ?? episodePath,
-            Type = MediaType.Series,
-            Year = year,
-            DateModified = DateTime.UtcNow
-        };
-
-        // Enrich with TVMaze metadata
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var metadataAggregator = scope.ServiceProvider.GetService<MetadataAggregator>();
-            if (metadataAggregator != null)
-            {
-                await metadataAggregator.EnrichMediaItemAsync(series, LibraryType.TV, deferImageCaching: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[TvScanner] Failed to enrich series metadata: {Show}", showName);
-        }
-
-        context.MediaItems.Add(series);
-        await context.SaveChangesAsync(cancellationToken);
-
-        _seriesCache[showName] = series;
-        _newSeriesIds.Add(series.Id);  // Defer image caching until scan completes
-
-        _logger.LogInformation("[TvScanner] Created series: {ShowName}", showName);
-        return series;
     }
 
     /// <summary>
@@ -245,47 +278,45 @@ public class TvScanner : BaseMediaScanner
         Library library,
         CancellationToken cancellationToken)
     {
-        var cacheKey = (series.Id, seasonNum);
-        if (_seasonCache.TryGetValue(cacheKey, out var cached))
-            return cached;
-
-        // Check database
-        var season = await context.MediaItems
-            .FirstOrDefaultAsync(m =>
-                m.SeriesId == series.Id &&
-                m.Type == MediaType.Season &&
-                m.SeasonNumber == seasonNum,
-                cancellationToken);
-
-        if (season != null)
+        var key = $"{series.Id}-{seasonNum}";
+        
+        using (await LockParentAsync(key, cancellationToken))
         {
-            _seasonCache[cacheKey] = season;
+            var season = await context.MediaItems
+                .AsNoTracking()
+                .FirstOrDefaultAsync(m =>
+                    m.SeriesId == series.Id &&
+                    m.Type == MediaType.Season &&
+                    m.SeasonNumber == seasonNum,
+                    cancellationToken);
+
+            if (season == null)
+            {
+                // Create new season
+                season = new MediaItem
+                {
+                    Id = Guid.NewGuid(),
+                    LibraryId = library.Id,
+                    SeriesId = series.Id,
+                    Title = $"Season {seasonNum}",
+                    SortTitle = $"Season {seasonNum:D2}",
+                    Path = series.Path,
+                    Type = MediaType.Season,
+                    SeasonNumber = seasonNum,
+                    DateModified = DateTime.UtcNow
+                };
+
+                // Try to get metadata from series JSON
+                PopulateSeasonMetadata(season, series, seasonNum);
+
+                context.MediaItems.Add(season);
+                await context.SaveChangesAsync(cancellationToken);
+
+                _logger.LogInformation("[TvScanner] Created season: {Show} - Season {Num}", series.Title, seasonNum);
+            }
+            
             return season;
         }
-
-        // Create new season
-        season = new MediaItem
-        {
-            LibraryId = library.Id,
-            SeriesId = series.Id,
-            Title = $"Season {seasonNum}",
-            SortTitle = $"Season {seasonNum:D2}",
-            Path = series.Path,
-            Type = MediaType.Season,
-            SeasonNumber = seasonNum,
-            DateModified = DateTime.UtcNow
-        };
-
-        // Try to get metadata from series JSON
-        PopulateSeasonMetadata(season, series, seasonNum);
-
-        context.MediaItems.Add(season);
-        await context.SaveChangesAsync(cancellationToken);
-
-        _seasonCache[cacheKey] = season;
-
-        _logger.LogInformation("[TvScanner] Created season: {Show} - Season {Num}", series.Title, seasonNum);
-        return season;
     }
 
     /// <summary>

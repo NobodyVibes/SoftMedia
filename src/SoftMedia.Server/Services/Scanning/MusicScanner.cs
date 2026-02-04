@@ -6,6 +6,7 @@ using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Media;
 using TagLib;
+using SoftMedia.Server.Services.Metadata;
 
 namespace SoftMedia.Server.Services.Scanning;
 
@@ -16,10 +17,6 @@ public class MusicScanner : BaseMediaScanner
 {
     private readonly IBackgroundImageCacheService _backgroundImageCache;
     private readonly IMediaAnalysisService _mediaAnalysisService;
-
-    // Session caches to avoid duplicate entity creation
-    private Dictionary<string, MediaItem> _artistCache = new(StringComparer.OrdinalIgnoreCase);
-    private Dictionary<(Guid ArtistId, string AlbumName), MediaItem> _albumCache = new();
 
     // Local cover art filenames to check (in priority order)
     private static readonly string[] LocalCoverNames =
@@ -51,8 +48,9 @@ public class MusicScanner : BaseMediaScanner
         ILogger<MusicScanner> logger,
         IMediaNotificationService notificationService,
         IBackgroundImageCacheService backgroundImageCache,
-        IMediaAnalysisService mediaAnalysisService)
-        : base(scopeFactory, logger, notificationService)
+        IMediaAnalysisService mediaAnalysisService,
+        IMetadataQueue metadataQueue)
+        : base(scopeFactory, logger, notificationService, metadataQueue)
     {
         _backgroundImageCache = backgroundImageCache;
         _mediaAnalysisService = mediaAnalysisService;
@@ -66,17 +64,14 @@ public class MusicScanner : BaseMediaScanner
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        // Clear session caches
-        _artistCache.Clear();
-        _albumCache.Clear();
-
+        // No session caches anymore
         await base.ScanLibraryAsync(library, progress, cancellationToken);
     }
 
     /// <summary>
     /// Process a single audio file.
     /// </summary>
-    protected override async Task<ScanResult> ProcessFileAsync(
+    protected override async Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
         string filePath,
         MediaItem? existing,
@@ -95,10 +90,10 @@ public class MusicScanner : BaseMediaScanner
             var albumName = tag.Album ?? "Unknown Album";
             var trackTitle = tag.Title ?? Path.GetFileNameWithoutExtension(filePath);
 
-            // Get or create artist
+            // Get or create artist (Thread Safe)
             var artist = await EnsureArtistAsync(context, artistName, library, filePath, cancellationToken);
 
-            // Get or create album
+            // Get or create album (Thread Safe)
             var album = await EnsureAlbumAsync(context, albumName, artist, library, filePath, tagFile, cancellationToken);
 
             // Create or update track
@@ -143,18 +138,18 @@ public class MusicScanner : BaseMediaScanner
                 context.MediaItems.Add(track);
                 _logger.LogDebug("[MusicScanner] Added track: {Title} by {Artist}",
                     track.Title, artistName);
-                return ScanResult.New;
+                return new ScanOperationResult(ScanResult.New, track.Id, EnqueueMetadata: false);
             }
             else
             {
                 _logger.LogDebug("[MusicScanner] Updated track: {Title}", track.Title);
-                return ScanResult.Updated;
+                return new ScanOperationResult(ScanResult.Updated, track.Id, EnqueueMetadata: false);
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[MusicScanner] Error processing audio file: {FilePath}", filePath);
-            return ScanResult.Skipped;
+            return new ScanOperationResult(ScanResult.Skipped);
         }
     }
 
@@ -168,69 +163,58 @@ public class MusicScanner : BaseMediaScanner
         string trackPath,
         CancellationToken cancellationToken)
     {
-        // Check session cache first
-        if (_artistCache.TryGetValue(artistName, out var cached))
-            return cached;
-
-        // Check EF Core local cache (entities added but not yet saved)
-        var localArtist = context.MediaItems.Local
-            .FirstOrDefault(m => 
-                m.Title.Equals(artistName, StringComparison.OrdinalIgnoreCase) &&
-                m.Type == MediaType.Artist &&
-                m.LibraryId == library.Id);
-
-        if (localArtist != null)
+        using (await LockParentAsync(artistName, cancellationToken))
         {
-            _artistCache[artistName] = localArtist;
-            return localArtist;
-        }
+            // Check database
+            var artist = await context.MediaItems
+                .AsNoTracking()
+                .FirstOrDefaultAsync(m =>
+                    m.Title == artistName &&
+                    m.Type == MediaType.Artist &&
+                    m.LibraryId == library.Id,
+                    cancellationToken);
 
-        // Check database
-        var artist = await context.MediaItems
-            .FirstOrDefaultAsync(m =>
-                m.Title == artistName &&
-                m.Type == MediaType.Artist &&
-                m.LibraryId == library.Id,
-                cancellationToken);
+            if (artist != null)
+                return artist;
 
-        if (artist != null)
-        {
-            _artistCache[artistName] = artist;
-            return artist;
-        }
-
-        // Create new artist
-        artist = new MediaItem
-        {
-            LibraryId = library.Id,
-            Title = artistName,
-            SortTitle = SortableTitle(artistName),
-            Path = Path.GetDirectoryName(trackPath) ?? trackPath,
-            Type = MediaType.Artist,
-            DateModified = DateTime.UtcNow
-        };
-
-        // Check for local artist image
-        var artistDir = Path.GetDirectoryName(trackPath);
-        if (artistDir != null)
-        {
-            var parentDir = Path.GetDirectoryName(artistDir);
-            if (parentDir != null)
+            // Create new artist
+            artist = new MediaItem
             {
-                var artistImage = FindArtistImage(parentDir);
-                if (artistImage != null)
+                Id = Guid.NewGuid(),
+                LibraryId = library.Id,
+                Title = artistName,
+                SortTitle = SortableTitle(artistName),
+                Path = Path.GetDirectoryName(trackPath) ?? trackPath,
+                Type = MediaType.Artist,
+                DateModified = DateTime.UtcNow
+            };
+
+            // Check for local artist image
+            var artistDir = Path.GetDirectoryName(trackPath);
+            if (artistDir != null)
+            {
+                var parentDir = Path.GetDirectoryName(artistDir);
+                if (parentDir != null)
                 {
-                    artist.CoverArtPath = artistImage;
-                    _logger.LogDebug("[MusicScanner] Found artist image: {Path}", artistImage);
+                    var artistImage = FindArtistImage(parentDir);
+                    if (artistImage != null)
+                    {
+                        artist.CoverArtPath = artistImage;
+                        _logger.LogDebug("[MusicScanner] Found artist image: {Path}", artistImage);
+                    }
                 }
             }
+
+            context.MediaItems.Add(artist);
+            await context.SaveChangesAsync(cancellationToken);
+            
+            // Queue for metadata enrichment (image/bio)
+            await _metadataQueue.EnqueueMetadataRefreshAsync(artist.Id, LibraryType.Music);
+
+            _logger.LogInformation("[MusicScanner] Created artist: {ArtistName}", artistName);
+
+            return artist;
         }
-
-        context.MediaItems.Add(artist);
-        _artistCache[artistName] = artist;
-        _logger.LogInformation("[MusicScanner] Created artist: {ArtistName}", artistName);
-
-        return artist;
     }
 
     /// <summary>
@@ -245,64 +229,53 @@ public class MusicScanner : BaseMediaScanner
         TagLib.File tagFile,
         CancellationToken cancellationToken)
     {
-        var cacheKey = (artist.Id, albumName);
+        var key = $"{artist.Id}-{albumName}";
         
-        // Check session cache first
-        if (_albumCache.TryGetValue(cacheKey, out var cached))
-            return cached;
-
-        // Check EF Core local cache (entities added but not yet saved)
-        var localAlbum = context.MediaItems.Local
-            .FirstOrDefault(m => 
-                m.Title.Equals(albumName, StringComparison.OrdinalIgnoreCase) &&
-                m.ArtistId == artist.Id &&
-                m.Type == MediaType.Album &&
-                m.LibraryId == library.Id);
-
-        if (localAlbum != null)
+        using (await LockParentAsync(key, cancellationToken))
         {
-            _albumCache[cacheKey] = localAlbum;
-            return localAlbum;
-        }
+            // Check database
+            var album = await context.MediaItems
+                .AsNoTracking()
+                .FirstOrDefaultAsync(m =>
+                    m.Title == albumName &&
+                    m.ArtistId == artist.Id &&
+                    m.Type == MediaType.Album &&
+                    m.LibraryId == library.Id,
+                    cancellationToken);
 
-        // Check database
-        var album = await context.MediaItems
-            .FirstOrDefaultAsync(m =>
-                m.Title == albumName &&
-                m.ArtistId == artist.Id &&
-                m.Type == MediaType.Album &&
-                m.LibraryId == library.Id,
-                cancellationToken);
+            if (album != null)
+                return album;
 
-        if (album != null)
-        {
-            _albumCache[cacheKey] = album;
+            // Create new album
+            var albumDir = Path.GetDirectoryName(trackPath) ?? trackPath;
+            album = new MediaItem
+            {
+                Id = Guid.NewGuid(),
+                LibraryId = library.Id,
+                Title = albumName,
+                SortTitle = SortableTitle(albumName),
+                Path = albumDir,
+                Type = MediaType.Album,
+                ArtistId = artist.Id,
+                Year = (int?)tagFile.Tag.Year > 0 ? (int)tagFile.Tag.Year : null,
+                DateModified = DateTime.UtcNow
+            };
+
+            // Resolve cover art (priority: local file > embedded > deferred)
+            await ResolveAlbumCoverAsync(album, albumDir, tagFile, cancellationToken);
+
+            context.MediaItems.Add(album);
+            await context.SaveChangesAsync(cancellationToken);
+            
+            // Queue for metadata enrichment if we didn't find local cover, or just always for better metadata?
+            // Let's queue always for consistency.
+            await _metadataQueue.EnqueueMetadataRefreshAsync(album.Id, LibraryType.Music);
+
+            _logger.LogInformation("[MusicScanner] Created album: {AlbumName} by {ArtistName}",
+                albumName, artist.Title);
+
             return album;
         }
-
-        // Create new album
-        var albumDir = Path.GetDirectoryName(trackPath) ?? trackPath;
-        album = new MediaItem
-        {
-            LibraryId = library.Id,
-            Title = albumName,
-            SortTitle = SortableTitle(albumName),
-            Path = albumDir,
-            Type = MediaType.Album,
-            ArtistId = artist.Id,
-            Year = (int?)tagFile.Tag.Year > 0 ? (int)tagFile.Tag.Year : null,
-            DateModified = DateTime.UtcNow
-        };
-
-        // Resolve cover art (priority: local file > embedded > deferred)
-        await ResolveAlbumCoverAsync(album, albumDir, tagFile, cancellationToken);
-
-        context.MediaItems.Add(album);
-        _albumCache[cacheKey] = album;
-        _logger.LogInformation("[MusicScanner] Created album: {AlbumName} by {ArtistName}",
-            albumName, artist.Title);
-
-        return album;
     }
 
     /// <summary>

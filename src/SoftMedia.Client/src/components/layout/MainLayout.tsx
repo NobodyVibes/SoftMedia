@@ -4,6 +4,7 @@ import TopBar from './TopBar';
 import { useUIStore } from '../../store/uiStore';
 import { useAudioStore } from '../../store/audioStore';
 import { cn } from '../../lib/utils';
+import ScanProgressToast from '../shared/ScanProgressToast';
 
 export default function MainLayout() {
     const { isSidebarCollapsed } = useUIStore();
@@ -12,6 +13,7 @@ export default function MainLayout() {
     return (
         <div className="min-h-screen bg-background text-white font-sans">
             <TopBar />
+            <ScanProgressToast />
 
             <div className="flex pt-16">
                 <Sidebar />

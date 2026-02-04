@@ -38,8 +38,9 @@ public class GameScanner : BaseMediaScanner
         IServiceScopeFactory scopeFactory,
         ILogger<GameScanner> logger,
         IMediaNotificationService notificationService,
-        IBackgroundImageCacheService backgroundImageCache)
-        : base(scopeFactory, logger, notificationService)
+        IBackgroundImageCacheService backgroundImageCache,
+        IMetadataQueue metadataQueue)
+        : base(scopeFactory, logger, notificationService, metadataQueue)
     {
         _backgroundImageCache = backgroundImageCache;
     }
@@ -47,7 +48,8 @@ public class GameScanner : BaseMediaScanner
     /// <summary>
     /// Process a single file as a game.
     /// </summary>
-    protected override async Task<ScanResult> ProcessFileAsync(
+
+    protected override async Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
         string filePath,
         MediaItem? existing,
@@ -81,11 +83,9 @@ public class GameScanner : BaseMediaScanner
             {
                 context.MediaItems.Add(game);
                 
-                // Enrich with Wikidata metadata
-                await EnrichGameMetadataAsync(game, library.Type);
-
+                // Enqueue for background enrichment via Base Scanner
                 _logger.LogDebug("[GameScanner] Added game: {Title} ({Year})", title, year);
-                return ScanResult.New;
+                return new ScanOperationResult(ScanResult.New, game.Id, EnqueueMetadata: true);
             }
             else
             {
@@ -94,47 +94,24 @@ public class GameScanner : BaseMediaScanner
 
                 if (needsEnrichment)
                 {
-                    await EnrichGameMetadataAsync(game, library.Type);
-                    _logger.LogDebug("[GameScanner] Enriched game metadata: {Title}", title);
-                    return ScanResult.Updated;
+                    _logger.LogDebug("[GameScanner] Queued game metadata enrichment: {Title}", title);
+                    return new ScanOperationResult(ScanResult.Updated, game.Id, EnqueueMetadata: true);
                 }
                 else
                 {
                     _logger.LogDebug("[GameScanner] Updated game: {Title}", title);
-                    return ScanResult.Updated;
+                    return new ScanOperationResult(ScanResult.Updated, game.Id, EnqueueMetadata: false);
                 }
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[GameScanner] Error processing file: {FilePath}", filePath);
-            return ScanResult.Skipped;
+            return new ScanOperationResult(ScanResult.Skipped);
         }
     }
 
-    /// <summary>
-    /// Enrich game with Wikidata metadata.
-    /// </summary>
-    private async Task EnrichGameMetadataAsync(MediaItem game, LibraryType libraryType)
-    {
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var metadataAggregator = scope.ServiceProvider.GetService<MetadataAggregator>();
-            
-            if (metadataAggregator != null)
-            {
-                await metadataAggregator.EnrichMediaItemAsync(game, libraryType, deferImageCaching: true);
-            }
 
-            // Queue for background image caching (in case Wikidata provider gets updated to include posters)
-            _backgroundImageCache.QueueImageCaching(game.Id);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[GameScanner] Failed to enrich game metadata: {Title}", game.Title);
-        }
-    }
 
     /// <summary>
     /// Create a sortable version of a title.

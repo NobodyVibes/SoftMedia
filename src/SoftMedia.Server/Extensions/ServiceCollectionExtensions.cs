@@ -95,7 +95,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMetadataProvider, ExifMetadataProvider>();
         
         services.AddScoped<EmbeddedMusicProvider>(); 
-        services.AddScoped<MetadataAggregator>();
+        services.AddScoped<IMetadataAggregator, MetadataAggregator>();
         services.AddScoped<IMetadataRouter, MetadataRouter>();
 
         // Media Analysis Strategies (Strategy Pattern for type-specific analysis)
@@ -166,6 +166,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<MetadataRefreshService>();
         services.AddHostedService(sp => sp.GetRequiredService<MetadataRefreshService>());
         services.AddHostedService<HeroCacheWorker>();
+
+        // Metadata Queue
+        services.AddSingleton<MetadataQueueService>();
+        services.AddSingleton<IMetadataQueue>(sp => sp.GetRequiredService<MetadataQueueService>());
+        services.AddHostedService(sp => sp.GetRequiredService<MetadataQueueService>());
 
         return services;
     }

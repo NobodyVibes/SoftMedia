@@ -26,6 +26,14 @@ public interface IScannerOrchestrator
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Execute a library scan directly (Bypassing queue, internal use).
+    /// </summary>
+    Task ExecuteScanAsync(
+        Guid libraryId,
+        IProgress<ScanProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Process a single file addition or change.
     /// </summary>
     /// <param name="filePath">Path to the file.</param>

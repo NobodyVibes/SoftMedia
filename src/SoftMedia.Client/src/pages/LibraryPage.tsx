@@ -144,6 +144,16 @@ export default function LibraryPage() {
         );
     };
 
+    // Rescan handler
+    const handleRescan = async () => {
+        try {
+            await api.post(`/libraries/${id}/scan`);
+            // Toast will show automatically via SignalR -> Store -> Toast
+        } catch (error) {
+            console.error('Failed to start scan:', error);
+        }
+    };
+
     return (
         <div className="min-h-screen bg-background flex flex-col">
             {/* FilterBar - ALWAYS rendered to preserve state */}
@@ -160,6 +170,7 @@ export default function LibraryPage() {
                 onViewModeChange={library?.type === 'Music' ? setViewMode : undefined}
                 libraryType={library?.type}
                 libraryId={id}
+                onRescan={handleRescan}
             />
 
             {/* Content area - rendered conditionally based on loading/error state */}

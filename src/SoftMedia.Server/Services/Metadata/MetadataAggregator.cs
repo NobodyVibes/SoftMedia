@@ -5,7 +5,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace SoftMedia.Server.Services.Metadata;
 
-public class MetadataAggregator
+public interface IMetadataAggregator
+{
+    Task EnrichMediaItemAsync(MediaItem item, LibraryType type, bool deferImageCaching = false, bool refreshImages = true);
+}
+
+public class MetadataAggregator : IMetadataAggregator
 {
     private readonly IEnumerable<IMetadataProvider> _providers;
     private readonly IMetadataRouter _metadataRouter;

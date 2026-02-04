@@ -88,8 +88,19 @@ export function useMediaHub({ libraryId, mediaId }: UseMediaHubOptions) {
 
         connection.on('ScanProgress', (libId: string, processed: number, total: number, status: string) => {
             console.debug('[SignalR] ScanProgress:', libId, processed, total, status);
+            // Update global store
+            import('../store/scanProgressStore').then(({ useScanProgressStore }) => {
+                useScanProgressStore.getState().updateProgress(libId, processed, total, status);
+            });
             // Invalidate scan queue to update any progress displays
             queryClient.invalidateQueries({ queryKey: ['scanQueue'] });
+        });
+
+        connection.on('LibraryRecentUpdated', (libId: string) => {
+            console.debug('[SignalR] LibraryRecentUpdated:', libId);
+            // Invalidate the library recent query so that Home Page refreshes
+            queryClient.invalidateQueries({ queryKey: ['libraryRecent', libId] });
+            queryClient.invalidateQueries({ queryKey: ['recentMedia'] }); // Also invalidate global recent
         });
 
         // Handle reconnection - rejoin groups

@@ -5,13 +5,16 @@ import { useAudioStore } from '../../store/audioStore';
 import {
     Play, Pause, SkipForward, SkipBack,
     Volume2, VolumeX, Shuffle, Repeat, Repeat1,
-    List, X, RotateCcw, RotateCw, ChevronUp, ChevronDown
+    List, X, RotateCcw, RotateCw, ChevronUp, ChevronDown, Activity
 } from 'lucide-react';
 import { API_URL } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { cn } from '../../lib/utils';
 import type { MediaItem } from '../../types';
 import { ScrollingText } from '../ui/ScrollingText';
+import { AudioVisualizer, VisualizerSelector } from './visualizers';
+import { useVisualizerStore } from '../../store/visualizerStore';
+import { useAudioAnalyser } from '../../hooks/useAudioAnalyser';
 
 // Preload threshold in seconds before track ends
 const PRELOAD_THRESHOLD = 15;
@@ -49,8 +52,21 @@ export const PersistentPlayer: React.FC = () => {
 
     const [progress, setProgress] = useState(0);
     const [duration, setDuration] = useState(0);
+    // Audio Element State (for Visualizer Hook Reactivity)
+    const [audioAElement, setAudioAElement] = useState<HTMLAudioElement | null>(null);
+    const [audioBElement, setAudioBElement] = useState<HTMLAudioElement | null>(null);
+
+
     const [showQueue, setShowQueue] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
+
+    // Visualizer state
+    const { isEnabled: visualizerEnabled, toggle: toggleVisualizer } = useVisualizerStore();
+    const { frequencyData, timeDomainData, isReady: visualizerReady, updateData, setGlobalVolume } = useAudioAnalyser(
+        audioAElement,
+        audioBElement,
+        activePlayer
+    );
     const [isPreloaded, setIsPreloaded] = useState(false);
     const [preloadedTrackId, setPreloadedTrackId] = useState<string | null>(null);
 
@@ -211,14 +227,26 @@ export const PersistentPlayer: React.FC = () => {
         }
     }, [isPlaying, activeAudioRef]);
 
-    // Volume control for active element only (preload stays at 0 until crossfade)
+    // Volume control - now controls Master Gain (Post-Visualizer)
     useEffect(() => {
         const vol = isMuted ? 0 : volume;
+
+        // Apply volume to Master Gain (Post-Visualizer) using Web Audio if ready
+        if (visualizerReady && setGlobalVolume) {
+            setGlobalVolume(vol);
+        }
+
+        // Keep local audio elements at full volume for visualizer input
+        // unless we are NOT using Web Audio (fallback)
         const activeEl = activeAudioRef.current;
         if (activeEl && !isTransitioningRef.current) {
-            activeEl.volume = vol;
+            if (visualizerReady) {
+                activeEl.volume = 1.0; // Source always max for visualizer
+            } else {
+                activeEl.volume = vol; // Fallback to element volume
+            }
         }
-    }, [volume, isMuted, activeAudioRef]);
+    }, [volume, isMuted, activeAudioRef, visualizerReady, isTransitioningRef, setGlobalVolume]);
 
     // Handle repeat one mode
     useEffect(() => {
@@ -385,12 +413,16 @@ export const PersistentPlayer: React.FC = () => {
                         setIsExpanded(prev => !prev);
                     }
                     break;
+                case 'KeyV':
+                    e.preventDefault();
+                    toggleVisualizer();
+                    break;
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isPlaying, pause, resume, handleSkipNext, handlePrevious, handleSeekBackward, handleSeekForward, toggleMute, toggleShuffle, cycleRepeatMode, isExpanded]);
+    }, [isPlaying, pause, resume, handleSkipNext, handlePrevious, handleSeekBackward, handleSeekForward, toggleMute, toggleShuffle, cycleRepeatMode, isExpanded, toggleVisualizer]);
 
     if (!currentTrack) return null;
 
@@ -400,15 +432,28 @@ export const PersistentPlayer: React.FC = () => {
     return (
         <>
             {/* Persistent Audio Elements - outside conditionals to prevent re-mounting */}
+            {/* Persistent Audio Elements - outside conditionals to prevent re-mounting */}
             <audio
-                ref={audioARef}
+                ref={(el) => {
+                    // Update Ref for imperative logic
+                    if (audioARef) (audioARef as any).current = el;
+                    // Update State for hook reactivity
+                    if (el !== audioAElement) setAudioAElement(el);
+                }}
+                crossOrigin="anonymous"
                 onTimeUpdate={activePlayer === 0 ? handleTimeUpdate : undefined}
                 onEnded={activePlayer === 0 ? handleEnded : undefined}
                 onCanPlayThrough={activePlayer === 1 ? handlePreloadReady : undefined}
                 preload="auto"
             />
             <audio
-                ref={audioBRef}
+                ref={(el) => {
+                    // Update Ref for imperative logic
+                    if (audioBRef) (audioBRef as any).current = el;
+                    // Update State for hook reactivity
+                    if (el !== audioBElement) setAudioBElement(el);
+                }}
+                crossOrigin="anonymous"
                 onTimeUpdate={activePlayer === 1 ? handleTimeUpdate : undefined}
                 onEnded={activePlayer === 1 ? handleEnded : undefined}
                 onCanPlayThrough={activePlayer === 0 ? handlePreloadReady : undefined}
@@ -423,8 +468,16 @@ export const PersistentPlayer: React.FC = () => {
                         animate={{ y: 0 }}
                         exit={{ y: "100%" }}
                         transition={{ type: "spring", damping: 25, stiffness: 200 }}
-                        className="fixed inset-0 z-[100] bg-gradient-to-b from-gray-900 via-gray-900 to-black flex flex-col"
+                        className="fixed inset-0 z-[100] bg-gradient-to-b from-gray-900 via-gray-900 to-black flex flex-col overflow-hidden"
                     >
+                        {/* Visualizer Canvas (behind content) */}
+                        <AudioVisualizer
+                            frequencyData={frequencyData}
+                            timeDomainData={timeDomainData}
+                            isReady={visualizerReady}
+                            updateData={updateData}
+                            className="z-0"
+                        />
                         {/* Header */}
                         <div className="flex items-center justify-between p-4">
                             <button
@@ -438,6 +491,21 @@ export const PersistentPlayer: React.FC = () => {
                                 <p className="text-gray-400 text-sm">Now Playing</p>
                             </div>
                             <div className="flex items-center space-x-2">
+                                {/* Visualizer Selector */}
+                                <VisualizerSelector />
+
+                                {/* Visualizer Toggle */}
+                                <button
+                                    onClick={toggleVisualizer}
+                                    className={cn(
+                                        "p-2 transition",
+                                        visualizerEnabled ? "text-primary" : "text-gray-400 hover:text-white"
+                                    )}
+                                    title="Visualizer (V)"
+                                >
+                                    <Activity size={24} />
+                                </button>
+
                                 <button
                                     onClick={() => setShowQueue(!showQueue)}
                                     className={cn(
@@ -633,10 +701,18 @@ export const PersistentPlayer: React.FC = () => {
                         animate={{ y: 0 }}
                         exit={{ y: 100 }}
                         transition={{ duration: 0.3 }}
-                        className="fixed bottom-0 left-0 right-0 h-20 bg-gray-900 border-t border-gray-800 flex items-center px-4 z-50 shadow-2xl"
+                        className="fixed bottom-0 left-0 w-screen h-20 bg-gray-900 border-t border-gray-800 flex items-center px-4 z-50 shadow-2xl"
                     >
+                        {/* Visualizer Canvas (behind content) */}
+                        <AudioVisualizer
+                            frequencyData={frequencyData}
+                            timeDomainData={timeDomainData}
+                            isReady={visualizerReady}
+                            updateData={updateData}
+                            className="z-0"
+                        />
                         {/* Track Info */}
-                        <div className="flex items-center w-1/4 min-w-[200px]">
+                        <div className="flex items-center w-1/4 min-w-[200px] relative z-10 pointer-events-auto">
                             <img
                                 src={imageUrl}
                                 alt={currentTrack.title}
@@ -659,7 +735,7 @@ export const PersistentPlayer: React.FC = () => {
                         </div>
 
                         {/* Controls */}
-                        <div className="flex-1 flex flex-col items-center justify-center">
+                        <div className="flex-1 flex flex-col items-center justify-center relative z-10 pointer-events-auto">
                             <div className="flex items-center space-x-4 mb-1">
                                 <button
                                     onClick={toggleShuffle}
@@ -738,7 +814,20 @@ export const PersistentPlayer: React.FC = () => {
                         </div>
 
                         {/* Volume & Extras */}
-                        <div className="w-1/4 flex items-center justify-end space-x-3">
+                        <div className="w-1/4 flex items-center justify-end space-x-3 relative z-10 pointer-events-auto">
+                            {/* Visualizer Toggle */}
+                            <VisualizerSelector className="hidden md:block" direction="up" />
+                            <button
+                                onClick={toggleVisualizer}
+                                className={cn(
+                                    "transition",
+                                    visualizerEnabled ? "text-primary" : "text-gray-400 hover:text-white"
+                                )}
+                                title="Visualizer (V)"
+                            >
+                                <Activity size={20} />
+                            </button>
+
                             <button
                                 onClick={() => setShowQueue(!showQueue)}
                                 className={cn(

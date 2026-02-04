@@ -5,7 +5,7 @@ import { useAudioStore } from '../../store/audioStore';
 import {
     Play, Pause, SkipForward, SkipBack,
     Volume2, VolumeX, Shuffle, Repeat, Repeat1,
-    List, X, RotateCcw, RotateCw, ChevronUp, ChevronDown, Activity,
+    List, X, RotateCcw, RotateCw, ChevronUp, ChevronDown,
     Maximize2, Minimize2
 } from 'lucide-react';
 import { API_URL } from '../../services/api';
@@ -568,21 +568,7 @@ export const PersistentPlayer: React.FC = () => {
                                     {/* Visualizer Selector */}
                                     <VisualizerSelector />
 
-                                    {/* Visualizer Toggle */}
-                                    <button
-                                        onClick={toggleVisualizer}
-                                        className={cn(
-                                            "p-2 transition",
-                                            visualizerEnabled ? "text-primary" : "text-gray-400 hover:text-white"
-                                        )}
-                                        title="Visualizer (V)"
-                                        onContextMenu={(e) => {
-                                            e.preventDefault();
-                                            window.location.href = '/settings/visualizers';
-                                        }}
-                                    >
-                                        <Activity size={24} />
-                                    </button>
+                                    {/* Full Screen Toggle */}
 
                                     {/* Full Screen Toggle */}
                                     <button
@@ -602,6 +588,7 @@ export const PersistentPlayer: React.FC = () => {
                                             "p-2 transition relative",
                                             showQueue ? "text-primary" : "text-gray-400 hover:text-white"
                                         )}
+                                        title="Queue"
                                     >
                                         <List size={24} />
                                         {queue.length > 0 && (
@@ -609,6 +596,14 @@ export const PersistentPlayer: React.FC = () => {
                                                 {queue.length > 9 ? '9+' : queue.length}
                                             </span>
                                         )}
+                                    </button>
+
+                                    <button
+                                        onClick={closePlayer}
+                                        className="text-gray-400 hover:text-red-500 transition-colors p-2"
+                                        title="Close Player"
+                                    >
+                                        <X size={24} />
                                     </button>
                                 </div>
                             </div>
@@ -662,85 +657,98 @@ export const PersistentPlayer: React.FC = () => {
                                     </div>
 
                                     {/* Controls */}
-                                    <div className="flex items-center space-x-6">
-                                        <button
-                                            onClick={toggleShuffle}
-                                            className={cn(
-                                                "transition",
-                                                shuffleMode ? "text-primary" : "text-gray-400 hover:text-white"
-                                            )}
-                                            title="Shuffle (Shift+S)"
-                                        >
-                                            <Shuffle size={24} />
-                                        </button>
+                                    <div className="grid grid-cols-[1fr_auto_1fr] items-center w-full max-w-4xl mx-auto">
+                                        <div className="flex justify-end items-center gap-6 pr-10">
+                                            <button
+                                                onClick={toggleShuffle}
+                                                className={cn(
+                                                    "transition",
+                                                    shuffleMode ? "text-primary" : "text-gray-400 hover:text-white"
+                                                )}
+                                                title="Shuffle (Shift+S)"
+                                            >
+                                                <Shuffle size={24} />
+                                            </button>
 
-                                        <button onClick={handlePrevious} className="text-gray-400 hover:text-white transition">
-                                            <SkipBack size={32} />
-                                        </button>
+                                            <button onClick={handlePrevious} className="text-gray-400 hover:text-white transition">
+                                                <SkipBack size={32} />
+                                            </button>
 
-                                        <button
-                                            onClick={handleSeekBackward}
-                                            className="text-gray-400 hover:text-white transition relative"
-                                            title="Seek backward 30s"
-                                        >
-                                            <RotateCcw size={24} />
-                                            <span className="absolute text-[10px] font-bold" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>30</span>
-                                        </button>
+                                            <button
+                                                onClick={handleSeekBackward}
+                                                className="text-gray-400 hover:text-white transition relative"
+                                                title="Seek backward 30s"
+                                            >
+                                                <RotateCcw size={24} />
+                                                <span className="absolute text-[10px] font-bold" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>30</span>
+                                            </button>
+                                        </div>
 
-                                        <button
-                                            onClick={isPlaying ? pause : resume}
-                                            className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition shadow-lg"
-                                        >
-                                            {isPlaying ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" className="ml-1" />}
-                                        </button>
+                                        <div className="flex justify-center items-center">
+                                            <button
+                                                onClick={isPlaying ? pause : resume}
+                                                className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition shadow-lg"
+                                            >
+                                                {isPlaying ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" className="ml-1" />}
+                                            </button>
+                                        </div>
 
-                                        <button
-                                            onClick={handleSeekForward}
-                                            className="text-gray-400 hover:text-white transition relative"
-                                            title="Seek forward 30s"
-                                        >
-                                            <RotateCw size={24} />
-                                            <span className="absolute text-[10px] font-bold" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>30</span>
-                                        </button>
+                                        <div className="flex justify-start items-center gap-6 pl-10">
+                                            <button
+                                                onClick={handleSeekForward}
+                                                className="text-gray-400 hover:text-white transition relative"
+                                                title="Seek forward 30s"
+                                            >
+                                                <RotateCw size={24} />
+                                                <span className="absolute text-[10px] font-bold" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>30</span>
+                                            </button>
 
-                                        <button onClick={handleSkipNext} className="text-gray-400 hover:text-white transition">
-                                            <SkipForward size={32} />
-                                        </button>
+                                            <button onClick={handleSkipNext} className="text-gray-400 hover:text-white transition">
+                                                <SkipForward size={32} />
+                                            </button>
 
-                                        <button
-                                            onClick={cycleRepeatMode}
-                                            className={cn(
-                                                "transition",
-                                                repeatMode !== 'off' ? "text-primary" : "text-gray-400 hover:text-white"
-                                            )}
-                                            title={`Repeat: ${repeatMode} (Shift+R)`}
-                                        >
-                                            <RepeatIcon size={24} />
-                                        </button>
+                                            <button
+                                                onClick={cycleRepeatMode}
+                                                className={cn(
+                                                    "transition",
+                                                    repeatMode !== 'off' ? "text-primary" : "text-gray-400 hover:text-white"
+                                                )}
+                                                title={`Repeat: ${repeatMode} (Shift+R)`}
+                                            >
+                                                <RepeatIcon size={24} />
+                                            </button>
+
+                                            {/* Divider */}
+                                            <div className="w-px h-6 bg-gray-700/50 mx-2" />
+
+                                            {/* Volume Control Integrated */}
+                                            <div className="relative flex items-center group/volume z-20">
+                                                <button onClick={toggleMute} className="text-gray-400 hover:text-white p-2 transition-colors relative z-10">
+                                                    {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
+                                                </button>
+
+                                                <div className="absolute left-1/2 -translate-x-1/2 bottom-full flex flex-col items-center bg-gray-800/80 backdrop-blur-sm border border-white/5 rounded-lg px-2 py-4 opacity-0 scale-y-0 origin-bottom group-hover/volume:opacity-100 group-hover/volume:scale-y-100 transition-all duration-300 delay-150 group-hover/volume:delay-0 pointer-events-none group-hover/volume:pointer-events-auto shadow-xl w-11">
+                                                    <input
+                                                        type="range"
+                                                        min="0"
+                                                        max="1"
+                                                        step="0.05"
+                                                        value={isMuted ? 0 : volume}
+                                                        onChange={(e) => {
+                                                            const newVol = parseFloat(e.target.value);
+                                                            if (isMuted && newVol > 0) toggleMute();
+                                                            setVolume(newVol);
+                                                        }}
+                                                        className="h-24 accent-blue-500 cursor-pointer"
+                                                        style={{ writingMode: 'vertical-lr', transform: 'rotate(180deg)' }}
+                                                    />
+                                                    <span className="text-white/70 text-xs mt-2">{Math.round((isMuted ? 0 : volume) * 100)}%</span>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
 
-                                    {/* Volume */}
-                                    <div className="flex items-center space-x-3 mt-6">
-                                        <button onClick={toggleMute} className="text-gray-400 hover:text-white">
-                                            {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
-                                        </button>
-                                        <input
-                                            type="range"
-                                            min="0"
-                                            max="1"
-                                            step="0.01"
-                                            value={isMuted ? 0 : volume}
-                                            onChange={(e) => setVolume(parseFloat(e.target.value))}
-                                            className="w-32 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
-                                        />
-                                        <button
-                                            onClick={closePlayer}
-                                            className="text-gray-400 hover:text-red-500 transition ml-2"
-                                            title="Close Player"
-                                        >
-                                            <X size={24} />
-                                        </button>
-                                    </div>
+
                                 </div>
 
                                 {/* Inline Queue (when shown) */}
@@ -910,26 +918,12 @@ export const PersistentPlayer: React.FC = () => {
                         {/* Volume & Extras */}
                         <div className="w-1/4 flex items-center justify-end space-x-3 relative z-10 pointer-events-auto">
                             {/* Visualizer Toggle */}
-                            <VisualizerSelector className="hidden md:block" direction="up" />
-                            <button
-                                onClick={toggleVisualizer}
-                                className={cn(
-                                    "transition",
-                                    visualizerEnabled ? "text-primary" : "text-gray-400 hover:text-white"
-                                )}
-                                title="Visualizer (V)"
-                                onContextMenu={(e) => {
-                                    e.preventDefault();
-                                    window.location.href = '/settings/visualizers';
-                                }}
-                            >
-                                <Activity size={20} />
-                            </button>
+                            <VisualizerSelector className="hidden md:block" direction="up" iconSize={20} />
 
                             <button
                                 onClick={toggleFullScreen}
                                 className={cn(
-                                    "transition",
+                                    "p-2 transition rounded-full hover:bg-white/10",
                                     isFullScreen ? "text-primary" : "text-gray-400 hover:text-white"
                                 )}
                                 title="Toggle Full Screen"
@@ -940,7 +934,7 @@ export const PersistentPlayer: React.FC = () => {
                             <button
                                 onClick={() => setShowQueue(!showQueue)}
                                 className={cn(
-                                    "transition relative",
+                                    "p-2 transition relative rounded-full hover:bg-white/10",
                                     showQueue ? "text-primary" : "text-gray-400 hover:text-white"
                                 )}
                                 title="Queue"
@@ -953,27 +947,39 @@ export const PersistentPlayer: React.FC = () => {
                                 )}
                             </button>
 
-                            <button onClick={toggleMute} className="text-gray-400 hover:text-white">
-                                {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
-                            </button>
+                            <div className="relative flex items-center group/volume z-20">
+                                <button onClick={toggleMute} className="text-gray-400 hover:text-white p-2 transition-colors relative z-10 rounded-full hover:bg-white/10">
+                                    {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                                </button>
 
-                            <input
-                                type="range"
-                                min="0"
-                                max="1"
-                                step="0.01"
-                                value={isMuted ? 0 : volume}
-                                onChange={(e) => setVolume(parseFloat(e.target.value))}
-                                className="w-24 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
-                            />
+                                <div className="absolute left-1/2 -translate-x-1/2 bottom-full flex flex-col items-center bg-gray-800/80 backdrop-blur-sm border border-white/5 rounded-lg px-2 py-4 opacity-0 scale-y-0 origin-bottom group-hover/volume:opacity-100 group-hover/volume:scale-y-100 transition-all duration-300 delay-150 group-hover/volume:delay-0 pointer-events-none group-hover/volume:pointer-events-auto shadow-xl w-11">
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.05"
+                                        value={isMuted ? 0 : volume}
+                                        onChange={(e) => {
+                                            const newVol = parseFloat(e.target.value);
+                                            if (isMuted && newVol > 0) toggleMute();
+                                            setVolume(newVol);
+                                        }}
+                                        className="h-24 accent-blue-500 cursor-pointer"
+                                        style={{ writingMode: 'vertical-lr', transform: 'rotate(180deg)' }}
+                                    />
+                                    <span className="text-white/70 text-xs mt-2">{Math.round((isMuted ? 0 : volume) * 100)}%</span>
+                                </div>
+                            </div>
 
                             <button
                                 onClick={closePlayer}
-                                className="text-gray-400 hover:text-red-500 transition ml-1"
+                                className="text-gray-400 hover:text-red-500 transition p-2 rounded-full hover:bg-white/10"
                                 title="Close Player"
                             >
                                 <X size={20} />
                             </button>
+
+
                         </div>
                     </motion.div>
                 )}

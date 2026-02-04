@@ -33,6 +33,7 @@ interface AudioState {
     cycleRepeatMode: () => void;
     setRepeatMode: (mode: RepeatMode) => void;
     jumpToQueueIndex: (index: number) => void;
+    closePlayer: () => void;
 }
 
 // Fisher-Yates shuffle
@@ -187,6 +188,17 @@ export const useAudioStore = create<AudioState>()(
                     : history;
 
                 const currentTrackNew = tracks[startIndex];
+
+                // Keep the FULL original queue for un-shuffling or repeating, don't filter out the started track
+                const originalQueue = [...tracks];
+
+                // The active queue should be everything AFTER the current track
+                // If shuffling, we take the *remaining* tracks and shuffle them (standard behavior) 
+                // OR we shuffle the *whole* playlist and put current track first?
+                // Standard: Shuffle the *entire* list, find current track, move to front? 
+                // OR: Just shuffle everything else.
+                // Let's stick to "everything else" to respect the user's choice of starting track.
+
                 let queue = tracks.filter((_, i) => i !== startIndex);
 
                 // Shuffle if needed
@@ -197,20 +209,35 @@ export const useAudioStore = create<AudioState>()(
                 set({
                     currentTrack: currentTrackNew,
                     queue,
-                    originalQueue: tracks.filter((_, i) => i !== startIndex),
+                    originalQueue, // Save FULL list
                     history: newHistory,
                     isPlaying: true
                 });
             },
 
             toggleShuffle: () => {
-                const { shuffleMode, queue, originalQueue } = get();
+                const { shuffleMode, queue, originalQueue, currentTrack } = get();
 
                 if (shuffleMode) {
-                    // Turn off shuffle - restore original order
+                    // Turn off shuffle - restore original order of remaining tracks
+                    // We need to find where we are in the original queue
+                    let newQueue = [...originalQueue];
+
+                    if (currentTrack) {
+                        const currentIndex = originalQueue.findIndex(t => t.id === currentTrack.id);
+                        if (currentIndex !== -1) {
+                            // Queue is everything AFTER the current track
+                            newQueue = originalQueue.slice(currentIndex + 1);
+                        } else {
+                            // Current track not in original queue (maybe added later?), just keep full original?
+                            // Or maybe we just keep the current queue but sorted?
+                            // Safest: if track not found, just use original queue.
+                        }
+                    }
+
                     set({
                         shuffleMode: false,
-                        queue: [...originalQueue]
+                        queue: newQueue
                     });
                 } else {
                     // Turn on shuffle
@@ -246,9 +273,22 @@ export const useAudioStore = create<AudioState>()(
 
                 set({
                     currentTrack: newTrack,
-                    queue: newQueue,
+                    queue: newQueue, // This reduces the queue. If repeat is on, 'next' will handle reloading from originalQueue
                     history: newHistory,
                     isPlaying: true
+                });
+            },
+
+            closePlayer: () => {
+                set({
+                    currentTrack: null,
+                    isPlaying: false,
+                    // We can optionally clear queue or keep it. 
+                    // Usually closing player means "stop everything".
+                    // But keeping queue/history in background might be nice if they accidentally closed it?
+                    // For now, adhering to "refresh page" equivalent behavior which clears session state usually.
+                    // But the persistence says we only persist preferences. 
+                    // So clearing currentTrack hides the UI.
                 });
             }
         }),

@@ -11,6 +11,7 @@ import { API_URL } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { cn } from '../../lib/utils';
 import type { MediaItem } from '../../types';
+import { ScrollingText } from '../ui/ScrollingText';
 
 // Preload threshold in seconds before track ends
 const PRELOAD_THRESHOLD = 15;
@@ -33,7 +34,8 @@ export const PersistentPlayer: React.FC = () => {
         shuffleMode, repeatMode, queue,
         pause, resume, next, previous,
         setVolume, toggleMute,
-        toggleShuffle, cycleRepeatMode
+        toggleShuffle, cycleRepeatMode,
+        closePlayer
     } = useAudioStore();
 
     // Dual audio elements for true gapless playback
@@ -189,10 +191,13 @@ export const PersistentPlayer: React.FC = () => {
         // Reset crossfade trigger for new track
         crossfadeTriggeredRef.current = false;
 
+        // Force apply volume to the new active element to prevent full-volume blast
+        activeEl.volume = isMuted ? 0 : volume;
+
         if (isPlaying) {
             activeEl.play().catch(e => console.error("Playback failed", e));
         }
-    }, [currentTrack, currentStreamUrl, activeAudioRef, isPlaying]);
+    }, [currentTrack, currentStreamUrl, activeAudioRef, isPlaying, volume, isMuted]);
 
     // Play/pause control
     useEffect(() => {
@@ -432,28 +437,30 @@ export const PersistentPlayer: React.FC = () => {
                             <div className="text-center">
                                 <p className="text-gray-400 text-sm">Now Playing</p>
                             </div>
-                            <button
-                                onClick={() => setShowQueue(!showQueue)}
-                                className={cn(
-                                    "p-2 transition relative",
-                                    showQueue ? "text-primary" : "text-gray-400 hover:text-white"
-                                )}
-                            >
-                                <List size={24} />
-                                {queue.length > 0 && (
-                                    <span className="absolute top-0 right-0 bg-primary text-white text-xs w-4 h-4 rounded-full flex items-center justify-center">
-                                        {queue.length > 9 ? '9+' : queue.length}
-                                    </span>
-                                )}
-                            </button>
+                            <div className="flex items-center space-x-2">
+                                <button
+                                    onClick={() => setShowQueue(!showQueue)}
+                                    className={cn(
+                                        "p-2 transition relative",
+                                        showQueue ? "text-primary" : "text-gray-400 hover:text-white"
+                                    )}
+                                >
+                                    <List size={24} />
+                                    {queue.length > 0 && (
+                                        <span className="absolute top-0 right-0 bg-primary text-white text-xs w-4 h-4 rounded-full flex items-center justify-center">
+                                            {queue.length > 9 ? '9+' : queue.length}
+                                        </span>
+                                    )}
+                                </button>
+                            </div>
                         </div>
 
                         {/* Main Content */}
-                        <div className="flex-1 flex">
+                        <div className="flex-1 flex relative">
                             {/* Album Art & Controls */}
                             <div className={cn(
                                 "flex-1 flex flex-col items-center justify-center px-8 transition-all",
-                                showQueue ? "w-1/2" : "w-full"
+                                showQueue ? "w-1/2 xl:w-full" : "w-full"
                             )}>
                                 {/* Large Album Art */}
                                 <div className="relative mb-8">
@@ -471,7 +478,7 @@ export const PersistentPlayer: React.FC = () => {
 
                                 {/* Track Info */}
                                 <div className="text-center mb-6 max-w-md">
-                                    <h2 className="text-white text-2xl font-bold truncate">{currentTrack.title}</h2>
+                                    <ScrollingText text={currentTrack.title} className="text-white text-2xl font-bold" />
                                     <p className="text-gray-400 text-lg truncate">
                                         {(currentTrack.metadata?.artist as string) || (currentTrack.metadata?.albumArtist as string) || 'Unknown Artist'}
                                     </p>
@@ -565,18 +572,28 @@ export const PersistentPlayer: React.FC = () => {
                                         onChange={(e) => setVolume(parseFloat(e.target.value))}
                                         className="w-32 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
                                     />
+                                    <button
+                                        onClick={closePlayer}
+                                        className="text-gray-400 hover:text-red-500 transition ml-2"
+                                        title="Close Player"
+                                    >
+                                        <X size={24} />
+                                    </button>
                                 </div>
                             </div>
 
                             {/* Inline Queue (when shown) */}
                             {showQueue && (
-                                <div className="w-80 bg-black/30 border-l border-gray-800 overflow-hidden flex flex-col">
+                                <div className={cn(
+                                    "w-80 bg-black/30 border-l border-gray-800 overflow-hidden flex flex-col scale-in-hor-right origin-right animate-in fade-in duration-300",
+                                    "xl:absolute xl:right-0 xl:top-0 xl:bottom-0 xl:z-10 xl:bg-black/80 xl:backdrop-blur-md xl:border-l-gray-700"
+                                )}>
                                     <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
                                         <h3 className="text-white font-semibold">Up Next</h3>
                                         <span className="text-gray-400 text-sm">{queue.length} tracks</span>
                                     </div>
                                     <div className="flex-1 overflow-y-auto flex flex-col">
-                                        <QueueList isPreloaded={isPreloaded} />
+                                        <QueueList />
                                     </div>
                                 </div>
                             )}
@@ -602,7 +619,7 @@ export const PersistentPlayer: React.FC = () => {
                             </button>
                         </div>
                         <div className="flex-1 overflow-hidden flex flex-col">
-                            <QueueList isPreloaded={isPreloaded} />
+                            <QueueList />
                         </div>
                     </motion.div>
                 )}
@@ -626,7 +643,7 @@ export const PersistentPlayer: React.FC = () => {
                                 className="w-14 h-14 rounded object-cover mr-4 bg-gray-800"
                             />
                             <div className="truncate">
-                                <h4 className="text-white font-medium truncate">{currentTrack.title}</h4>
+                                <ScrollingText text={currentTrack.title} className="text-white font-medium" />
                                 <p className="text-gray-400 text-sm truncate">
                                     {(currentTrack.metadata?.artist as string) || (currentTrack.metadata?.albumArtist as string) || 'Unknown Artist'}
                                 </p>
@@ -732,7 +749,7 @@ export const PersistentPlayer: React.FC = () => {
                             >
                                 <List size={20} />
                                 {queue.length > 0 && (
-                                    <span className="absolute -top-1 -right-1 bg-primary text-white text-xs w-4 h-4 rounded-full flex items-center justify-center">
+                                    <span className="absolute -top-2 -right-2 bg-primary text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center border-2 border-gray-900">
                                         {queue.length > 9 ? '9+' : queue.length}
                                     </span>
                                 )}
@@ -741,6 +758,7 @@ export const PersistentPlayer: React.FC = () => {
                             <button onClick={toggleMute} className="text-gray-400 hover:text-white">
                                 {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                             </button>
+
                             <input
                                 type="range"
                                 min="0"
@@ -750,6 +768,14 @@ export const PersistentPlayer: React.FC = () => {
                                 onChange={(e) => setVolume(parseFloat(e.target.value))}
                                 className="w-24 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
                             />
+
+                            <button
+                                onClick={closePlayer}
+                                className="text-gray-400 hover:text-red-500 transition ml-1"
+                                title="Close Player"
+                            >
+                                <X size={20} />
+                            </button>
                         </div>
                     </motion.div>
                 )}

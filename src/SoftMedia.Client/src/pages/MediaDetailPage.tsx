@@ -1,5 +1,5 @@
 import { useParams, useNavigate, Navigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
 import { type MediaItem } from '../types';
@@ -39,28 +39,6 @@ export default function MediaDetailPage() {
         return <div className="flex justify-center items-center h-screen text-red-500">Error loading media</div>;
     }
 
-    // Determine Library Type (Need to fetch library or infer from item if available)
-    // The backend MediaItem doesn't strictly have 'type' on it directly, but it has LibraryId.
-    // Ideally, the backend should return the type or we fetch the library.
-    // However, for now, let's assume we can infer it or the backend adds it.
-    // Wait, the MediaItem interface in frontend has `libraryId`.
-    // We might need to fetch the library to know the type, OR update the backend to send `LibraryType` in MediaItemDto.
-    // Let's check MediaItemDto again. It doesn't have Type.
-    // BUT, we can use the `Container` or `Metadata` to guess, or better yet, fetch the library.
-
-    // Actually, for this task, I'll fetch the library details if needed, but that's an extra call.
-    // A better approach is to add `LibraryType` to MediaItemDto.
-    // But I can't change backend right now easily without restarting.
-    // Let's see if I can infer it.
-    // Movies have 'video', TV has 'video'.
-    // Music has 'audio'.
-    // Books have 'book'.
-    // Games have 'game'.
-    // Photos have 'image'.
-
-    // Let's use a helper to guess type or fetch library.
-    // Actually, `MediaItem` has `libraryId`. I can use `useQuery` to fetch library.
-
     return <MediaDetailPageContent item={item} />;
 }
 
@@ -79,6 +57,36 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
     });
 
     const type = library?.type;
+
+    // Fetch albums for Artist background (random cover art)
+    const { data: artistAlbums } = useQuery({
+        queryKey: ['artist', item.id, 'albums'],
+        queryFn: async () => {
+            if (item.type !== MediaType.Artist) return null;
+            const response = await api.get<MediaItem[]>(`/libraries/artists/${item.id}/albums`);
+            return response.data;
+        },
+        enabled: item.type === MediaType.Artist,
+        staleTime: 1000 * 60 * 5 // Cache for 5 minutes
+    });
+
+    const backdropOverride = useMemo(() => {
+        // For Albums, use the album cover itself as backdrop
+        if (item.type === MediaType.Album && item.posterPath) {
+            return item.posterPath;
+        }
+
+        // For Artists, pick a random album cover
+        if (item.type === MediaType.Artist && artistAlbums && artistAlbums.length > 0) {
+            // Filter albums that have a poster path
+            const albumsWithCovers = artistAlbums.filter(a => a.posterPath);
+            if (albumsWithCovers.length > 0) {
+                const randomIndex = Math.floor(Math.random() * albumsWithCovers.length);
+                return albumsWithCovers[randomIndex].posterPath;
+            }
+        }
+        return null;
+    }, [item.type, item.posterPath, artistAlbums]);
 
     const handlePlay = async () => {
         if (type === 'Music') {
@@ -184,7 +192,7 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
     };
 
     return (
-        <MediaDetailLayout item={item} onPlay={handlePlay} qualityItem={qualityItem}>
+        <MediaDetailLayout item={item} onPlay={handlePlay} qualityItem={qualityItem} backdropOverride={backdropOverride}>
             {renderContent()}
         </MediaDetailLayout>
     );

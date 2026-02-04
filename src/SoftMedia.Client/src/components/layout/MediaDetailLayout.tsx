@@ -16,9 +16,10 @@ interface MediaDetailLayoutProps {
     children: ReactNode;
     onPlay?: () => void;
     qualityItem?: MediaItem | null;
+    backdropOverride?: string | null;
 }
 
-export default function MediaDetailLayout({ item, children, onPlay, qualityItem }: MediaDetailLayoutProps) {
+export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride }: MediaDetailLayoutProps) {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
 
@@ -45,21 +46,25 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem 
         }
     });
 
+    // Use override if provided, otherwise default to item backdrop
+    const effectiveBackdrop = backdropOverride ?? item.backdropPath;
+
     return (
         <div className="min-h-screen bg-background relative overflow-x-hidden">
             {/* Backdrop */}
-            <div className="absolute inset-0 h-[70vh] w-full overflow-hidden">
-                {item.backdropPath ? (
+            <div className="fixed inset-0 w-full h-full overflow-hidden pointer-events-none">
+                {effectiveBackdrop ? (
                     <>
                         <img
-                            src={item.backdropPath}
+                            src={effectiveBackdrop}
                             alt=""
-                            className="w-full h-full object-cover opacity-40 blur-sm scale-105"
+                            className="w-full h-full object-cover object-top opacity-30 blur-xl scale-110"
                         />
-                        <div className="absolute inset-0 bg-gradient-to-b from-background/20 via-background/60 to-background" />
+                        <div className="absolute inset-0 bg-background/60" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-transparent" />
                     </>
                 ) : (
-                    <div className="w-full h-full bg-gradient-to-b from-primary/20 to-background" />
+                    <div className="w-full h-full bg-gradient-to-b from-primary/10 to-background" />
                 )}
             </div>
 

@@ -4,16 +4,16 @@ import { GripVertical } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { API_URL } from '../../services/api';
 import type { MediaItem } from '../../types';
+import { ScrollingText } from '../ui/ScrollingText';
 
 interface Props {
     track: MediaItem;
     originalIndex: number; // The logic index in the queue
     id: number; // The sortable ID (same as index)
-    isPreloaded: boolean;
     onPlay: () => void;
 }
 
-export const SortableQueueItem = ({ track, originalIndex, id, isPreloaded, onPlay }: Props) => {
+export const SortableQueueItem = ({ track, originalIndex, id, onPlay }: Props) => {
     const {
         attributes,
         listeners,
@@ -69,18 +69,12 @@ export const SortableQueueItem = ({ track, originalIndex, id, isPreloaded, onPla
                     className="w-10 h-10 rounded object-cover bg-gray-800 pointer-events-none"
                 />
                 <div className="flex-1 min-w-0">
-                    <p className={cn("truncate text-sm font-medium", isPreloaded ? "text-primary" : "text-white")}>
-                        {track.title}
-                    </p>
+                    <ScrollingText text={track.title} className="text-sm font-medium text-white" hoverOnly />
                     <p className="text-gray-400 text-xs truncate">
                         {(track.metadata?.artist as string) || 'Unknown'}
                     </p>
                 </div>
             </div>
-
-            {isPreloaded && (
-                <span className="text-xs text-primary shrink-0 font-medium bg-primary/10 px-2 py-1 rounded">Ready</span>
-            )}
         </div>
     );
 };

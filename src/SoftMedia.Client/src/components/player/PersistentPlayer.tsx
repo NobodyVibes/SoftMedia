@@ -5,7 +5,8 @@ import { useAudioStore } from '../../store/audioStore';
 import {
     Play, Pause, SkipForward, SkipBack,
     Volume2, VolumeX, Shuffle, Repeat, Repeat1,
-    List, X, RotateCcw, RotateCw, ChevronUp, ChevronDown, Activity
+    List, X, RotateCcw, RotateCw, ChevronUp, ChevronDown, Activity,
+    Maximize2, Minimize2
 } from 'lucide-react';
 import { API_URL } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
@@ -59,6 +60,7 @@ export const PersistentPlayer: React.FC = () => {
 
     const [showQueue, setShowQueue] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
+    const [isFullScreen, setIsFullScreen] = useState(false); // Explicit Full Screen Mode
 
     // Visualizer state
     const { isEnabled: visualizerEnabled, toggle: toggleVisualizer } = useVisualizerStore();
@@ -69,6 +71,35 @@ export const PersistentPlayer: React.FC = () => {
     );
     const [isPreloaded, setIsPreloaded] = useState(false);
     const [preloadedTrackId, setPreloadedTrackId] = useState<string | null>(null);
+
+    const [showControls, setShowControls] = useState(true);
+
+    // Idle timer for fullscreen controls
+    useEffect(() => {
+        if (!isFullScreen) {
+            setShowControls(true);
+            return;
+        }
+
+        let timeout: NodeJS.Timeout;
+        const resetIdle = () => {
+            setShowControls(true);
+            clearTimeout(timeout);
+            timeout = setTimeout(() => setShowControls(false), 3000);
+        };
+
+        window.addEventListener('mousemove', resetIdle);
+        window.addEventListener('click', resetIdle);
+        window.addEventListener('keydown', resetIdle);
+        resetIdle();
+
+        return () => {
+            window.removeEventListener('mousemove', resetIdle);
+            window.removeEventListener('click', resetIdle);
+            window.removeEventListener('keydown', resetIdle);
+            clearTimeout(timeout);
+        };
+    }, [isFullScreen]);
 
     // Prevent multiple rapid transitions
     const isTransitioningRef = useRef(false);
@@ -359,6 +390,38 @@ export const PersistentPlayer: React.FC = () => {
         }
     }, [activeAudioRef]);
 
+    // Toggle Full Screen with Browser API
+    const toggleFullScreen = useCallback(async () => {
+        if (!document.fullscreenElement) {
+            try {
+                await document.documentElement.requestFullscreen();
+                setIsFullScreen(true);
+                setIsExpanded(true); // Ensure expanded view is active
+            } catch (err) {
+                console.error("Error attempting to enable full-screen mode:", err);
+            }
+        } else {
+            if (document.exitFullscreen) {
+                await document.exitFullscreen();
+                setIsFullScreen(false);
+            }
+        }
+    }, []);
+
+    // Sync state with browser fullscreen changes (e.g. user presses Esc)
+    useEffect(() => {
+        const handleFullScreenChange = () => {
+            // If document.fullscreenElement is null, we are not in fullscreen
+            const isFS = !!document.fullscreenElement;
+            setIsFullScreen(isFS);
+            // If we exit fullscreen, what should happen?
+            // Should we exit expanded mode? Maybe not necessarily.
+        };
+
+        document.addEventListener('fullscreenchange', handleFullScreenChange);
+        return () => document.removeEventListener('fullscreenchange', handleFullScreenChange);
+    }, []);
+
     // Keyboard shortcuts
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -402,16 +465,12 @@ export const PersistentPlayer: React.FC = () => {
                     }
                     break;
                 case 'Escape':
-                    if (isExpanded) {
+                    if (isExpanded && !isFullScreen) {
                         e.preventDefault();
                         setIsExpanded(false);
                     }
-                    break;
-                case 'KeyF':
-                    if (e.shiftKey) {
-                        e.preventDefault();
-                        setIsExpanded(prev => !prev);
-                    }
+                    // Browser handles Escape for exiting FullScreen naturally,
+                    // which triggers fullscreenchange -> setIsFullScreen(false).
                     break;
                 case 'KeyV':
                     e.preventDefault();
@@ -422,7 +481,7 @@ export const PersistentPlayer: React.FC = () => {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isPlaying, pause, resume, handleSkipNext, handlePrevious, handleSeekBackward, handleSeekForward, toggleMute, toggleShuffle, cycleRepeatMode, isExpanded, toggleVisualizer]);
+    }, [isPlaying, pause, resume, handleSkipNext, handlePrevious, handleSeekBackward, handleSeekForward, toggleMute, toggleShuffle, cycleRepeatMode, isExpanded, toggleVisualizer, isFullScreen]);
 
     if (!currentTrack) return null;
 
@@ -432,7 +491,6 @@ export const PersistentPlayer: React.FC = () => {
     return (
         <>
             {/* Persistent Audio Elements - outside conditionals to prevent re-mounting */}
-            {/* Persistent Audio Elements - outside conditionals to prevent re-mounting */}
             <audio
                 ref={(el) => {
                     // Update Ref for imperative logic
@@ -440,7 +498,7 @@ export const PersistentPlayer: React.FC = () => {
                     // Update State for hook reactivity
                     if (el !== audioAElement) setAudioAElement(el);
                 }}
-                crossOrigin="anonymous"
+                crossOrigin="use-credentials"
                 onTimeUpdate={activePlayer === 0 ? handleTimeUpdate : undefined}
                 onEnded={activePlayer === 0 ? handleEnded : undefined}
                 onCanPlayThrough={activePlayer === 1 ? handlePreloadReady : undefined}
@@ -453,7 +511,7 @@ export const PersistentPlayer: React.FC = () => {
                     // Update State for hook reactivity
                     if (el !== audioBElement) setAudioBElement(el);
                 }}
-                crossOrigin="anonymous"
+                crossOrigin="use-credentials"
                 onTimeUpdate={activePlayer === 1 ? handleTimeUpdate : undefined}
                 onEnded={activePlayer === 1 ? handleEnded : undefined}
                 onCanPlayThrough={activePlayer === 0 ? handlePreloadReady : undefined}
@@ -468,7 +526,13 @@ export const PersistentPlayer: React.FC = () => {
                         animate={{ y: 0 }}
                         exit={{ y: "100%" }}
                         transition={{ type: "spring", damping: 25, stiffness: 200 }}
-                        className="fixed inset-0 z-[100] bg-gradient-to-b from-gray-900 via-gray-900 to-black flex flex-col overflow-hidden"
+                        className={cn(
+                            "fixed inset-0 z-[100] flex flex-col overflow-hidden",
+                            isFullScreen ? "bg-black" : "bg-gradient-to-b from-gray-900 via-gray-900 to-black"
+                        )}
+                        style={{
+                            cursor: (isFullScreen && !showControls) ? 'none' : 'default'
+                        }}
                     >
                         {/* Visualizer Canvas (behind content) */}
                         <AudioVisualizer
@@ -478,194 +542,224 @@ export const PersistentPlayer: React.FC = () => {
                             updateData={updateData}
                             className="z-0"
                         />
-                        {/* Header */}
-                        <div className="flex items-center justify-between p-4">
-                            <button
-                                onClick={() => setIsExpanded(false)}
-                                className="text-gray-400 hover:text-white transition p-2"
-                                title="Minimize (Escape)"
-                            >
-                                <ChevronDown size={28} />
-                            </button>
-                            <div className="text-center">
-                                <p className="text-gray-400 text-sm">Now Playing</p>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                                {/* Visualizer Selector */}
-                                <VisualizerSelector />
 
-                                {/* Visualizer Toggle */}
+                        {/* Controls Container - Fades out in FS */}
+                        <motion.div
+                            className="flex-1 flex flex-col w-full h-full relative z-10"
+                            animate={{ opacity: (isFullScreen && !showControls) ? 0 : 1 }}
+                            transition={{ duration: 0.5 }}
+                        >
+                            {/* Header */}
+                            <div className="flex items-center justify-between p-4 relative z-10">
                                 <button
-                                    onClick={toggleVisualizer}
-                                    className={cn(
-                                        "p-2 transition",
-                                        visualizerEnabled ? "text-primary" : "text-gray-400 hover:text-white"
-                                    )}
-                                    title="Visualizer (V)"
+                                    onClick={() => {
+                                        if (isFullScreen) toggleFullScreen();
+                                        else setIsExpanded(false);
+                                    }}
+                                    className="text-gray-400 hover:text-white transition p-2"
+                                    title="Minimize (Escape)"
                                 >
-                                    <Activity size={24} />
+                                    <ChevronDown size={28} />
                                 </button>
-
-                                <button
-                                    onClick={() => setShowQueue(!showQueue)}
-                                    className={cn(
-                                        "p-2 transition relative",
-                                        showQueue ? "text-primary" : "text-gray-400 hover:text-white"
-                                    )}
-                                >
-                                    <List size={24} />
-                                    {queue.length > 0 && (
-                                        <span className="absolute top-0 right-0 bg-primary text-white text-xs w-4 h-4 rounded-full flex items-center justify-center">
-                                            {queue.length > 9 ? '9+' : queue.length}
-                                        </span>
-                                    )}
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Main Content */}
-                        <div className="flex-1 flex relative">
-                            {/* Album Art & Controls */}
-                            <div className={cn(
-                                "flex-1 flex flex-col items-center justify-center px-8 transition-all",
-                                showQueue ? "w-1/2 xl:w-full" : "w-full"
-                            )}>
-                                {/* Large Album Art */}
-                                <div className="relative mb-8">
-                                    <img
-                                        src={imageUrl}
-                                        alt={currentTrack.title}
-                                        className="w-72 h-72 md:w-96 md:h-96 rounded-lg object-cover shadow-2xl"
-                                    />
-                                    {isPreloaded && (
-                                        <span className="absolute top-2 right-2 bg-primary/80 text-white text-xs px-2 py-1 rounded">
-                                            Next Ready
-                                        </span>
-                                    )}
+                                <div className="text-center">
+                                    <p className="text-gray-400 text-sm">Now Playing</p>
                                 </div>
+                                <div className="flex items-center space-x-2">
+                                    {/* Visualizer Selector */}
+                                    <VisualizerSelector />
 
-                                {/* Track Info */}
-                                <div className="text-center mb-6 max-w-md">
-                                    <ScrollingText text={currentTrack.title} className="text-white text-2xl font-bold" />
-                                    <p className="text-gray-400 text-lg truncate">
-                                        {(currentTrack.metadata?.artist as string) || (currentTrack.metadata?.albumArtist as string) || 'Unknown Artist'}
-                                    </p>
-                                </div>
-
-                                {/* Progress Bar */}
-                                <div className="w-full max-w-lg mb-6">
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max={duration || 100}
-                                        value={progress}
-                                        onChange={handleSeek}
-                                        className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full"
-                                    />
-                                    <div className="flex justify-between text-sm text-gray-400 mt-1">
-                                        <span>{formatTime(progress)}</span>
-                                        <span>{formatTime(duration)}</span>
-                                    </div>
-                                </div>
-
-                                {/* Controls */}
-                                <div className="flex items-center space-x-6">
+                                    {/* Visualizer Toggle */}
                                     <button
-                                        onClick={toggleShuffle}
+                                        onClick={toggleVisualizer}
                                         className={cn(
-                                            "transition",
-                                            shuffleMode ? "text-primary" : "text-gray-400 hover:text-white"
+                                            "p-2 transition",
+                                            visualizerEnabled ? "text-primary" : "text-gray-400 hover:text-white"
                                         )}
-                                        title="Shuffle (Shift+S)"
+                                        title="Visualizer (V)"
+                                        onContextMenu={(e) => {
+                                            e.preventDefault();
+                                            window.location.href = '/settings/visualizers';
+                                        }}
                                     >
-                                        <Shuffle size={24} />
+                                        <Activity size={24} />
                                     </button>
 
-                                    <button onClick={handlePrevious} className="text-gray-400 hover:text-white transition">
-                                        <SkipBack size={32} />
-                                    </button>
-
+                                    {/* Full Screen Toggle */}
                                     <button
-                                        onClick={handleSeekBackward}
-                                        className="text-gray-400 hover:text-white transition relative"
-                                        title="Seek backward 30s"
-                                    >
-                                        <RotateCcw size={24} />
-                                        <span className="absolute text-[10px] font-bold" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>30</span>
-                                    </button>
-
-                                    <button
-                                        onClick={isPlaying ? pause : resume}
-                                        className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition shadow-lg"
-                                    >
-                                        {isPlaying ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" className="ml-1" />}
-                                    </button>
-
-                                    <button
-                                        onClick={handleSeekForward}
-                                        className="text-gray-400 hover:text-white transition relative"
-                                        title="Seek forward 30s"
-                                    >
-                                        <RotateCw size={24} />
-                                        <span className="absolute text-[10px] font-bold" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>30</span>
-                                    </button>
-
-                                    <button onClick={handleSkipNext} className="text-gray-400 hover:text-white transition">
-                                        <SkipForward size={32} />
-                                    </button>
-
-                                    <button
-                                        onClick={cycleRepeatMode}
+                                        onClick={toggleFullScreen}
                                         className={cn(
-                                            "transition",
-                                            repeatMode !== 'off' ? "text-primary" : "text-gray-400 hover:text-white"
+                                            "p-2 transition",
+                                            isFullScreen ? "text-primary" : "text-gray-400 hover:text-white"
                                         )}
-                                        title={`Repeat: ${repeatMode} (Shift+R)`}
+                                        title="Toggle Full Screen"
                                     >
-                                        <RepeatIcon size={24} />
+                                        {isFullScreen ? <Minimize2 size={24} /> : <Maximize2 size={24} />}
                                     </button>
-                                </div>
 
-                                {/* Volume */}
-                                <div className="flex items-center space-x-3 mt-6">
-                                    <button onClick={toggleMute} className="text-gray-400 hover:text-white">
-                                        {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
-                                    </button>
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.01"
-                                        value={isMuted ? 0 : volume}
-                                        onChange={(e) => setVolume(parseFloat(e.target.value))}
-                                        className="w-32 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
-                                    />
                                     <button
-                                        onClick={closePlayer}
-                                        className="text-gray-400 hover:text-red-500 transition ml-2"
-                                        title="Close Player"
+                                        onClick={() => setShowQueue(!showQueue)}
+                                        className={cn(
+                                            "p-2 transition relative",
+                                            showQueue ? "text-primary" : "text-gray-400 hover:text-white"
+                                        )}
                                     >
-                                        <X size={24} />
+                                        <List size={24} />
+                                        {queue.length > 0 && (
+                                            <span className="absolute top-0 right-0 bg-primary text-white text-xs w-4 h-4 rounded-full flex items-center justify-center">
+                                                {queue.length > 9 ? '9+' : queue.length}
+                                            </span>
+                                        )}
                                     </button>
                                 </div>
                             </div>
 
-                            {/* Inline Queue (when shown) */}
-                            {showQueue && (
+                            {/* Main Content */}
+                            <div className="flex-1 flex relative">
+                                {/* Album Art & Controls */}
                                 <div className={cn(
-                                    "w-80 bg-black/30 border-l border-gray-800 overflow-hidden flex flex-col scale-in-hor-right origin-right animate-in fade-in duration-300",
-                                    "xl:absolute xl:right-0 xl:top-0 xl:bottom-0 xl:z-10 xl:bg-black/80 xl:backdrop-blur-md xl:border-l-gray-700"
+                                    "flex-1 flex flex-col items-center justify-center px-8 transition-all relative z-10",
+                                    showQueue ? "w-1/2 xl:w-full" : "w-full"
                                 )}>
-                                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
-                                        <h3 className="text-white font-semibold">Up Next</h3>
-                                        <span className="text-gray-400 text-sm">{queue.length} tracks</span>
+                                    {/* Large Album Art - Fades out if FS+Visualizer */}
+                                    <div className={cn(
+                                        "relative mb-8 transition-opacity duration-1000",
+                                        (isFullScreen && visualizerEnabled) ? "opacity-0" : "opacity-100"
+                                    )}>
+                                        <img
+                                            src={imageUrl}
+                                            alt={currentTrack.title}
+                                            className="w-72 h-72 md:w-96 md:h-96 rounded-lg object-cover shadow-2xl"
+                                        />
+                                        {isPreloaded && (
+                                            <span className="absolute top-2 right-2 bg-primary/80 text-white text-xs px-2 py-1 rounded">
+                                                Next Ready
+                                            </span>
+                                        )}
                                     </div>
-                                    <div className="flex-1 overflow-y-auto flex flex-col">
-                                        <QueueList />
+
+                                    {/* Track Info */}
+                                    <div className="text-center mb-6 max-w-md">
+                                        <ScrollingText text={currentTrack.title} className="text-white text-2xl font-bold" />
+                                        <p className="text-gray-400 text-lg truncate">
+                                            {(currentTrack.metadata?.artist as string) || (currentTrack.metadata?.albumArtist as string) || 'Unknown Artist'}
+                                        </p>
+                                    </div>
+
+                                    {/* Progress Bar */}
+                                    <div className="w-full max-w-lg mb-6">
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max={duration || 100}
+                                            value={progress}
+                                            onChange={handleSeek}
+                                            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full"
+                                        />
+                                        <div className="flex justify-between text-sm text-gray-400 mt-1">
+                                            <span>{formatTime(progress)}</span>
+                                            <span>{formatTime(duration)}</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Controls */}
+                                    <div className="flex items-center space-x-6">
+                                        <button
+                                            onClick={toggleShuffle}
+                                            className={cn(
+                                                "transition",
+                                                shuffleMode ? "text-primary" : "text-gray-400 hover:text-white"
+                                            )}
+                                            title="Shuffle (Shift+S)"
+                                        >
+                                            <Shuffle size={24} />
+                                        </button>
+
+                                        <button onClick={handlePrevious} className="text-gray-400 hover:text-white transition">
+                                            <SkipBack size={32} />
+                                        </button>
+
+                                        <button
+                                            onClick={handleSeekBackward}
+                                            className="text-gray-400 hover:text-white transition relative"
+                                            title="Seek backward 30s"
+                                        >
+                                            <RotateCcw size={24} />
+                                            <span className="absolute text-[10px] font-bold" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>30</span>
+                                        </button>
+
+                                        <button
+                                            onClick={isPlaying ? pause : resume}
+                                            className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition shadow-lg"
+                                        >
+                                            {isPlaying ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" className="ml-1" />}
+                                        </button>
+
+                                        <button
+                                            onClick={handleSeekForward}
+                                            className="text-gray-400 hover:text-white transition relative"
+                                            title="Seek forward 30s"
+                                        >
+                                            <RotateCw size={24} />
+                                            <span className="absolute text-[10px] font-bold" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>30</span>
+                                        </button>
+
+                                        <button onClick={handleSkipNext} className="text-gray-400 hover:text-white transition">
+                                            <SkipForward size={32} />
+                                        </button>
+
+                                        <button
+                                            onClick={cycleRepeatMode}
+                                            className={cn(
+                                                "transition",
+                                                repeatMode !== 'off' ? "text-primary" : "text-gray-400 hover:text-white"
+                                            )}
+                                            title={`Repeat: ${repeatMode} (Shift+R)`}
+                                        >
+                                            <RepeatIcon size={24} />
+                                        </button>
+                                    </div>
+
+                                    {/* Volume */}
+                                    <div className="flex items-center space-x-3 mt-6">
+                                        <button onClick={toggleMute} className="text-gray-400 hover:text-white">
+                                            {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
+                                        </button>
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.01"
+                                            value={isMuted ? 0 : volume}
+                                            onChange={(e) => setVolume(parseFloat(e.target.value))}
+                                            className="w-32 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
+                                        />
+                                        <button
+                                            onClick={closePlayer}
+                                            className="text-gray-400 hover:text-red-500 transition ml-2"
+                                            title="Close Player"
+                                        >
+                                            <X size={24} />
+                                        </button>
                                     </div>
                                 </div>
-                            )}
-                        </div>
+
+                                {/* Inline Queue (when shown) */}
+                                {showQueue && (
+                                    <div className={cn(
+                                        "w-80 bg-black/30 border-l border-gray-800 overflow-hidden flex flex-col scale-in-hor-right origin-right animate-in fade-in duration-300",
+                                        "xl:absolute xl:right-0 xl:top-0 xl:bottom-0 xl:z-10 xl:bg-black/80 xl:backdrop-blur-md xl:border-l-gray-700"
+                                    )}>
+                                        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+                                            <h3 className="text-white font-semibold">Up Next</h3>
+                                            <span className="text-gray-400 text-sm">{queue.length} tracks</span>
+                                        </div>
+                                        <div className="flex-1 overflow-y-auto flex flex-col">
+                                            <QueueList />
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </motion.div>
                     </motion.div>
                 )}
             </AnimatePresence>
@@ -824,8 +918,23 @@ export const PersistentPlayer: React.FC = () => {
                                     visualizerEnabled ? "text-primary" : "text-gray-400 hover:text-white"
                                 )}
                                 title="Visualizer (V)"
+                                onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    window.location.href = '/settings/visualizers';
+                                }}
                             >
                                 <Activity size={20} />
+                            </button>
+
+                            <button
+                                onClick={toggleFullScreen}
+                                className={cn(
+                                    "transition",
+                                    isFullScreen ? "text-primary" : "text-gray-400 hover:text-white"
+                                )}
+                                title="Toggle Full Screen"
+                            >
+                                <Maximize2 size={20} />
                             </button>
 
                             <button
@@ -872,5 +981,3 @@ export const PersistentPlayer: React.FC = () => {
         </>
     );
 };
-
-

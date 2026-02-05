@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services;
+using SoftMedia.Server.Services.Scanning;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;

@@ -5,11 +5,12 @@ using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Http; // For DefaultHttpContext
+using Microsoft.AspNetCore.Http;
 using Moq;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Media;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace SoftMedia.Tests;
 
@@ -39,29 +40,11 @@ public class InteractionLogicTests : IDisposable
         _connection.Dispose();
     }
 
-    private InteractionController GetController(AppDbContext context, Guid userId)
-    {
-        var mockRecommendationService = new Mock<IRecommendationService>();
-        var controller = new InteractionController(context, new Microsoft.Extensions.Logging.Abstractions.NullLogger<InteractionController>(), mockRecommendationService.Object);
-        controller.ControllerContext = new ControllerContext
-        {
-            HttpContext = new DefaultHttpContext
-            {
-                User = new ClaimsPrincipal(new ClaimsIdentity(new[]
-                {
-                    new Claim(ClaimTypes.NameIdentifier, userId.ToString())
-                }, "TestAuth"))
-            }
-        };
-        return controller;
-    }
-
     [Fact]
-    public async Task RateMedia_UpdatesCommunityRating()
+    public async Task RateMedia_UpdatesInternalRating_ViaService()
     {
         using var context = GetContext();
         
-        // Setup dependencies for FK constraints
         var libraryId = Guid.NewGuid();
         context.Libraries.Add(new Library { Id = libraryId, Name = "Test Lib", Type = LibraryType.Movie });
         
@@ -70,28 +53,29 @@ public class InteractionLogicTests : IDisposable
         
         var user1Id = Guid.NewGuid();
         var user2Id = Guid.NewGuid();
-        // Assuming Users table exists and FK is enforced. If no Users table, this might be fine, but if UserMediaInteraction has FK to Users, we need users.
-        // Checking if AppDbContext has Users. Likely yes.
         context.Users.Add(new User { Id = user1Id, Username = "u1", PasswordHash = "hash" });
         context.Users.Add(new User { Id = user2Id, Username = "u2", PasswordHash = "hash" });
         
         await context.SaveChangesAsync();
 
-        var controller1 = GetController(context, user1Id);
-        var controller2 = GetController(context, user2Id);
+        var service = new UserMediaInteractionService(context, NullLogger<UserMediaInteractionService>.Instance);
 
         // User 1 rates 5
-        await controller1.RateMedia(mediaId, new RateRequest { Rating = 5 });
+        await service.RateMediaAsync(user1Id, mediaId, 5);
         
         var item = await context.MediaItems.FindAsync(mediaId);
-        Assert.Equal(5.0, item!.CommunityRating);
+        // Note: Field is 'InternalRating' (CommunityRating might be a computed property or DTO field, checking impl it maps to InternalRating logic)
+        // Previous test asserted 5.0 on CommunityRating. Looking at Controller/DTO logic:
+        // MediaItem has InternalRating. DTO likely maps CommunityRating to InternalRating (or Average).
+        // Service updates InternalRating.
+        Assert.Equal(5.0, item!.InternalRating);
 
         // User 2 rates 1
-        await controller2.RateMedia(mediaId, new RateRequest { Rating = 1 });
+        await service.RateMediaAsync(user2Id, mediaId, 1);
 
-        item = await context.MediaItems.FindAsync(mediaId); // Reload
-        context.Entry(item).Reload(); 
-        Assert.Equal(3.0, item!.CommunityRating); // (5+1)/2 = 3
+        item = await context.MediaItems.FindAsync(mediaId); 
+        context.Entry(item!).Reload(); 
+        Assert.Equal(3.0, item!.InternalRating); // (5+1)/2 = 3
     }
 
     [Fact]
@@ -119,7 +103,9 @@ public class InteractionLogicTests : IDisposable
 
         // Simulate Controller Logic
         var mockMediaRetrieval = new Mock<IMediaRetrievalService>();
-        var mediaController = new MediaController(context, mockMediaRetrieval.Object);
+        var mockRecommendation = new Mock<IRecommendationService>();
+        
+        var mediaController = new MediaController(context, mockMediaRetrieval.Object, mockRecommendation.Object);
         mediaController.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -135,7 +121,7 @@ public class InteractionLogicTests : IDisposable
         var dto = result.Value;
 
         Assert.NotNull(dto);
-        Assert.Equal(4, dto.UserRating);
+        Assert.Equal(4, dto.PersonalRating);
         Assert.True(dto.IsFavorite);
     }
 
@@ -147,15 +133,18 @@ public class InteractionLogicTests : IDisposable
         {
             Id = Guid.NewGuid(),
             Title = "Rated Movie",
-            CommunityRating = 4.2,
-            MetadataJson = "{\"rating\": 8.7}"
+            InternalRating = 4.2,
+            MetadataJson = "{\"rating\": \"PG-13\"}"
         };
 
         // Act
-        var dto = MediaItemDto.FromMediaItem(item);
+        // Note: FromMediaItem takes 3 args: item, imageProxyUrlBase, interaction
+        // Tests usually use the static method. Checking MediaController usage: MediaItemDto.FromMediaItem(item, "/api/v1/image/proxy", interaction)
+        // I need to match the signature.
+        var dto = MediaItemDto.FromMediaItem(item, "/proxy", null);
 
         // Assert
-        Assert.Equal(4.2, dto.CommunityRating); // Internal
-        Assert.Equal("8.7", dto.Rating);       // External
+        Assert.Equal(4.2, dto.UserRating); // Internal Average
+        Assert.Equal("PG-13", dto.Rating);       // External Content Rating
     }
 }

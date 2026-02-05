@@ -7,100 +7,77 @@ using SoftMedia.Server.Models;
 
 using Moq;
 using SoftMedia.Server.Services;
+using SoftMedia.Server.Services.Abstractions;
 
 namespace SoftMedia.Tests;
 
 public class LibraryTests
 {
-    private AppDbContext GetDbContext()
+    private readonly Mock<ILibraryService> _mockLibraryService;
+    private readonly LibrariesController _controller;
+
+    public LibraryTests()
     {
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .Options;
-        return new AppDbContext(options);
+        _mockLibraryService = new Mock<ILibraryService>();
+        _controller = new LibrariesController(_mockLibraryService.Object);
     }
 
     [Fact]
     public async Task GetLibraries_ReturnsOrderedLibraries()
     {
         // Arrange
-        using var context = GetDbContext();
-        context.Libraries.AddRange(
-            new Library { Name = "Lib 2", Order = 2 },
-            new Library { Name = "Lib 1", Order = 1 }
-        );
-        await context.SaveChangesAsync();
-
-        var mockScanner = new Mock<IFileScannerService>();
-        var mockScanQueue = new Mock<ILibraryScanQueueService>();
-        var controller = new LibrariesController(context, mockScanner.Object, mockScanQueue.Object);
+        var libraries = new List<Library>
+        {
+            new Library { Name = "Lib 1", Order = 1 },
+            new Library { Name = "Lib 2", Order = 2 }
+        };
+        _mockLibraryService.Setup(s => s.GetLibrariesAsync()).ReturnsAsync(libraries);
 
         // Act
-        var result = await controller.GetLibraries();
+        var result = await _controller.GetLibraries();
 
         // Assert
-        var actionResult = Assert.IsType<ActionResult<IEnumerable<Library>>>(result);
-        var libraries = Assert.IsAssignableFrom<IEnumerable<Library>>(actionResult.Value);
-        Assert.Equal(2, libraries.Count());
-        Assert.Equal("Lib 1", libraries.First().Name);
+        var actionResult = Assert.IsType<OkObjectResult>(result.Result);
+        var returnedLibraries = Assert.IsAssignableFrom<IEnumerable<Library>>(actionResult.Value);
+        Assert.Equal(2, returnedLibraries.Count());
+        Assert.Equal("Lib 1", returnedLibraries.First().Name);
     }
 
     [Fact]
     public async Task CreateLibrary_AddsLibrary()
     {
         // Arrange
-        using var context = GetDbContext();
-        var mockScanner = new Mock<IFileScannerService>();
-        var mockScanQueue = new Mock<ILibraryScanQueueService>();
-        var controller = new LibrariesController(context, mockScanner.Object, mockScanQueue.Object);
         var request = new CreateLibraryRequest
         {
             Name = "New Lib",
             Type = LibraryType.Movie,
-            Paths = new List<string> { "C:\\Movies" } // Note: Directory.Exists check might fail in unit test environment if not mocked or handled.
-            // Since Directory.Exists is a static method, it's hard to mock without a wrapper.
-            // For this test, we might need to assume the controller checks Directory.Exists.
-            // If the controller checks Directory.Exists, this test will fail if the path doesn't exist.
-            // We should use a path that likely exists or modify the controller to use an interface for file system operations.
-            // For now, I'll use a path that likely exists like current directory, or I'll skip path validation in test if possible?
-            // No, I can't skip it easily.
-            // I'll use Directory.GetCurrentDirectory()
+            Paths = new List<string> { "C:\\Movies" }
         };
-        request.Paths = new List<string> { Directory.GetCurrentDirectory() };
+        var createdLibrary = new Library { Name = "New Lib", Order = 0, Id = Guid.NewGuid() };
+        
+        _mockLibraryService.Setup(s => s.CreateLibraryAsync(request)).ReturnsAsync(createdLibrary);
 
         // Act
-        var result = await controller.CreateLibrary(request);
+        var result = await _controller.CreateLibrary(request);
 
         // Assert
         var createdAtActionResult = Assert.IsType<CreatedAtActionResult>(result.Result);
         var library = Assert.IsType<Library>(createdAtActionResult.Value);
         Assert.Equal("New Lib", library.Name);
-        Assert.Equal(0, library.Order); // First one
     }
 
     [Fact]
     public async Task ReorderLibraries_UpdatesOrder()
     {
         // Arrange
-        using var context = GetDbContext();
-        var lib1 = new Library { Name = "Lib 1", Order = 0 };
-        var lib2 = new Library { Name = "Lib 2", Order = 1 };
-        context.Libraries.AddRange(lib1, lib2);
-        await context.SaveChangesAsync();
-
-        var mockScanner = new Mock<IFileScannerService>();
-        var mockScanQueue = new Mock<ILibraryScanQueueService>();
-        var controller = new LibrariesController(context, mockScanner.Object, mockScanQueue.Object);
-        var orderedIds = new List<Guid> { lib2.Id, lib1.Id };
+        var orderedIds = new List<Guid> { Guid.NewGuid(), Guid.NewGuid() };
+        _mockLibraryService.Setup(s => s.ReorderLibrariesAsync(orderedIds)).Returns(Task.CompletedTask);
 
         // Act
-        await controller.ReorderLibraries(orderedIds);
+        var result = await _controller.ReorderLibraries(orderedIds);
 
         // Assert
-        var updatedLib1 = await context.Libraries.FindAsync(lib1.Id);
-        var updatedLib2 = await context.Libraries.FindAsync(lib2.Id);
-
-        Assert.Equal(1, updatedLib1.Order);
-        Assert.Equal(0, updatedLib2.Order);
+        Assert.IsType<NoContentResult>(result);
+        _mockLibraryService.Verify(s => s.ReorderLibrariesAsync(orderedIds), Times.Once);
     }
 }

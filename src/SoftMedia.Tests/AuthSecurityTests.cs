@@ -7,6 +7,9 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services;
+using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Identity;
+using SoftMedia.Server.Services.Infrastructure;
 using Xunit;
 
 namespace SoftMedia.Tests;
@@ -49,7 +52,9 @@ public class AuthSecurityTests
         var mockSettingsService = new Mock<ISettingsService>();
         mockSettingsService.Setup(x => x.GetSettingAsync("AllowUserSignup", "Disabled")).ReturnsAsync("Disabled");
 
-        var controller = new AuthController(context, mockPasswordHasher.Object, mockTokenService.Object, mockSettingsService.Object);
+        var mockUserPreferencesService = new Mock<IUserPreferencesService>();
+
+        var controller = new AuthController(context, mockPasswordHasher.Object, mockTokenService.Object, mockSettingsService.Object, mockUserPreferencesService.Object);
         SetupControllerContext(controller);
         
         // Act
@@ -77,8 +82,9 @@ public class AuthSecurityTests
         mockPasswordHasher.Setup(x => x.VerifyPassword("password", "hash")).Returns(true);
         var mockTokenService = new Mock<ITokenService>();
         var mockSettingsService = new Mock<ISettingsService>();
+        var mockUserPreferencesService = new Mock<IUserPreferencesService>();
 
-        var controller = new AuthController(context, mockPasswordHasher.Object, mockTokenService.Object, mockSettingsService.Object);
+        var controller = new AuthController(context, mockPasswordHasher.Object, mockTokenService.Object, mockSettingsService.Object, mockUserPreferencesService.Object);
         SetupControllerContext(controller);
 
         // Act
@@ -104,10 +110,11 @@ public class AuthSecurityTests
         mockTokenService.Setup(x => x.GenerateAccessToken(It.IsAny<User>())).Returns("access_token");
 
         var mockSettingsService = new Mock<ISettingsService>();
-        // Even if signup is disabled, first user should be allowed
         mockSettingsService.Setup(x => x.GetSettingAsync("AllowUserSignup", "Disabled")).ReturnsAsync("Disabled");
 
-        var controller = new AuthController(context, mockPasswordHasher.Object, mockTokenService.Object, mockSettingsService.Object);
+        var mockUserPreferencesService = new Mock<IUserPreferencesService>();
+
+        var controller = new AuthController(context, mockPasswordHasher.Object, mockTokenService.Object, mockSettingsService.Object, mockUserPreferencesService.Object);
         SetupControllerContext(controller);
 
         // Act

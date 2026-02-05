@@ -102,7 +102,7 @@ public class TranscodeServiceTests
 
         // Assert
         // Verify TryRemoveSession was called, indicating the old session was stopped
-        _sessionManagerMock.Verify(m => m.TryRemoveSession(sessionKey, out It.Ref<TranscodeSession>.IsAny), Times.Once, 
+        _sessionManagerMock.Verify(m => m.TryRemoveSession(sessionKey, out It.Ref<TranscodeSession?>.IsAny), Times.Once, 
             "Session should be removed/restarted when resolution changes");
             
         // Cleanup

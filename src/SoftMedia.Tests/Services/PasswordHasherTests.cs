@@ -1,4 +1,5 @@
 using SoftMedia.Server.Services;
+using SoftMedia.Server.Services.Identity;
 using Xunit;
 
 namespace SoftMedia.Tests.Services;

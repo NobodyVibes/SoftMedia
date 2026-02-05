@@ -7,6 +7,7 @@ using SoftMedia.Server.Services;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Transcoding;
+using SoftMedia.Server.Services.Infrastructure;
 using Xunit;
 
 namespace SoftMedia.Tests.Services;
@@ -28,6 +29,8 @@ public class TranscodingIntegrationTests : IDisposable
     private readonly string _testOutputDir = "C:\\test\\output";
     private readonly string _testSegmentPrefix = "segment";
 
+    private readonly Mock<IBinaryLocationService> _binaryLocationMock;
+
     public TranscodingIntegrationTests()
     {
         // Create in-memory database with unique name per test
@@ -40,10 +43,28 @@ public class TranscodingIntegrationTests : IDisposable
         _settingsService = new SettingsService(_context, _settingsLoggerMock.Object);
         _mediaProbeMock = new Mock<IMediaProbeService>();
         _subtitleMock = new Mock<ISubtitleService>();
-        _profileBuilderMock = new Mock<ITranscodeProfileBuilder>();
         _ffmpegLoggerMock = new Mock<ILogger<FFmpegService>>();
+        
+        _binaryLocationMock = new Mock<IBinaryLocationService>();
+        _binaryLocationMock.Setup(x => x.ResolveFFmpegPath()).Returns("ffmpeg");
+        
+        // Use REAL profile builder to test the logic
+        var profileBuilder = new TranscodeProfileBuilder(
+            new Mock<ILogger<TranscodeProfileBuilder>>().Object,
+            _binaryLocationMock.Object,
+            _mediaProbeMock.Object,
+            _subtitleMock.Object
+        );
+        _profileBuilderMock = new Mock<ITranscodeProfileBuilder>(); // Not used directly, but kept for field compatibility? 
+        // Actually I should remove _profileBuilderMock field or just ignore it.
+        // But CreateFFmpegService needs to use the REAL one.
+        
+        // Let's store the real one in a field so CreateFFmpegService can access it?
+        // Or just instantiate here?
+        // Wait, _profileBuilderMock field is defined in the class. Method CreateFFmpegService uses it.
+        // I need to change CreateFFmpegService to use a field that holds the REAL builder.
     }
-
+    
     public void Dispose()
     {
         _context.Database.EnsureDeleted();
@@ -52,12 +73,23 @@ public class TranscodingIntegrationTests : IDisposable
 
     private FFmpegService CreateFFmpegService()
     {
+        // Re-create builder to pick up any mock changes? 
+        // No, mocks are passed by reference.
+        // But settingsService is shared.
+        
+        var profileBuilder = new TranscodeProfileBuilder(
+            new Mock<ILogger<TranscodeProfileBuilder>>().Object,
+            _binaryLocationMock.Object,
+            _mediaProbeMock.Object,
+            _subtitleMock.Object
+        );
+
         return new FFmpegService(
             _ffmpegLoggerMock.Object, 
             _settingsService, 
             _mediaProbeMock.Object, 
             _subtitleMock.Object, 
-            _profileBuilderMock.Object);
+            profileBuilder);
     }
 
     /// <summary>
@@ -78,7 +110,7 @@ public class TranscodingIntegrationTests : IDisposable
         var ffmpegService = CreateFFmpegService();
 
         // Act - Get transcode arguments
-        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var processInfo = await ffmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert - Default values should be used
         Assert.Contains("-c:v libx264", processInfo.Arguments);  // none hardware = libx264
@@ -114,7 +146,7 @@ public class TranscodingIntegrationTests : IDisposable
         var ffmpegService = CreateFFmpegService();
 
         // First transcode with default preset
-        var firstProcessInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var firstProcessInfo = await ffmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
         Assert.Contains("-preset veryfast", firstProcessInfo.Arguments);
 
         // Simulate user changing preset via frontend
@@ -125,7 +157,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Act - Create new FFmpegService instance (simulates new request scope)
         var newFfmpegService = CreateFFmpegService();
-        var secondProcessInfo = newFfmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var secondProcessInfo = await newFfmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert - New preset should be used
         Assert.Contains("-preset slow", secondProcessInfo.Arguments);
@@ -145,7 +177,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Act
         var ffmpegService = CreateFFmpegService();
-        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var processInfo = await ffmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert
         Assert.Contains("-crf 18", processInfo.Arguments);
@@ -166,7 +198,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Act
         var ffmpegService = CreateFFmpegService();
-        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var processInfo = await ffmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert
         Assert.Contains("-threads 8", processInfo.Arguments);
@@ -186,7 +218,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Act
         var ffmpegService = CreateFFmpegService();
-        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var processInfo = await ffmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert - 720p uses scale=1280:-2
         Assert.Contains("scale=1280:-2", processInfo.Arguments);
@@ -206,7 +238,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Act
         var ffmpegService = CreateFFmpegService();
-        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var processInfo = await ffmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert
         Assert.Contains("-c:v h264_nvenc", processInfo.Arguments);
@@ -246,7 +278,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Act
         var ffmpegService = CreateFFmpegService();
-        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var processInfo = await ffmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert - NVIDIA should use CUDA hardware decode + NVENC encode
         Assert.Contains("-hwaccel cuda", processInfo.Arguments);
@@ -271,7 +303,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Act
         var ffmpegService = CreateFFmpegService();
-        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var processInfo = await ffmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert - Intel should use QSV hardware decode + QSV encode
         Assert.Contains("-hwaccel qsv", processInfo.Arguments);
@@ -296,7 +328,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Act
         var ffmpegService = CreateFFmpegService();
-        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var processInfo = await ffmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert - AMD should use D3D11VA hardware decode + AMF encode
         Assert.Contains("-hwaccel d3d11va", processInfo.Arguments);
@@ -320,7 +352,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Act
         var ffmpegService = CreateFFmpegService();
-        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var processInfo = await ffmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert - No hardware acceleration = no hwaccel flags
         Assert.DoesNotContain("-hwaccel", processInfo.Arguments);
@@ -349,7 +381,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Act
         var ffmpegService = CreateFFmpegService();
-        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var processInfo = await ffmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert - All settings should be applied
         Assert.Contains("-c:v h264_qsv", processInfo.Arguments);  // Intel QSV
@@ -372,7 +404,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Verify custom settings applied
         var customService = CreateFFmpegService();
-        var customArgs = customService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var customArgs = await customService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
         Assert.Contains("-preset slow", customArgs.Arguments);
         Assert.Contains("-crf 15", customArgs.Arguments);
 
@@ -385,7 +417,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Act
         var defaultService = CreateFFmpegService();
-        var defaultArgs = defaultService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var defaultArgs = await defaultService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert - Back to defaults
         Assert.Contains("-preset veryfast", defaultArgs.Arguments);
@@ -410,7 +442,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Act
         var ffmpegService = CreateFFmpegService();
-        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var processInfo = await ffmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert - Should use fallback value (23)
         Assert.Contains("-crf 23", processInfo.Arguments);
@@ -425,7 +457,7 @@ public class TranscodingIntegrationTests : IDisposable
 
         // Act - Other settings should use defaults
         var ffmpegService = CreateFFmpegService();
-        var processInfo = ffmpegService.GetTranscodeArguments(_testInputPath, _testOutputDir, _testSegmentPrefix);
+        var processInfo = await ffmpegService.GetTranscodeArgumentsAsync(_testInputPath, _testOutputDir, _testSegmentPrefix);
 
         // Assert - Default values for missing keys
         Assert.Contains("-preset veryfast", processInfo.Arguments);

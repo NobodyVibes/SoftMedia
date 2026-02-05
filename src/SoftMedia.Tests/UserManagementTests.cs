@@ -8,6 +8,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using SoftMedia.Server.Services;
+using SoftMedia.Server.Services.Identity;
+using SoftMedia.Server.Services.Infrastructure;
 
 namespace SoftMedia.Tests;
 
@@ -25,8 +27,10 @@ public class UserManagementTests
     {
         var mockPasswordHasher = new Mock<IPasswordHasher>();
         mockPasswordHasher.Setup(x => x.HashPassword(It.IsAny<string>())).Returns("hashed_password");
+        
+        var mockUserPreferencesService = new Mock<IUserPreferencesService>(); // Mock the missing dependency
 
-        var controller = new UsersController(context, mockPasswordHasher.Object);
+        var controller = new UsersController(context, mockPasswordHasher.Object, mockUserPreferencesService.Object);
         var claims = new List<Claim>
         {
             new Claim(ClaimTypes.NameIdentifier, currentUser.Id.ToString()),

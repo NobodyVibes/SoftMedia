@@ -121,7 +121,9 @@ public class FFmpegService : IFFmpegService
     public async Task<bool> IsTranscodingDisabledAsync()
     {
         var enableStr = await _settingsService.GetSettingAsync("EnableTranscoding", "true");
-        return !(bool.TryParse(enableStr, out var enable) && enable);
+        // Returns true (Disabled) only if parsing succeeds AND value is false.
+        // If parsing fails (invalid), it defaults to Enabled (returns false).
+        return bool.TryParse(enableStr, out var enable) && !enable;
     }
 
     public static bool IsBitmapSubtitleCodec(string? codec)
@@ -153,7 +155,7 @@ public class FFmpegService : IFFmpegService
         
         return new TranscodeSettings
         {
-            EnableTranscoding = bool.TryParse(enableStr, out var enable) && enable,
+            EnableTranscoding = !bool.TryParse(enableStr, out var enable) || enable,
             HardwareAcceleration = hwAccel,
             Preset = preset,
             ThreadCount = int.TryParse(threadCountStr, out var tc) ? tc : 0,

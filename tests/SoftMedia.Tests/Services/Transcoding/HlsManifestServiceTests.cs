@@ -27,8 +27,8 @@ public class HlsManifestServiceTests
         var mediaId = "media1";
         var token = "token123";
         var subTrackIndex = 1;
-        var subtitleVttPath = "subtitles.vtt";
-
+        // var subtitleVttPath = "subtitles.vtt"; // Removed unused variable
+        
         // Create a dummy file to pass the File.Exists check
         // Since HlsManifestService checks File.Exists(subtitleVttPath), we need to ensure this passes.
         // However, we can't easily mock static File.Exists in a unit test without a wrapper or using integration test.

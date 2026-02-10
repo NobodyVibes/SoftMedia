@@ -239,10 +239,9 @@ public class TvScanner : BaseMediaScanner
                  // Create new series
                  series = new MediaItem
                  {
-                     Id = Guid.NewGuid(), // Generate ID
                      LibraryId = library.Id,
                      Title = showName,
-                     SortTitle = SortableTitle(showName),
+                     SortTitle = MediaStringHelpers.GetSortTitle(showName),
                      Path = Path.GetDirectoryName(episodePath) ?? episodePath,
                      Type = MediaType.Series,
                      Year = year,
@@ -529,19 +528,5 @@ public class TvScanner : BaseMediaScanner
             _logger.LogInformation("[TvScanner] Removing {Count} empty series", emptySeries.Count);
             context.MediaItems.RemoveRange(emptySeries);
         }
-    }
-
-    /// <summary>
-    /// Create a sortable version of a title.
-    /// </summary>
-    private static string SortableTitle(string title)
-    {
-        if (title.StartsWith("The ", StringComparison.OrdinalIgnoreCase))
-            return title[4..];
-        if (title.StartsWith("A ", StringComparison.OrdinalIgnoreCase))
-            return title[2..];
-        if (title.StartsWith("An ", StringComparison.OrdinalIgnoreCase))
-            return title[3..];
-        return title;
     }
 }

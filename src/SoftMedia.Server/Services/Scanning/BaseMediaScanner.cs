@@ -35,14 +35,22 @@ public abstract class BaseMediaScanner : IMediaScanner
         _logger = logger;
         _notificationService = notificationService;
         _metadataQueue = metadataQueue;
+        
+        // Initialize striped locks (fixed memory usage)
+        _stripedLocks = new SemaphoreSlim[LockStripeCount];
+        for (int i = 0; i < LockStripeCount; i++)
+        {
+            _stripedLocks[i] = new SemaphoreSlim(1, 1);
+        }
     }
 
     protected readonly IMetadataQueue _metadataQueue;
 
     /// <summary>
-    /// Template method for scanning a library.
+    /// Striped locks for parent entities to ensure thread safety without unbounded memory growth.
     /// </summary>
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _parentLocks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim[] _stripedLocks;
+    private const int LockStripeCount = 1024;
 
     /// <summary>
     /// Template method for scanning a library.
@@ -55,8 +63,8 @@ public abstract class BaseMediaScanner : IMediaScanner
         _logger.LogInformation("[{Scanner}] Starting scan of library '{LibraryName}' (ID: {LibraryId})",
             DisplayName, library.Name, library.Id);
             
-        // Reset locks for this scan
-        _parentLocks.Clear();
+        // Reset stats
+        // _parentLocks no longer used (replaced by striped locks which persist)
 
         // Stats tracking (thread-safe)
         int processedCount = 0;
@@ -233,7 +241,11 @@ public abstract class BaseMediaScanner : IMediaScanner
 
     protected async Task<IDisposable> LockParentAsync(string parentName, CancellationToken ct)
     {
-        var sem = _parentLocks.GetOrAdd(parentName, _ => new SemaphoreSlim(1, 1));
+        // Use striped locking to avoid dictionary overhead and unbounded growth
+        var hash = (uint)parentName.GetHashCode(StringComparison.OrdinalIgnoreCase); 
+        var index = hash % (uint)LockStripeCount;
+        
+        var sem = _stripedLocks[index];
         await sem.WaitAsync(ct);
         return new SemaphoreReleaser(sem);
     }

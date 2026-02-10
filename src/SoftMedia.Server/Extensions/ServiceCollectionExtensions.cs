@@ -136,7 +136,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IMediaNotificationService, MediaNotificationService>();
 
         // Image Cache Client
-        services.AddHttpClient<ImageCacheService>(client =>
+        services.AddHttpClient<IImageCacheService, ImageCacheService>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(30);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
@@ -171,6 +171,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<MetadataQueueService>();
         services.AddSingleton<IMetadataQueue>(sp => sp.GetRequiredService<MetadataQueueService>());
         services.AddHostedService(sp => sp.GetRequiredService<MetadataQueueService>());
+
+        // Image Download Queue
+        services.AddSingleton<ImageDownloadQueueService>();
+        services.AddSingleton<IImageDownloadQueue>(sp => sp.GetRequiredService<ImageDownloadQueueService>());
+        services.AddHostedService(sp => sp.GetRequiredService<ImageDownloadQueueService>());
 
         return services;
     }

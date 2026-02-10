@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SoftMedia.Server.Data;
+using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Media;
@@ -101,7 +102,7 @@ public class MusicScanner : BaseMediaScanner
             var track = existing ?? new MediaItem { LibraryId = library.Id };
 
             track.Title = trackTitle;
-            track.SortTitle = SortableTitle(trackTitle);
+            track.SortTitle = MediaStringHelpers.GetSortTitle(trackTitle);
             track.Path = filePath;
             track.Type = MediaType.Audio;
             track.ArtistId = artist.Id;
@@ -183,7 +184,7 @@ public class MusicScanner : BaseMediaScanner
                 Id = Guid.NewGuid(),
                 LibraryId = library.Id,
                 Title = artistName,
-                SortTitle = SortableTitle(artistName),
+                SortTitle = MediaStringHelpers.GetSortTitle(artistName),
                 Path = Path.GetDirectoryName(trackPath) ?? trackPath,
                 Type = MediaType.Artist,
                 DateModified = DateTime.UtcNow
@@ -253,7 +254,7 @@ public class MusicScanner : BaseMediaScanner
                 Id = Guid.NewGuid(),
                 LibraryId = library.Id,
                 Title = albumName,
-                SortTitle = SortableTitle(albumName),
+                SortTitle = MediaStringHelpers.GetSortTitle(albumName),
                 Path = albumDir,
                 Type = MediaType.Album,
                 ArtistId = artist.Id,
@@ -477,17 +478,5 @@ public class MusicScanner : BaseMediaScanner
     private static string? GetFirstOrDefault(string[] values) =>
         values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
 
-    /// <summary>
-    /// Create a sortable version of a title (removes leading "The ", "A ", etc.)
-    /// </summary>
-    private static string SortableTitle(string title)
-    {
-        if (title.StartsWith("The ", StringComparison.OrdinalIgnoreCase))
-            return title[4..];
-        if (title.StartsWith("A ", StringComparison.OrdinalIgnoreCase))
-            return title[2..];
-        if (title.StartsWith("An ", StringComparison.OrdinalIgnoreCase))
-            return title[3..];
-        return title;
-    }
+// End of class
 }

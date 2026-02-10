@@ -62,10 +62,16 @@ public class MediaItem
     /// </summary>
     public double? InternalRating { get; set; }
 
+
     /// <summary>
     /// Total number of users who have rated this item.
     /// </summary>
     public int InternalRatingCount { get; set; }
+
+    // External IDs
+    public string? ImdbId { get; set; }
+    public int? TvMazeId { get; set; }
+    public string? MusicBrainzId { get; set; }
 
     // Type-Specific Metadata (JSON)
     public string? MetadataJson { get; set; }

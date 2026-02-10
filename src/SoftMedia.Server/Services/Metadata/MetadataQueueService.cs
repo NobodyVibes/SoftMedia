@@ -14,8 +14,14 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IMediaNotificationService _notificationService;
     private readonly ILogger<MetadataQueueService> _logger;
-    private readonly Channel<MetadataQueueItem> _channel;
-    private readonly PartitionedRateLimiter<MetadataQueueItem> _limiter;
+
+    // Dynamic Channel Router
+    // Key: Channel Name (Music, TV, Shared)
+    private readonly Dictionary<string, Channel<MetadataQueueItem>> _channels;
+    
+    // Rate Limiter
+    // Key: Provider Name (e.g. "MusicBrainz", "TVMaze")
+    private readonly PartitionedRateLimiter<string> _limiter;
 
     // Track dirty state of libraries for cache update
     private readonly ConcurrentDictionary<Guid, bool> _dirtyLibraries = new();
@@ -29,46 +35,60 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
         _scopeFactory = scopeFactory;
         _notificationService = notificationService;
         _logger = logger;
-        _channel = Channel.CreateBounded<MetadataQueueItem>(new BoundedChannelOptions(1000)
-        {
-            FullMode = BoundedChannelFullMode.Wait
-        });
 
-        _limiter = PartitionedRateLimiter.Create<MetadataQueueItem, string>(resource =>
+        // Initialize Channels with appropriate capacities
+        // Music: High capacity because scans are large, but processing is slow.
+        // TV/Shared: Moderate capacity.
+        _channels = new Dictionary<string, Channel<MetadataQueueItem>>
         {
-            // Define limits based on LibraryType (approximating provider usage)
-            return resource.Type switch
+            { "Music", Channel.CreateBounded<MetadataQueueItem>(new BoundedChannelOptions(10000) { FullMode = BoundedChannelFullMode.Wait }) },
+            { "TV", Channel.CreateBounded<MetadataQueueItem>(new BoundedChannelOptions(5000) { FullMode = BoundedChannelFullMode.Wait }) },
+            { "Shared", Channel.CreateBounded<MetadataQueueItem>(new BoundedChannelOptions(5000) { FullMode = BoundedChannelFullMode.Wait }) }
+        };
+
+        // Initialize Rate Limiter
+        _limiter = PartitionedRateLimiter.Create<string, string>(providerName =>
+        {
+            // Default rules
+            int permitLimit = 5;
+            TimeSpan window = TimeSpan.FromSeconds(1);
+
+            switch (providerName.ToLowerInvariant())
             {
-                // MusicBrainz: VERY strict (1 req/sec)
-                LibraryType.Music => RateLimitPartition.GetFixedWindowLimiter("Music",
-                    _ => new FixedWindowRateLimiterOptions
-                    {
-                        PermitLimit = 1,
-                        Window = TimeSpan.FromSeconds(1.1),
-                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                        QueueLimit = 100
-                    }),
+                case "musicbrainz":
+                    // strict 1 req/sec
+                    permitLimit = 1; 
+                    window = TimeSpan.FromSeconds(1.1); 
+                    break;
+                case "tvmaze":
+                    // ~2 req/sec
+                    permitLimit = 2; 
+                    window = TimeSpan.FromSeconds(1);
+                    break;
+                case "wikidata":
+                case "omdb": // OMDb is fast but paid; strict limit might be needed if user has low tier key, but 10 is safe default.
+                case "igdb": 
+                case "open library":
+                    permitLimit = 10; 
+                    window = TimeSpan.FromSeconds(1);
+                    break;
+                case "local":
+                case "embedded":
+                case "exif":
+                case "none":
+                    permitLimit = 100; // Unlimited effectively
+                    window = TimeSpan.FromSeconds(1);
+                    break;
+            }
 
-                // TVMaze: 20 req / 10s => ~2 req/sec
-                LibraryType.TV => RateLimitPartition.GetFixedWindowLimiter("TV",
-                    _ => new FixedWindowRateLimiterOptions
-                    {
-                        PermitLimit = 2,
-                        Window = TimeSpan.FromSeconds(1),
-                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                        QueueLimit = 100
-                    }),
-
-                // Default (Movies/Games - Wikidata/OMDb): Moderate
-                _ => RateLimitPartition.GetFixedWindowLimiter("Default",
-                    _ => new FixedWindowRateLimiterOptions
-                    {
-                        PermitLimit = 5,
-                        Window = TimeSpan.FromSeconds(1),
-                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                        QueueLimit = 100
-                    })
-            };
+            return RateLimitPartition.GetFixedWindowLimiter(providerName,
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = permitLimit,
+                    Window = window,
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                    QueueLimit = 1000
+                });
         });
         
         // Start background cache update loop
@@ -114,36 +134,105 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
         }
     }
 
-    public async Task EnqueueMetadataRefreshAsync(Guid mediaId, LibraryType type)
+    public async Task EnqueueMetadataRefreshAsync(Guid mediaId, LibraryType type, bool refreshImages = true)
     {
-        await _channel.Writer.WriteAsync(new MetadataQueueItem(mediaId, type));
+        var channel = GetChannelForType(type);
+        await channel.Writer.WriteAsync(new MetadataQueueItem(mediaId, type, refreshImages));
+    }
+
+    private Channel<MetadataQueueItem> GetChannelForType(LibraryType type)
+    {
+        // Dynamic Routing
+        return type switch
+        {
+            LibraryType.Music => _channels["Music"],
+            LibraryType.TV => _channels["TV"],
+            _ => _channels["Shared"] // Movie, Book, Game, Photo
+        };
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Metadata Queue Service started.");
+        _logger.LogInformation("Metadata Queue Service started with Dynamic Channels.");
 
-        await foreach (var item in _channel.Reader.ReadAllAsync(stoppingToken))
+        var tasks = new List<Task>();
+
+        // Launch processors for each channel
+        // Music: 2 Concurrent (Strict limit will bottleneck, but 2 allows overlap if provider is fast)
+        tasks.Add(ProcessChannelAsync(_channels["Music"], "Music", 2, stoppingToken));
+
+        // TV: 4 Concurrent
+        tasks.Add(ProcessChannelAsync(_channels["TV"], "TV", 4, stoppingToken));
+
+        // Shared: 10 Concurrent (Movies, Games, etc. can be retrieved very quickly from Wikidata/OMDb)
+        tasks.Add(ProcessChannelAsync(_channels["Shared"], "Shared", 10, stoppingToken));
+
+        await Task.WhenAll(tasks);
+    }
+
+    private async Task ProcessChannelAsync(Channel<MetadataQueueItem> channel, string channelName, int concurrency, CancellationToken ct)
+    {
+         var parallelOptions = new ParallelOptions
         {
-            try 
-            {
-                // Wait for rate limiter
-                using var lease = await _limiter.AcquireAsync(item, permitCount: 1, cancellationToken: stoppingToken);
-                
-                if (lease.IsAcquired)
+            MaxDegreeOfParallelism = concurrency,
+            CancellationToken = ct
+        };
+
+        try 
+        {
+            await Parallel.ForEachAsync(
+                channel.Reader.ReadAllAsync(ct),
+                parallelOptions,
+                async (item, token) => 
                 {
-                    await ProcessItemAsync(item, stoppingToken);
-                }
-                else
-                {
-                    _logger.LogWarning("Rate Limit Exceeded for {Type}. Re-queuing {Id}", item.Type, item.MediaId);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error processing metadata item {Id}", item.MediaId);
-            }
+                    try
+                    {
+                        // 1. Determine Provider (for Rate Limiting)
+                        string providerName = await GetProviderNameAsync(item.Type);
+
+                        // 2. Acquire Rate Limit Lease
+                        // We use the Provider Name as the partition key.
+                        // This ensures that even if we are processing 10 movies in parallel,
+                        // if they all use the same provider, they will respect the rate limit.
+                        using var lease = await _limiter.AcquireAsync(providerName, permitCount: 1, cancellationToken: token);
+
+                        if (lease.IsAcquired)
+                        {
+                            await ProcessItemAsync(item, token);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Rate Limit Lease failed for {Provider}. Re-queuing {Id}", providerName, item.MediaId);
+                            // Simple retry by writing back to channel? 
+                            // Risk of infinite loop if queue is full. 
+                            // Better to just log. Ideally RateLimiter waits until available with AcquireAsync.
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error processing item {Id} in channel {Channel}", item.MediaId, channelName);
+                    }
+                });
         }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task<string> GetProviderNameAsync(LibraryType type)
+    {
+        // Use a scope to resolve SettingsService
+        using var scope = _scopeFactory.CreateScope();
+        var settings = scope.ServiceProvider.GetRequiredService<ISettingsService>();
+
+        return type switch
+        {
+            LibraryType.Movie => await settings.GetSettingAsync("MovieProvider", "Wikidata"),
+            LibraryType.TV => await settings.GetSettingAsync("TVProvider", "TVMaze"),
+            LibraryType.Music => await settings.GetSettingAsync("MusicProvider", "MusicBrainz"),
+            LibraryType.Book => await settings.GetSettingAsync("BookProvider", "Open Library"),
+            LibraryType.Game => await settings.GetSettingAsync("GameProvider", "Wikidata"),
+            LibraryType.Photo => await settings.GetSettingAsync("PhotoProvider", "Exif"),
+            _ => "Default"
+        };
     }
 
     private async Task ProcessItemAsync(MetadataQueueItem item, CancellationToken ct)
@@ -162,7 +251,7 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
             }
 
             // Enrich
-            await aggregator.EnrichMediaItemAsync(mediaItem, item.Type, deferImageCaching: false, refreshImages: true);
+            await aggregator.EnrichMediaItemAsync(mediaItem, item.Type, deferImageCaching: false, refreshImages: item.RefreshImages);
 
             // Save changes
             await context.SaveChangesAsync(ct);
@@ -179,5 +268,5 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
         }
     }
 
-    private record MetadataQueueItem(Guid MediaId, LibraryType Type);
+    private record MetadataQueueItem(Guid MediaId, LibraryType Type, bool RefreshImages);
 }

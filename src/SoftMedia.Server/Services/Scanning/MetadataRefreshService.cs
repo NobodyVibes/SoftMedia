@@ -44,7 +44,7 @@ public class MetadataRefreshService : BackgroundService
     {
         using var scope = _services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var aggregator = scope.ServiceProvider.GetRequiredService<MetadataAggregator>();
+        var queue = scope.ServiceProvider.GetRequiredService<IMetadataQueue>();
         var settings = scope.ServiceProvider.GetRequiredService<ISettingsService>();
         var queueService = scope.ServiceProvider.GetRequiredService<ILibraryScanQueueService>();
 
@@ -82,7 +82,7 @@ public class MetadataRefreshService : BackgroundService
 
         bool refreshImages = !string.Equals(mode, "Variable", StringComparison.OrdinalIgnoreCase);
 
-        int successCount = 0;
+        int enqueuedCount = 0;
         int failCount = 0;
         int processed = 0;
 
@@ -92,28 +92,26 @@ public class MetadataRefreshService : BackgroundService
             try
             {
                 var libType = item.Type == MediaType.Movie ? LibraryType.Movie : LibraryType.TV;
-                await aggregator.EnrichMediaItemAsync(item, libType, deferImageCaching: false, refreshImages: refreshImages);
-                successCount++;
-                _logger.LogDebug("Refreshed: {Title} (Images: {Images})", item.Title, refreshImages);
+                await queue.EnqueueMetadataRefreshAsync(item.Id, libType, refreshImages);
+                enqueuedCount++;
             }
             catch (Exception ex)
             {
                 failCount++;
-                _logger.LogWarning(ex, "Failed to refresh metadata for: {Title}", item.Title);
+                _logger.LogWarning(ex, "Failed to enqueue refresh for: {Title}", item.Title);
             }
 
             processed++;
-            // Update progress every 5 items or on completion
-            if (processed % 5 == 0 || processed == candidates.Count)
+            // Update progress every 50 items or on completion
+            if (processed % 50 == 0 || processed == candidates.Count)
             {
                 queueService.UpdateProgress(job.Id, LibraryScanStage.Processing, processed, candidates.Count, item.Title);
             }
         }
 
-        await context.SaveChangesAsync(ct);
-        
-        queueService.CompleteJob(job.Id, 0, successCount, 0, failCount);
-        _logger.LogInformation("Metadata refresh job complete: {Success} succeeded, {Failed} failed", successCount, failCount);
+        // Job is "Complete" when items are queued. Processing happens in background.
+        queueService.CompleteJob(job.Id, 0, enqueuedCount, 0, failCount);
+        _logger.LogInformation("Metadata refresh job complete: {Enqueued} enqueued, {Failed} failed", enqueuedCount, failCount);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

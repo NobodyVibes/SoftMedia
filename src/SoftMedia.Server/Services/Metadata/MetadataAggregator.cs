@@ -2,6 +2,7 @@ using SoftMedia.Server.Models;
 using System.Text.Json;
 using SoftMedia.Server.Data;
 using Microsoft.EntityFrameworkCore;
+using SoftMedia.Server.Services.Abstractions;
 
 namespace SoftMedia.Server.Services.Metadata;
 
@@ -15,7 +16,7 @@ public class MetadataAggregator : IMetadataAggregator
     private readonly IEnumerable<IMetadataProvider> _providers;
     private readonly IMetadataRouter _metadataRouter;
     private readonly ISettingsService _settingsService;
-    private readonly ImageCacheService _imageCacheService;
+    private readonly IImageDownloadQueue _imageDownloadQueue;
     private readonly AppDbContext _context;
     private readonly ILogger<MetadataAggregator> _logger;
 
@@ -23,14 +24,14 @@ public class MetadataAggregator : IMetadataAggregator
         IEnumerable<IMetadataProvider> providers,
         IMetadataRouter metadataRouter,
         ISettingsService settingsService, 
-        ImageCacheService imageCacheService,
+        IImageDownloadQueue imageDownloadQueue,
         AppDbContext context,
         ILogger<MetadataAggregator> logger)
     {
         _providers = providers;
         _metadataRouter = metadataRouter;
         _settingsService = settingsService;
-        _imageCacheService = imageCacheService;
+        _imageDownloadQueue = imageDownloadQueue;
         _context = context;
         _logger = logger;
     }
@@ -209,10 +210,6 @@ public class MetadataAggregator : IMetadataAggregator
             if (metadata != null)
             {
                  bool hasTitle = metadata.ContainsKey("title");
-                 // For generic/video, maybe different sufficiency? 
-                 // Current logic was: Title && Artist. 
-                 // For generic check, we'll keep it simple or align with legacy.
-                 // The original code checked specific keys.
                  return hasTitle;
             }
             return false;
@@ -260,170 +257,191 @@ public class MetadataAggregator : IMetadataAggregator
                 item.ReleaseDate = releaseDate;
             }
             
+            // Populate External IDs if available (New Schema)
+            if (metadata.TryGetValue("imdbId", out var imdbIdObj)) item.ImdbId = imdbIdObj.ToString();
+            if (metadata.TryGetValue("tvmazeId", out var tvmazeIdObj) && int.TryParse(tvmazeIdObj.ToString(), out var tvmazeId)) item.TvMazeId = tvmazeId;
+            if (metadata.TryGetValue("musicBrainzId", out var mbIdObj)) item.MusicBrainzId = mbIdObj.ToString();
+
+            // FILTERING: Only keep metadata for Seasons/Episodes that exist locally
+            if (item.Type == MediaType.Series)
+            {
+                // await FilterTvMetadataAsync(item, metadata);
+                // Re-serialize the filtered metadata to update the JSON string being processed
+                json = JsonSerializer.Serialize(metadata);
+            }
+
             // If deferring image caching OR explicitly disabled, skip all image download operations
             // Background service will handle image caching later (if deferred) or never (if disabled)
             if (deferImageCaching || !refreshImages)
             {
                 return;
             }
-            
-            // Cache poster image locally if available
+
+            // Queue for Image Downloads
+            var downloads = new List<(string Url, int? Season, int? Episode, ImageType Type)>();
+
+            // 1. Poster / Cover Art
             if (metadata.TryGetValue("poster", out var posterObj))
             {
                 var posterUrl = posterObj.ToString();
-                _logger.LogInformation("Found poster URL for {Title}: {Url}, ItemType: {Type}", item.Title, posterUrl, item.Type);
-                
                 if (!string.IsNullOrEmpty(posterUrl) && posterUrl.StartsWith("http"))
                 {
-                    try
-                    {
-                        _logger.LogInformation("Caching poster for {Title} (Type: {Type})", item.Title, item.Type);
-                        string cachedUrl = item.Type switch
-                        {
-                            MediaType.Movie => await _imageCacheService.CacheMoviePosterAsync(item.Id, posterUrl),
-                            MediaType.Series => await _imageCacheService.CacheSeriesPosterAsync(item.Id, posterUrl),
-                            MediaType.Audio => await _imageCacheService.CacheAlbumCoverAsync(item.Id, posterUrl),
-                            MediaType.Game => await _imageCacheService.CacheGamePosterAsync(item.Id, posterUrl),
-                            _ => posterUrl
-                        };
-                        
-                        if (cachedUrl != posterUrl)
-                        {
-                            // Update metadata with cached URL
-                            metadata["poster"] = cachedUrl;
-                            item.MetadataJson = JsonSerializer.Serialize(metadata);
-                            _logger.LogDebug("Cached poster for {Title}: {Url}", item.Title, cachedUrl);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to cache poster for {Title}", item.Title);
-                    }
+                    _logger.LogInformation("Found poster URL for {Title}: {Url}", item.Title, posterUrl);
+                    downloads.Add((posterUrl, null, null, item.Type == MediaType.Audio || item.Type == MediaType.Album ? ImageType.AlbumCover : ImageType.Poster));
+                    
+                    // Remove remote URL to prevent hotlinking
+                    metadata.Remove("poster");
                 }
             }
             
-            // For Series: Cache season posters and episode stills, update metadata with cached URLs
+            // 2. Series Specific Images
             if (item.Type == MediaType.Series)
             {
-                bool metadataModified = false;
-
-                // Optimization: Pre-fetch existing Seasons and Episodes to avoid caching images for unowned content
-                // This prevents excessive API calls and disk usage for content the user doesn't have.
-                var existingSeasons = await _context.MediaItems
-                    .AsNoTracking()
-                    .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Season && m.SeasonNumber.HasValue)
-                    .Select(m => m.SeasonNumber ?? 0)
-                    .ToListAsync();
-                var existingSeasonsSet = new HashSet<int>(existingSeasons);
-
-                var existingEpisodes = await _context.MediaItems
-                    .AsNoTracking()
-                    .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Episode && m.SeasonNumber.HasValue && m.EpisodeNumber.HasValue)
-                    .Select(m => new { Season = m.SeasonNumber ?? 0, Episode = m.EpisodeNumber ?? 0 })
-                    .ToListAsync();
-                var existingEpisodesSet = new HashSet<(int, int)>(existingEpisodes.Select(e => (e.Season, e.Episode)));
-
-                // Cache season posters and update URLs
+                // Season Posters
                 if (metadata.TryGetValue("seasons", out var seasonsObj) && seasonsObj is JsonElement seasonsArray)
                 {
-                    // Convert to mutable list of dictionaries
                     var seasonsList = new List<Dictionary<string, object?>>();
                     foreach (var season in seasonsArray.EnumerateArray())
                     {
                         var seasonDict = JsonSerializer.Deserialize<Dictionary<string, object?>>(season.GetRawText()) ?? new();
-                        
-                        try
+                        if (seasonDict.TryGetValue("number", out var numObj) && numObj != null &&
+                            seasonDict.TryGetValue("poster", out var seasonPosterObj) && seasonPosterObj != null)
                         {
-                            if (seasonDict.TryGetValue("number", out var numObj) && numObj != null &&
-                                seasonDict.TryGetValue("poster", out var seasonPosterObj) && seasonPosterObj != null)
+                            var seasonNum = Convert.ToInt32(numObj.ToString());
+                            var seasonPosterUrl = seasonPosterObj.ToString();
+                            
+                            if (!string.IsNullOrEmpty(seasonPosterUrl) && seasonPosterUrl.StartsWith("http"))
                             {
-                                var seasonNum = Convert.ToInt32(numObj.ToString());
-                                var seasonPosterUrl = seasonPosterObj.ToString();
-                                
-                                // Only cache if we actually have this season in the DB
-                                if (existingSeasonsSet.Contains(seasonNum) && 
-                                    !string.IsNullOrEmpty(seasonPosterUrl) && seasonPosterUrl.StartsWith("http"))
-                                {
-                                    var cachedUrl = await _imageCacheService.CacheSeasonPosterAsync(item.Id, seasonNum, seasonPosterUrl);
-                                    if (cachedUrl != seasonPosterUrl)
-                                    {
-                                        seasonDict["poster"] = cachedUrl;
-                                        metadataModified = true;
-                                        _logger.LogDebug("Cached season {Season} poster for {Title}: {Url}", seasonNum, item.Title, cachedUrl);
-                                    }
-                                }
+                                downloads.Add((seasonPosterUrl, seasonNum, null, ImageType.SeasonPoster));
+                                // Remove remote URL
+                                seasonDict.Remove("poster");
                             }
                         }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to cache season poster for {Title}", item.Title);
-                        }
-                        
                         seasonsList.Add(seasonDict);
                     }
-                    
-                    if (metadataModified)
-                    {
-                        metadata["seasons"] = seasonsList;
-                    }
+                    metadata["seasons"] = seasonsList;
                 }
                 
-                // Cache episode stills and update URLs
+                // Episode Stills
                 if (metadata.TryGetValue("episodes", out var episodesObj) && episodesObj is JsonElement episodesArray)
                 {
                     var episodesList = new List<Dictionary<string, object?>>();
-                    bool episodesModified = false;
-                    
                     foreach (var episode in episodesArray.EnumerateArray())
                     {
                         var epDict = JsonSerializer.Deserialize<Dictionary<string, object?>>(episode.GetRawText()) ?? new();
-                        
-                        try
-                        {
-                            if (epDict.TryGetValue("season", out var seasonObj) &&
-                                epDict.TryGetValue("episode", out var epNumObj) &&
-                                epDict.TryGetValue("still", out var stillObj) && stillObj != null)
-                            {
-                                var epSeason = seasonObj != null ? Convert.ToInt32(seasonObj.ToString()) : 0;
-                                var epNum = epNumObj != null ? Convert.ToInt32(epNumObj.ToString()) : 0;
-                                var stillUrl = stillObj.ToString();
-                                
-                                // Only cache if we actually have this episode in the DB
-                                if (existingEpisodesSet.Contains((epSeason, epNum)) &&
-                                    epNum > 0 && !string.IsNullOrEmpty(stillUrl) && stillUrl.StartsWith("http"))
-                                {
-                                    var cachedUrl = await _imageCacheService.CacheEpisodeStillAsync(item.Id, epSeason, epNum, stillUrl);
-                                    if (cachedUrl != stillUrl)
-                                    {
-                                        epDict["still"] = cachedUrl;
-                                        episodesModified = true;
-                                        _logger.LogDebug("Cached S{Season}E{Episode} still for {Title}: {Url}", epSeason, epNum, item.Title, cachedUrl);
-                                    }
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to cache episode still for {Title}", item.Title);
-                        }
-                        
-                        episodesList.Add(epDict);
+                         if (epDict.TryGetValue("season", out var seasonObj) &&
+                             epDict.TryGetValue("episode", out var epNumObj) &&
+                             epDict.TryGetValue("still", out var stillObj) && stillObj != null)
+                         {
+                              var epSeason = seasonObj != null ? Convert.ToInt32(seasonObj.ToString()) : 0;
+                              var epNum = epNumObj != null ? Convert.ToInt32(epNumObj.ToString()) : 0;
+                              var stillUrl = stillObj.ToString();
+                              
+                              if (!string.IsNullOrEmpty(stillUrl) && stillUrl.StartsWith("http"))
+                              {
+                                   downloads.Add((stillUrl, epSeason, epNum, ImageType.Still));
+                                   // Remove remote URL
+                                   epDict.Remove("still");
+                              }
+                         }
+                         episodesList.Add(epDict);
                     }
-                    
-                    if (episodesModified)
-                    {
-                        metadata["episodes"] = episodesList;
-                        metadataModified = true;
-                    }
-                }
-                
-                // Save updated metadata back to item
-                if (metadataModified)
-                {
-                    item.MetadataJson = JsonSerializer.Serialize(metadata);
-                    _logger.LogInformation("Updated metadata with cached image URLs for {Title}", item.Title);
+                    metadata["episodes"] = episodesList;
                 }
             }
+
+            // Update MetadataJson (Strip remote URLs)
+            item.MetadataJson = JsonSerializer.Serialize(metadata);
+
+            // SAVE to DB to prevent race conditions
+            // We save the "clean" metadata first.
+            await _context.SaveChangesAsync();
+
+            // Enqueue Downloads
+            foreach (var download in downloads)
+            {
+                 await _imageDownloadQueue.EnqueueImageDownloadAsync(
+                     item.Id, 
+                     download.Url, 
+                     download.Season, 
+                     download.Episode, 
+                     item.Type, 
+                     download.Type);
+            }
+        }
+    }
+
+    private async Task FilterTvMetadataAsync(MediaItem series, Dictionary<string, object> metadata)
+    {
+        // 1. Fetch existing Seasons and Episodes (Lightweight projection)
+        // We need to know which Season/Episode numbers exist for this SeriesId
+        var existingSeasons = await _context.MediaItems
+            .Where(m => m.SeriesId == series.Id && m.Type == MediaType.Season)
+            .Select(m => m.SeasonNumber ?? -1)
+            .ToListAsync();
+
+        var existingEpisodes = await _context.MediaItems
+            .Where(m => m.SeriesId == series.Id && m.Type == MediaType.Episode)
+            .Select(m => new { S = m.SeasonNumber ?? 0, E = m.EpisodeNumber ?? 0 })
+            .ToListAsync();
+
+        var seasonSet = new HashSet<int>(existingSeasons);
+        var episodeSet = new HashSet<(int, int)>(existingEpisodes.Select(x => (x.S, x.E)));
+
+        // 2. Filter Seasons
+        if (metadata.TryGetValue("seasons", out var sObj) && sObj is JsonElement sArr)
+        {
+            var filteredSeasons = new List<Dictionary<string, object?>>();
+            foreach (var s in sArr.EnumerateArray())
+            {
+                var sDict = JsonSerializer.Deserialize<Dictionary<string, object?>>(s.GetRawText());
+                if (sDict != null && sDict.TryGetValue("number", out var nObj) && int.TryParse(nObj?.ToString(), out var num))
+                {
+                    if (seasonSet.Contains(num))
+                    {
+                        filteredSeasons.Add(sDict);
+                    }
+                }
+            }
+            metadata["seasons"] = filteredSeasons;
+        }
+        else if (metadata["seasons"] is List<Dictionary<string, object?>> sList)
+        {
+             // Already a list (from previous merge step?), filter it
+             var filtered = sList.Where(s => 
+                s.TryGetValue("number", out var n) && 
+                int.TryParse(n?.ToString(), out var num) && 
+                seasonSet.Contains(num)).ToList();
+             metadata["seasons"] = filtered;
+        }
+
+        // 3. Filter Episodes
+        if (metadata.TryGetValue("episodes", out var eObj) && eObj is JsonElement eArr)
+        {
+            var filteredEpisodes = new List<Dictionary<string, object?>>();
+            foreach (var e in eArr.EnumerateArray())
+            {
+                var eDict = JsonSerializer.Deserialize<Dictionary<string, object?>>(e.GetRawText());
+                if (eDict != null && 
+                    eDict.TryGetValue("season", out var sObj2) && int.TryParse(sObj2?.ToString(), out var sNum) &&
+                    eDict.TryGetValue("episode", out var eNumObj) && int.TryParse(eNumObj?.ToString(), out var eNum))
+                {
+                    if (episodeSet.Contains((sNum, eNum)))
+                    {
+                        filteredEpisodes.Add(eDict);
+                    }
+                }
+            }
+            metadata["episodes"] = filteredEpisodes;
+        }
+        else if (metadata.TryGetValue("episodes", out var eListObj) && eListObj is List<Dictionary<string, object?>> eList)
+        {
+             // Already a list?
+             var filtered = eList.Where(e => 
+                e.TryGetValue("season", out var s) && int.TryParse(s?.ToString(), out var sNum) &&
+                e.TryGetValue("episode", out var ep) && int.TryParse(ep?.ToString(), out var epNum) &&
+                episodeSet.Contains((sNum, epNum))).ToList();
+             metadata["episodes"] = filtered;
         }
     }
 }

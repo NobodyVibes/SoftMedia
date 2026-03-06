@@ -17,7 +17,8 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
     private readonly KeyedLock _keyedLock = new(); // Striped Locking for Metadata Updates
     
     // Concurrency control for downloads
-    private const int MaxConcurrentDownloads = 4;
+    // Reduced to 2 to align with rate limits (approx 2 req/sec) and avoid queue timeouts
+    private const int MaxConcurrentDownloads = 2;
 
     public ImageDownloadQueueService(
         IServiceScopeFactory scopeFactory,
@@ -31,9 +32,9 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
         });
     }
 
-    public async Task EnqueueImageDownloadAsync(Guid mediaId, string remoteUrl, int? seasonNumber = null, int? episodeNumber = null, MediaType type = MediaType.Movie, ImageType imageType = ImageType.Poster)
+    public async Task EnqueueImageDownloadAsync(Guid mediaId, string remoteUrl, int? seasonNumber = null, int? episodeNumber = null, MediaType type = MediaType.Movie, ImageType imageType = ImageType.Poster, int? personId = null)
     {
-        await _channel.Writer.WriteAsync(new ImageDownloadRequest(mediaId, remoteUrl, seasonNumber, episodeNumber, type, imageType));
+        await _channel.Writer.WriteAsync(new ImageDownloadRequest(mediaId, remoteUrl, seasonNumber, episodeNumber, type, imageType, personId));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -105,6 +106,10 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
             {
                 localPath = await imageCacheService.CacheEpisodeStillAsync(request.MediaId, request.SeasonNumber.Value, request.EpisodeNumber.Value, request.RemoteUrl);
             }
+            else if (request.ImageType == ImageType.CastImage && request.PersonId.HasValue)
+            {
+                localPath = await imageCacheService.CacheCastImageAsync(request.PersonId.Value, request.RemoteUrl);
+            }
         }
         catch (Exception ex)
         {
@@ -155,7 +160,7 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
                         item.MetadataJson = "{}";
                     }
 
-                    var meta = JsonSerializer.Deserialize<Dictionary<string, object>>(item.MetadataJson) ?? new Dictionary<string, object>();
+                    var meta = MetadataJsonHelper.Parse(item.MetadataJson);
                     
                     string key = request.ImageType.ToString().ToLowerInvariant();
                     if (request.ImageType == ImageType.Backdrop) key = "backdrop";
@@ -187,7 +192,7 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
                         {
                             var seasonMeta = string.IsNullOrEmpty(seasonItem.MetadataJson) 
                                 ? new Dictionary<string, object>() 
-                                : JsonSerializer.Deserialize<Dictionary<string, object>>(seasonItem.MetadataJson) ?? new Dictionary<string, object>();
+                                : MetadataJsonHelper.Parse(seasonItem.MetadataJson);
                             
                             seasonMeta["poster"] = localPath;
                             seasonItem.MetadataJson = JsonSerializer.Serialize(seasonMeta);
@@ -224,12 +229,33 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
                         {
                             var epMeta = string.IsNullOrEmpty(episodeItem.MetadataJson) 
                                 ? new Dictionary<string, object>() 
-                                : JsonSerializer.Deserialize<Dictionary<string, object>>(episodeItem.MetadataJson) ?? new Dictionary<string, object>();
+                                : MetadataJsonHelper.Parse(episodeItem.MetadataJson);
                             
                             epMeta["still"] = localPath;
                             episodeItem.MetadataJson = JsonSerializer.Serialize(epMeta);
                             updated = true;
                             _logger.LogDebug("Updated Episode item {Id} still", episodeItem.Id);
+                        }
+                    }
+                    else if (request.ImageType == ImageType.CastImage && request.PersonId.HasValue)
+                    {
+                        // Update the specific cast member's image in the cast array
+                        if (meta.ContainsKey("cast") && meta["cast"] is JsonElement castEl)
+                        {
+                            var castList = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(castEl.GetRawText());
+                            if (castList != null)
+                            {
+                                var member = castList.FirstOrDefault(c =>
+                                    c.ContainsKey("id") && c["id"].ToString() == request.PersonId.ToString());
+
+                                if (member != null)
+                                {
+                                    member["image"] = localPath;
+                                    meta["cast"] = castList;
+                                    updated = true;
+                                    _logger.LogDebug("Updated cast image for person {PersonId}", request.PersonId);
+                                }
+                            }
                         }
                     }
                     else if (!request.SeasonNumber.HasValue) // Top level item
@@ -250,6 +276,10 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
                 if (updated)
                 {
                     await context.SaveChangesAsync(ct);
+                    
+                    // Invalidate caches so home page and hero show local image URLs
+                    await InvalidateCachesAsync(context, item.LibraryId, ct);
+                    
                     notificationService.NotifyItemUpdated(item.Id);
                     _logger.LogDebug("Updated MediaItem {Id} image ({Type}): {Path}", item.Id, request.ImageType, localPath);
                 }
@@ -260,6 +290,40 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
             }
         }
     }
+
+    /// <summary>
+    /// Invalidate LibraryRecentCache and HeroCache after image downloads so
+    /// the home page and hero sections use local (cached) image URLs.
+    /// Absorbed from BackgroundImageCacheService.
+    /// </summary>
+    private async Task InvalidateCachesAsync(AppDbContext context, Guid? libraryId, CancellationToken ct)
+    {
+        try
+        {
+            if (libraryId.HasValue)
+            {
+                var cacheEntry = await context.LibraryRecentCaches
+                    .FirstOrDefaultAsync(c => c.LibraryId == libraryId.Value, ct);
+                if (cacheEntry != null)
+                {
+                    context.LibraryRecentCaches.Remove(cacheEntry);
+                    await context.SaveChangesAsync(ct);
+                }
+            }
+
+            var heroCache = await context.HeroCaches.FirstOrDefaultAsync(c => c.Id == 1, ct);
+            if (heroCache != null)
+            {
+                context.HeroCaches.Remove(heroCache);
+                await context.SaveChangesAsync(ct);
+                _logger.LogDebug("Invalidated hero cache after image download");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to invalidate caches after image download");
+        }
+    }
 }
 
-public record ImageDownloadRequest(Guid MediaId, string RemoteUrl, int? SeasonNumber, int? EpisodeNumber, MediaType Type, ImageType ImageType);
+public record ImageDownloadRequest(Guid MediaId, string RemoteUrl, int? SeasonNumber, int? EpisodeNumber, MediaType Type, ImageType ImageType, int? PersonId = null);

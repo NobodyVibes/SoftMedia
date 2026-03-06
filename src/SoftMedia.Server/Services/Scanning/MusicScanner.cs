@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -16,8 +17,11 @@ namespace SoftMedia.Server.Services.Scanning;
 /// </summary>
 public class MusicScanner : BaseMediaScanner
 {
-    private readonly IBackgroundImageCacheService _backgroundImageCache;
     private readonly IMediaAnalysisService _mediaAnalysisService;
+
+    // Session caches — pre-loaded at scan start, used for O(1) lookups during parallel directory processing
+    private readonly ConcurrentDictionary<string, MediaItem> _artistCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<(Guid ArtistId, string AlbumName), MediaItem> _albumCache = new();
 
     // Local cover art filenames to check (in priority order)
     private static readonly string[] LocalCoverNames =
@@ -48,24 +52,55 @@ public class MusicScanner : BaseMediaScanner
         IServiceScopeFactory scopeFactory,
         ILogger<MusicScanner> logger,
         IMediaNotificationService notificationService,
-        IBackgroundImageCacheService backgroundImageCache,
         IMediaAnalysisService mediaAnalysisService,
         IMetadataQueue metadataQueue)
         : base(scopeFactory, logger, notificationService, metadataQueue)
     {
-        _backgroundImageCache = backgroundImageCache;
         _mediaAnalysisService = mediaAnalysisService;
     }
 
     /// <summary>
-    /// Override to clear session caches at start of scan.
+    /// Override to pre-load session caches before the parallel directory loop.
+    /// Bulk-loads all existing Artist and Album items for this library in one query each,
+    /// eliminating the N+1 pattern where each file would trigger a separate DB lookup.
     /// </summary>
     public override async Task ScanLibraryAsync(
         Library library,
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        // No session caches anymore
+        // Clear session caches
+        _artistCache.Clear();
+        _albumCache.Clear();
+
+        // Bulk pre-load all existing Artists and Albums for this library
+        using (var scope = _scopeFactory.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            var existingArtists = await context.MediaItems
+                .AsNoTracking()
+                .Where(m => m.LibraryId == library.Id && m.Type == MediaType.Artist)
+                .ToListAsync(cancellationToken);
+
+            foreach (var a in existingArtists)
+                _artistCache.TryAdd(a.Title, a);
+
+            var existingAlbums = await context.MediaItems
+                .AsNoTracking()
+                .Where(m => m.LibraryId == library.Id && m.Type == MediaType.Album)
+                .ToListAsync(cancellationToken);
+
+            foreach (var a in existingAlbums)
+            {
+                if (a.ArtistId.HasValue)
+                    _albumCache.TryAdd((a.ArtistId.Value, a.Title), a);
+            }
+
+            _logger.LogInformation("[MusicScanner] Pre-loaded {ArtistCount} artists and {AlbumCount} albums for library {LibraryId}",
+                existingArtists.Count, existingAlbums.Count, library.Id);
+        }
+
         await base.ScanLibraryAsync(library, progress, cancellationToken);
     }
 
@@ -155,7 +190,8 @@ public class MusicScanner : BaseMediaScanner
     }
 
     /// <summary>
-    /// Get or create an artist entity.
+    /// Get or create an artist entity. Uses pre-loaded cache for O(1) lookups,
+    /// falling back to DB + lock only when creating new artists.
     /// </summary>
     private async Task<MediaItem> EnsureArtistAsync(
         AppDbContext context,
@@ -164,22 +200,19 @@ public class MusicScanner : BaseMediaScanner
         string trackPath,
         CancellationToken cancellationToken)
     {
+        // Fast path: check pre-loaded cache (thread-safe ConcurrentDictionary)
+        if (_artistCache.TryGetValue(artistName, out var cached))
+            return cached;
+
+        // Slow path: cache miss — acquire lock and create new artist
         using (await LockParentAsync(artistName, cancellationToken))
         {
-            // Check database
-            var artist = await context.MediaItems
-                .AsNoTracking()
-                .FirstOrDefaultAsync(m =>
-                    m.Title == artistName &&
-                    m.Type == MediaType.Artist &&
-                    m.LibraryId == library.Id,
-                    cancellationToken);
-
-            if (artist != null)
-                return artist;
+            // Double-check cache after acquiring lock
+            if (_artistCache.TryGetValue(artistName, out cached))
+                return cached;
 
             // Create new artist
-            artist = new MediaItem
+            var artist = new MediaItem
             {
                 Id = Guid.NewGuid(),
                 LibraryId = library.Id,
@@ -208,18 +241,21 @@ public class MusicScanner : BaseMediaScanner
 
             context.MediaItems.Add(artist);
             await context.SaveChangesAsync(cancellationToken);
-            
+
             // Queue for metadata enrichment (image/bio)
             await _metadataQueue.EnqueueMetadataRefreshAsync(artist.Id, LibraryType.Music);
 
-            _logger.LogInformation("[MusicScanner] Created artist: {ArtistName}", artistName);
+            // Add to cache for subsequent lookups
+            _artistCache.TryAdd(artistName, artist);
 
+            _logger.LogInformation("[MusicScanner] Created artist: {ArtistName}", artistName);
             return artist;
         }
     }
 
     /// <summary>
-    /// Get or create an album entity.
+    /// Get or create an album entity. Uses pre-loaded cache for O(1) lookups,
+    /// falling back to DB + lock only when creating new albums.
     /// </summary>
     private async Task<MediaItem> EnsureAlbumAsync(
         AppDbContext context,
@@ -230,26 +266,23 @@ public class MusicScanner : BaseMediaScanner
         TagLib.File tagFile,
         CancellationToken cancellationToken)
     {
-        var key = $"{artist.Id}-{albumName}";
-        
-        using (await LockParentAsync(key, cancellationToken))
-        {
-            // Check database
-            var album = await context.MediaItems
-                .AsNoTracking()
-                .FirstOrDefaultAsync(m =>
-                    m.Title == albumName &&
-                    m.ArtistId == artist.Id &&
-                    m.Type == MediaType.Album &&
-                    m.LibraryId == library.Id,
-                    cancellationToken);
+        var cacheKey = (artist.Id, albumName);
 
-            if (album != null)
-                return album;
+        // Fast path: check pre-loaded cache
+        if (_albumCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
+        // Slow path: cache miss — acquire lock and create new album
+        var lockKey = $"{artist.Id}-{albumName}";
+        using (await LockParentAsync(lockKey, cancellationToken))
+        {
+            // Double-check cache after acquiring lock
+            if (_albumCache.TryGetValue(cacheKey, out cached))
+                return cached;
 
             // Create new album
             var albumDir = Path.GetDirectoryName(trackPath) ?? trackPath;
-            album = new MediaItem
+            var album = new MediaItem
             {
                 Id = Guid.NewGuid(),
                 LibraryId = library.Id,
@@ -267,14 +300,15 @@ public class MusicScanner : BaseMediaScanner
 
             context.MediaItems.Add(album);
             await context.SaveChangesAsync(cancellationToken);
-            
-            // Queue for metadata enrichment if we didn't find local cover, or just always for better metadata?
-            // Let's queue always for consistency.
+
+            // Queue for metadata enrichment
             await _metadataQueue.EnqueueMetadataRefreshAsync(album.Id, LibraryType.Music);
+
+            // Add to cache for subsequent lookups
+            _albumCache.TryAdd(cacheKey, album);
 
             _logger.LogInformation("[MusicScanner] Created album: {AlbumName} by {ArtistName}",
                 albumName, artist.Title);
-
             return album;
         }
     }
@@ -330,10 +364,9 @@ public class MusicScanner : BaseMediaScanner
             }
         }
 
-        // 3. Queue for background fetch (MusicBrainz)
-        // Will be handled after SaveChangesAsync when the album has a valid ID
-        _backgroundImageCache.QueueImageCaching(album.Id);
-        _logger.LogInformation("[MusicScanner] Queued album for background cover fetch: {Album}", album.Title);
+        // 3. No local or embedded art found — metadata pipeline will handle image
+        // download via MetadataAggregator → ImageUrlExtractorService after enrichment
+        _logger.LogInformation("[MusicScanner] No local cover found for {Album}, will be handled by metadata pipeline", album.Title);
     }
 
     /// <summary>

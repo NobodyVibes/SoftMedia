@@ -136,11 +136,32 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IMediaNotificationService, MediaNotificationService>();
 
         // Image Cache Client
-        services.AddHttpClient<IImageCacheService, ImageCacheService>(client =>
+        services.AddHttpClient<IImageCacheService, ImageCacheService>((sp, client) =>
         {
             client.Timeout = TimeSpan.FromSeconds(30);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
+        })
+        .AddHttpMessageHandler(sp => 
+        {
+            var factory = sp.GetRequiredService<RateLimiterFactory>();
+            // Use TVMaze limiter (18/10s) as it's the primary constraint. 
+            // Other hosts (MusicBrainz, etc.) also are covered by this conservative limit.
+            // Ideally we'd switch limiter based on host, but for now a single shared limiter for the client is safer.
+            // Actually, wait: ImageCacheService downloads from MANY hosts.
+            // If we use "TVMaze" limiter for *everything* (Wikidata, FanArt, etc.), we might throttle unnecessary requests.
+            // However, the "default" limiter in factory is 10/10s, which is even stricter.
+            // TVMaze is 18/10s.
+            // Getting a limiter based on request URL inside the handler is better, but DelegatingHandler is constructed once per client chain usually?
+            // No, AddHttpMessageHandler factory is called when the pipeline is built.
+            // But the *instance* of the handler processes multiple requests.
+            // The handler needs to be smart enough to pick the limiter, OR we just use a safe global limit.
+            // Given the complexity, and that TVMaze is the bulk of traffic, using the TVMaze limiter for *all* image downloads 
+            // is a safe starting point (1.8 req/sec is plenty for images if we only have 2 concurrent downloads).
+            return new RateLimitingDelegatingHandler(factory.GetLimiter("TVMaze"), sp.GetRequiredService<ILogger<RateLimitingDelegatingHandler>>());
         });
+
+        // Image URL extraction (delegates to IImageDownloadQueue)
+        services.AddScoped<IImageUrlExtractorService, ImageUrlExtractorService>();
 
         return services;
     }
@@ -155,11 +176,6 @@ public static class ServiceCollectionExtensions
         // Library Watcher
         services.AddSingleton<LibraryWatcher>();
         services.AddHostedService(sp => sp.GetRequiredService<LibraryWatcher>());
-
-        // Image Cache
-        services.AddSingleton<BackgroundImageCacheService>();
-        services.AddSingleton<IBackgroundImageCacheService>(sp => sp.GetRequiredService<BackgroundImageCacheService>());
-        services.AddHostedService(sp => sp.GetRequiredService<BackgroundImageCacheService>());
 
         // Other Background Services
         services.AddHostedService<ThrottleMonitorService>();

@@ -1,8 +1,10 @@
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Helpers;
 using System.Text.Json;
 using SoftMedia.Server.Data;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Media;
 
 namespace SoftMedia.Server.Services.Metadata;
 
@@ -16,7 +18,7 @@ public class MetadataAggregator : IMetadataAggregator
     private readonly IEnumerable<IMetadataProvider> _providers;
     private readonly IMetadataRouter _metadataRouter;
     private readonly ISettingsService _settingsService;
-    private readonly IImageDownloadQueue _imageDownloadQueue;
+    private readonly IImageUrlExtractorService _imageUrlExtractor;
     private readonly AppDbContext _context;
     private readonly ILogger<MetadataAggregator> _logger;
 
@@ -24,14 +26,14 @@ public class MetadataAggregator : IMetadataAggregator
         IEnumerable<IMetadataProvider> providers,
         IMetadataRouter metadataRouter,
         ISettingsService settingsService, 
-        IImageDownloadQueue imageDownloadQueue,
+        IImageUrlExtractorService imageUrlExtractor,
         AppDbContext context,
         ILogger<MetadataAggregator> logger)
     {
         _providers = providers;
         _metadataRouter = metadataRouter;
         _settingsService = settingsService;
-        _imageDownloadQueue = imageDownloadQueue;
+        _imageUrlExtractor = imageUrlExtractor;
         _context = context;
         _logger = logger;
     }
@@ -55,7 +57,7 @@ public class MetadataAggregator : IMetadataAggregator
             {
                 try
                 {
-                    var existing = JsonSerializer.Deserialize<Dictionary<string, object>>(item.MetadataJson);
+                    var existing = MetadataJsonHelper.Parse(item.MetadataJson);
                     var newMeta = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
 
                     if (existing != null && newMeta != null)
@@ -194,33 +196,6 @@ public class MetadataAggregator : IMetadataAggregator
         }
     }
 
-    private async Task<bool> TryApplyMetadata(MediaItem item, IMetadataProvider provider)
-    {
-        // Deprecated for Music, kept for others if needed or remove if unused.
-        // Actually generic enrich still uses this.
-        try 
-        {
-            var json = await provider.FetchMetadataAsync(item);
-            if (string.IsNullOrEmpty(json)) return false;
-
-            item.MetadataJson = json;
-            await ProcessMetadataJsonAsync(item, json);
-
-            var metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
-            if (metadata != null)
-            {
-                 bool hasTitle = metadata.ContainsKey("title");
-                 return hasTitle;
-            }
-            return false;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error fetching from {Provider} for {Item}", provider.ProviderName, item.Title);
-            return false;
-        }
-    }
-
     private async Task ProcessMetadataJsonAsync(MediaItem item, string json, bool deferImageCaching = false, bool refreshImages = true)
     {
         // Parse and promote fields
@@ -262,12 +237,52 @@ public class MetadataAggregator : IMetadataAggregator
             if (metadata.TryGetValue("tvmazeId", out var tvmazeIdObj) && int.TryParse(tvmazeIdObj.ToString(), out var tvmazeId)) item.TvMazeId = tvmazeId;
             if (metadata.TryGetValue("musicBrainzId", out var mbIdObj)) item.MusicBrainzId = mbIdObj.ToString();
 
-            // FILTERING: Only keep metadata for Seasons/Episodes that exist locally
+            // Promote queryable fields: genres, studio, director
+            if (metadata.TryGetValue("genres", out var genresObj) && genresObj != null)
+            {
+                if (genresObj is JsonElement genresEl && genresEl.ValueKind == JsonValueKind.Array)
+                {
+                    var genreList = new List<string>();
+                    foreach (var g in genresEl.EnumerateArray())
+                    {
+                        var gStr = g.GetString();
+                        if (!string.IsNullOrEmpty(gStr)) genreList.Add(gStr);
+                    }
+                    if (genreList.Count > 0) item.Genres = string.Join(", ", genreList);
+                }
+                else
+                {
+                    var genreStr = genresObj.ToString();
+                    if (!string.IsNullOrEmpty(genreStr)) item.Genres = genreStr;
+                }
+            }
+            if (metadata.TryGetValue("studio", out var studioObj) && studioObj != null)
+            {
+                var studioStr = studioObj.ToString();
+                if (!string.IsNullOrEmpty(studioStr)) item.Studio = studioStr;
+            }
+            if (metadata.TryGetValue("director", out var directorObj) && directorObj != null)
+            {
+                var directorStr = directorObj.ToString();
+                if (!string.IsNullOrEmpty(directorStr)) item.Director = directorStr;
+            }
+
+            // FILTERING: Only keep metadata for Seasons/Episodes that exist locally.
+            // This MUST run before image extraction and propagation to avoid
+            // downloading stills and storing metadata for episodes the user doesn't have.
             if (item.Type == MediaType.Series)
             {
-                // await FilterTvMetadataAsync(item, metadata);
-                // Re-serialize the filtered metadata to update the JSON string being processed
+                await FilterTvMetadataAsync(item, metadata);
+
+                // FilterTvMetadataAsync replaces JsonElement arrays with List<Dictionary>,
+                // but downstream code expects JsonElement. Re-serialize + re-parse to normalize.
                 json = JsonSerializer.Serialize(metadata);
+                metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(json) 
+                           ?? new Dictionary<string, object>();
+
+                // Propagate episode-level metadata (titles, airdates, stills) to child episodes.
+                // Runs after filtering so only local episodes are updated.
+                await PropagateEpisodeMetadataAsync(item, metadata);
             }
 
             // If deferring image caching OR explicitly disabled, skip all image download operations
@@ -277,97 +292,97 @@ public class MetadataAggregator : IMetadataAggregator
                 return;
             }
 
-            // Queue for Image Downloads
-            var downloads = new List<(string Url, int? Season, int? Episode, ImageType Type)>();
+            // Delegate image URL extraction and download queueing to ImageUrlExtractorService
+            bool imagesEnqueued = await _imageUrlExtractor.ExtractAndQueueAsync(item, metadata);
 
-            // 1. Poster / Cover Art
-            if (metadata.TryGetValue("poster", out var posterObj))
-            {
-                var posterUrl = posterObj.ToString();
-                if (!string.IsNullOrEmpty(posterUrl) && posterUrl.StartsWith("http"))
-                {
-                    _logger.LogInformation("Found poster URL for {Title}: {Url}", item.Title, posterUrl);
-                    downloads.Add((posterUrl, null, null, item.Type == MediaType.Audio || item.Type == MediaType.Album ? ImageType.AlbumCover : ImageType.Poster));
-                    
-                    // Remove remote URL to prevent hotlinking
-                    metadata.Remove("poster");
-                }
-            }
-            
-            // 2. Series Specific Images
-            if (item.Type == MediaType.Series)
-            {
-                // Season Posters
-                if (metadata.TryGetValue("seasons", out var seasonsObj) && seasonsObj is JsonElement seasonsArray)
-                {
-                    var seasonsList = new List<Dictionary<string, object?>>();
-                    foreach (var season in seasonsArray.EnumerateArray())
-                    {
-                        var seasonDict = JsonSerializer.Deserialize<Dictionary<string, object?>>(season.GetRawText()) ?? new();
-                        if (seasonDict.TryGetValue("number", out var numObj) && numObj != null &&
-                            seasonDict.TryGetValue("poster", out var seasonPosterObj) && seasonPosterObj != null)
-                        {
-                            var seasonNum = Convert.ToInt32(numObj.ToString());
-                            var seasonPosterUrl = seasonPosterObj.ToString();
-                            
-                            if (!string.IsNullOrEmpty(seasonPosterUrl) && seasonPosterUrl.StartsWith("http"))
-                            {
-                                downloads.Add((seasonPosterUrl, seasonNum, null, ImageType.SeasonPoster));
-                                // Remove remote URL
-                                seasonDict.Remove("poster");
-                            }
-                        }
-                        seasonsList.Add(seasonDict);
-                    }
-                    metadata["seasons"] = seasonsList;
-                }
-                
-                // Episode Stills
-                if (metadata.TryGetValue("episodes", out var episodesObj) && episodesObj is JsonElement episodesArray)
-                {
-                    var episodesList = new List<Dictionary<string, object?>>();
-                    foreach (var episode in episodesArray.EnumerateArray())
-                    {
-                        var epDict = JsonSerializer.Deserialize<Dictionary<string, object?>>(episode.GetRawText()) ?? new();
-                         if (epDict.TryGetValue("season", out var seasonObj) &&
-                             epDict.TryGetValue("episode", out var epNumObj) &&
-                             epDict.TryGetValue("still", out var stillObj) && stillObj != null)
-                         {
-                              var epSeason = seasonObj != null ? Convert.ToInt32(seasonObj.ToString()) : 0;
-                              var epNum = epNumObj != null ? Convert.ToInt32(epNumObj.ToString()) : 0;
-                              var stillUrl = stillObj.ToString();
-                              
-                              if (!string.IsNullOrEmpty(stillUrl) && stillUrl.StartsWith("http"))
-                              {
-                                   downloads.Add((stillUrl, epSeason, epNum, ImageType.Still));
-                                   // Remove remote URL
-                                   epDict.Remove("still");
-                              }
-                         }
-                         episodesList.Add(epDict);
-                    }
-                    metadata["episodes"] = episodesList;
-                }
-            }
-
-            // Update MetadataJson (Strip remote URLs)
+            // Update MetadataJson (strip remote URLs)
             item.MetadataJson = JsonSerializer.Serialize(metadata);
 
             // SAVE to DB to prevent race conditions
             // We save the "clean" metadata first.
             await _context.SaveChangesAsync();
+        }
+    }
 
-            // Enqueue Downloads
-            foreach (var download in downloads)
+    /// <summary>
+    /// After series enrichment, pushes episode-level metadata (titles, airdates, stills)
+    /// from the TVMaze series response down to child episode MediaItems.
+    /// </summary>
+    private async Task PropagateEpisodeMetadataAsync(MediaItem series, Dictionary<string, object> metadata)
+    {
+        if (!metadata.TryGetValue("episodes", out var eObj) || eObj is not JsonElement eArr)
+            return;
+
+        // Build a lookup: (season, episode) → episode metadata from TVMaze
+        var episodeLookup = new Dictionary<(int, int), JsonElement>();
+        foreach (var ep in eArr.EnumerateArray())
+        {
+            if (ep.TryGetProperty("season", out var sProp) && sProp.TryGetInt32(out var s) &&
+                ep.TryGetProperty("episode", out var eProp) && eProp.TryGetInt32(out var e))
             {
-                 await _imageDownloadQueue.EnqueueImageDownloadAsync(
-                     item.Id, 
-                     download.Url, 
-                     download.Season, 
-                     download.Episode, 
-                     item.Type, 
-                     download.Type);
+                episodeLookup[(s, e)] = ep;
             }
+        }
+
+        if (episodeLookup.Count == 0) return;
+
+        // Fetch child episodes from DB
+        var childEpisodes = await _context.MediaItems
+            .Where(m => m.SeriesId == series.Id && m.Type == MediaType.Episode)
+            .ToListAsync();
+
+        int updated = 0;
+        foreach (var child in childEpisodes)
+        {
+            var sn = child.SeasonNumber ?? 0;
+            var en = child.EpisodeNumber ?? 0;
+            if (!episodeLookup.TryGetValue((sn, en), out var epData))
+                continue;
+
+            // Title: prefer TVMaze authoritative title over filename-parsed title
+            if (epData.TryGetProperty("name", out var nameProp))
+            {
+                var tvTitle = nameProp.GetString();
+                if (!string.IsNullOrEmpty(tvTitle))
+                    child.Title = tvTitle;
+            }
+
+            // Airdate → ReleaseDate
+            if (epData.TryGetProperty("airdate", out var adProp))
+            {
+                var adStr = adProp.GetString();
+                if (DateTime.TryParse(adStr, out var airdate))
+                    child.ReleaseDate = airdate;
+            }
+
+            // Overview/Summary
+            if (epData.TryGetProperty("summary", out var sumProp))
+            {
+                var summary = sumProp.GetString();
+                if (!string.IsNullOrEmpty(summary))
+                    child.Overview = summary;
+            }
+
+            // Still image → episode MetadataJson
+            if (epData.TryGetProperty("still", out var stillProp))
+            {
+                var stillUrl = stillProp.GetString();
+                if (!string.IsNullOrEmpty(stillUrl))
+                {
+                    var epMeta = MetadataJsonHelper.Parse(child.MetadataJson);
+                    epMeta["still"] = stillUrl;
+                    child.MetadataJson = JsonSerializer.Serialize(epMeta);
+                }
+            }
+
+            updated++;
+        }
+
+        if (updated > 0)
+        {
+            _logger.LogInformation("[MetadataAggregator] Propagated metadata to {Count} episodes for '{Series}'", 
+                updated, series.Title);
+            await _context.SaveChangesAsync();
         }
     }
 

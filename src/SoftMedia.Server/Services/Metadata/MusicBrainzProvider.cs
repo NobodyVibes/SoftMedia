@@ -43,7 +43,7 @@ public class MusicBrainzProvider : IMetadataProvider
         {
             try 
             {
-                var tags = JsonSerializer.Deserialize<Dictionary<string, object>>(item.MetadataJson);
+                var tags = MetadataJsonHelper.Parse(item.MetadataJson);
                 if (tags != null)
                 {
                     if (tags.TryGetValue("artist", out var a)) artist = a.ToString();

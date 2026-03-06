@@ -130,16 +130,14 @@ public abstract class BaseMediaScanner : IMediaScanner
                     ct.ThrowIfCancellationRequested();
                     try 
                     {
-                        var opResult = await ProcessFileAsync(context, filePath, null /* optimize lookups? */, library, ct);
-                        
-                        // Check if we need to look up existing item ID (if we passed null)
-                        // Actually, ProcessFileAsync *usually* handles lookup if passed null? 
-                        // Or we look it up here using our global map.
-                        if (existingPaths.TryGetValue(filePath, out var id))
+                        // Look up existing item from DB if we know about it
+                        MediaItem? existing = null;
+                        if (existingPaths.TryGetValue(filePath, out var existingId))
                         {
-                            // We might need to attach it to context if updates are needed.
-                            // ProcessFileAsync overrides usually do a DB lookup if 'existing' is null.
+                            existing = await context.MediaItems.FindAsync(new object[] { existingId }, ct);
                         }
+
+                        var opResult = await ProcessFileAsync(context, filePath, existing, library, ct);
 
                         processedFiles.TryAdd(filePath, 0);
 
@@ -300,21 +298,40 @@ public abstract class BaseMediaScanner : IMediaScanner
     }
 
     /// <summary>
-    /// Get existing media item paths for the library.
+    /// Get existing media item paths for the library (leaf items only).
+    /// Container items (Series, Season, Artist, Album) are excluded because they are
+    /// managed by EnsureXAsync methods and cleaned up by CleanupEmptyContainersAsync.
+    /// Including them would cause false orphan deletions since their directory paths
+    /// never appear in the processedFiles set.
     /// </summary>
     protected async Task<Dictionary<string, Guid>> GetExistingPathsAsync(
         AppDbContext context,
         Guid libraryId,
         CancellationToken cancellationToken)
     {
-        return await context.MediaItems
-            .Where(m => m.LibraryId == libraryId && m.Path != null)
+        // Container types are managed separately — only track leaf media items
+        var containerTypes = new[]
+        {
+            MediaType.Series,
+            MediaType.Season,
+            MediaType.Artist,
+            MediaType.Album
+        };
+
+        var items = await context.MediaItems
+            .Where(m => m.LibraryId == libraryId
+                     && m.Path != null
+                     && !containerTypes.Contains(m.Type))
             .Select(m => new { m.Path, m.Id })
-            .ToDictionaryAsync(
-                m => m.Path!,
-                m => m.Id,
-                StringComparer.OrdinalIgnoreCase,
-                cancellationToken);
+            .ToListAsync(cancellationToken);
+
+        // Group by path in case of duplicates and take the first ID
+        return items
+            .GroupBy(m => m.Path!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.First().Id,
+                StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>

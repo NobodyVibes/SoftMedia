@@ -11,7 +11,7 @@ public interface IImageDownloadQueue
     /// <param name="remoteUrl">The remote URL of the image to download.</param>
     /// <param name="type">The type of media item (affects storage path).</param>
     /// <param name="imageType">The type of image (Poster, Backdrop, etc.) for MetadataJson updates.</param>
-    Task EnqueueImageDownloadAsync(Guid mediaId, string remoteUrl, int? seasonNumber = null, int? episodeNumber = null, MediaType type = MediaType.Movie, ImageType imageType = ImageType.Poster);
+    Task EnqueueImageDownloadAsync(Guid mediaId, string remoteUrl, int? seasonNumber = null, int? episodeNumber = null, MediaType type = MediaType.Movie, ImageType imageType = ImageType.Poster, int? personId = null);
 }
 
 public enum ImageType
@@ -21,5 +21,6 @@ public enum ImageType
     Still, // Episode still
     SeasonPoster,
     AlbumCover,
-    ArtistImage
+    ArtistImage,
+    CastImage
 }

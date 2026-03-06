@@ -15,7 +15,6 @@ namespace SoftMedia.Server.Services.Scanning;
 /// </summary>
 public class MovieScanner : BaseMediaScanner
 {
-    private readonly IBackgroundImageCacheService _backgroundImageCache;
     private readonly IMediaAnalysisService _mediaAnalysisService;
 
     // Supported video extensions
@@ -32,18 +31,13 @@ public class MovieScanner : BaseMediaScanner
         IServiceScopeFactory scopeFactory,
         ILogger<MovieScanner> logger,
         IMediaNotificationService notificationService,
-        IBackgroundImageCacheService backgroundImageCache,
         IMediaAnalysisService mediaAnalysisService,
         IMetadataQueue metadataQueue)
         : base(scopeFactory, logger, notificationService, metadataQueue)
     {
-        _backgroundImageCache = backgroundImageCache;
         _mediaAnalysisService = mediaAnalysisService;
     }
 
-    /// <summary>
-    /// Process a single video file as a movie.
-    /// </summary>
     /// <summary>
     /// Process a single video file as a movie.
     /// </summary>

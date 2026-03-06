@@ -52,56 +52,51 @@ public class MetadataRouter : IMetadataRouter
         _logger.LogInformation("Using metadata provider '{Provider}' for {Type}: {Title}", 
             preferredProvider, type, item.Title);
 
-        // 2. Special handling for OMDB (requires API key)
-        if (type == LibraryType.Movie && preferredProvider == "OMDb")
-        {
-            return await FetchOMDbMetadataAsync(item);
-        }
-
-        // 3. Find the matching provider
+        // 2. Find the matching provider
         var provider = _providers.FirstOrDefault(p => p.SupportedType == type && p.ProviderName == preferredProvider)
                        ?? _providers.FirstOrDefault(p => p.SupportedType == type); // Fallback to any provider for type
 
-        if (provider != null)
+        if (provider == null)
+            return null;
+
+        // 3. Handle keyed providers (API key management)
+        if (provider is IKeyedMetadataProvider keyedProvider)
         {
-            return await provider.FetchMetadataAsync(item);
+            return await FetchKeyedMetadataAsync(keyedProvider, item);
         }
-        return null;
+
+        return await provider.FetchMetadataAsync(item);
     }
 
     /// <summary>
-    /// Handles OMDB metadata fetching with API key management.
+    /// Handles metadata fetching for providers that require API key management.
     /// </summary>
-    private async Task<string?> FetchOMDbMetadataAsync(MediaItem item)
+    private async Task<string?> FetchKeyedMetadataAsync(IKeyedMetadataProvider keyedProvider, MediaItem item)
     {
-        var omdbProvider = _providers.OfType<OMDbProvider>().FirstOrDefault();
-        if (omdbProvider == null)
-        {
-            _logger.LogWarning("OMDB provider not registered");
-            return null;
-        }
+        // Resolve key settings using the provider name as prefix
+        var keyModeSettingKey = $"{keyedProvider.ProviderName}ApiKeyMode";
+        var customKeySettingKey = $"{keyedProvider.ProviderName}ApiKeyCustom";
 
-        // Get API key mode and custom key
-        var keyMode = await _settingsService.GetSettingAsync("OMDbApiKeyMode", "softmedia");
-        var customKey = await _settingsService.GetSettingAsync("OMDbApiKeyCustom", "");
+        var keyMode = await _settingsService.GetSettingAsync(keyModeSettingKey, "softmedia");
+        var customKey = await _settingsService.GetSettingAsync(customKeySettingKey, "");
 
-        // Resolve the actual API key
-        var apiKey = omdbProvider.GetActiveApiKey(keyMode, customKey);
+        var apiKey = keyedProvider.GetActiveApiKey(keyMode, customKey);
 
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             if (keyMode == "disabled")
             {
-                _logger.LogDebug("OMDB is disabled for movie: {Title}", item.Title);
+                _logger.LogDebug("{Provider} is disabled for: {Title}", keyedProvider.ProviderName, item.Title);
             }
             else
             {
-                _logger.LogWarning("No valid OMDB API key configured. Mode: {Mode}", keyMode);
+                _logger.LogWarning("No valid API key configured for {Provider}. Mode: {Mode}", 
+                    keyedProvider.ProviderName, keyMode);
             }
             return null;
         }
 
-        return await omdbProvider.FetchMetadataWithKeyAsync(item, apiKey, keyMode);
+        return await keyedProvider.FetchMetadataWithKeyAsync(item, apiKey, keyMode);
     }
 }
 

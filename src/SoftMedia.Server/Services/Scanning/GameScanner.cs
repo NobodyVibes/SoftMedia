@@ -13,8 +13,6 @@ namespace SoftMedia.Server.Services.Scanning;
 /// </summary>
 public class GameScanner : BaseMediaScanner
 {
-    private readonly IBackgroundImageCacheService _backgroundImageCache;
-
     // Supported game extensions
     private static readonly string[] GameExtensions =
     {
@@ -38,11 +36,9 @@ public class GameScanner : BaseMediaScanner
         IServiceScopeFactory scopeFactory,
         ILogger<GameScanner> logger,
         IMediaNotificationService notificationService,
-        IBackgroundImageCacheService backgroundImageCache,
         IMetadataQueue metadataQueue)
         : base(scopeFactory, logger, notificationService, metadataQueue)
     {
-        _backgroundImageCache = backgroundImageCache;
     }
 
     /// <summary>

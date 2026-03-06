@@ -50,6 +50,17 @@ public class RateLimiterFactory : IDisposable
                 QueueLimit = 30
             })),
 
+        // OpenLibrary: < 100 requests per 5 minutes → ~3 per 10 seconds
+        "OpenLibrary" => _limiters.GetOrAdd(providerName, _ =>
+            new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions
+            {
+                Window = TimeSpan.FromSeconds(10),
+                SegmentsPerWindow = 2,
+                PermitLimit = 3,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 20
+            })),
+
         // OMDb: 20 requests per 10 seconds (confirmed by testing)
         "OMDb" => _limiters.GetOrAdd(providerName, _ =>
             new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions

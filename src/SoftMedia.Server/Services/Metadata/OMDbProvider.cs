@@ -10,7 +10,7 @@ namespace SoftMedia.Server.Services.Metadata;
 /// Requires an API key - either the bundled SoftMedia key or a user-provided custom key.
 /// Implements daily usage tracking with tier-based limits.
 /// </summary>
-public class OMDbProvider : IMetadataProvider
+public class OMDbProvider : IKeyedMetadataProvider
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<OMDbProvider> _logger;

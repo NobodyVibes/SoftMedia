@@ -535,8 +535,11 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
                     <div>
                         <h3 className="text-lg font-bold text-white mb-4">Cast</h3>
                         <HorizontalScrollList>
-                            {metadata.cast.slice(0, 15).map((actor: { name?: string; character?: string; image?: string }, i: number) => (
-                                <div key={i} className="flex-shrink-0 w-28 text-center group">
+                            {metadata.cast.slice(0, 10).map((actor: { name?: string; character?: string; image?: string; id?: number }, i: number) => {
+                                const allRoles = actor.character?.split(' / ') || [];
+                                const displayRoles = allRoles.slice(0, 3).join(' / ') + (allRoles.length > 3 ? ' ...' : '');
+                                return (
+                                <div key={actor.id ?? i} className="flex-shrink-0 w-32 text-center group">
                                     <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-blue-600/30 to-violet-600/30 border-2 border-white/10 group-hover:border-violet-500/50 transition-all overflow-hidden flex items-center justify-center">
                                         {actor.image ? (
                                             <img
@@ -548,10 +551,11 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
                                             <span className="text-2xl text-gray-400">{actor.name?.charAt(0) || '?'}</span>
                                         )}
                                     </div>
-                                    <p className="mt-2 text-sm text-white font-medium line-clamp-1">{actor.name}</p>
-                                    <p className="text-xs text-gray-400 line-clamp-1">{actor.character}</p>
+                                    <p className="mt-2 text-sm text-white font-medium line-clamp-1" title={actor.name}>{actor.name}</p>
+                                    <p className="text-xs text-gray-400 line-clamp-2" title={actor.character}>{displayRoles}</p>
                                 </div>
-                            ))}
+                                );
+                            })}
                         </HorizontalScrollList>
                     </div>
                 )}

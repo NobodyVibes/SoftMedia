@@ -55,6 +55,9 @@ public class MediaItem
     public string? Overview { get; set; }
     public double? CommunityRating { get; set; }
     public string? ContentRating { get; set; }
+    public string? Genres { get; set; }    // Comma-separated (e.g. "Action, Drama")
+    public string? Studio { get; set; }
+    public string? Director { get; set; }
 
     /// <summary>
     /// Average rating of all users on this SoftMedia server.

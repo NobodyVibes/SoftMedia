@@ -8,6 +8,7 @@ using Moq;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Metadata;
 using SoftMedia.Server.Services.Infrastructure;
 using Xunit;
@@ -19,7 +20,7 @@ public class MetadataAggregatorTests : IDisposable
     private readonly Mock<IMetadataProvider> _mockProvider;
     private readonly Mock<IMetadataRouter> _mockRouter;
     private readonly Mock<ISettingsService> _mockSettings;
-    private readonly Mock<IImageDownloadQueue> _mockQueue;
+    private readonly Mock<IImageUrlExtractorService> _mockImageExtractor;
     private readonly Mock<ILogger<MetadataAggregator>> _mockLogger;
     private readonly AppDbContext _dbContext;
 
@@ -33,8 +34,13 @@ public class MetadataAggregatorTests : IDisposable
         _mockProvider = new Mock<IMetadataProvider>();
         _mockRouter = new Mock<IMetadataRouter>();
         _mockSettings = new Mock<ISettingsService>();
-        _mockQueue = new Mock<IImageDownloadQueue>();
+        _mockImageExtractor = new Mock<IImageUrlExtractorService>();
         _mockLogger = new Mock<ILogger<MetadataAggregator>>();
+
+        // Default: ExtractAndQueueAsync returns true (images found)
+        _mockImageExtractor
+            .Setup(x => x.ExtractAndQueueAsync(It.IsAny<MediaItem>(), It.IsAny<Dictionary<string, object>>()))
+            .ReturnsAsync(true);
     }
 
     public void Dispose()
@@ -48,13 +54,13 @@ public class MetadataAggregatorTests : IDisposable
             new[] { _mockProvider.Object },
             _mockRouter.Object,
             _mockSettings.Object,
-            _mockQueue.Object,
+            _mockImageExtractor.Object,
             _dbContext,
             _mockLogger.Object);
     }
 
     [Fact]
-    public async Task EnrichMediaItemAsync_ShouldEnqueueImage_WhenPosterUrlPresent()
+    public async Task EnrichMediaItemAsync_ShouldCallImageExtractor_WhenPosterUrlPresent()
     {
         // Arrange
         var aggregator = CreateAggregator();
@@ -76,19 +82,14 @@ public class MetadataAggregatorTests : IDisposable
         await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie);
 
         // Assert
-        // 1. Verify Queue was called
-        _mockQueue.Verify(x => x.EnqueueImageDownloadAsync(
-            item.Id,
-            "http://example.com/poster.jpg",
-            null,
-            null,
-            MediaType.Movie,
-            ImageType.Poster), Times.Once);
+        // 1. Verify ImageUrlExtractorService was called to extract and queue images
+        _mockImageExtractor.Verify(x => x.ExtractAndQueueAsync(
+            It.Is<MediaItem>(m => m.Id == item.Id),
+            It.IsAny<Dictionary<string, object>>()), Times.Once);
 
-        // 2. Verify Remote URL is removed from saved metadata (No Hotlinking)
+        // 2. Verify metadata was saved to DB
         var savedItem = await _dbContext.MediaItems.FindAsync(item.Id);
-        Assert.NotNull(savedItem.MetadataJson);
-        Assert.DoesNotContain("http://example.com/poster.jpg", savedItem.MetadataJson);
+        Assert.NotNull(savedItem!.MetadataJson);
         Assert.Contains("2023", savedItem.MetadataJson);
     }
 
@@ -117,13 +118,13 @@ public class MetadataAggregatorTests : IDisposable
 
         // Assert
         var savedItem = await _dbContext.MediaItems.FindAsync(item.Id);
-        Assert.Equal("tt1234567", savedItem.ImdbId);
+        Assert.Equal("tt1234567", savedItem!.ImdbId);
         Assert.Equal(999, savedItem.TvMazeId);
         Assert.Equal("mb-id-123", savedItem.MusicBrainzId);
     }
 
     [Fact]
-    public async Task EnrichMediaItemAsync_ShouldPopulateSeasonDiffs_AndQueueSeasonPosters()
+    public async Task EnrichMediaItemAsync_ShouldCallImageExtractor_ForSeriesWithSeasons()
     {
         // Arrange
         var aggregator = CreateAggregator();
@@ -151,12 +152,40 @@ public class MetadataAggregatorTests : IDisposable
         await aggregator.EnrichMediaItemAsync(item, LibraryType.TV);
 
         // Assert
-        // Verify queues for season posters
-        _mockQueue.Verify(x => x.EnqueueImageDownloadAsync(item.Id, "http://example.com/s1.jpg", 1, null, MediaType.Series, ImageType.SeasonPoster), Times.Once);
-        _mockQueue.Verify(x => x.EnqueueImageDownloadAsync(item.Id, "http://example.com/s2.jpg", 2, null, MediaType.Series, ImageType.SeasonPoster), Times.Once);
+        // Verify ImageUrlExtractorService was called with the series item
+        _mockImageExtractor.Verify(x => x.ExtractAndQueueAsync(
+            It.Is<MediaItem>(m => m.Id == item.Id && m.Type == MediaType.Series),
+            It.IsAny<Dictionary<string, object>>()), Times.Once);
         
-        // Verify remote URLs removed
+        // Verify metadata was saved
         var savedItem = await _dbContext.MediaItems.FindAsync(item.Id);
-        Assert.DoesNotContain("http://example.com/s1.jpg", savedItem.MetadataJson);
+        Assert.NotNull(savedItem!.MetadataJson);
+    }
+
+    [Fact]
+    public async Task EnrichMediaItemAsync_ShouldSkipImages_WhenDeferImageCachingIsTrue()
+    {
+        // Arrange
+        var aggregator = CreateAggregator();
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Deferred Movie", Type = MediaType.Movie };
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        var json = JsonSerializer.Serialize(new
+        {
+            title = "Deferred Movie",
+            poster = "http://example.com/poster.jpg"
+        });
+
+        _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Movie))
+            .ReturnsAsync(json);
+
+        // Act
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie, deferImageCaching: true);
+
+        // Assert — Image extractor should NOT be called when deferred
+        _mockImageExtractor.Verify(x => x.ExtractAndQueueAsync(
+            It.IsAny<MediaItem>(),
+            It.IsAny<Dictionary<string, object>>()), Times.Never);
     }
 }

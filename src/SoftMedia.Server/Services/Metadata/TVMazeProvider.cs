@@ -22,6 +22,13 @@ public class TVMazeProvider : IMetadataProvider
 
     public async Task<string?> FetchMetadataAsync(MediaItem item)
     {
+        // Episodes get their metadata from the parent series fetch — never search individually
+        if (item.Type == Models.MediaType.Episode || item.Type == Models.MediaType.Season)
+        {
+            _logger.LogDebug("Skipping TVMaze search for {Type} '{Title}' — metadata comes from series", item.Type, item.Title);
+            return null;
+        }
+
         var title = item.Title;
         var path = item.Path;
         var targetYear = item.Year;
@@ -304,20 +311,49 @@ public class TVMazeProvider : IMetadataProvider
 
             if (root.TryGetProperty("_embedded", out var embedded) && embedded.TryGetProperty("cast", out var castArray))
             {
-                var castList = new List<object>();
+                // Smart cast deduplication: merge genuinely distinct characters per actor,
+                // but filter out obvious variants of the same character.
+                // TVMaze orders cast by total appearances (most important first).
+                // Examples:
+                //   "Leela", "Young Leela", "Leela 1" → "Leela" (variants dropped)
+                //   "Fry", "Professor Farnsworth"      → "Fry / Professor Farnsworth" (distinct kept)
+                var castLookup = new Dictionary<int, (string Name, List<string> Characters, string? Image)>();
+                var castOrder = new List<int>();
+
                 foreach (var castMember in castArray.EnumerateArray())
                 {
-                    if (castMember.TryGetProperty("person", out var person) && person.TryGetProperty("name", out var name))
+                    if (!castMember.TryGetProperty("person", out var person) || !person.TryGetProperty("name", out var name))
+                        continue;
+
+                    int personId = -1;
+                    if (person.TryGetProperty("id", out var idProp))
                     {
-                        var characterName = "Unknown";
-                        string? personImage = null;
-                        
-                        if (castMember.TryGetProperty("character", out var character) && character.TryGetProperty("name", out var charName))
+                        personId = idProp.GetInt32();
+                    }
+
+                    var characterName = "Unknown";
+                    if (castMember.TryGetProperty("character", out var character) && character.TryGetProperty("name", out var charName))
+                    {
+                        characterName = charName.GetString() ?? "Unknown";
+                    }
+
+                    if (castLookup.TryGetValue(personId, out var existing))
+                    {
+                        // Only add if this is a genuinely distinct character (not a variant).
+                        // A variant is when the new name contains an existing name or vice versa.
+                        // e.g. "Young Leela" contains "Leela" → variant, skip it.
+                        var isVariant = existing.Characters.Any(c =>
+                            characterName.Contains(c, StringComparison.OrdinalIgnoreCase) ||
+                            c.Contains(characterName, StringComparison.OrdinalIgnoreCase));
+
+                        if (!isVariant)
                         {
-                            characterName = charName.GetString();
+                            existing.Characters.Add(characterName);
                         }
-                        
-                        // Get actor profile image
+                    }
+                    else
+                    {
+                        string? personImage = null;
                         if (person.TryGetProperty("image", out var personImageObj) && personImageObj.ValueKind != System.Text.Json.JsonValueKind.Null)
                         {
                             if (personImageObj.TryGetProperty("medium", out var mediumImg))
@@ -326,16 +362,20 @@ public class TVMazeProvider : IMetadataProvider
                             }
                         }
 
-                        int? personId = null;
-                        if (person.TryGetProperty("id", out var idProp))
-                        {
-                            personId = idProp.GetInt32();
-                        }
-
-                        castList.Add(new { id = personId, name = name.GetString(), character = characterName, image = personImage });
+                        castLookup[personId] = (name.GetString() ?? "Unknown", new List<string> { characterName }, personImage);
+                        castOrder.Add(personId);
                     }
                 }
-                metadata["cast"] = castList.Take(10).ToList(); // Top 10
+
+                // Build final list: top 10 unique actors, characters joined with " / "
+                var finalCast = new List<object>();
+                foreach (var pid in castOrder.Take(10))
+                {
+                    var c = castLookup[pid];
+                    finalCast.Add(new { id = (int?)pid, name = c.Name, character = string.Join(" / ", c.Characters), image = c.Image });
+                }
+
+                metadata["cast"] = finalCast;
             }
 
             // Fetch seasons with poster images

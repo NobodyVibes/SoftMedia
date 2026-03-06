@@ -13,5 +13,6 @@ public interface IImageCacheService
     Task<string> CacheGamePosterAsync(Guid gameId, string remoteUrl);
     void DeleteImageForMediaItem(Guid mediaItemId, Models.MediaType type);
     void DeleteImagesForLibrary(IEnumerable<(Guid Id, Models.MediaType Type)> mediaItems);
+    void DeleteCastImagesForPersonIds(IEnumerable<int> personIds);
     int CleanupOrphanedImages(HashSet<Guid> validMediaIds);
 }

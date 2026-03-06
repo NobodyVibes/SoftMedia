@@ -25,7 +25,6 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
 
     // Track dirty state of libraries for cache update
     private readonly ConcurrentDictionary<Guid, bool> _dirtyLibraries = new();
-    private readonly Task _cacheUpdateLoop;
 
     public MetadataQueueService(
         IServiceScopeFactory scopeFactory,
@@ -91,19 +90,17 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
                 });
         });
         
-        // Start background cache update loop
-        _cacheUpdateLoop = Task.Run(CacheUpdateLoopAsync);
     }
     
-    private async Task CacheUpdateLoopAsync()
+    private async Task CacheUpdateLoopAsync(CancellationToken ct)
     {
         _logger.LogInformation("Recently Added Cache Update Loop started.");
         try
         {
-            while (true)
+            while (!ct.IsCancellationRequested)
             {
                 // Check every 2 seconds
-                await Task.Delay(2000);
+                await Task.Delay(2000, ct);
                 
                 var dirtyLibs = _dirtyLibraries.Keys.ToList();
                 foreach (var libId in dirtyLibs)
@@ -156,6 +153,9 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
         _logger.LogInformation("Metadata Queue Service started with Dynamic Channels.");
 
         var tasks = new List<Task>();
+
+        // Start background cache update loop (with stoppingToken for graceful shutdown)
+        tasks.Add(Task.Run(() => CacheUpdateLoopAsync(stoppingToken)));
 
         // Launch processors for each channel
         // Music: 2 Concurrent (Strict limit will bottleneck, but 2 allows overlap if provider is fast)
@@ -246,7 +246,7 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
             var mediaItem = await context.MediaItems.FindAsync(new object[] { item.MediaId }, ct);
             if (mediaItem == null) 
             {
-                _logger.LogWarning("Metadata queue item {Id} not found in DB", item.MediaId);
+                _logger.LogDebug("Metadata queue item {Id} not found in DB (likely deleted during rescan)", item.MediaId);
                 return;
             }
 

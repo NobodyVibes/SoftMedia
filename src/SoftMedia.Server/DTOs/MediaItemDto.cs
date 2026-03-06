@@ -174,7 +174,7 @@ public class MediaItemDto
             {
                 try
                 {
-                    var metadata = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(item.MetadataJson);
+                    var metadata = Helpers.MetadataJsonHelper.Parse(item.MetadataJson);
                     if (metadata != null)
                     {
                         dto.Metadata = metadata; // Expose full metadata to frontend

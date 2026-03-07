@@ -159,18 +159,18 @@ public class OMDbProvider : IKeyedMetadataProvider
         }
     }
 
-    public Task<string?> FetchMetadataAsync(MediaItem item)
+    public Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
     {
         // This method is called by MetadataRouter which should pass the resolved API key
         // For direct calls, we return null as the key context isn't available
         _logger.LogDebug("FetchMetadataAsync called directly - use FetchMetadataWithKeyAsync instead");
-        return Task.FromResult<string?>(null);
+        return Task.FromResult<MetadataResult?>(null);
     }
 
     /// <summary>
     /// Fetches metadata using the provided API key.
     /// </summary>
-    public async Task<string?> FetchMetadataWithKeyAsync(MediaItem item, string apiKey, string mode = "custom")
+    public async Task<MetadataResult?> FetchMetadataWithKeyAsync(MediaItem item, string apiKey, string mode = "custom")
     {
         var title = item.Title;
 
@@ -360,43 +360,43 @@ public class OMDbProvider : IKeyedMetadataProvider
         }
     }
 
-    private string ProcessProcessAndSerialize(JsonElement movieData, string title)
+    private MetadataResult ProcessProcessAndSerialize(JsonElement movieData, string title)
     {
-            var metadata = new Dictionary<string, object>();
+            var result = new MetadataResult();
 
             if (movieData.TryGetProperty("Year", out var yearProp))
             {
                 var yearStr = yearProp.GetString();
-                if (!string.IsNullOrEmpty(yearStr) && yearStr != "N/A")
-                    metadata["year"] = yearStr;
+                if (!string.IsNullOrEmpty(yearStr) && yearStr != "N/A" && int.TryParse(yearStr.Substring(0, 4), out var year))
+                    result.Year = year;
             }
 
             if (movieData.TryGetProperty("Plot", out var plotProp))
             {
                 var plot = plotProp.GetString();
                 if (!string.IsNullOrEmpty(plot) && plot != "N/A")
-                    metadata["description"] = plot;
+                    result.Description = plot;
             }
 
             if (movieData.TryGetProperty("Director", out var dirProp))
             {
                 var director = dirProp.GetString();
                 if (!string.IsNullOrEmpty(director) && director != "N/A")
-                    metadata["director"] = director;
+                    result.Director = director;
             }
 
             if (movieData.TryGetProperty("Genre", out var genreProp))
             {
                 var genreStr = genreProp.GetString();
                 if (!string.IsNullOrEmpty(genreStr) && genreStr != "N/A")
-                    metadata["genres"] = genreStr.Split(',').Select(g => g.Trim()).ToArray();
+                    result.Genres = genreStr.Split(',').Select(g => g.Trim()).ToList();
             }
 
             if (movieData.TryGetProperty("Rated", out var ratedProp))
             {
                 var rated = ratedProp.GetString();
                 if (!string.IsNullOrEmpty(rated) && rated != "N/A")
-                    metadata["contentRating"] = rated;
+                    result.ContentRating = rated;
             }
 
             if (movieData.TryGetProperty("Poster", out var posterProp))
@@ -404,67 +404,79 @@ public class OMDbProvider : IKeyedMetadataProvider
                 var poster = posterProp.GetString();
                 _logger.LogInformation("Raw OMDb Poster value for {Title}: '{Poster}'", title, poster);
                 if (!string.IsNullOrEmpty(poster) && poster != "N/A")
-                    metadata["poster"] = poster;
+                    result.PosterUrl = poster;
             }
 
             if (movieData.TryGetProperty("imdbRating", out var ratingProp))
             {
                 var ratingStr = ratingProp.GetString();
                 if (!string.IsNullOrEmpty(ratingStr) && ratingStr != "N/A" && double.TryParse(ratingStr, out var rating))
-                    metadata["imdbRating"] = rating;
-            }
-
-            if (movieData.TryGetProperty("Runtime", out var runtimeProp))
-            {
-                var runtime = runtimeProp.GetString();
-                if (!string.IsNullOrEmpty(runtime) && runtime != "N/A")
-                    metadata["runtime"] = runtime;
+                    result.ImdbRating = rating;
             }
 
             if (movieData.TryGetProperty("Actors", out var actorsProp))
             {
                 var actors = actorsProp.GetString();
                 if (!string.IsNullOrEmpty(actors) && actors != "N/A")
-                    metadata["cast"] = actors.Split(',').Select(a => a.Trim()).ToArray();
+                    result.Cast = actors.Split(',').Select(a => new CastMember { Name = a.Trim() }).ToList();
             }
 
             if (movieData.TryGetProperty("imdbID", out var imdbIdProp))
             {
                 var imdbId = imdbIdProp.GetString();
                 if (!string.IsNullOrEmpty(imdbId))
-                    metadata["imdbId"] = imdbId;
-            }
-
-            if (movieData.TryGetProperty("Writer", out var writerProp))
-            {
-                var writer = writerProp.GetString();
-                if (!string.IsNullOrEmpty(writer) && writer != "N/A")
-                    metadata["writer"] = writer;
-            }
-
-            if (movieData.TryGetProperty("Awards", out var awardsProp))
-            {
-                var awards = awardsProp.GetString();
-                if (!string.IsNullOrEmpty(awards) && awards != "N/A")
-                    metadata["awards"] = awards;
-            }
-
-            if (movieData.TryGetProperty("BoxOffice", out var boxOfficeProp))
-            {
-                var boxOffice = boxOfficeProp.GetString();
-                if (!string.IsNullOrEmpty(boxOffice) && boxOffice != "N/A")
-                    metadata["boxOffice"] = boxOffice;
+                    result.ImdbId = imdbId;
             }
 
             if (movieData.TryGetProperty("Production", out var productionProp))
             {
                 var production = productionProp.GetString();
                 if (!string.IsNullOrEmpty(production) && production != "N/A")
-                    metadata["studio"] = production;
+                    result.Studio = production;
             }
 
-            _logger.LogInformation("Successfully fetched OMDB metadata for: {Title}. Keys: {Keys}", title, string.Join(", ", metadata.Keys));
-            return JsonSerializer.Serialize(metadata);
+            // Unmapped fields go to Extra
+            var extraData = new Dictionary<string, string>();
+
+            if (movieData.TryGetProperty("Runtime", out var runtimeProp))
+            {
+                var runtime = runtimeProp.GetString();
+                if (!string.IsNullOrEmpty(runtime) && runtime != "N/A")
+                    extraData["runtime"] = runtime;
+            }
+
+            if (movieData.TryGetProperty("Writer", out var writerProp))
+            {
+                var writer = writerProp.GetString();
+                if (!string.IsNullOrEmpty(writer) && writer != "N/A")
+                    extraData["writer"] = writer;
+            }
+
+            if (movieData.TryGetProperty("Awards", out var awardsProp))
+            {
+                var awards = awardsProp.GetString();
+                if (!string.IsNullOrEmpty(awards) && awards != "N/A")
+                    extraData["awards"] = awards;
+            }
+
+            if (movieData.TryGetProperty("BoxOffice", out var boxOfficeProp))
+            {
+                var boxOffice = boxOfficeProp.GetString();
+                if (!string.IsNullOrEmpty(boxOffice) && boxOffice != "N/A")
+                    extraData["boxOffice"] = boxOffice;
+            }
+            
+            if (extraData.Count > 0)
+            {
+                result.Extra ??= new Dictionary<string, JsonElement>();
+                foreach (var kvp in extraData)
+                {
+                    result.Extra[kvp.Key] = JsonSerializer.SerializeToElement(kvp.Value);
+                }
+            }
+
+            _logger.LogInformation("Successfully fetched OMDB metadata for: {Title}", title);
+            return result;
     }
 
     /// <summary>

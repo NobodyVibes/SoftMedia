@@ -28,7 +28,7 @@ public class MusicBrainzProvider : IMetadataProvider
         }
     }
 
-    public async Task<string?> FetchMetadataAsync(MediaItem item)
+    public async Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
     {
         // 1. Context Strategy: Prefer Embedded Tags (ID3) over Path Parsing
         // The Aggregator should have already populated embedded tags into item.MetadataJson
@@ -214,20 +214,24 @@ public class MusicBrainzProvider : IMetadataProvider
 
                 if (bestScore > -1)
                 {
-                    var result = new Dictionary<string, object>();
+                    var result = new MetadataResult();
                     // Extract from bestRecording + bestRelease
                     
-                    if (bestRecording.TryGetProperty("title", out var t)) result["title"] = t.GetString() ?? trackTitle;
-                    if (bestRecording.TryGetProperty("length", out var l) && l.TryGetInt32(out var ms)) result["duration"] = ms / 1000.0;
+                    if (bestRecording.TryGetProperty("title", out var t)) result.Title = t.GetString() ?? trackTitle;
+                    if (bestRecording.TryGetProperty("length", out var l) && l.TryGetInt32(out var ms)) result.Duration = ms / 1000.0;
                     if (bestRecording.TryGetProperty("artist-credit", out var credits) && credits.GetArrayLength() > 0)
                     {
-                         if (credits[0].TryGetProperty("name", out var an)) result["artist"] = an.GetString() ?? artist ?? "Unknown";
+                         if (credits[0].TryGetProperty("name", out var an)) result.Artist = an.GetString() ?? artist ?? "Unknown";
+                    }
+                    if (bestRecording.TryGetProperty("id", out var recId))
+                    {
+                        result.MusicBrainzId = recId.GetString();
                     }
                     
                     if (bestRelease.HasValue)
                     {
                         var rel = bestRelease.Value;
-                        if (rel.TryGetProperty("title", out var rt)) result["album"] = rt.GetString() ?? album ?? "Unknown";
+                        if (rel.TryGetProperty("title", out var rt)) result.Album = rt.GetString() ?? album ?? "Unknown";
                         
                         // Try Release Group Image first (Most reliable)
                         string? releaseGroupId = null;
@@ -238,14 +242,14 @@ public class MusicBrainzProvider : IMetadataProvider
 
                         if (!string.IsNullOrEmpty(releaseGroupId))
                         {
-                            result["poster"] = $"https://coverartarchive.org/release-group/{releaseGroupId}/front";
+                            result.PosterUrl = $"https://coverartarchive.org/release-group/{releaseGroupId}/front";
                         }
                         else if (rel.TryGetProperty("id", out var rid)) // Fallback to Release ID
                         {
                             var rId = rid.GetString();
                             if (!string.IsNullOrEmpty(rId))
                             {
-                                result["poster"] = $"https://coverartarchive.org/release/{rId}/front";
+                                result.PosterUrl = $"https://coverartarchive.org/release/{rId}/front";
                             }
                         }
 
@@ -253,7 +257,7 @@ public class MusicBrainzProvider : IMetadataProvider
                         {
                             var dateStr = rd.GetString();
                             if (!string.IsNullOrEmpty(dateStr) && DateTime.TryParse(dateStr.Substring(0, Math.Min(4, dateStr.Length)), out var d))
-                                result["year"] = d.Year;
+                                result.Year = d.Year;
                         }
                     }
                     
@@ -265,11 +269,11 @@ public class MusicBrainzProvider : IMetadataProvider
                          {
                              if (tag.TryGetProperty("name", out var tn)) genreList.Add(tn.GetString()!);
                          }
-                         if (genreList.Count > 0) result["genres"] = genreList.ToArray();
+                         if (genreList.Count > 0) result.Genres = genreList;
                     }
 
                     _logger.LogInformation("Selected Match: {Match} for '{Track}'", bestMatchInfo, trackTitle);
-                    return JsonSerializer.Serialize(result);
+                    return result;
                 }
             }
         }

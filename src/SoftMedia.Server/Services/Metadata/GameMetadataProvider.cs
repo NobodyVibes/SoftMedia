@@ -22,7 +22,7 @@ public class GameMetadataProvider : WikidataSparqlClient
         var itemSelector = BuildEntitySearchSelector(item.Title, "Q7889");
 
         return $@"
-            SELECT DISTINCT ?item ?itemLabel ?year ?developerLabel ?publisherLabel ?platformLabel ?genreLabel ?modeLabel ?description WHERE {{
+            SELECT DISTINCT ?item ?itemLabel ?year ?developerLabel ?publisherLabel ?platformLabel ?genreLabel ?modeLabel ?description ?logo ?image WHERE {{
               {itemSelector}
               
               OPTIONAL {{ ?item wdt:P577 ?pubDate . BIND(YEAR(?pubDate) AS ?year) }}
@@ -31,6 +31,8 @@ public class GameMetadataProvider : WikidataSparqlClient
               OPTIONAL {{ ?item wdt:P400 ?platform . }}
               OPTIONAL {{ ?item wdt:P136 ?genre . }}
               OPTIONAL {{ ?item wdt:P404 ?mode . }}
+              OPTIONAL {{ ?item wdt:P154 ?logo . }}
+              OPTIONAL {{ ?item wdt:P18 ?image . }}
               OPTIONAL {{ ?item schema:description ?description . FILTER(LANG(?description) = ""en"") }}
               
               SERVICE wikibase:label {{ bd:serviceParam wikibase:language ""en"". }}
@@ -39,17 +41,36 @@ public class GameMetadataProvider : WikidataSparqlClient
         ";
     }
 
-    protected override Dictionary<string, object> ExtractMetadata(JsonElement result, MediaItem item)
+    protected override MetadataResult ExtractMetadata(JsonElement result, MediaItem item)
     {
-        var metadata = new Dictionary<string, object>();
+        var metadata = new MetadataResult();
 
-        TryAddBinding(metadata, result, "year", "year");
-        TryAddBinding(metadata, result, "description", "description");
-        TryAddBinding(metadata, result, "developerLabel", "studio");   // Map Developer to Studio
-        TryAddBinding(metadata, result, "publisherLabel", "publisher");
-        TryAddBinding(metadata, result, "platformLabel", "platform");
-        TryAddBindingArray(metadata, result, "genreLabel", "genres");
-        TryAddBinding(metadata, result, "modeLabel", "gameMode");
+        if (int.TryParse(GetBindingString(result, "year"), out var year))
+            metadata.Year = year;
+
+        metadata.Description = GetBindingString(result, "description");
+        metadata.Studio = GetBindingString(result, "developerLabel");
+        metadata.Publisher = GetBindingString(result, "publisherLabel");
+
+        var logo = GetBindingString(result, "logo");
+        var image = GetBindingString(result, "image");
+        metadata.PosterUrl = string.IsNullOrEmpty(logo) ? (string.IsNullOrEmpty(image) ? null : image) : logo;
+
+        var genre = GetBindingString(result, "genreLabel");
+        if (!string.IsNullOrEmpty(genre))
+            metadata.Genres = new List<string> { genre };
+
+        var platform = GetBindingString(result, "platformLabel");
+        var gameMode = GetBindingString(result, "modeLabel");
+
+        if (!string.IsNullOrEmpty(platform) || !string.IsNullOrEmpty(gameMode))
+        {
+            metadata.Extra = new Dictionary<string, JsonElement>();
+            if (!string.IsNullOrEmpty(platform))
+                metadata.Extra["platform"] = JsonSerializer.SerializeToElement(platform);
+            if (!string.IsNullOrEmpty(gameMode))
+                metadata.Extra["gameMode"] = JsonSerializer.SerializeToElement(gameMode);
+        }
 
         return metadata;
     }

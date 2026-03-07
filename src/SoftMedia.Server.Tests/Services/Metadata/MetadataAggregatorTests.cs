@@ -21,6 +21,8 @@ public class MetadataAggregatorTests : IDisposable
     private readonly Mock<IMetadataRouter> _mockRouter;
     private readonly Mock<ISettingsService> _mockSettings;
     private readonly Mock<IImageUrlExtractorService> _mockImageExtractor;
+    private readonly Mock<ITvMetadataEnricher> _mockTvEnricher;
+    private readonly Mock<IMusicMetadataResolver> _mockMusicResolver;
     private readonly Mock<ILogger<MetadataAggregator>> _mockLogger;
     private readonly AppDbContext _dbContext;
 
@@ -35,11 +37,13 @@ public class MetadataAggregatorTests : IDisposable
         _mockRouter = new Mock<IMetadataRouter>();
         _mockSettings = new Mock<ISettingsService>();
         _mockImageExtractor = new Mock<IImageUrlExtractorService>();
+        _mockTvEnricher = new Mock<ITvMetadataEnricher>();
+        _mockMusicResolver = new Mock<IMusicMetadataResolver>();
         _mockLogger = new Mock<ILogger<MetadataAggregator>>();
 
         // Default: ExtractAndQueueAsync returns true (images found)
         _mockImageExtractor
-            .Setup(x => x.ExtractAndQueueAsync(It.IsAny<MediaItem>(), It.IsAny<Dictionary<string, object>>()))
+            .Setup(x => x.ExtractAndQueueAsync(It.IsAny<MediaItem>(), It.IsAny<MetadataResult>()))
             .ReturnsAsync(true);
     }
 
@@ -55,7 +59,8 @@ public class MetadataAggregatorTests : IDisposable
             _mockRouter.Object,
             _mockSettings.Object,
             _mockImageExtractor.Object,
-            _dbContext,
+            _mockTvEnricher.Object,
+            _mockMusicResolver.Object,
             _mockLogger.Object);
     }
 
@@ -68,15 +73,15 @@ public class MetadataAggregatorTests : IDisposable
         _dbContext.MediaItems.Add(item);
         await _dbContext.SaveChangesAsync();
 
-        var json = JsonSerializer.Serialize(new
+        var result = new MetadataResult
         {
-            title = "Test Movie",
-            poster = "http://example.com/poster.jpg",
-            year = 2023
-        });
+            Title = "Test Movie",
+            PosterUrl = "http://example.com/poster.jpg",
+            Year = 2023
+        };
 
         _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Movie))
-            .ReturnsAsync(json);
+            .ReturnsAsync(result);
 
         // Act
         await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie);
@@ -85,7 +90,7 @@ public class MetadataAggregatorTests : IDisposable
         // 1. Verify ImageUrlExtractorService was called to extract and queue images
         _mockImageExtractor.Verify(x => x.ExtractAndQueueAsync(
             It.Is<MediaItem>(m => m.Id == item.Id),
-            It.IsAny<Dictionary<string, object>>()), Times.Once);
+            It.IsAny<MetadataResult>()), Times.Once);
 
         // 2. Verify metadata was saved to DB
         var savedItem = await _dbContext.MediaItems.FindAsync(item.Id);
@@ -102,16 +107,16 @@ public class MetadataAggregatorTests : IDisposable
         _dbContext.MediaItems.Add(item);
         await _dbContext.SaveChangesAsync();
 
-        var json = JsonSerializer.Serialize(new
+        var result = new MetadataResult
         {
-            title = "Test Show",
-            imdbId = "tt1234567",
-            tvmazeId = 999,
-            musicBrainzId = "mb-id-123"
-        });
+            Title = "Test Show",
+            ImdbId = "tt1234567",
+            TvMazeId = 999,
+            MusicBrainzId = "mb-id-123"
+        };
 
         _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.TV))
-            .ReturnsAsync(json);
+            .ReturnsAsync(result);
 
         // Act
         await aggregator.EnrichMediaItemAsync(item, LibraryType.TV);
@@ -135,18 +140,18 @@ public class MetadataAggregatorTests : IDisposable
         _dbContext.MediaItems.AddRange(item, s1, s2);
         await _dbContext.SaveChangesAsync();
 
-        var json = JsonSerializer.Serialize(new
+        var result = new MetadataResult
         {
-            title = "Test Series",
-            seasons = new[]
+            Title = "Test Series",
+            Seasons = new List<SeasonMetadata>
             {
-                new { number = 1, poster = "http://example.com/s1.jpg" },
-                new { number = 2, poster = "http://example.com/s2.jpg" }
+                new SeasonMetadata { Number = 1, PosterUrl = "http://example.com/s1.jpg" },
+                new SeasonMetadata { Number = 2, PosterUrl = "http://example.com/s2.jpg" }
             }
-        });
+        };
 
         _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.TV))
-            .ReturnsAsync(json);
+            .ReturnsAsync(result);
 
         // Act
         await aggregator.EnrichMediaItemAsync(item, LibraryType.TV);
@@ -155,7 +160,7 @@ public class MetadataAggregatorTests : IDisposable
         // Verify ImageUrlExtractorService was called with the series item
         _mockImageExtractor.Verify(x => x.ExtractAndQueueAsync(
             It.Is<MediaItem>(m => m.Id == item.Id && m.Type == MediaType.Series),
-            It.IsAny<Dictionary<string, object>>()), Times.Once);
+            It.IsAny<MetadataResult>()), Times.Once);
         
         // Verify metadata was saved
         var savedItem = await _dbContext.MediaItems.FindAsync(item.Id);
@@ -171,14 +176,14 @@ public class MetadataAggregatorTests : IDisposable
         _dbContext.MediaItems.Add(item);
         await _dbContext.SaveChangesAsync();
 
-        var json = JsonSerializer.Serialize(new
+        var result = new MetadataResult
         {
-            title = "Deferred Movie",
-            poster = "http://example.com/poster.jpg"
-        });
+            Title = "Deferred Movie",
+            PosterUrl = "http://example.com/poster.jpg"
+        };
 
         _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Movie))
-            .ReturnsAsync(json);
+            .ReturnsAsync(result);
 
         // Act
         await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie, deferImageCaching: true);
@@ -186,6 +191,6 @@ public class MetadataAggregatorTests : IDisposable
         // Assert — Image extractor should NOT be called when deferred
         _mockImageExtractor.Verify(x => x.ExtractAndQueueAsync(
             It.IsAny<MediaItem>(),
-            It.IsAny<Dictionary<string, object>>()), Times.Never);
+            It.IsAny<MetadataResult>()), Times.Never);
     }
 }

@@ -635,7 +635,7 @@ public class TranscodeService : ITranscodeService
         
         if (_sessionManager.TryRemoveSession(sessionKey, out var session))
         {
-            StopSession(session, deleteFiles);
+            StopSession(session!, deleteFiles);
         }
     }
 
@@ -654,7 +654,7 @@ public class TranscodeService : ITranscodeService
         {
             if (_sessionManager.TryRemoveSession(key, out var session))
             {
-                StopSession(session, deleteFiles: true);
+                StopSession(session!, deleteFiles: true);
             }
         }
     }
@@ -694,7 +694,7 @@ public class TranscodeService : ITranscodeService
     {
         if (_sessionManager.TryRemoveSession(key, out var session))
         {
-            StopSession(session, deleteFiles: true);
+            StopSession(session!, deleteFiles: true);
             _logger.LogInformation("Dormant session {MediaId} deleted", key.MediaId);
         }
     }

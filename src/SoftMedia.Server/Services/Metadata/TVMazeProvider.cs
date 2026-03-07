@@ -20,7 +20,7 @@ public class TVMazeProvider : IMetadataProvider
         _rateLimiter = rateLimiterFactory.GetLimiter("TVMaze");
     }
 
-    public async Task<string?> FetchMetadataAsync(MediaItem item)
+    public async Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
     {
         // Episodes get their metadata from the parent series fetch — never search individually
         if (item.Type == Models.MediaType.Episode || item.Type == Models.MediaType.Season)
@@ -143,6 +143,9 @@ public class TVMazeProvider : IMetadataProvider
             int bestScore = 0;
             int adjacentYearScore = 0;
             
+            // If parsed year is 0 (often from poorly parsed filenames), ignore it for matching
+            if (targetYear <= 0) targetYear = null;
+
             foreach (var result in searchResults.EnumerateArray())
             {
                 if (!result.TryGetProperty("show", out var show)) continue;
@@ -212,6 +215,14 @@ public class TVMazeProvider : IMetadataProvider
             var detailUrl = $"https://api.tvmaze.com/shows/{matchId}?embed=cast";
             _logger.LogInformation($"Fetching full details for match ID {matchId}: {detailUrl}");
             
+            // Acquire rate limit lease before making API call
+            using var lease4 = await _rateLimiter.AcquireAsync(1);
+            if (!lease4.IsAcquired)
+            {
+                _logger.LogWarning($"TVMaze rate limit exceeded for '{title}', request was queued too long");
+                return null;
+            }
+
             var detailResponse = await _httpClient.GetStringAsync(detailUrl);
             using var detailDoc = System.Text.Json.JsonDocument.Parse(detailResponse);
             
@@ -220,59 +231,56 @@ public class TVMazeProvider : IMetadataProvider
         catch (Exception ex)
         {
             _logger.LogError(ex, $"Error fetching TVMaze for {title}");
-            var errorData = new Dictionary<string, string> { { "error", ex.Message }, { "stack", ex.StackTrace ?? "" } };
-            return System.Text.Json.JsonSerializer.Serialize(errorData);
+            return null; // Don't return error JSON
         }
     }
 
-    private async Task<string> ProcessShowMetadataAsync(System.Text.Json.JsonElement root, string title)
+    private async Task<MetadataResult> ProcessShowMetadataAsync(System.Text.Json.JsonElement root, string title)
     {
-            var metadata = new Dictionary<string, object>();
+            var result = new MetadataResult();
             
             // Store TVMaze show ID for season/episode lookups
-            int? tvmazeId = null;
             if (root.TryGetProperty("id", out var idVal))
             {
-                tvmazeId = idVal.GetInt32();
-                metadata["tvmazeId"] = tvmazeId.Value;
+                result.TvMazeId = idVal.GetInt32();
             }
             
             if (root.TryGetProperty("premiered", out var premieredVal))
             {
                var dateStr = premieredVal.GetString();
-               if (!string.IsNullOrEmpty(dateStr))
+               if (!string.IsNullOrEmpty(dateStr) && DateTime.TryParse(dateStr, out var date))
                {
-                   metadata["premiered"] = dateStr; // Store raw string for display
-                   if (DateTime.TryParse(dateStr, out var date))
-                   {
-                       metadata["year"] = date.Year;
-                       metadata["releaseDate"] = date.ToString("yyyy-MM-dd");
-                   }
+                   result.Year = date.Year;
+                   result.ReleaseDate = date;
                }
             }
 
             if (root.TryGetProperty("status", out var statusVal))
             {
                 var status = statusVal.GetString();
-                if (!string.IsNullOrEmpty(status)) metadata["status"] = status;
+                if (!string.IsNullOrEmpty(status)) 
+                {
+                    result.Extra ??= new Dictionary<string, System.Text.Json.JsonElement>();
+                    result.Extra["status"] = System.Text.Json.JsonSerializer.SerializeToElement(status);
+                }
             }
 
             if (root.TryGetProperty("summary", out var summary))
             {
                 // Strip HTML tags
                 var summaryText = System.Text.RegularExpressions.Regex.Replace(summary.GetString() ?? "", "<.*?>", "");
-                metadata["description"] = summaryText;
+                result.Description = summaryText;
             }
             
             if (root.TryGetProperty("rating", out var ratingObj) && ratingObj.TryGetProperty("average", out var avg))
             {
                 if (avg.ValueKind != System.Text.Json.JsonValueKind.Null)
-                    metadata["rating"] = avg.GetDouble();
+                    result.Rating = avg.GetDouble();
             }
             
             if (root.TryGetProperty("genres", out var genresArray))
             {
-                metadata["genres"] = genresArray.EnumerateArray().Select(g => g.GetString()).ToList();
+                result.Genres = genresArray.EnumerateArray().Select(g => g.GetString()!).ToList();
             }
 
             if (root.TryGetProperty("image", out var imageObj) && imageObj.ValueKind != System.Text.Json.JsonValueKind.Null)
@@ -280,7 +288,7 @@ public class TVMazeProvider : IMetadataProvider
                 if (imageObj.TryGetProperty("original", out var original))
                 {
                     var poster = original.GetString();
-                    if (poster != null) metadata["poster"] = poster;
+                    if (poster != null) result.PosterUrl = poster;
                 }
             }
 
@@ -289,11 +297,7 @@ public class TVMazeProvider : IMetadataProvider
                 if (networkObj.TryGetProperty("name", out var netName))
                 {
                     var studio = netName.GetString();
-                    if (studio != null) 
-                    {
-                        metadata["studio"] = studio;
-                        metadata["network"] = studio;
-                    }
+                    if (studio != null) result.Studio = studio;
                 }
             }
             else if (root.TryGetProperty("webChannel", out var webChannelObj) && webChannelObj.ValueKind != System.Text.Json.JsonValueKind.Null)
@@ -301,11 +305,7 @@ public class TVMazeProvider : IMetadataProvider
                 if (webChannelObj.TryGetProperty("name", out var webName))
                 {
                     var channel = webName.GetString();
-                    if (channel != null)
-                    {
-                        metadata["studio"] = channel;
-                        metadata["network"] = channel;
-                    }
+                    if (channel != null) result.Studio = channel;
                 }
             }
 
@@ -367,54 +367,68 @@ public class TVMazeProvider : IMetadataProvider
                     }
                 }
 
-                // Build final list: top 10 unique actors, characters joined with " / "
-                var finalCast = new List<object>();
+                result.Cast = new List<CastMember>();
                 foreach (var pid in castOrder.Take(10))
                 {
                     var c = castLookup[pid];
-                    finalCast.Add(new { id = (int?)pid, name = c.Name, character = string.Join(" / ", c.Characters), image = c.Image });
+                    result.Cast.Add(new CastMember 
+                    { 
+                        Id = pid >= 0 ? pid : null, 
+                        Name = c.Name, 
+                        Character = string.Join(" / ", c.Characters), 
+                        ImageUrl = c.Image 
+                    });
                 }
-
-                metadata["cast"] = finalCast;
             }
 
             // Fetch seasons with poster images
-            if (tvmazeId.HasValue)
+            if (result.TvMazeId.HasValue)
             {
                 try
                 {
-                    var seasonsUrl = $"https://api.tvmaze.com/shows/{tvmazeId}/seasons";
-                    var seasonsResponse = await _httpClient.GetStringAsync(seasonsUrl);
-                    using var seasonsDoc = System.Text.Json.JsonDocument.Parse(seasonsResponse);
-                    
-                    var seasonsList = new List<object>();
-                    foreach (var season in seasonsDoc.RootElement.EnumerateArray())
+                    // Acquire rate limit lease before making API call
+                    using var lease = await _rateLimiter.AcquireAsync(1);
+                    if (!lease.IsAcquired)
                     {
-                        var seasonData = new Dictionary<string, object?>();
+                        _logger.LogWarning($"TVMaze rate limit exceeded for '{title}', request was queued too long");
+                        // Continue without seasons, don't return null for entire metadata
+                    }
+                    else
+                    {
+                        var seasonsUrl = $"https://api.tvmaze.com/shows/{result.TvMazeId}/seasons";
+                        var seasonsResponse = await _httpClient.GetStringAsync(seasonsUrl);
+                        using var seasonsDoc = System.Text.Json.JsonDocument.Parse(seasonsResponse);
                         
-                        if (season.TryGetProperty("id", out var seasonId))
-                            seasonData["id"] = seasonId.GetInt32();
-                        if (season.TryGetProperty("number", out var seasonNum) && seasonNum.ValueKind != System.Text.Json.JsonValueKind.Null)
-                            seasonData["number"] = seasonNum.GetInt32();
-                        if (season.TryGetProperty("episodeOrder", out var epOrder) && epOrder.ValueKind != System.Text.Json.JsonValueKind.Null)
-                            seasonData["episodeCount"] = epOrder.GetInt32();
-                        if (season.TryGetProperty("premiereDate", out var premDate) && premDate.ValueKind != System.Text.Json.JsonValueKind.Null)
-                            seasonData["premiereDate"] = premDate.GetString();
-                        if (season.TryGetProperty("image", out var seasonImg) && seasonImg.ValueKind != System.Text.Json.JsonValueKind.Null)
+                        result.Seasons = new List<SeasonMetadata>();
+                        foreach (var season in seasonsDoc.RootElement.EnumerateArray())
                         {
-                            if (seasonImg.TryGetProperty("original", out var seasonOriginal))
-                                seasonData["poster"] = seasonOriginal.GetString();
-                            else if (seasonImg.TryGetProperty("medium", out var seasonMedium))
-                                seasonData["poster"] = seasonMedium.GetString();
+                            var seasonData = new SeasonMetadata();
+                            
+                            if (season.TryGetProperty("id", out var seasonId))
+                                seasonData.Id = seasonId.GetInt32();
+                            if (season.TryGetProperty("number", out var seasonNum) && seasonNum.ValueKind != System.Text.Json.JsonValueKind.Null)
+                                seasonData.Number = seasonNum.GetInt32();
+                            if (season.TryGetProperty("premiereDate", out var premDate) && premDate.ValueKind != System.Text.Json.JsonValueKind.Null)
+                            {
+                                if (DateTime.TryParse(premDate.GetString(), out var sd)) seasonData.PremiereDate = sd;
+                            }
+                            if (season.TryGetProperty("endDate", out var endDate) && endDate.ValueKind != System.Text.Json.JsonValueKind.Null)
+                            {
+                                if (DateTime.TryParse(endDate.GetString(), out var ed)) seasonData.EndDate = ed;
+                            }
+                            if (season.TryGetProperty("image", out var seasonImg) && seasonImg.ValueKind != System.Text.Json.JsonValueKind.Null)
+                            {
+                                if (seasonImg.TryGetProperty("original", out var seasonOriginal))
+                                    seasonData.PosterUrl = seasonOriginal.GetString();
+                                else if (seasonImg.TryGetProperty("medium", out var seasonMedium))
+                                    seasonData.PosterUrl = seasonMedium.GetString();
+                            }
+                            
+                            result.Seasons.Add(seasonData);
                         }
                         
-                        seasonsList.Add(seasonData);
+                        _logger.LogInformation($"Fetched {result.Seasons.Count} seasons for {title}");
                     }
-                    
-                    // Note: Season 0 (Specials) will be added after we process episodes
-                    // to count how many specials exist
-                    metadata["seasons"] = seasonsList;
-                    _logger.LogInformation($"Fetched {seasonsList.Count} seasons for {title}");
                 }
                 catch (Exception ex)
                 {
@@ -424,86 +438,94 @@ public class TVMazeProvider : IMetadataProvider
                 // Fetch episodes with still images
                 try
                 {
-                    var episodesUrl = $"https://api.tvmaze.com/shows/{tvmazeId}/episodes?specials=1";
-                    var episodesResponse = await _httpClient.GetStringAsync(episodesUrl);
-                    using var episodesDoc = System.Text.Json.JsonDocument.Parse(episodesResponse);
-                    
-                    var episodesList = new List<object>();
-                    foreach (var episode in episodesDoc.RootElement.EnumerateArray())
+                    // Acquire rate limit lease before making API call
+                    using var lease = await _rateLimiter.AcquireAsync(1);
+                    if (!lease.IsAcquired)
                     {
-                        var epData = new Dictionary<string, object?>();
-                        
-                        if (episode.TryGetProperty("id", out var epId))
-                            epData["id"] = epId.GetInt32();
-                        if (episode.TryGetProperty("number", out var epNum) && epNum.ValueKind != System.Text.Json.JsonValueKind.Null)
-                        {
-                            // Regular episode with episode number
-                            if (episode.TryGetProperty("season", out var epSeason))
-                                epData["season"] = epSeason.GetInt32();
-                            epData["episode"] = epNum.GetInt32();
-                        }
-                        else
-                        {
-                            // Special episode (number is null) - map to Season 0
-                            // This matches the S00E01 naming convention used by media organizers
-                            epData["season"] = 0;
-                            // Episode number will be sequential among specials, assigned below
-                        }
-                        if (episode.TryGetProperty("name", out var epName))
-                            epData["title"] = epName.GetString();
-                        if (episode.TryGetProperty("airdate", out var airdate) && airdate.ValueKind != System.Text.Json.JsonValueKind.Null)
-                            epData["airdate"] = airdate.GetString();
-                        if (episode.TryGetProperty("runtime", out var runtime) && runtime.ValueKind != System.Text.Json.JsonValueKind.Null)
-                            epData["runtime"] = runtime.GetInt32();
-                        if (episode.TryGetProperty("summary", out var epSummary) && epSummary.ValueKind != System.Text.Json.JsonValueKind.Null)
-                        {
-                            var epSummaryText = System.Text.RegularExpressions.Regex.Replace(epSummary.GetString() ?? "", "<.*?>", "");
-                            epData["summary"] = epSummaryText;
-                        }
-                        if (episode.TryGetProperty("image", out var epImg) && epImg.ValueKind != System.Text.Json.JsonValueKind.Null)
-                        {
-                            if (epImg.TryGetProperty("original", out var epOriginal))
-                                epData["still"] = epOriginal.GetString();
-                            else if (epImg.TryGetProperty("medium", out var epMedium))
-                                epData["still"] = epMedium.GetString();
-                        }
-                        
-                        episodesList.Add(epData);
+                        _logger.LogWarning($"TVMaze rate limit exceeded for '{title}', request was queued too long");
+                        // Continue without episodes, don't return null for entire metadata
                     }
-                    
-                    // Assign sequential episode numbers to Season 0 (specials)
-                    // This allows matching S00E01, S00E02, etc. from filenames
-                    int specialEpisodeNumber = 1;
-                    foreach (var ep in episodesList)
+                    else
                     {
-                        var epDict = ep as Dictionary<string, object?>;
-                        if (epDict != null && epDict.TryGetValue("season", out var seasonObj) && 
-                            seasonObj is int season && season == 0 && !epDict.ContainsKey("episode"))
-                        {
-                            epDict["episode"] = specialEpisodeNumber++;
-                        }
-                    }
-                    
-                    metadata["episodes"] = episodesList;
-                    var specialCount = episodesList.Cast<Dictionary<string, object?>>().Count(e => e.TryGetValue("season", out var s) && s is int si && si == 0);
-                    _logger.LogInformation($"Fetched {episodesList.Count} episodes ({specialCount} specials as Season 0) for {title}");
-                    
-                    // Add Season 0 (Specials) to seasons list if we have any specials
-                    if (specialCount > 0 && metadata.TryGetValue("seasons", out var seasonsObj) && seasonsObj is List<object> seasonsList2)
-                    {
-                        // Create Season 0 entry
-                        var season0 = new Dictionary<string, object?>
-                        {
-                            ["id"] = 0,
-                            ["number"] = 0,
-                            ["episodeCount"] = specialCount,
-                            // Use show poster as fallback for Season 0
-                            ["poster"] = metadata.TryGetValue("poster", out var showPoster) ? showPoster : null
-                        };
+                        var episodesUrl = $"https://api.tvmaze.com/shows/{result.TvMazeId}/episodes?specials=1";
+                        var episodesResponse = await _httpClient.GetStringAsync(episodesUrl);
+                        using var episodesDoc = System.Text.Json.JsonDocument.Parse(episodesResponse);
                         
-                        // Insert at the beginning of the list
-                        seasonsList2.Insert(0, season0);
-                        _logger.LogInformation($"Added Season 0 (Specials) with {specialCount} episodes for {title}");
+                        result.Episodes = new List<EpisodeMetadata>();
+                        foreach (var episode in episodesDoc.RootElement.EnumerateArray())
+                        {
+                            var epData = new EpisodeMetadata();
+                            
+                            if (episode.TryGetProperty("id", out var epId))
+                                epData.Id = epId.GetInt32();
+                                
+                            if (episode.TryGetProperty("number", out var epNum) && epNum.ValueKind != System.Text.Json.JsonValueKind.Null)
+                            {
+                                // Regular episode with episode number
+                                if (episode.TryGetProperty("season", out var epSeason))
+                                    epData.SeasonNumber = epSeason.GetInt32();
+                                epData.EpisodeNumber = epNum.GetInt32();
+                            }
+                            else
+                            {
+                                epData.SeasonNumber = 0;
+                            }
+                            
+                            if (episode.TryGetProperty("name", out var epName))
+                                epData.Name = epName.GetString();
+                                
+                            if (episode.TryGetProperty("airdate", out var airdate) && airdate.ValueKind != System.Text.Json.JsonValueKind.Null)
+                            {
+                                if (DateTime.TryParse(airdate.GetString(), out var ad)) epData.AirDate = ad;
+                            }
+                                
+                            if (episode.TryGetProperty("runtime", out var runtime) && runtime.ValueKind != System.Text.Json.JsonValueKind.Null)
+                                epData.Runtime = runtime.GetInt32();
+                                
+                            if (episode.TryGetProperty("summary", out var epSummary) && epSummary.ValueKind != System.Text.Json.JsonValueKind.Null)
+                            {
+                                var epSummaryText = System.Text.RegularExpressions.Regex.Replace(epSummary.GetString() ?? "", "<.*?>", "");
+                                epData.Summary = epSummaryText;
+                            }
+                            
+                            if (episode.TryGetProperty("rating", out var epRatingObj) && epRatingObj.TryGetProperty("average", out var epRating) && epRating.ValueKind != System.Text.Json.JsonValueKind.Null)
+                            {
+                                 epData.Rating = epRating.GetDouble();
+                            }
+                            
+                            if (episode.TryGetProperty("image", out var epImg) && epImg.ValueKind != System.Text.Json.JsonValueKind.Null)
+                            {
+                                if (epImg.TryGetProperty("original", out var epOriginal))
+                                    epData.StillUrl = epOriginal.GetString();
+                                else if (epImg.TryGetProperty("medium", out var epMedium))
+                                    epData.StillUrl = epMedium.GetString();
+                            }
+                            
+                            result.Episodes.Add(epData);
+                        }
+                        
+                        // Assign sequential episode numbers to Season 0 (specials)
+                        int specialEpisodeNumber = 1;
+                        foreach (var ep in result.Episodes.Where(e => e.SeasonNumber == 0 && e.EpisodeNumber == 0))
+                        {
+                            ep.EpisodeNumber = specialEpisodeNumber++;
+                        }
+                        
+                        var specialCount = result.Episodes.Count(e => e.SeasonNumber == 0);
+                        _logger.LogInformation($"Fetched {result.Episodes.Count} episodes ({specialCount} specials as Season 0) for {title}");
+                        
+                        // Add Season 0 (Specials) to seasons list if we have any specials
+                        if (specialCount > 0 && result.Seasons != null)
+                        {
+                            var season0 = new SeasonMetadata
+                            {
+                                Id = 0,
+                                Number = 0,
+                                PosterUrl = result.PosterUrl // Fallback
+                            };
+                            result.Seasons.Insert(0, season0);
+                            _logger.LogInformation($"Added Season 0 (Specials) with {specialCount} episodes for {title}");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -512,6 +534,6 @@ public class TVMazeProvider : IMetadataProvider
                 }
             }
 
-            return System.Text.Json.JsonSerializer.Serialize(metadata);
+            return result;
     }
-    }
+}

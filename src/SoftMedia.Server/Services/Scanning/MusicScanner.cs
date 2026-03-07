@@ -38,14 +38,8 @@ public class MusicScanner : BaseMediaScanner
         "Covers", "Cover", "Artwork", "Art", "Scans", "Images", "CD"
     };
 
-    // Supported audio extensions
-    private static readonly string[] AudioExtensions =
-    {
-        "mp3", "flac", "aac", "m4a", "ogg", "wma", "wav", "ape", "alac"
-    };
-
     public override LibraryType SupportedType => LibraryType.Music;
-    public override string[] SupportedExtensions => AudioExtensions;
+    public override string[] SupportedExtensions => SoftMedia.Server.Constants.MediaExtensions.Audio;
     public override string DisplayName => "Music Scanner";
 
     public MusicScanner(
@@ -348,7 +342,7 @@ public class MusicScanner : BaseMediaScanner
             Directory.CreateDirectory(cacheDir);
 
             var extension = GetImageExtension(coverPic.MimeType);
-            var cachePath = Path.Combine(cacheDir, $"{album.Id}{extension}");
+            var cachePath = Path.Combine(cacheDir, $"{album.Id}_cover{extension}");
 
             try
             {

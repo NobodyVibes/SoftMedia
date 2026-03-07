@@ -4,7 +4,7 @@ namespace SoftMedia.Server.Services.Metadata;
 
 public interface IMetadataRouter
 {
-    Task<string?> FetchMetadataAsync(MediaItem item, LibraryType type);
+    Task<MetadataResult?> FetchMetadataAsync(MediaItem item, LibraryType type);
 }
 
 public class MetadataRouter : IMetadataRouter
@@ -23,7 +23,7 @@ public class MetadataRouter : IMetadataRouter
         _logger = logger;
     }
 
-    public async Task<string?> FetchMetadataAsync(MediaItem item, LibraryType type)
+    public async Task<MetadataResult?> FetchMetadataAsync(MediaItem item, LibraryType type)
     {
         // 1. Determine which provider to use based on settings
         string? preferredProvider = null;
@@ -34,9 +34,6 @@ public class MetadataRouter : IMetadataRouter
                 break;
             case LibraryType.TV:
                 preferredProvider = await _settingsService.GetSettingAsync("TVProvider", "TVMaze");
-                break;
-            case LibraryType.Music:
-                preferredProvider = await _settingsService.GetSettingAsync("MusicProvider", "MusicBrainz");
                 break;
             case LibraryType.Book:
                 preferredProvider = await _settingsService.GetSettingAsync("BookProvider", "Open Library");
@@ -71,7 +68,7 @@ public class MetadataRouter : IMetadataRouter
     /// <summary>
     /// Handles metadata fetching for providers that require API key management.
     /// </summary>
-    private async Task<string?> FetchKeyedMetadataAsync(IKeyedMetadataProvider keyedProvider, MediaItem item)
+    private async Task<MetadataResult?> FetchKeyedMetadataAsync(IKeyedMetadataProvider keyedProvider, MediaItem item)
     {
         // Resolve key settings using the provider name as prefix
         var keyModeSettingKey = $"{keyedProvider.ProviderName}ApiKeyMode";

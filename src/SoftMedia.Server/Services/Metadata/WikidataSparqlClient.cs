@@ -29,10 +29,7 @@ public abstract class WikidataSparqlClient : IMetadataProvider
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
     }
 
-    /// <summary>
-    /// Template method: subclasses build the SPARQL query and extract metadata from the result.
-    /// </summary>
-    public async Task<string?> FetchMetadataAsync(MediaItem item)
+    public async Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
     {
         try
         {
@@ -57,11 +54,7 @@ public abstract class WikidataSparqlClient : IMetadataProvider
                 return null;
 
             var result = bindings[0];
-            var metadata = ExtractMetadata(result, item);
-
-            return metadata.Count > 0
-                ? JsonSerializer.Serialize(metadata)
-                : null;
+            return ExtractMetadata(result, item);
         }
         catch (Exception ex)
         {
@@ -76,9 +69,9 @@ public abstract class WikidataSparqlClient : IMetadataProvider
     protected abstract string BuildSparqlQuery(MediaItem item);
 
     /// <summary>
-    /// Extract metadata from the first SPARQL result binding into a dictionary.
+    /// Extract metadata from the first SPARQL result binding.
     /// </summary>
-    protected abstract Dictionary<string, object> ExtractMetadata(JsonElement result, MediaItem item);
+    protected abstract MetadataResult ExtractMetadata(JsonElement result, MediaItem item);
 
     // ─── Shared helpers for subclass use ────────────────────────────────
 
@@ -92,26 +85,6 @@ public abstract class WikidataSparqlClient : IMetadataProvider
             return prop.GetProperty("value").GetString();
         }
         return null;
-    }
-
-    /// <summary>
-    /// Add a binding value to the metadata dictionary if it exists.
-    /// </summary>
-    protected static void TryAddBinding(Dictionary<string, object> metadata, JsonElement result, string bindingName, string metadataKey)
-    {
-        var value = GetBindingString(result, bindingName);
-        if (value != null)
-            metadata[metadataKey] = value;
-    }
-
-    /// <summary>
-    /// Add a binding value as a single-element array (e.g., for genres).
-    /// </summary>
-    protected static void TryAddBindingArray(Dictionary<string, object> metadata, JsonElement result, string bindingName, string metadataKey)
-    {
-        var value = GetBindingString(result, bindingName);
-        if (value != null)
-            metadata[metadataKey] = new[] { value };
     }
 
     /// <summary>

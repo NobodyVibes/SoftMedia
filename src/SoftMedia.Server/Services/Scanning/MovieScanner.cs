@@ -17,14 +17,8 @@ public class MovieScanner : BaseMediaScanner
 {
     private readonly IMediaAnalysisService _mediaAnalysisService;
 
-    // Supported video extensions
-    private static readonly string[] VideoExtensions =
-    {
-        "mkv", "mp4", "avi", "m4v", "wmv", "mov", "webm", "ts", "m2ts"
-    };
-
     public override LibraryType SupportedType => LibraryType.Movie;
-    public override string[] SupportedExtensions => VideoExtensions;
+    public override string[] SupportedExtensions => SoftMedia.Server.Constants.MediaExtensions.Video;
     public override string DisplayName => "Movie Scanner";
 
     public MovieScanner(

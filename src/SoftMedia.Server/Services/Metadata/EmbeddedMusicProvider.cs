@@ -15,11 +15,33 @@ public class EmbeddedMusicProvider : IMetadataProvider
         _logger = logger;
     }
 
-    public Task<string?> FetchMetadataAsync(MediaItem item)
+    public Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
     {
         var title = item.Title;
         var path = item.Path;
-        var metadata = new Dictionary<string, object>();
+
+        // Optimization: If MusicScanner already extracted all tags (indicated by "scannedTags": true),
+        // we can just deserialize the existing MetadataJson and return it, skipping the TagLib read entirely.
+        if (!string.IsNullOrEmpty(item.MetadataJson) && item.MetadataJson.Contains("\"scannedTags\""))
+        {
+            try
+            {
+                var existingResult = JsonSerializer.Deserialize<MetadataResult>(item.MetadataJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (existingResult != null)
+                {
+                    _logger.LogInformation("Using pre-scanned metadata from MusicScanner for {Path}", path);
+                    return Task.FromResult<MetadataResult?>(existingResult);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to deserialize pre-scanned MetadataResult for {Path}. Falling back to TagLib.", path);
+            }
+        }
+
+        // Fallback: Legacy item or scanner didn't fully scan it
+        var result = new MetadataResult();
+        bool hasData = false;
         try
         {
             if (File.Exists(path))
@@ -27,22 +49,23 @@ public class EmbeddedMusicProvider : IMetadataProvider
                 using var tfile = TagLib.File.Create(path);
                 var tag = tfile.Tag;
 
-                if (!string.IsNullOrEmpty(tag.Title)) metadata["title"] = tag.Title;
-                if (!string.IsNullOrEmpty(tag.FirstPerformer)) metadata["artist"] = tag.FirstPerformer;
-                if (!string.IsNullOrEmpty(tag.Album)) metadata["album"] = tag.Album;
-                if (tag.Year > 0) metadata["year"] = tag.Year;
-                if (tag.Genres.Length > 0) metadata["genres"] = tag.Genres;
-                if (tag.Track > 0) metadata["track"] = tag.Track;
-                if (tag.Disc > 0) metadata["disc"] = tag.Disc;
+                if (!string.IsNullOrEmpty(tag.Title)) { result.Title = tag.Title; hasData = true; }
+                if (!string.IsNullOrEmpty(tag.FirstPerformer)) { result.Artist = tag.FirstPerformer; hasData = true; }
+                if (!string.IsNullOrEmpty(tag.Album)) { result.Album = tag.Album; hasData = true; }
+                if (tag.Year > 0) { result.Year = (int)tag.Year; hasData = true; }
+                if (tag.Genres.Length > 0) { result.Genres = tag.Genres.ToList(); hasData = true; }
+                if (tag.Track > 0) { result.TrackNumber = (int)tag.Track; hasData = true; }
+                if (tag.Disc > 0) { result.DiscNumber = (int)tag.Disc; hasData = true; }
 
                 // Duration from file properties
-                metadata["duration"] = tfile.Properties.Duration.TotalSeconds;
+                result.Duration = tfile.Properties.Duration.TotalSeconds;
 
                 // Check for embedded pictures
                 if (tfile.Tag.Pictures.Length > 0)
                 {
                     _logger.LogInformation("Found {Count} embedded pictures in {Path}. MimeType: {MimeType}", tfile.Tag.Pictures.Length, path, tfile.Tag.Pictures[0].MimeType);
-                    metadata["hasEmbeddedArt"] = true;
+                    result.HasEmbeddedArt = true;
+                    hasData = true;
                 }
                 else
                 {
@@ -55,6 +78,6 @@ public class EmbeddedMusicProvider : IMetadataProvider
             _logger.LogWarning(ex, "Error reading embedded tags for {Path}", path);
         }
 
-        return Task.FromResult(metadata.Count > 0 ? JsonSerializer.Serialize(metadata) : null);
+        return Task.FromResult(hasData ? result : null);
     }
 }

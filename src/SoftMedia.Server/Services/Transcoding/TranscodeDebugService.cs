@@ -63,8 +63,13 @@ public class TranscodeDebugService : ITranscodeDebugService
         var repository = scope.ServiceProvider.GetRequiredService<IMediaRepository>();
         var mediaItem = await repository.GetByIdAsync(mediaId);
         
+        if (mediaItem == null)
+        {
+            return new { error = "Media item not found" };
+        }
+
         // Compute Stream Plan (Backend Decision Logic)
-        var streamPlan = await _streamPlanService.ComputeStreamPlanAsync(mediaId, mediaItem, clientCaps ?? new ClientCapabilities(), null);
+        var streamPlan = await _streamPlanService.ComputeStreamPlanAsync(mediaId, mediaItem, clientCaps ?? new ClientCapabilities(), string.Empty);
 
         if (session == null)
         {

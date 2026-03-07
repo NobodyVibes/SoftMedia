@@ -90,43 +90,6 @@ public class MetadataQueueServiceTests : IDisposable
         _mockNotificationService.Verify(x => x.NotifyItemUpdated(mediaId), Times.Once);
     }
     
-    [Fact]
-    public async Task ProcessQueue_ShouldHandleRateLimit_Gracefully()
-    {
-        // This test verifies that items eventually get processed even with strict limits.
-        // We simulate a "MusicBrainz" provider which has 1 req/s limit.
-        // We enqueue 2 items. They should both succeed eventually.
-
-        // Arrange
-        var service = new MetadataQueueService(_mockScopeFactory.Object, _mockNotificationService.Object, _mockLogger.Object);
-        var id1 = Guid.NewGuid();
-        var id2 = Guid.NewGuid();
-        
-        _dbContext.MediaItems.AddRange(
-            new MediaItem { Id = id1, Title = "Song 1", Type = MediaType.Audio, LibraryId = Guid.NewGuid() },
-            new MediaItem { Id = id2, Title = "Song 2", Type = MediaType.Audio, LibraryId = Guid.NewGuid() }
-        );
-        await _dbContext.SaveChangesAsync();
-
-        _mockSettingsService.Setup(x => x.GetSettingAsync<string>("MusicProvider", It.IsAny<string>()))
-            .ReturnsAsync("MusicBrainz"); // Triggers 1 req/s limit
-
-        // Act
-        await service.EnqueueMetadataRefreshAsync(id1, LibraryType.Music);
-        await service.EnqueueMetadataRefreshAsync(id2, LibraryType.Music);
-        
-        await service.StartAsync(CancellationToken.None);
-        
-        // Wait 2.5 seconds (should be enough for 2 items at 1/s)
-        await Task.Delay(2500); 
-        
-        await service.StopAsync(CancellationToken.None);
-
-        // Assert
-        _mockAggregator.Verify(x => x.EnrichMediaItemAsync(It.Is<MediaItem>(m => m.Id == id1), LibraryType.Music, false, true), Times.Once);
-        _mockAggregator.Verify(x => x.EnrichMediaItemAsync(It.Is<MediaItem>(m => m.Id == id2), LibraryType.Music, false, true), Times.Once);
-    }
-
     public void Dispose()
     {
         _dbContext.Dispose();

@@ -111,6 +111,51 @@ public static class FileNameParser
         return (cleanName, null);
     }
 
+    public static (string Author, string Title) ParseBook(string fileName)
+    {
+        var cleanName = Path.GetFileNameWithoutExtension(fileName);
+        
+        // Expected format: "Author Name - Book Title"
+        var parts = cleanName.Split(new[] { " - " }, 2, StringSplitOptions.RemoveEmptyEntries);
+        
+        if (parts.Length == 2)
+        {
+            return (parts[0].Trim(), CleanName(parts[1].Trim()));
+        }
+        
+        // Fallback: entire filename is the title
+        return (string.Empty, CleanName(cleanName));
+    }
+
+    public static (string Title, int? Year) ParseGame(string filePath)
+    {
+        var cleanName = Path.GetFileNameWithoutExtension(filePath);
+        
+        // If it's a generic executable name, use the parent directory name instead
+        var genericNames = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase) 
+        { 
+            "game", "setup", "install", "run", "play", "start", "launcher", "autorun"
+        };
+        
+        if (genericNames.Contains(cleanName))
+        {
+            var dirName = Path.GetFileName(Path.GetDirectoryName(filePath));
+            if (!string.IsNullOrEmpty(dirName))
+            {
+                cleanName = dirName;
+            }
+        }
+        
+        // Extract year before stripping parens, so that e.g. Game Title (1998) is caught
+        var year = ExtractYear(cleanName);
+        
+        // Strip ROM/Region tags in brackets/parens (e.g. [!], (USA), (Rev 1), [T+Eng])
+        cleanName = Regex.Replace(cleanName, @"\[[^\]]+\]", "");
+        cleanName = Regex.Replace(cleanName, @"\([^\)]+\)", "");
+        
+        return (CleanName(cleanName), year);
+    }
+
     private static string CleanName(string title)
     {
         if (string.IsNullOrEmpty(title)) return string.Empty;

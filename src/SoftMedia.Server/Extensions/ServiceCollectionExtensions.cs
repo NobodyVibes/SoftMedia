@@ -76,14 +76,17 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMediaScanner, TvScanner>();
         services.AddScoped<IMediaScanner, MovieScanner>();
         services.AddScoped<IMediaScanner, GameScanner>();
+        services.AddScoped<IMediaScanner, BookScanner>();
+        
+        services.AddTransient<SoftMediaUserAgentHandler>();
         
         // Metadata Providers
-        services.AddHttpClient<WikidataProvider>();
-        services.AddHttpClient<TVMazeProvider>();
-        services.AddHttpClient<OMDbProvider>();
-        services.AddHttpClient<MusicBrainzProvider>();
-        services.AddHttpClient<OpenLibraryProvider>();
-        services.AddHttpClient<GameMetadataProvider>();
+        services.AddHttpClient<WikidataProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+        services.AddHttpClient<TVMazeProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+        services.AddHttpClient<OMDbProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+        services.AddHttpClient<MusicBrainzProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+        services.AddHttpClient<OpenLibraryProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+        services.AddHttpClient<GameMetadataProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
         
         services.AddScoped<IMetadataProvider, WikidataProvider>();
         services.AddScoped<IMetadataProvider, TVMazeProvider>();
@@ -95,6 +98,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMetadataProvider, ExifMetadataProvider>();
         
         services.AddScoped<EmbeddedMusicProvider>(); 
+        services.AddScoped<ITvMetadataEnricher, TvMetadataEnricher>();
+        services.AddScoped<IMusicMetadataResolver, MusicMetadataResolver>();
         services.AddScoped<IMetadataAggregator, MetadataAggregator>();
         services.AddScoped<IMetadataRouter, MetadataRouter>();
 
@@ -139,8 +144,8 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<IImageCacheService, ImageCacheService>((sp, client) =>
         {
             client.Timeout = TimeSpan.FromSeconds(30);
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
         })
+        .AddHttpMessageHandler<SoftMediaUserAgentHandler>()
         .AddHttpMessageHandler(sp => 
         {
             var factory = sp.GetRequiredService<RateLimiterFactory>();
@@ -187,6 +192,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<MetadataQueueService>();
         services.AddSingleton<IMetadataQueue>(sp => sp.GetRequiredService<MetadataQueueService>());
         services.AddHostedService(sp => sp.GetRequiredService<MetadataQueueService>());
+
+        // Metadata Retry Service
+        services.AddSingleton<MetadataRetryService>();
+        services.AddSingleton<IMetadataRetryService>(sp => sp.GetRequiredService<MetadataRetryService>());
+        services.AddHostedService(sp => sp.GetRequiredService<MetadataRetryService>());
 
         // Image Download Queue
         services.AddSingleton<ImageDownloadQueueService>();

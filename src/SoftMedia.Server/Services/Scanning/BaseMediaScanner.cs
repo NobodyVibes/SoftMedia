@@ -386,16 +386,12 @@ public abstract class BaseMediaScanner : IMediaScanner
 
         _logger.LogInformation("[{Scanner}] Removing {Count} orphaned items", DisplayName, orphanPaths.Count);
 
-        foreach (var path in orphanPaths)
-        {
-            var id = existingPaths[path];
-            var item = await context.MediaItems.FindAsync(new object[] { id }, cancellationToken);
-            if (item != null)
-            {
-                context.MediaItems.Remove(item);
-                _logger.LogDebug("[{Scanner}] Removed orphan: {Path}", DisplayName, path);
-            }
-        }
+        var orphanIds = orphanPaths.Select(p => existingPaths[p]).ToList();
+        var deletedCount = await context.MediaItems
+            .Where(m => orphanIds.Contains(m.Id))
+            .ExecuteDeleteAsync(cancellationToken);
+            
+        _logger.LogDebug("[{Scanner}] Bulk removed {Count} orphans", DisplayName, deletedCount);
     }
 
     /// <summary>

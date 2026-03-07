@@ -85,7 +85,7 @@ public class TranscodeController : ControllerBase
             if (accessResult == MediaAccessResult.Unauthorized) return Forbid();
 
             var token = Request.GetToken();
-            var plan = await _streamPlanService.ComputeStreamPlanAsync(id, mediaItem, capabilities, token);
+            var plan = await _streamPlanService.ComputeStreamPlanAsync(id, mediaItem, capabilities, token ?? string.Empty);
 
             _logger.LogInformation("Stream plan for {Id}: Method={Method}, Profile={Profile}, Reason={Reason}",
                 id, plan.Method, plan.DisplayProfile, plan.Reason);

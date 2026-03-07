@@ -13,23 +13,8 @@ namespace SoftMedia.Server.Services.Scanning;
 /// </summary>
 public class GameScanner : BaseMediaScanner
 {
-    // Supported game extensions
-    private static readonly string[] GameExtensions =
-    {
-        // ROMs / Emulation
-        "nes", "sfc", "smc", "gba", "gb", "gbc", "n64", "z64", "v64", 
-        "nds", "3ds", "iso", "cue", "bin", "ps1", "ps2", "ps3", "psp", 
-        "chd", "pkg", "md", "gen", "sms", "gg", "wbu", "wud", "wux", "rpx",
-        
-        // PC / Executables
-        "exe", "lnk", "msi",
-        
-        // Archives (often used for game packages)
-        "zip", "rar", "7z", "tar", "gz"
-    };
-
     public override LibraryType SupportedType => LibraryType.Game;
-    public override string[] SupportedExtensions => GameExtensions;
+    public override string[] SupportedExtensions => SoftMedia.Server.Constants.MediaExtensions.Game;
     public override string DisplayName => "Game Scanner";
 
     public GameScanner(
@@ -45,7 +30,7 @@ public class GameScanner : BaseMediaScanner
     /// Process a single file as a game.
     /// </summary>
 
-    protected override async Task<ScanOperationResult> ProcessFileAsync(
+    protected override Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
         string filePath,
         MediaItem? existing,
@@ -54,8 +39,8 @@ public class GameScanner : BaseMediaScanner
     {
         try
         {
-            // Parse title and year from filename using movie parser (works well for Game Name (Year) format)
-            var parsed = FileNameParser.ParseMovie(filePath);
+            // Parse title and year from filename using game parser to strip release tags
+            var parsed = FileNameParser.ParseGame(filePath);
             var title = parsed.Title;
             var year = parsed.Year;
 
@@ -81,7 +66,7 @@ public class GameScanner : BaseMediaScanner
                 
                 // Enqueue for background enrichment via Base Scanner
                 _logger.LogDebug("[GameScanner] Added game: {Title} ({Year})", title, year);
-                return new ScanOperationResult(ScanResult.New, game.Id, EnqueueMetadata: true);
+                return Task.FromResult(new ScanOperationResult(ScanResult.New, game.Id, EnqueueMetadata: true));
             }
             else
             {
@@ -91,19 +76,19 @@ public class GameScanner : BaseMediaScanner
                 if (needsEnrichment)
                 {
                     _logger.LogDebug("[GameScanner] Queued game metadata enrichment: {Title}", title);
-                    return new ScanOperationResult(ScanResult.Updated, game.Id, EnqueueMetadata: true);
+                    return Task.FromResult(new ScanOperationResult(ScanResult.Updated, game.Id, EnqueueMetadata: true));
                 }
                 else
                 {
                     _logger.LogDebug("[GameScanner] Updated game: {Title}", title);
-                    return new ScanOperationResult(ScanResult.Updated, game.Id, EnqueueMetadata: false);
+                    return Task.FromResult(new ScanOperationResult(ScanResult.Updated, game.Id, EnqueueMetadata: false));
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[GameScanner] Error processing file: {FilePath}", filePath);
-            return new ScanOperationResult(ScanResult.Skipped);
+            _logger.LogError(ex, "Error processing game file {Path}", filePath);
+            return Task.FromResult(new ScanOperationResult(ScanResult.Skipped));
         }
     }
 

@@ -17,6 +17,7 @@ public class WikidataProviderTests
         // Arrange
         var mockLogger = new Mock<ILogger<WikidataProvider>>();
         var httpClient = new HttpClient(); // Real HTTP client for integration test
+        httpClient.DefaultRequestHeaders.Add("User-Agent", "SoftMediaTest/1.0 (test@softmedia.local)");
         // In a real CI/CD, we should mock this. But for this specific debugging task, 
         // we want to verify the SPARQL query against the real endpoint.
         
@@ -24,13 +25,13 @@ public class WikidataProviderTests
         var title = "Austin Powers: International Man of Mystery";
 
         // Act
-        var json = await provider.FetchMetadataAsync(new MediaItem { Title = title });
+        var result = await provider.FetchMetadataAsync(new MediaItem { Title = title });
 
         // Assert
-        Assert.NotNull(json);
-        Assert.Contains("poster", json);
-        Assert.Contains("year", json);
-        Assert.Contains("1997", json);
+        Assert.NotNull(result);
+        Assert.NotNull(result.PosterUrl);
+        Assert.NotNull(result.Year);
+        Assert.Equal(1997, result.Year);
     }
 
     [Fact]
@@ -69,11 +70,11 @@ public class WikidataProviderTests
         var provider = new WikidataProvider(httpClient, mockLogger.Object, new RateLimiterFactory());
 
         // Act
-        var resultJson = await provider.FetchMetadataAsync(new MediaItem { Title = "Test Movie" });
+        var result = await provider.FetchMetadataAsync(new MediaItem { Title = "Test Movie" });
 
         // Assert
-        Assert.NotNull(resultJson);
-        Assert.Contains("http://example.com/poster.jpg", resultJson);
-        Assert.Contains("1999", resultJson);
+        Assert.NotNull(result);
+        Assert.Equal("http://example.com/poster.jpg", result.PosterUrl);
+        Assert.Equal(1999, result.Year);
     }
 }

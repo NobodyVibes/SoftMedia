@@ -39,35 +39,34 @@ public class RateLimiterFactory : IDisposable
                 QueueLimit = 20
             })),
 
-        // Wikidata: 10 requests per 10 seconds (conservative estimate)
+        // Wikidata: 5 concurrent requests (using sliding window to emulate)
         "Wikidata" => _limiters.GetOrAdd(providerName, _ =>
             new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions
             {
                 Window = TimeSpan.FromSeconds(10),
                 SegmentsPerWindow = 2,
-                PermitLimit = 10,
+                PermitLimit = 5,
                 QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                 QueueLimit = 30
             })),
 
-        // OpenLibrary: < 100 requests per 5 minutes → ~3 per 10 seconds
+        // OpenLibrary: 3 requests per second limit (assuming User-Agent is provided)
         "OpenLibrary" => _limiters.GetOrAdd(providerName, _ =>
-            new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions
+            new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
             {
-                Window = TimeSpan.FromSeconds(10),
-                SegmentsPerWindow = 2,
+                Window = TimeSpan.FromSeconds(1),
                 PermitLimit = 3,
                 QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                 QueueLimit = 20
             })),
 
-        // OMDb: 20 requests per 10 seconds (confirmed by testing)
+        // OMDb: Daily limit is real constraint. Throttle modestly to 10 per 10s.
         "OMDb" => _limiters.GetOrAdd(providerName, _ =>
             new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions
             {
                 Window = TimeSpan.FromSeconds(10),
                 SegmentsPerWindow = 2,
-                PermitLimit = 20,
+                PermitLimit = 10,
                 QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                 QueueLimit = 100
             })),

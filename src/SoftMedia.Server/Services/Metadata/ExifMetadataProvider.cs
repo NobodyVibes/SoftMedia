@@ -16,16 +16,17 @@ public class ExifMetadataProvider : IMetadataProvider
         _logger = logger;
     }
 
-    public Task<string?> FetchMetadataAsync(MediaItem item)
+    public Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
     {
         var title = item.Title;
         var path = item.Path;
         try
         {
-            if (!File.Exists(path)) return Task.FromResult<string?>(null);
+            if (!File.Exists(path)) return Task.FromResult<MetadataResult?>(null);
 
             var directories = ImageMetadataReader.ReadMetadata(path);
-            var metadata = new Dictionary<string, object>();
+            var metadata = new MetadataResult();
+            var extraData = new Dictionary<string, string>();
 
             // Helper to find tag value across directories
             string? GetTagValue(string tagName)
@@ -42,23 +43,23 @@ public class ExifMetadataProvider : IMetadataProvider
             var model = GetTagValue("Model");
             if (!string.IsNullOrEmpty(make) || !string.IsNullOrEmpty(model))
             {
-                metadata["camera"] = $"{make} {model}".Trim();
+                extraData["camera"] = $"{make} {model}".Trim();
             }
 
             var iso = GetTagValue("ISO Speed Ratings");
-            if (!string.IsNullOrEmpty(iso)) metadata["iso"] = iso;
+            if (!string.IsNullOrEmpty(iso)) extraData["iso"] = iso;
 
             var fnumber = GetTagValue("F-Number");
-            if (!string.IsNullOrEmpty(fnumber)) metadata["fstop"] = fnumber;
+            if (!string.IsNullOrEmpty(fnumber)) extraData["fstop"] = fnumber;
 
             var exposure = GetTagValue("Exposure Time");
-            if (!string.IsNullOrEmpty(exposure)) metadata["exposure"] = exposure;
+            if (!string.IsNullOrEmpty(exposure)) extraData["exposure"] = exposure;
 
             var dateTaken = GetTagValue("Date/Time Original");
             if (!string.IsNullOrEmpty(dateTaken) && DateTime.TryParseExact(dateTaken, "yyyy:MM:dd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out var date))
             {
-                metadata["dateTaken"] = date.ToString("yyyy-MM-dd HH:mm:ss");
-                metadata["year"] = date.Year;
+                extraData["dateTaken"] = date.ToString("yyyy-MM-dd HH:mm:ss");
+                metadata.Year = date.Year;
             }
 
             // GPS
@@ -66,15 +67,24 @@ public class ExifMetadataProvider : IMetadataProvider
             var lon = GetTagValue("GPS Longitude");
             if (!string.IsNullOrEmpty(lat) && !string.IsNullOrEmpty(lon))
             {
-                metadata["gps"] = $"{lat}, {lon}";
+                extraData["gps"] = $"{lat}, {lon}";
             }
 
-            return Task.FromResult<string?>(JsonSerializer.Serialize(metadata));
+            if (extraData.Count > 0)
+            {
+                metadata.Extra = new Dictionary<string, JsonElement>();
+                foreach (var kvp in extraData)
+                {
+                    metadata.Extra[kvp.Key] = JsonSerializer.SerializeToElement(kvp.Value);
+                }
+            }
+
+            return Task.FromResult<MetadataResult?>(metadata);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, $"Error reading EXIF for {path}");
-            return Task.FromResult<string?>(null);
+            return Task.FromResult<MetadataResult?>(null);
         }
     }
 }

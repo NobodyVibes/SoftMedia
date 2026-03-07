@@ -4,9 +4,9 @@ namespace SoftMedia.Server.Services.Metadata;
 
 public interface IMetadataProvider
 {
-    string ProviderName { get; }
     LibraryType SupportedType { get; }
-    Task<string?> FetchMetadataAsync(MediaItem item);
+    string ProviderName { get; }
+    Task<MetadataResult?> FetchMetadataAsync(MediaItem item);
 }
 
 /// <summary>
@@ -18,7 +18,7 @@ public interface IKeyedMetadataProvider : IMetadataProvider
     /// <summary>
     /// Fetch metadata using the provided API key and key mode.
     /// </summary>
-    Task<string?> FetchMetadataWithKeyAsync(MediaItem item, string apiKey, string keyMode);
+    Task<MetadataResult?> FetchMetadataWithKeyAsync(MediaItem item, string apiKey, string keyMode);
 
     /// <summary>
     /// Resolve the active API key based on the configured mode and optional custom key.

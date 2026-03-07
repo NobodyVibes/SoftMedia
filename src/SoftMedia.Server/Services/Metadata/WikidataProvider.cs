@@ -51,20 +51,26 @@ public class WikidataProvider : WikidataSparqlClient
         ";
     }
 
-    protected override Dictionary<string, object> ExtractMetadata(JsonElement result, MediaItem item)
+    protected override MetadataResult ExtractMetadata(JsonElement result, MediaItem item)
     {
-        var metadata = new Dictionary<string, object>();
+        var metadata = new MetadataResult();
 
-        TryAddBinding(metadata, result, "year", "year");
-        TryAddBinding(metadata, result, "description", "description");
-        TryAddBinding(metadata, result, "directorLabel", "director");
-        TryAddBindingArray(metadata, result, "genreLabel", "genres");
-        TryAddBinding(metadata, result, "mpaaLabel", "contentRating");
+        if (int.TryParse(GetBindingString(result, "year"), out var year))
+            metadata.Year = year;
+
+        metadata.Description = GetBindingString(result, "description");
+        metadata.Director = GetBindingString(result, "directorLabel");
+        
+        var genre = GetBindingString(result, "genreLabel");
+        if (!string.IsNullOrEmpty(genre))
+            metadata.Genres = new List<string> { genre };
+
+        metadata.ContentRating = GetBindingString(result, "mpaaLabel");
 
         // Prefer official movie poster (P3383), fallback to image (P18)
         var posterUrl = GetBindingString(result, "poster") ?? GetBindingString(result, "image");
         if (posterUrl != null)
-            metadata["poster"] = posterUrl;
+            metadata.PosterUrl = posterUrl;
 
         return metadata;
     }

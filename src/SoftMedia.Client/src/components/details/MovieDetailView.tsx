@@ -11,7 +11,7 @@ export default function MovieDetailView({ item }: MovieDetailViewProps) {
     const { isSidebarCollapsed } = useUIStore();
 
     // Extract metadata fields
-    const cast = (metadata.cast as string[]) || [];
+    const cast = (metadata.cast as any[]) || [];
     const director = metadata.director as string;
     const writer = metadata.writer as string;
     const studio = metadata.studio || metadata.production as string;
@@ -49,14 +49,19 @@ export default function MovieDetailView({ item }: MovieDetailViewProps) {
                             Cast
                         </h2>
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-                            {cast.slice(0, 12).map((actor, index) => (
-                                <div
-                                    key={index}
-                                    className="bg-white/5 p-3 rounded-xl border border-white/10 hover:border-violet-500/30 hover:bg-white/10 transition-all"
-                                >
-                                    <div className="font-medium text-gray-200 text-sm">{actor}</div>
-                                </div>
-                            ))}
+                            {cast.slice(0, 12).map((actor: any, index: number) => {
+                                const name = typeof actor === 'string' ? actor : actor.name;
+                                const character = typeof actor === 'string' ? null : actor.character;
+                                return (
+                                    <div
+                                        key={index}
+                                        className="bg-white/5 p-3 rounded-xl border border-white/10 hover:border-violet-500/30 hover:bg-white/10 transition-all flex flex-col justify-center"
+                                    >
+                                        <div className="font-medium text-gray-200 text-sm line-clamp-1" title={name}>{name}</div>
+                                        {character && <div className="text-xs text-gray-400 mt-1 line-clamp-1" title={character}>{character}</div>}
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
                 )}

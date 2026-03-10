@@ -30,6 +30,9 @@ public class TvScanner : BaseMediaScanner
     // Track new series IDs for deferred image caching (to avoid race condition)
     private readonly ConcurrentDictionary<Guid, byte> _newSeriesIds = new();
 
+    // Cache parsed series MetadataJson to avoid O(N) re-parsing per episode
+    private readonly ConcurrentDictionary<Guid, Dictionary<string, object>?> _parsedSeriesMetadataCache = new();
+
 
 
     public TvScanner(
@@ -57,6 +60,7 @@ public class TvScanner : BaseMediaScanner
         _seriesCache.Clear();
         _seasonCache.Clear();
         _newSeriesIds.Clear();
+        _parsedSeriesMetadataCache.Clear();
 
         // Bulk pre-load all existing Series for this library
         using (var scope = _scopeFactory.CreateScope())
@@ -353,18 +357,39 @@ public class TvScanner : BaseMediaScanner
     }
 
     /// <summary>
+    /// Get or parse the series MetadataJson, using a per-scan cache to avoid
+    /// redundant parsing for every episode in the same series.
+    /// </summary>
+    private Dictionary<string, object>? GetCachedSeriesMetadata(MediaItem series)
+    {
+        return _parsedSeriesMetadataCache.GetOrAdd(series.Id, _ =>
+        {
+            if (string.IsNullOrEmpty(series.MetadataJson))
+                return null;
+            try
+            {
+                return MetadataJsonHelper.Parse(series.MetadataJson);
+            }
+            catch
+            {
+                return null;
+            }
+        });
+    }
+
+    /// <summary>
     /// Get episode title from series metadata (TVMaze).
+    /// Uses cached parsed metadata to avoid re-parsing per episode.
     /// </summary>
     private string? GetEpisodeTitleFromMetadata(MediaItem series, int seasonNum, int episodeNum)
     {
-        if (string.IsNullOrEmpty(series.MetadataJson))
+        var seriesMeta = GetCachedSeriesMetadata(series);
+        if (seriesMeta == null)
             return null;
 
         try
         {
-            var seriesMeta = MetadataJsonHelper.Parse(series.MetadataJson);
-            if (seriesMeta != null && 
-                seriesMeta.TryGetValue("episodes", out var eObj) && 
+            if (seriesMeta.TryGetValue("episodes", out var eObj) && 
                 eObj is JsonElement eArr)
             {
                 foreach (var ep in eArr.EnumerateArray())
@@ -390,16 +415,17 @@ public class TvScanner : BaseMediaScanner
 
     /// <summary>
     /// Populate episode metadata (still, summary, airdate) from series metadata.
+    /// Uses cached parsed metadata to avoid re-parsing per episode.
     /// </summary>
     private void PopulateEpisodeMetadata(MediaItem episode, MediaItem series, int seasonNum, int episodeNum)
     {
-        if (string.IsNullOrEmpty(series.MetadataJson))
+        var seriesMeta = GetCachedSeriesMetadata(series);
+        if (seriesMeta == null)
             return;
 
         try
         {
-            var seriesMeta = MetadataJsonHelper.Parse(series.MetadataJson);
-            if (seriesMeta == null || !seriesMeta.TryGetValue("episodes", out var eObj) || eObj is not JsonElement eArr)
+            if (!seriesMeta.TryGetValue("episodes", out var eObj) || eObj is not JsonElement eArr)
                 return;
 
             foreach (var ep in eArr.EnumerateArray())

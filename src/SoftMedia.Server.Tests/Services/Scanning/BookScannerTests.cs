@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Metadata;
 using SoftMedia.Server.Services.Scanning;
 using Xunit;
@@ -17,8 +18,9 @@ public class TestableBookScanner : BookScanner
         IServiceScopeFactory scopeFactory,
         ILogger<BookScanner> logger,
         IMediaNotificationService notificationService,
+        IMediaAnalysisService mediaAnalysisService,
         IMetadataQueue metadataQueue) 
-        : base(scopeFactory, logger, notificationService, metadataQueue)
+        : base(scopeFactory, logger, notificationService, mediaAnalysisService, metadataQueue)
     {
     }
 
@@ -39,6 +41,7 @@ public class BookScannerTests : IDisposable
     private readonly Mock<ILogger<BookScanner>> _mockLogger;
     private readonly Mock<IMediaNotificationService> _mockNotification;
     private readonly Mock<IMetadataQueue> _mockQueue;
+    private readonly Mock<IMediaAnalysisService> _mockMediaAnalysis;
     private readonly AppDbContext _dbContext;
 
     public BookScannerTests()
@@ -47,6 +50,7 @@ public class BookScannerTests : IDisposable
         _mockLogger = new Mock<ILogger<BookScanner>>();
         _mockNotification = new Mock<IMediaNotificationService>();
         _mockQueue = new Mock<IMetadataQueue>();
+        _mockMediaAnalysis = new Mock<IMediaAnalysisService>();
 
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
@@ -59,7 +63,7 @@ public class BookScannerTests : IDisposable
     {
         // Arrange
         var scanner = new TestableBookScanner(
-            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object, _mockQueue.Object);
+            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object, _mockMediaAnalysis.Object, _mockQueue.Object);
             
         var tempFile = Path.GetTempFileName();
         var destFile = tempFile + " - Frank Herbert - Dune.epub";
@@ -95,7 +99,7 @@ public class BookScannerTests : IDisposable
     {
         // Arrange
         var scanner = new TestableBookScanner(
-            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object, _mockQueue.Object);
+            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object, _mockMediaAnalysis.Object, _mockQueue.Object);
             
         var tempFile = Path.GetTempFileName();
         var destFile = tempFile + " - Frank Herbert - Dune.epub";

@@ -61,6 +61,7 @@ public class MetadataAggregatorTests : IDisposable
             _mockImageExtractor.Object,
             _mockTvEnricher.Object,
             _mockMusicResolver.Object,
+            _dbContext,
             _mockLogger.Object);
     }
 

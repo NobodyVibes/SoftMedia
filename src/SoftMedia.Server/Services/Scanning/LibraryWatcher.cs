@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Constants;
 
 namespace SoftMedia.Server.Services.Scanning;
 
@@ -340,8 +341,8 @@ public class LibraryWatcher : BackgroundService, IDisposable
                     _logger.LogInformation("File ready for scanning: {Path} (stable for {Seconds}s)", 
                         pending.Path, stableSeconds);
                     
-                    // Mark library for scanning
-                    _librariesToScan[pending.LibraryId] = now;
+                    // Use single-file processing for individual stable files
+                    _ = ProcessStableFileAsync(pending.Path, pending.LibraryId);
                     filesToRemove.Add(kvp.Key);
                     continue;
                 }
@@ -469,16 +470,32 @@ public class LibraryWatcher : BackgroundService, IDisposable
         }
     }
 
+    /// <summary>
+    /// Process a single stable file via the scanner orchestrator instead of triggering a full library scan.
+    /// </summary>
+    private async Task ProcessStableFileAsync(string filePath, Guid libraryId)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var scannerOrchestrator = scope.ServiceProvider.GetRequiredService<IScannerOrchestrator>();
+            await scannerOrchestrator.ProcessSingleFileAsync(filePath, libraryId);
+            _logger.LogInformation("Single-file scan completed: {Path}", filePath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Single-file scan failed for {Path}, falling back to full library scan", filePath);
+            _librariesToScan[libraryId] = DateTime.UtcNow;
+        }
+    }
+
+    private static readonly HashSet<string> _mediaExtensions =
+        new(MediaExtensions.All, StringComparer.OrdinalIgnoreCase);
+
     private static bool IsMediaFile(string path)
     {
-        var ext = Path.GetExtension(path).ToLowerInvariant();
-        return ext switch
-        {
-            ".mkv" or ".mp4" or ".avi" or ".mov" or ".wmv" or ".flv" or ".webm" or ".m4v" or ".mpg" or ".mpeg" => true,
-            ".mp3" or ".flac" or ".aac" or ".wav" or ".ogg" or ".m4a" or ".weba" or ".wma" or ".alac" or ".opus" => true,
-            ".jpg" or ".jpeg" or ".png" or ".webp" or ".heic" or ".bmp" or ".gif" or ".tiff" => true,
-            _ => false
-        };
+        var ext = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
+        return _mediaExtensions.Contains(ext);
     }
 
     public override void Dispose()

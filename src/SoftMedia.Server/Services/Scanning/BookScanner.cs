@@ -4,6 +4,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Metadata;
 
 namespace SoftMedia.Server.Services.Scanning;
@@ -13,6 +14,8 @@ namespace SoftMedia.Server.Services.Scanning;
 /// </summary>
 public class BookScanner : BaseMediaScanner
 {
+    private readonly IMediaAnalysisService _mediaAnalysisService;
+
     public override LibraryType SupportedType => LibraryType.Book;
     public override string[] SupportedExtensions => SoftMedia.Server.Constants.MediaExtensions.Book;
     public override string DisplayName => "Book Scanner";
@@ -21,15 +24,17 @@ public class BookScanner : BaseMediaScanner
         IServiceScopeFactory scopeFactory,
         ILogger<BookScanner> logger,
         IMediaNotificationService notificationService,
+        IMediaAnalysisService mediaAnalysisService,
         IMetadataQueue metadataQueue)
         : base(scopeFactory, logger, notificationService, metadataQueue)
     {
+        _mediaAnalysisService = mediaAnalysisService;
     }
 
     /// <summary>
     /// Process a single document file as a book.
     /// </summary>
-    protected override Task<ScanOperationResult> ProcessFileAsync(
+    protected override async Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
         string filePath,
         MediaItem? existing,
@@ -57,19 +62,11 @@ public class BookScanner : BaseMediaScanner
             book.Size = new FileInfo(filePath).Length;
             book.DateModified = File.GetLastWriteTimeUtc(filePath);
 
-            // Set Author as part of CAST member via MetadataJson directly? 
-            // The OpenLibraryProvider will usually find the author from title search and override it.
-            // But we can leave the Title with the parsed string.
+            // Store parsed author in MetadataJson for OpenLibraryProvider search enrichment.
+            // Do NOT append author to Title — that corrupts the display name.
             if (!string.IsNullOrEmpty(author) && string.IsNullOrEmpty(book.MetadataJson))
             {
-                // We're relying on the OpenLibraryProvider to fetch and properly structure the author as CastMember.
-                // It's helpful if the scanner passes the author in the title to the search, or stores it temporarily.
-                // OpenLibraryProvider searches "Title" currently. Maybe we can combine them?
-                if (!string.IsNullOrEmpty(author))
-                {
-                    book.Title = $"{author} {title}"; // Help OpenLibrary search by passing Author + Title
-                    book.SortTitle = MediaStringHelpers.GetSortTitle(book.Title);
-                }
+                book.MetadataJson = System.Text.Json.JsonSerializer.Serialize(new { author });
             }
 
             if (isNew)
@@ -78,8 +75,12 @@ public class BookScanner : BaseMediaScanner
 
                 context.MediaItems.Add(book);
 
+                // Delegate local file analysis (page count, etc.)
+                var refreshMode = MetadataRefreshMode.Full;
+                await _mediaAnalysisService.AnalyzeAsync(book, filePath, refreshMode, cancellationToken);
+
                 _logger.LogDebug("[BookScanner] Added book: {Title}", title);
-                return Task.FromResult(new ScanOperationResult(ScanResult.New, book.Id, EnqueueMetadata: true));
+                return new ScanOperationResult(ScanResult.New, book.Id, EnqueueMetadata: true);
             }
             else
             {
@@ -90,16 +91,16 @@ public class BookScanner : BaseMediaScanner
                 if (needsEnrichment)
                 {
                     _logger.LogDebug("[BookScanner] Queued metadata enrichment: {Title}", title);
-                    return Task.FromResult(new ScanOperationResult(ScanResult.Updated, book.Id, EnqueueMetadata: true));
+                    return new ScanOperationResult(ScanResult.Updated, book.Id, EnqueueMetadata: true);
                 }
 
-                return Task.FromResult(new ScanOperationResult(ScanResult.Skipped, book.Id, EnqueueMetadata: false));
+                return new ScanOperationResult(ScanResult.Skipped, book.Id, EnqueueMetadata: false);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[BookScanner] Error processing file: {Path}", filePath);
-            return Task.FromResult(new ScanOperationResult(ScanResult.Skipped, Guid.Empty, false));
+            return new ScanOperationResult(ScanResult.Skipped, Guid.Empty, false);
         }
     }
 }

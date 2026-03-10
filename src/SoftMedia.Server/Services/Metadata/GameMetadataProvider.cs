@@ -7,6 +7,7 @@ namespace SoftMedia.Server.Services.Metadata;
 /// <summary>
 /// Wikidata SPARQL provider for video game metadata.
 /// Searches Wikidata for video games (Q7889) to fetch developer, publisher, platform, and genre info.
+/// Uses GROUP_CONCAT for multi-valued properties (genre, platform, game mode).
 /// </summary>
 public class GameMetadataProvider : WikidataSparqlClient
 {
@@ -21,22 +22,34 @@ public class GameMetadataProvider : WikidataSparqlClient
         // Entity search filtered to video games (Q7889)
         var itemSelector = BuildEntitySearchSelector(item.Title, "Q7889");
 
+        // GROUP_CONCAT aggregates multi-valued properties into comma-separated strings.
         return $@"
-            SELECT DISTINCT ?item ?itemLabel ?year ?developerLabel ?publisherLabel ?platformLabel ?genreLabel ?modeLabel ?description ?logo ?image WHERE {{
+            SELECT ?item ?itemLabel
+                   (SAMPLE(?year) AS ?year)
+                   (SAMPLE(?developerLabel) AS ?developerLabel)
+                   (SAMPLE(?publisherLabel) AS ?publisherLabel)
+                   (GROUP_CONCAT(DISTINCT ?platformLabel; SEPARATOR="", "") AS ?platforms)
+                   (GROUP_CONCAT(DISTINCT ?genreLabel; SEPARATOR="", "") AS ?genres)
+                   (GROUP_CONCAT(DISTINCT ?modeLabel; SEPARATOR="", "") AS ?modes)
+                   (SAMPLE(?description) AS ?description)
+                   (SAMPLE(?logo) AS ?logo)
+                   (SAMPLE(?image) AS ?image)
+            WHERE {{
               {itemSelector}
               
               OPTIONAL {{ ?item wdt:P577 ?pubDate . BIND(YEAR(?pubDate) AS ?year) }}
-              OPTIONAL {{ ?item wdt:P178 ?developer . }}
-              OPTIONAL {{ ?item wdt:P123 ?publisher . }}
-              OPTIONAL {{ ?item wdt:P400 ?platform . }}
-              OPTIONAL {{ ?item wdt:P136 ?genre . }}
-              OPTIONAL {{ ?item wdt:P404 ?mode . }}
+              OPTIONAL {{ ?item wdt:P178 ?developer . ?developer rdfs:label ?developerLabel . FILTER(LANG(?developerLabel) = ""en"") }}
+              OPTIONAL {{ ?item wdt:P123 ?publisher . ?publisher rdfs:label ?publisherLabel . FILTER(LANG(?publisherLabel) = ""en"") }}
+              OPTIONAL {{ ?item wdt:P400 ?platform . ?platform rdfs:label ?platformLabel . FILTER(LANG(?platformLabel) = ""en"") }}
+              OPTIONAL {{ ?item wdt:P136 ?genre . ?genre rdfs:label ?genreLabel . FILTER(LANG(?genreLabel) = ""en"") }}
+              OPTIONAL {{ ?item wdt:P404 ?mode . ?mode rdfs:label ?modeLabel . FILTER(LANG(?modeLabel) = ""en"") }}
               OPTIONAL {{ ?item wdt:P154 ?logo . }}
               OPTIONAL {{ ?item wdt:P18 ?image . }}
               OPTIONAL {{ ?item schema:description ?description . FILTER(LANG(?description) = ""en"") }}
               
               SERVICE wikibase:label {{ bd:serviceParam wikibase:language ""en"". }}
             }}
+            GROUP BY ?item ?itemLabel
             LIMIT 1
         ";
     }
@@ -56,20 +69,22 @@ public class GameMetadataProvider : WikidataSparqlClient
         var image = GetBindingString(result, "image");
         metadata.PosterUrl = string.IsNullOrEmpty(logo) ? (string.IsNullOrEmpty(image) ? null : image) : logo;
 
-        var genre = GetBindingString(result, "genreLabel");
-        if (!string.IsNullOrEmpty(genre))
-            metadata.Genres = new List<string> { genre };
+        // Parse aggregated genres (comma-separated) into list
+        var genres = GetBindingString(result, "genres");
+        if (!string.IsNullOrEmpty(genres))
+            metadata.Genres = genres.Split(", ", StringSplitOptions.RemoveEmptyEntries).ToList();
 
-        var platform = GetBindingString(result, "platformLabel");
-        var gameMode = GetBindingString(result, "modeLabel");
+        // Parse aggregated platforms and game modes
+        var platforms = GetBindingString(result, "platforms");
+        var gameModes = GetBindingString(result, "modes");
 
-        if (!string.IsNullOrEmpty(platform) || !string.IsNullOrEmpty(gameMode))
+        if (!string.IsNullOrEmpty(platforms) || !string.IsNullOrEmpty(gameModes))
         {
             metadata.Extra = new Dictionary<string, JsonElement>();
-            if (!string.IsNullOrEmpty(platform))
-                metadata.Extra["platform"] = JsonSerializer.SerializeToElement(platform);
-            if (!string.IsNullOrEmpty(gameMode))
-                metadata.Extra["gameMode"] = JsonSerializer.SerializeToElement(gameMode);
+            if (!string.IsNullOrEmpty(platforms))
+                metadata.Extra["platform"] = JsonSerializer.SerializeToElement(platforms);
+            if (!string.IsNullOrEmpty(gameModes))
+                metadata.Extra["gameMode"] = JsonSerializer.SerializeToElement(gameModes);
         }
 
         return metadata;

@@ -2,6 +2,7 @@ using SoftMedia.Server.Models;
 using SoftMedia.Server.Helpers;
 using System.Text.Json;
 using SoftMedia.Server.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Media;
@@ -21,6 +22,7 @@ public class MetadataAggregator : IMetadataAggregator
     private readonly IImageUrlExtractorService _imageUrlExtractor;
     private readonly ITvMetadataEnricher _tvMetadataEnricher;
     private readonly IMusicMetadataResolver _musicMetadataResolver;
+    private readonly AppDbContext _dbContext;
     private readonly ILogger<MetadataAggregator> _logger;
 
     public MetadataAggregator(
@@ -30,6 +32,7 @@ public class MetadataAggregator : IMetadataAggregator
         IImageUrlExtractorService imageUrlExtractor,
         ITvMetadataEnricher tvMetadataEnricher,
         IMusicMetadataResolver musicMetadataResolver,
+        AppDbContext dbContext,
         ILogger<MetadataAggregator> logger)
     {
         _providers = providers;
@@ -38,6 +41,7 @@ public class MetadataAggregator : IMetadataAggregator
         _imageUrlExtractor = imageUrlExtractor;
         _tvMetadataEnricher = tvMetadataEnricher;
         _musicMetadataResolver = musicMetadataResolver;
+        _dbContext = dbContext;
         _logger = logger;
     }
 
@@ -86,11 +90,8 @@ public class MetadataAggregator : IMetadataAggregator
                             existing[kvp.Key] = kvp.Value;
                         }
                         
-                        // Re-serialize
+                        // Re-serialize merged dictionary — result object already holds correct API data
                         json = JsonSerializer.Serialize(existing);
-                        
-                        // Deserialize back into MetadataResult so downstream pipeline has updated info
-                        result = JsonSerializer.Deserialize<MetadataResult>(json, jsonOptions) ?? result;
                     }
                 }
                 catch
@@ -128,10 +129,17 @@ public class MetadataAggregator : IMetadataAggregator
         if (metadata.TvMazeId.HasValue) item.TvMazeId = metadata.TvMazeId.Value;
         if (!string.IsNullOrEmpty(metadata.MusicBrainzId)) item.MusicBrainzId = metadata.MusicBrainzId;
 
-        // Promote queryable fields
+        // Promote queryable fields (keep comma-separated string for backward compatibility)
         if (metadata.Genres != null && metadata.Genres.Count > 0) item.Genres = string.Join(", ", metadata.Genres);
         if (!string.IsNullOrEmpty(metadata.Studio)) item.Studio = metadata.Studio;
         if (!string.IsNullOrEmpty(metadata.Director)) item.Director = metadata.Director;
+
+        // Persist normalized genres and cast to relational tables
+        if (metadata.Genres != null && metadata.Genres.Count > 0)
+            await PersistGenresAsync(item, metadata.Genres);
+
+        if (metadata.Cast != null && metadata.Cast.Count > 0)
+            await PersistCastAsync(item, metadata.Cast);
 
         // Filtering: Only keep metadata for Seasons/Episodes that exist locally
         if (item.Type == MediaType.Series)
@@ -148,12 +156,158 @@ public class MetadataAggregator : IMetadataAggregator
         // Process images
         bool imagesEnqueued = await _imageUrlExtractor.ExtractAndQueueAsync(item, metadata);
 
-        // Update MetadataJson to reflect removed remote URLs
+        // Re-serialize the MetadataResult (with image URLs now stripped) and MERGE
+        // into the existing MetadataJson to preserve scanner-injected keys (e.g. "author"
+        // from BookScanner, "hasEmbeddedArt" from IMediaAnalysisService).
         var jsonOptions = new JsonSerializerOptions 
         { 
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         };
-        item.MetadataJson = JsonSerializer.Serialize(metadata, jsonOptions);
+        var updatedResultJson = JsonSerializer.Serialize(metadata, jsonOptions);
+
+        if (!string.IsNullOrEmpty(item.MetadataJson))
+        {
+            try
+            {
+                var existing = MetadataJsonHelper.Parse(item.MetadataJson);
+                var updated = JsonSerializer.Deserialize<Dictionary<string, object>>(updatedResultJson);
+
+                if (existing != null && updated != null)
+                {
+                    // Merge: updated values (with stripped URLs) win, but existing keys are preserved
+                    foreach (var kvp in updated)
+                    {
+                        existing[kvp.Key] = kvp.Value;
+                    }
+                    item.MetadataJson = JsonSerializer.Serialize(existing);
+                }
+                else
+                {
+                    item.MetadataJson = updatedResultJson;
+                }
+            }
+            catch
+            {
+                item.MetadataJson = updatedResultJson;
+            }
+        }
+        else
+        {
+            item.MetadataJson = updatedResultJson;
+        }
+    }
+
+    /// <summary>
+    /// Persist genre data to the normalized Genre/MediaItemGenre tables.
+    /// Uses "get or create" pattern for Genre entities.
+    /// </summary>
+    private async Task PersistGenresAsync(MediaItem item, List<string> genreNames)
+    {
+        try
+        {
+            // Remove existing genre associations for this item
+            var existingAssociations = await _dbContext.MediaItemGenres
+                .Where(mg => mg.MediaItemId == item.Id)
+                .ToListAsync();
+            _dbContext.MediaItemGenres.RemoveRange(existingAssociations);
+
+            foreach (var genreName in genreNames)
+            {
+                var trimmedName = genreName.Trim();
+                if (string.IsNullOrEmpty(trimmedName)) continue;
+
+                // Get or create Genre entity
+                var genre = await _dbContext.Genres
+                    .FirstOrDefaultAsync(g => g.Name == trimmedName);
+
+                if (genre == null)
+                {
+                    genre = new Genre { Name = trimmedName };
+                    _dbContext.Genres.Add(genre);
+                    await _dbContext.SaveChangesAsync();
+                }
+
+                // Create junction entry (ignore duplicates)
+                var exists = await _dbContext.MediaItemGenres
+                    .AnyAsync(mg => mg.MediaItemId == item.Id && mg.GenreId == genre.Id);
+
+                if (!exists)
+                {
+                    _dbContext.MediaItemGenres.Add(new MediaItemGenre
+                    {
+                        MediaItemId = item.Id,
+                        GenreId = genre.Id
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist genres for {Title}", item.Title);
+        }
+    }
+
+    /// <summary>
+    /// Persist cast data to the normalized Person/MediaItemCast tables.
+    /// Uses external ID for deduplication when available, falls back to name matching.
+    /// </summary>
+    private async Task PersistCastAsync(MediaItem item, List<CastMember> castMembers)
+    {
+        try
+        {
+            // Remove existing cast associations for this item
+            var existingAssociations = await _dbContext.MediaItemCasts
+                .Where(mc => mc.MediaItemId == item.Id)
+                .ToListAsync();
+            _dbContext.MediaItemCasts.RemoveRange(existingAssociations);
+
+            for (int i = 0; i < castMembers.Count; i++)
+            {
+                var member = castMembers[i];
+                if (string.IsNullOrEmpty(member.Name)) continue;
+
+                // Get or create Person entity (prefer ExternalId dedup, fall back to name)
+                Person? person = null;
+
+                if (member.Id.HasValue && member.Id.Value > 0)
+                {
+                    person = await _dbContext.Persons
+                        .FirstOrDefaultAsync(p => p.ExternalId == member.Id.Value);
+                }
+
+                person ??= await _dbContext.Persons
+                    .FirstOrDefaultAsync(p => p.Name == member.Name);
+
+                if (person == null)
+                {
+                    person = new Person
+                    {
+                        Name = member.Name,
+                        ExternalId = member.Id,
+                        ImagePath = member.ImageUrl
+                    };
+                    _dbContext.Persons.Add(person);
+                    await _dbContext.SaveChangesAsync();
+                }
+                else if (member.Id.HasValue && !person.ExternalId.HasValue)
+                {
+                    // Update existing person with external ID if we now have it
+                    person.ExternalId = member.Id;
+                }
+
+                _dbContext.MediaItemCasts.Add(new MediaItemCast
+                {
+                    MediaItemId = item.Id,
+                    PersonId = person.Id,
+                    Character = member.Character,
+                    Order = i
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist cast for {Title}", item.Title);
+        }
     }
 }

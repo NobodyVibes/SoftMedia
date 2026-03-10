@@ -25,7 +25,8 @@ public class ImageController : ControllerBase
         "upload.wikimedia.org",
         "commons.wikimedia.org",
         "m.media-amazon.com",
-        "ia.media-imdb.com"
+        "ia.media-imdb.com",
+        "covers.openlibrary.org"
     };
     
     // Allowed content types

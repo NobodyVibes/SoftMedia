@@ -4,6 +4,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Metadata;
 
 namespace SoftMedia.Server.Services.Scanning;
@@ -13,6 +14,8 @@ namespace SoftMedia.Server.Services.Scanning;
 /// </summary>
 public class GameScanner : BaseMediaScanner
 {
+    private readonly IMediaAnalysisService _mediaAnalysisService;
+
     public override LibraryType SupportedType => LibraryType.Game;
     public override string[] SupportedExtensions => SoftMedia.Server.Constants.MediaExtensions.Game;
     public override string DisplayName => "Game Scanner";
@@ -21,16 +24,18 @@ public class GameScanner : BaseMediaScanner
         IServiceScopeFactory scopeFactory,
         ILogger<GameScanner> logger,
         IMediaNotificationService notificationService,
+        IMediaAnalysisService mediaAnalysisService,
         IMetadataQueue metadataQueue)
         : base(scopeFactory, logger, notificationService, metadataQueue)
     {
+        _mediaAnalysisService = mediaAnalysisService;
     }
 
     /// <summary>
     /// Process a single file as a game.
     /// </summary>
 
-    protected override Task<ScanOperationResult> ProcessFileAsync(
+    protected override async Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
         string filePath,
         MediaItem? existing,
@@ -64,9 +69,13 @@ public class GameScanner : BaseMediaScanner
             {
                 context.MediaItems.Add(game);
                 
+                // Delegate local file analysis (ROM headers, file metadata)
+                var refreshMode = MetadataRefreshMode.Full;
+                await _mediaAnalysisService.AnalyzeAsync(game, filePath, refreshMode, cancellationToken);
+
                 // Enqueue for background enrichment via Base Scanner
                 _logger.LogDebug("[GameScanner] Added game: {Title} ({Year})", title, year);
-                return Task.FromResult(new ScanOperationResult(ScanResult.New, game.Id, EnqueueMetadata: true));
+                return new ScanOperationResult(ScanResult.New, game.Id, EnqueueMetadata: true);
             }
             else
             {
@@ -76,19 +85,19 @@ public class GameScanner : BaseMediaScanner
                 if (needsEnrichment)
                 {
                     _logger.LogDebug("[GameScanner] Queued game metadata enrichment: {Title}", title);
-                    return Task.FromResult(new ScanOperationResult(ScanResult.Updated, game.Id, EnqueueMetadata: true));
+                    return new ScanOperationResult(ScanResult.Updated, game.Id, EnqueueMetadata: true);
                 }
                 else
                 {
                     _logger.LogDebug("[GameScanner] Updated game: {Title}", title);
-                    return Task.FromResult(new ScanOperationResult(ScanResult.Updated, game.Id, EnqueueMetadata: false));
+                    return new ScanOperationResult(ScanResult.Updated, game.Id, EnqueueMetadata: false);
                 }
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing game file {Path}", filePath);
-            return Task.FromResult(new ScanOperationResult(ScanResult.Skipped));
+            return new ScanOperationResult(ScanResult.Skipped);
         }
     }
 

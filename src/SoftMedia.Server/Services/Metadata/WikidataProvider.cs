@@ -7,6 +7,7 @@ namespace SoftMedia.Server.Services.Metadata;
 /// <summary>
 /// Wikidata SPARQL provider for movie metadata.
 /// Searches Wikidata for films (Q11424), with optional cached IMDb ID shortcut.
+/// Uses GROUP_CONCAT for multi-valued properties (genre, director) to aggregate all values.
 /// </summary>
 public class WikidataProvider : WikidataSparqlClient
 {
@@ -33,20 +34,31 @@ public class WikidataProvider : WikidataSparqlClient
             itemSelector = BuildEntitySearchSelector(item.Title, "Q11424");
         }
 
+        // GROUP_CONCAT aggregates multi-valued properties (genre, director) into comma-separated strings.
+        // GROUP BY on single-valued properties ensures one row per film.
         return $@"
-            SELECT DISTINCT ?item ?itemLabel ?year ?directorLabel ?genreLabel ?mpaaLabel ?description ?poster ?image WHERE {{
+            SELECT ?item ?itemLabel
+                   (SAMPLE(?year) AS ?year)
+                   (GROUP_CONCAT(DISTINCT ?directorLabel; SEPARATOR="", "") AS ?directors)
+                   (GROUP_CONCAT(DISTINCT ?genreLabel; SEPARATOR="", "") AS ?genres)
+                   (SAMPLE(?mpaaLabel) AS ?mpaaLabel)
+                   (SAMPLE(?description) AS ?description)
+                   (SAMPLE(?poster) AS ?poster)
+                   (SAMPLE(?image) AS ?image)
+            WHERE {{
               {itemSelector}
               
               OPTIONAL {{ ?item wdt:P577 ?pubDate . BIND(YEAR(?pubDate) AS ?year) }}
-              OPTIONAL {{ ?item wdt:P57 ?director . }}
-              OPTIONAL {{ ?item wdt:P136 ?genre . }}
-              OPTIONAL {{ ?item wdt:P1657 ?mpaa . }}
+              OPTIONAL {{ ?item wdt:P57 ?director . ?director rdfs:label ?directorLabel . FILTER(LANG(?directorLabel) = ""en"") }}
+              OPTIONAL {{ ?item wdt:P136 ?genre . ?genre rdfs:label ?genreLabel . FILTER(LANG(?genreLabel) = ""en"") }}
+              OPTIONAL {{ ?item wdt:P1657 ?mpaa . ?mpaa rdfs:label ?mpaaLabel . FILTER(LANG(?mpaaLabel) = ""en"") }}
               OPTIONAL {{ ?item schema:description ?description . FILTER(LANG(?description) = ""en"") }}
               OPTIONAL {{ ?item wdt:P3383 ?poster . }}
               OPTIONAL {{ ?item wdt:P18 ?image . }}
               
               SERVICE wikibase:label {{ bd:serviceParam wikibase:language ""en"". }}
             }}
+            GROUP BY ?item ?itemLabel
             LIMIT 1
         ";
     }
@@ -59,11 +71,16 @@ public class WikidataProvider : WikidataSparqlClient
             metadata.Year = year;
 
         metadata.Description = GetBindingString(result, "description");
-        metadata.Director = GetBindingString(result, "directorLabel");
+
+        // Parse aggregated directors (comma-separated)
+        var directors = GetBindingString(result, "directors");
+        if (!string.IsNullOrEmpty(directors))
+            metadata.Director = directors;
         
-        var genre = GetBindingString(result, "genreLabel");
-        if (!string.IsNullOrEmpty(genre))
-            metadata.Genres = new List<string> { genre };
+        // Parse aggregated genres (comma-separated) into list
+        var genres = GetBindingString(result, "genres");
+        if (!string.IsNullOrEmpty(genres))
+            metadata.Genres = genres.Split(", ", StringSplitOptions.RemoveEmptyEntries).ToList();
 
         metadata.ContentRating = GetBindingString(result, "mpaaLabel");
 

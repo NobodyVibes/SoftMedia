@@ -93,6 +93,8 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
                     localPath = await imageCacheService.CacheSeriesPosterAsync(request.MediaId, request.RemoteUrl);
                 else if (request.Type == MediaType.Game)
                     localPath = await imageCacheService.CacheGamePosterAsync(request.MediaId, request.RemoteUrl);
+                else if (request.Type == MediaType.Book)
+                    localPath = await imageCacheService.CacheBookPosterAsync(request.MediaId, request.RemoteUrl);
             }
             else if (request.ImageType == ImageType.AlbumCover)
             {

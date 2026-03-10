@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
@@ -7,28 +6,23 @@ using SoftMedia.Server.Services.Abstractions;
 
 namespace SoftMedia.Server.Services.Metadata;
 
-public class RetryItem
-{
-    public Guid MediaItemId { get; set; }
-    public LibraryType LibraryType { get; set; }
-    public int RetryCount { get; set; }
-    public DateTime NextAttempt { get; set; }
-}
-
 public interface IMetadataRetryService
 {
-    void EnqueueRetry(Guid mediaItemId, LibraryType libraryType, int previousRetries);
+    Task EnqueueRetryAsync(Guid mediaItemId, LibraryType libraryType, int previousRetries);
 }
 
+/// <summary>
+/// Persistent metadata retry service backed by the MetadataRetries SQLite table.
+/// Survives application restarts unlike the previous ConcurrentQueue implementation.
+/// </summary>
 public class MetadataRetryService : BackgroundService, IMetadataRetryService
 {
-    private readonly ConcurrentQueue<RetryItem> _retryQueue = new();
     private readonly ILogger<MetadataRetryService> _logger;
     private readonly IServiceProvider _serviceProvider;
-    private readonly int _maxRetries = 3;
+    private const int MaxRetries = 3;
 
     // Retry delays: 1 min, 5 min, 30 min, 4 hours
-    private readonly TimeSpan[] _backoffDelays = new[]
+    private static readonly TimeSpan[] BackoffDelays =
     {
         TimeSpan.FromMinutes(1),
         TimeSpan.FromMinutes(5),
@@ -42,92 +36,115 @@ public class MetadataRetryService : BackgroundService, IMetadataRetryService
         _serviceProvider = serviceProvider;
     }
 
-    public void EnqueueRetry(Guid mediaItemId, LibraryType libraryType, int previousRetries)
+    /// <summary>
+    /// Persist a retry entry to the database with exponential backoff.
+    /// </summary>
+    public async Task EnqueueRetryAsync(Guid mediaItemId, LibraryType libraryType, int previousRetries)
     {
-        if (previousRetries >= _maxRetries)
+        if (previousRetries >= MaxRetries)
         {
             _logger.LogWarning("Max retries reached for MediaItem {Id}. Moving to exhausted state.", mediaItemId);
-            _ = MarkAsExhaustedAsync(mediaItemId, libraryType);
+            await MarkAsExhaustedAsync(mediaItemId);
             return;
         }
 
-        var delay = _backoffDelays[Math.Min(previousRetries, _backoffDelays.Length - 1)];
-        var retryItem = new RetryItem
+        var delay = BackoffDelays[Math.Min(previousRetries, BackoffDelays.Length - 1)];
+        var retry = new MetadataRetry
         {
             MediaItemId = mediaItemId,
             LibraryType = libraryType,
             RetryCount = previousRetries + 1,
-            NextAttempt = DateTime.UtcNow.Add(delay)
+            NextAttempt = DateTime.UtcNow.Add(delay),
+            CreatedAt = DateTime.UtcNow
         };
 
-        _retryQueue.Enqueue(retryItem);
-        _logger.LogInformation("Enqueued retry for MediaItem {Id} at {Time} (Attempt {Attempt})", 
-            mediaItemId, retryItem.NextAttempt, retryItem.RetryCount);
+        try
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            // Avoid duplicate entries for the same MediaItem
+            var existing = await dbContext.MetadataRetries
+                .FirstOrDefaultAsync(r => r.MediaItemId == mediaItemId);
+
+            if (existing != null)
+            {
+                existing.RetryCount = retry.RetryCount;
+                existing.NextAttempt = retry.NextAttempt;
+            }
+            else
+            {
+                dbContext.MetadataRetries.Add(retry);
+            }
+
+            await dbContext.SaveChangesAsync();
+            _logger.LogInformation("Enqueued persistent retry for MediaItem {Id} at {Time} (Attempt {Attempt})",
+                mediaItemId, retry.NextAttempt, retry.RetryCount);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to persist retry entry for MediaItem {Id}", mediaItemId);
+        }
     }
 
+    /// <summary>
+    /// Background loop: every 30 seconds, query the DB for due retries and re-queue them.
+    /// </summary>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Short startup delay to let the app initialize
+        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
 
         while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
         {
-            ProcessRetries();
+            await ProcessRetriesAsync();
         }
     }
 
-    private void ProcessRetries()
-    {
-        var now = DateTime.UtcNow;
-        var pending = new List<RetryItem>();
-        var ready = new List<RetryItem>();
-
-        // Dequeue everything and sift
-        while (_retryQueue.TryDequeue(out var item))
-        {
-            if (now >= item.NextAttempt)
-            {
-                ready.Add(item);
-            }
-            else
-            {
-                pending.Add(item);
-            }
-        }
-
-        // Put pending back
-        foreach (var p in pending)
-        {
-            _retryQueue.Enqueue(p);
-        }
-
-        // Requeue ready items to MetadataQueueService
-        if (ready.Count > 0)
-        {
-            _ = RequeueItemsAsync(ready);
-        }
-    }
-
-    private async Task RequeueItemsAsync(List<RetryItem> readyItems)
+    /// <summary>
+    /// Query MetadataRetries for entries where NextAttempt <= now, re-queue them, and delete the rows.
+    /// </summary>
+    private async Task ProcessRetriesAsync()
     {
         try
         {
             using var scope = _serviceProvider.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var queueService = scope.ServiceProvider.GetRequiredService<IMetadataQueue>();
+
+            var now = DateTime.UtcNow;
+            var readyItems = await dbContext.MetadataRetries
+                .Where(r => r.NextAttempt <= now)
+                .ToListAsync();
+
+            if (readyItems.Count == 0)
+                return;
 
             foreach (var item in readyItems)
             {
-                _logger.LogInformation("Re-queuing MediaItem {Id} to main metadata queue (Attempt {Attempt})", 
+                _logger.LogInformation("Re-queuing MediaItem {Id} to main metadata queue (Attempt {Attempt})",
                     item.MediaItemId, item.RetryCount);
                 await queueService.EnqueueMetadataRefreshAsync(item.MediaItemId, item.LibraryType, retryCount: item.RetryCount);
             }
+
+            // Remove processed entries
+            dbContext.MetadataRetries.RemoveRange(readyItems);
+            await dbContext.SaveChangesAsync();
+
+            _logger.LogInformation("Processed {Count} metadata retries", readyItems.Count);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error re-queuing retry items.");
+            _logger.LogError(ex, "Error processing metadata retries.");
         }
     }
 
-    private async Task MarkAsExhaustedAsync(Guid mediaItemId, LibraryType libraryType)
+    /// <summary>
+    /// Mark a MediaItem as retry-exhausted in its MetadataJson.
+    /// </summary>
+    private async Task MarkAsExhaustedAsync(Guid mediaItemId)
     {
         try
         {
@@ -137,7 +154,6 @@ public class MetadataRetryService : BackgroundService, IMetadataRetryService
 
             if (item != null)
             {
-                // Parse existing JSON
                 Dictionary<string, object> metadataDict = new();
                 if (!string.IsNullOrEmpty(item.MetadataJson))
                 {
@@ -151,7 +167,13 @@ public class MetadataRetryService : BackgroundService, IMetadataRetryService
 
                 metadataDict["retryExhausted"] = true;
                 item.MetadataJson = JsonSerializer.Serialize(metadataDict);
-                
+
+                // Also remove any pending retry entry for this item
+                var pendingRetry = await dbContext.MetadataRetries
+                    .FirstOrDefaultAsync(r => r.MediaItemId == mediaItemId);
+                if (pendingRetry != null)
+                    dbContext.MetadataRetries.Remove(pendingRetry);
+
                 await dbContext.SaveChangesAsync();
                 _logger.LogInformation("Marked MediaItem {Id} as retry-exhausted.", mediaItemId);
             }

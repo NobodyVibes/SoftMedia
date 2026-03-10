@@ -11,6 +11,7 @@ public interface IImageCacheService
     Task<string> CacheMoviePosterAsync(Guid movieId, string remoteUrl);
     Task<string> CacheAlbumCoverAsync(Guid albumId, string remoteUrl);
     Task<string> CacheGamePosterAsync(Guid gameId, string remoteUrl);
+    Task<string> CacheBookPosterAsync(Guid bookId, string remoteUrl);
     void DeleteImageForMediaItem(Guid mediaItemId, Models.MediaType type);
     void DeleteImagesForLibrary(IEnumerable<(Guid Id, Models.MediaType Type)> mediaItems);
     void DeleteCastImagesForPersonIds(IEnumerable<int> personIds);

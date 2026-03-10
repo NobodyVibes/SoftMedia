@@ -179,7 +179,7 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
                 var retryService = scope.ServiceProvider.GetService<IMetadataRetryService>();
                 if (retryService != null)
                 {
-                    retryService.EnqueueRetry(item.MediaId, item.Type, item.RetryCount);
+                    await retryService.EnqueueRetryAsync(item.MediaId, item.Type, item.RetryCount);
                 }
             }
 
@@ -194,7 +194,7 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
             var retryService = scope.ServiceProvider.GetService<IMetadataRetryService>();
             if (retryService != null)
             {
-                retryService.EnqueueRetry(item.MediaId, item.Type, item.RetryCount);
+                await retryService.EnqueueRetryAsync(item.MediaId, item.Type, item.RetryCount);
             }
         }
     }

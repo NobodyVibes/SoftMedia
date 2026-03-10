@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using SoftMedia.Server.Data;
 
@@ -10,9 +11,11 @@ using SoftMedia.Server.Data;
 namespace SoftMedia.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260307194357_NormalizeGenresAndCast")]
+    partial class NormalizeGenresAndCast
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.2");
@@ -367,34 +370,6 @@ namespace SoftMedia.Server.Migrations
                     b.ToTable("MediaItemGenres");
                 });
 
-            modelBuilder.Entity("SoftMedia.Server.Models.MetadataRetry", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("LibraryType")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<Guid>("MediaItemId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("NextAttempt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("RetryCount")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("MediaItemId");
-
-                    b.ToTable("MetadataRetries");
-                });
-
             modelBuilder.Entity("SoftMedia.Server.Models.Person", b =>
                 {
                     b.Property<int>("Id")
@@ -712,17 +687,6 @@ namespace SoftMedia.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("Genre");
-
-                    b.Navigation("MediaItem");
-                });
-
-            modelBuilder.Entity("SoftMedia.Server.Models.MetadataRetry", b =>
-                {
-                    b.HasOne("SoftMedia.Server.Models.MediaItem", "MediaItem")
-                        .WithMany()
-                        .HasForeignKey("MediaItemId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
 
                     b.Navigation("MediaItem");
                 });

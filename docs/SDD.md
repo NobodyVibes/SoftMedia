@@ -230,7 +230,7 @@ To ensure ethical usage and prevent incorrect API calls, the system **MUST** enf
 | Library Type | Allowed Provider |
 | :--- | :--- |
 | **TV Shows** | TVMaze |
-| **Movies** | Wikidata |
+| **Movies** | Wikidata, OMDb |
 | **Music** | MusicBrainz |
 | **Books** | Open Library |
 | **Games** | Wikidata |

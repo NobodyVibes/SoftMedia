@@ -370,8 +370,7 @@ export default memo(function MediaCard({ item, libraryType }: MediaCardProps) {
         );
     }
 
-    const isBook = libraryType === 'Book';
-    const linkTarget = isBook ? `/read/${item.id}` : `/media/${item.id}`;
+    const linkTarget = `/media/${item.id}`;
 
     return (
         <Link to={linkTarget} className="block group/card relative hover:z-50 h-full">

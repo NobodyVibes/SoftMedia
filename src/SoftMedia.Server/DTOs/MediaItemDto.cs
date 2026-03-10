@@ -326,7 +326,10 @@ public class MediaItemDto
             // Fallback for embedded art if flag is present (and no other poster was found)
             if (string.IsNullOrEmpty(dto.PosterPath) && dto.Metadata != null && dto.Metadata.ContainsKey("hasEmbeddedArt"))
             {
-                 dto.PosterPath = $"/api/v1/audio/{dto.Id}/cover";
+                if (item.Type == MediaType.Audio || item.Type == MediaType.Album)
+                {
+                    dto.PosterPath = $"/api/v1/audio/{dto.Id}/cover";
+                }
             }
 
             // Fallback to CoverArtPath for music items (albums, artists)

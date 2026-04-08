@@ -99,11 +99,12 @@ public class TvScanner : BaseMediaScanner
     /// </summary>
     protected override async Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
-        string filePath,
+        FileDiscoveryResult file,
         MediaItem? existing,
         Library library,
         CancellationToken cancellationToken)
     {
+        var filePath = file.Path;
         try
         {
             // ... (keep existing parsing logic omitted for brevity, focusing on signature/return) ...
@@ -172,8 +173,8 @@ public class TvScanner : BaseMediaScanner
             episode.SeasonId = season.Id;
             episode.SeasonNumber = seasonNum;
             episode.EpisodeNumber = episodeNum;
-            episode.Size = new FileInfo(filePath).Length;
-            episode.DateModified = File.GetLastWriteTimeUtc(filePath);
+            episode.Size = file.Size;
+            episode.DateModified = file.LastWriteUtc;
 
             // Delegate technical analysis to MediaAnalysisService (Smart Probe)
             var refreshMode = isNew ? MetadataRefreshMode.Full : MetadataRefreshMode.Missing;
@@ -356,19 +357,34 @@ public class TvScanner : BaseMediaScanner
         }
     }
 
+    // Cache parsed series MetadataJson to avoid O(N) re-parsing per episode
+    private readonly ConcurrentDictionary<Guid, Dictionary<(int season, int episode), JsonElement>?> _parsedEpisodeCache = new();
+
     /// <summary>
-    /// Get or parse the series MetadataJson, using a per-scan cache to avoid
-    /// redundant parsing for every episode in the same series.
+    /// Get or parse the series episodes into an O(1) lookup dictionary.
+    /// Uses a per-scan cache to avoid redundant parsing for every episode.
     /// </summary>
-    private Dictionary<string, object>? GetCachedSeriesMetadata(MediaItem series)
+    private Dictionary<(int season, int episode), JsonElement>? GetCachedEpisodes(MediaItem series)
     {
-        return _parsedSeriesMetadataCache.GetOrAdd(series.Id, _ =>
+        return _parsedEpisodeCache.GetOrAdd(series.Id, _ =>
         {
             if (string.IsNullOrEmpty(series.MetadataJson))
                 return null;
             try
             {
-                return MetadataJsonHelper.Parse(series.MetadataJson);
+                var parsedMeta = MetadataJsonHelper.Parse(series.MetadataJson);
+                var dict = new Dictionary<(int season, int episode), JsonElement>();
+
+                if (parsedMeta != null && parsedMeta.TryGetValue("episodes", out var eObj) && eObj is JsonElement eArr)
+                {
+                    foreach (var ep in eArr.EnumerateArray())
+                    {
+                        int s = ep.TryGetProperty("season", out var _s) ? _s.GetInt32() : 0;
+                        int e = ep.TryGetProperty("episode", out var _e) ? _e.GetInt32() : 0;
+                        dict[(s, e)] = ep;
+                    }
+                }
+                return dict;
             }
             catch
             {
@@ -379,35 +395,20 @@ public class TvScanner : BaseMediaScanner
 
     /// <summary>
     /// Get episode title from series metadata (TVMaze).
-    /// Uses cached parsed metadata to avoid re-parsing per episode.
+    /// Uses cached O(1) lookup to avoid re-parsing and linear scans per episode.
     /// </summary>
     private string? GetEpisodeTitleFromMetadata(MediaItem series, int seasonNum, int episodeNum)
     {
-        var seriesMeta = GetCachedSeriesMetadata(series);
-        if (seriesMeta == null)
+        var episodes = GetCachedEpisodes(series);
+        if (episodes == null)
             return null;
 
-        try
+        if (episodes.TryGetValue((seasonNum, episodeNum), out var ep))
         {
-            if (seriesMeta.TryGetValue("episodes", out var eObj) && 
-                eObj is JsonElement eArr)
+            if (ep.TryGetProperty("name", out var name) && name.ValueKind != JsonValueKind.Null)
             {
-                foreach (var ep in eArr.EnumerateArray())
-                {
-                    int s = ep.TryGetProperty("season", out var _s) ? _s.GetInt32() : 0;
-                    int e = ep.TryGetProperty("episode", out var _e) ? _e.GetInt32() : 0;
-
-                    if (s == seasonNum && e == episodeNum)
-                    {
-                        if (ep.TryGetProperty("name", out var name) && name.ValueKind != JsonValueKind.Null)
-                            return name.GetString();
-                    }
-                }
+                return name.GetString();
             }
-        }
-        catch
-        {
-            // Ignore parsing errors
         }
 
         return null;
@@ -415,62 +416,52 @@ public class TvScanner : BaseMediaScanner
 
     /// <summary>
     /// Populate episode metadata (still, summary, airdate) from series metadata.
-    /// Uses cached parsed metadata to avoid re-parsing per episode.
+    /// Uses cached O(1) lookup to avoid re-parsing and linear scans per episode.
     /// </summary>
     private void PopulateEpisodeMetadata(MediaItem episode, MediaItem series, int seasonNum, int episodeNum)
     {
-        var seriesMeta = GetCachedSeriesMetadata(series);
-        if (seriesMeta == null)
+        var episodes = GetCachedEpisodes(series);
+        if (episodes == null)
             return;
 
         try
         {
-            if (!seriesMeta.TryGetValue("episodes", out var eObj) || eObj is not JsonElement eArr)
-                return;
-
-            foreach (var ep in eArr.EnumerateArray())
+            if (episodes.TryGetValue((seasonNum, episodeNum), out var ep))
             {
-                int s = ep.TryGetProperty("season", out var _s) ? _s.GetInt32() : 0;
-                int e = ep.TryGetProperty("episode", out var _e) ? _e.GetInt32() : 0;
+                var epMeta = !string.IsNullOrEmpty(episode.MetadataJson) 
+                     ? MetadataJsonHelper.Parse(episode.MetadataJson)
+                     : new Dictionary<string, object>();
 
-                if (s == seasonNum && e == episodeNum)
+                // Extract still image URL
+                if (ep.TryGetProperty("still", out var stillProp) && stillProp.ValueKind != JsonValueKind.Null)
                 {
-                    var epMeta = !string.IsNullOrEmpty(episode.MetadataJson) 
-                         ? MetadataJsonHelper.Parse(episode.MetadataJson)
-                         : new Dictionary<string, object>();
+                    var stillUrl = stillProp.GetString();
+                    if (!string.IsNullOrEmpty(stillUrl))
+                        epMeta["still"] = stillUrl;
+                }
 
-                    // Extract still image URL
-                    if (ep.TryGetProperty("still", out var stillProp) && stillProp.ValueKind != JsonValueKind.Null)
+                // Extract summary/description
+                if (ep.TryGetProperty("summary", out var summaryProp) && summaryProp.ValueKind != JsonValueKind.Null)
+                {
+                    var summary = summaryProp.GetString();
+                    if (!string.IsNullOrEmpty(summary))
                     {
-                        var stillUrl = stillProp.GetString();
-                        if (!string.IsNullOrEmpty(stillUrl))
-                            epMeta["still"] = stillUrl;
+                        epMeta["summary"] = summary;
+                        episode.Overview = summary;
                     }
+                }
 
-                    // Extract summary/description
-                    if (ep.TryGetProperty("summary", out var summaryProp) && summaryProp.ValueKind != JsonValueKind.Null)
-                    {
-                        var summary = summaryProp.GetString();
-                        if (!string.IsNullOrEmpty(summary))
-                        {
-                            epMeta["summary"] = summary;
-                            episode.Overview = summary;
-                        }
-                    }
+                // Extract airdate
+                if (ep.TryGetProperty("airdate", out var airdateProp) && airdateProp.ValueKind != JsonValueKind.Null)
+                {
+                    var airdate = airdateProp.GetString();
+                    if (!string.IsNullOrEmpty(airdate))
+                        epMeta["airdate"] = airdate;
+                }
 
-                    // Extract airdate
-                    if (ep.TryGetProperty("airdate", out var airdateProp) && airdateProp.ValueKind != JsonValueKind.Null)
-                    {
-                        var airdate = airdateProp.GetString();
-                        if (!string.IsNullOrEmpty(airdate))
-                            epMeta["airdate"] = airdate;
-                    }
-
-                    if (epMeta.Count > 0)
-                    {
-                        episode.MetadataJson = JsonSerializer.Serialize(epMeta);
-                    }
-                    break;
+                if (epMeta.Count > 0)
+                {
+                    episode.MetadataJson = JsonSerializer.Serialize(epMeta);
                 }
             }
         }

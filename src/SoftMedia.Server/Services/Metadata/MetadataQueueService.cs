@@ -22,6 +22,9 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
     // Track dirty state of libraries for cache update
     private readonly ConcurrentDictionary<Guid, bool> _dirtyLibraries = new();
 
+    // Deduplication guard — prevents the same media item from being enqueued multiple times
+    private readonly ConcurrentDictionary<Guid, byte> _pendingIds = new();
+
     public MetadataQueueService(
         IServiceScopeFactory scopeFactory,
         IMediaNotificationService notificationService,
@@ -84,6 +87,13 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
 
     public async Task EnqueueMetadataRefreshAsync(Guid mediaId, LibraryType type, bool refreshImages = true, int retryCount = 0)
     {
+        // Deduplication: skip if this item is already pending processing
+        if (!_pendingIds.TryAdd(mediaId, 0))
+        {
+            _logger.LogDebug("Skipping duplicate metadata enqueue for {MediaId}", mediaId);
+            return;
+        }
+
         var channel = GetChannelForType(type);
         await channel.Writer.WriteAsync(new MetadataQueueItem(mediaId, type, refreshImages, retryCount));
     }
@@ -138,18 +148,18 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
                 {
                     try
                     {
-                        await ProcessItemAsync(item, token);
+                        await ProcessItemAsync(item, channelName, token);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error processing item {Id} in channel {Channel}", item.MediaId, channelName);
+                        _logger.LogError(ex, "[{Channel}] Error processing item {Id}", channelName, item.MediaId);
                     }
                 });
         }
         catch (OperationCanceledException) { }
     }
 
-    private async Task ProcessItemAsync(MetadataQueueItem item, CancellationToken ct)
+    private async Task ProcessItemAsync(MetadataQueueItem item, string channelName, CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
         var aggregator = scope.ServiceProvider.GetRequiredService<IMetadataAggregator>();
@@ -163,6 +173,8 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
                 _logger.LogDebug("Metadata queue item {Id} not found in DB (likely deleted during rescan)", item.MediaId);
                 return;
             }
+            // Snapshot MetadataJson before enrichment to detect if anything changed
+            var metadataBefore = mediaItem.MetadataJson;
 
             // Enrich
             await aggregator.EnrichMediaItemAsync(mediaItem, item.Type, deferImageCaching: false, refreshImages: item.RefreshImages);
@@ -173,9 +185,20 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
             // Notify UI of item update
             _notificationService.NotifyItemUpdated(item.MediaId);
 
-            // If still no metadata, enqueue for retry
-            if (string.IsNullOrEmpty(mediaItem.MetadataJson) || mediaItem.MetadataJson == "{}")
+            // Retry only if enrichment produced NO change AND the item still needs enrichment.
+            // This avoids retry loops for:
+            //  - Album/Artist items with seeded MetadataJson (already have context)
+            //  - Items where the provider legitimately found no match
+            var metadataUnchanged = mediaItem.MetadataJson == metadataBefore;
+            var settingsService = scope.ServiceProvider.GetRequiredService<ISettingsService>();
+            var enrichmentMode = await settingsService.GetSettingAsync("MetadataEnrichmentMode", "Relaxed");
+            var strictMode = enrichmentMode == "Strict";
+            var stillNeedsEnrichment = MetadataEnrichmentPolicy.NeedsEnrichment(mediaItem, strictMode);
+            
+            if (metadataUnchanged && stillNeedsEnrichment)
             {
+                _logger.LogDebug("Metadata unchanged after enrichment for {Id} ({Title}), scheduling retry", 
+                    item.MediaId, mediaItem.Title);
                 var retryService = scope.ServiceProvider.GetService<IMetadataRetryService>();
                 if (retryService != null)
                 {
@@ -188,7 +211,7 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing metadata for {Id}", item.MediaId);
+            _logger.LogError(ex, "[{Channel}] Error processing metadata for {Id}", channelName, item.MediaId);
             
             // On hard exception, we also retry
             var retryService = scope.ServiceProvider.GetService<IMetadataRetryService>();
@@ -196,6 +219,12 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
             {
                 await retryService.EnqueueRetryAsync(item.MediaId, item.Type, item.RetryCount);
             }
+        }
+        finally
+        {
+            // Release dedup guard AFTER processing completes to prevent
+            // concurrent enrichment of the same item during processing.
+            _pendingIds.TryRemove(item.MediaId, out _);
         }
     }
 

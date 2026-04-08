@@ -74,18 +74,14 @@ public class GameMetadataProvider : WikidataSparqlClient
         if (!string.IsNullOrEmpty(genres))
             metadata.Genres = genres.Split(", ", StringSplitOptions.RemoveEmptyEntries).ToList();
 
-        // Parse aggregated platforms and game modes
+        // Map aggregated platforms and game modes to typed MetadataResult properties
         var platforms = GetBindingString(result, "platforms");
         var gameModes = GetBindingString(result, "modes");
 
-        if (!string.IsNullOrEmpty(platforms) || !string.IsNullOrEmpty(gameModes))
-        {
-            metadata.Extra = new Dictionary<string, JsonElement>();
-            if (!string.IsNullOrEmpty(platforms))
-                metadata.Extra["platform"] = JsonSerializer.SerializeToElement(platforms);
-            if (!string.IsNullOrEmpty(gameModes))
-                metadata.Extra["gameMode"] = JsonSerializer.SerializeToElement(gameModes);
-        }
+        if (!string.IsNullOrEmpty(platforms))
+            metadata.Platform = platforms;
+        if (!string.IsNullOrEmpty(gameModes))
+            metadata.GameMode = gameModes;
 
         return metadata;
     }

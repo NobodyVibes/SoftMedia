@@ -169,6 +169,15 @@ public class MediaItemDto
             dto.CommunityRating = item.CommunityRating;
             dto.Rating = item.ContentRating;
 
+            // Read genres exclusively from relational table
+            if (item.MediaItemGenres != null && item.MediaItemGenres.Count > 0)
+            {
+                dto.Genres = item.MediaItemGenres
+                    .Where(mg => mg.Genre != null)
+                    .Select(mg => mg.Genre!.Name)
+                    .ToList();
+            }
+
             // Fallback to MetadataJson for extra fields or if promoted fields are null (migration scenario)
             if (!string.IsNullOrEmpty(item.MetadataJson))
             {
@@ -212,42 +221,8 @@ public class MediaItemDto
                             dto.CommunityRating = imdbScore;
                         }
 
-                        if (metadata.TryGetValue("poster", out var posterObj))
-                        {
-                            var posterUrl = posterObj.ToString();
-                            if (!string.IsNullOrEmpty(posterUrl))
-                            {
-                                if (posterUrl.StartsWith("http") && !string.IsNullOrEmpty(imageProxyBaseUrl))
-                                {
-                                    dto.PosterPath = $"{imageProxyBaseUrl}?url={Uri.EscapeDataString(posterUrl)}";
-                                }
-                                else
-                                {
-                                    dto.PosterPath = posterUrl;
-                                }
-                            }
-                        }
-
-                        if (metadata.TryGetValue("backdrop", out var backdropObj))
-                        {
-                             var backdropUrl = backdropObj.ToString();
-                             if (!string.IsNullOrEmpty(backdropUrl) && backdropUrl.StartsWith("http") && !string.IsNullOrEmpty(imageProxyBaseUrl))
-                             {
-                                 dto.BackdropPath = $"{imageProxyBaseUrl}?url={Uri.EscapeDataString(backdropUrl)}";
-                             }
-                             else
-                             {
-                                 dto.BackdropPath = backdropUrl?.ToString();
-                             }
-                        }
-
                         if (metadata.TryGetValue("duration", out var durationObj)) dto.Duration = durationObj.ToString();
                         if (metadata.TryGetValue("quality", out var qualityObj)) dto.Quality = qualityObj.ToString();
-                        
-                        if (metadata.TryGetValue("genres", out var genresObj) && genresObj is System.Text.Json.JsonElement genresElement && genresElement.ValueKind == System.Text.Json.JsonValueKind.Array)
-                        {
-                            dto.Genres = genresElement.EnumerateArray().Select(x => x.ToString()).ToList();
-                        }
                         
                         // Extract credits start timecode for progress bar marker
                         if (metadata.TryGetValue("creditsStart", out var creditsStartObj))
@@ -285,78 +260,8 @@ public class MediaItemDto
                 }
             }
 
-            // Fallback to Series/Album poster if missing
-            if (string.IsNullOrEmpty(dto.PosterPath))
-            {
-                string? fallbackJson = null;
-                if (item.Series != null && !string.IsNullOrEmpty(item.Series.MetadataJson))
-                {
-                    fallbackJson = item.Series.MetadataJson;
-                }
-                else if (item.Album != null && !string.IsNullOrEmpty(item.Album.MetadataJson))
-                {
-                    fallbackJson = item.Album.MetadataJson;
-                }
-
-                if (fallbackJson != null)
-                {
-                    try 
-                    {
-                        var fallbackMeta = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(fallbackJson);
-                        if (fallbackMeta != null && fallbackMeta.TryGetValue("poster", out var posterObj))
-                        {
-                             var posterUrl = posterObj.ToString();
-                             if (!string.IsNullOrEmpty(posterUrl))
-                             {
-                                 if (posterUrl.StartsWith("http") && !string.IsNullOrEmpty(imageProxyBaseUrl))
-                                 {
-                                     dto.PosterPath = $"{imageProxyBaseUrl}?url={Uri.EscapeDataString(posterUrl)}";
-                                 }
-                                 else
-                                 {
-                                     dto.PosterPath = posterUrl;
-                                 }
-                             }
-                        }
-                    }
-                    catch {}
-                }
-            }
-
-            // Fallback for embedded art if flag is present (and no other poster was found)
-            if (string.IsNullOrEmpty(dto.PosterPath) && dto.Metadata != null && dto.Metadata.ContainsKey("hasEmbeddedArt"))
-            {
-                if (item.Type == MediaType.Audio || item.Type == MediaType.Album)
-                {
-                    dto.PosterPath = $"/api/v1/audio/{dto.Id}/cover";
-                }
-            }
-
-            // Fallback to CoverArtPath for music items (albums, artists)
-            if (string.IsNullOrEmpty(dto.PosterPath) && !string.IsNullOrEmpty(item.CoverArtPath))
-            {
-                // Use the music image endpoint which handles local files safely
-                if (item.Type == MediaType.Album)
-                {
-                    dto.PosterPath = $"/api/v1/music/album/{dto.Id}/cover";
-                }
-                else if (item.Type == MediaType.Artist)
-                {
-                    dto.PosterPath = $"/api/v1/music/artist/{dto.Id}/image";
-                }
-            }
-
-            // For albums without CoverArtPath, still try the endpoint (may have embedded or remote art)
-            if (string.IsNullOrEmpty(dto.PosterPath) && item.Type == MediaType.Album)
-            {
-                dto.PosterPath = $"/api/v1/music/album/{dto.Id}/cover";
-            }
-
-            // For audio tracks, use their album's cover art endpoint
-            if (string.IsNullOrEmpty(dto.PosterPath) && item.Type == MediaType.Audio && item.AlbumId.HasValue)
-            {
-                dto.PosterPath = $"/api/v1/music/album/{item.AlbumId}/cover";
-            }
+            dto.PosterPath = ResolvePosterPath(item, imageProxyBaseUrl, dto.Metadata);
+            dto.BackdropPath = ResolveBackdropPath(item, imageProxyBaseUrl, dto.Metadata);
 
             // Fallback for Duration if not in metadata but in technical details
             if (string.IsNullOrEmpty(dto.Duration) && item.Duration > 0)
@@ -373,5 +278,85 @@ public class MediaItemDto
             }
 
         return dto;
+    }
+
+    private static string? ResolvePosterPath(MediaItem item, string? imageProxyBaseUrl, Dictionary<string, object>? parsedMetadata)
+    {
+        string? url = item.PosterUrl;
+
+        if (string.IsNullOrEmpty(url))
+        {
+            if (item.Type == MediaType.Episode && item.Series != null)
+                url = item.Series.PosterUrl;
+            else if ((item.Type == MediaType.Audio || item.Type == MediaType.Album) && item.Album != null)
+                url = item.Album.PosterUrl;
+        }
+
+        if (string.IsNullOrEmpty(url) && parsedMetadata != null && parsedMetadata.TryGetValue("poster", out var posterObj))
+        {
+            url = posterObj?.ToString();
+        }
+
+        if (string.IsNullOrEmpty(url))
+        {
+            if (item.Series != null && !string.IsNullOrEmpty(item.Series.MetadataJson))
+            {
+                var fallbackMeta = Helpers.MetadataJsonHelper.Parse(item.Series.MetadataJson);
+                if (fallbackMeta != null && fallbackMeta.TryGetValue("poster", out var pObj))
+                    url = pObj?.ToString();
+            }
+            else if (item.Album != null && !string.IsNullOrEmpty(item.Album.MetadataJson))
+            {
+                var fallbackMeta = Helpers.MetadataJsonHelper.Parse(item.Album.MetadataJson);
+                if (fallbackMeta != null && fallbackMeta.TryGetValue("poster", out var pObj))
+                    url = pObj?.ToString();
+            }
+        }
+
+        if (!string.IsNullOrEmpty(url))
+        {
+            if (url.StartsWith("http") && !string.IsNullOrEmpty(imageProxyBaseUrl))
+                return $"{imageProxyBaseUrl}?url={Uri.EscapeDataString(url)}";
+            return url;
+        }
+
+        bool hasEmbeddedArt = parsedMetadata != null && parsedMetadata.ContainsKey("hasEmbeddedArt");
+        if (hasEmbeddedArt && (item.Type == MediaType.Audio || item.Type == MediaType.Album))
+            return $"/api/v1/audio/{item.Id}/cover";
+
+        if (!string.IsNullOrEmpty(item.CoverArtPath))
+        {
+            if (item.Type == MediaType.Album || item.Type == MediaType.Audio)
+                return $"/api/v1/music/album/{(item.AlbumId ?? item.Id)}/cover";
+            if (item.Type == MediaType.Artist)
+                return $"/api/v1/music/artist/{item.Id}/image";
+        }
+
+        if (item.Type == MediaType.Album)
+            return $"/api/v1/music/album/{item.Id}/cover";
+
+        if (item.Type == MediaType.Audio && item.AlbumId.HasValue)
+            return $"/api/v1/music/album/{item.AlbumId}/cover";
+
+        return null;
+    }
+
+    private static string? ResolveBackdropPath(MediaItem item, string? imageProxyBaseUrl, Dictionary<string, object>? parsedMetadata)
+    {
+        string? url = item.BackdropUrl;
+
+        if (string.IsNullOrEmpty(url) && parsedMetadata != null && parsedMetadata.TryGetValue("backdrop", out var backdropObj))
+        {
+            url = backdropObj?.ToString();
+        }
+
+        if (!string.IsNullOrEmpty(url))
+        {
+            if (url.StartsWith("http") && !string.IsNullOrEmpty(imageProxyBaseUrl))
+                return $"{imageProxyBaseUrl}?url={Uri.EscapeDataString(url)}";
+            return url;
+        }
+
+        return null;
     }
 }

@@ -24,6 +24,12 @@ public class TestableBookScanner : BookScanner
     {
     }
 
+    public bool IsStrictEnrichment
+    {
+        get => _strictEnrichment;
+        set => _strictEnrichment = value;
+    }
+
     public new Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
         string filePath,
@@ -31,7 +37,9 @@ public class TestableBookScanner : BookScanner
         Library library,
         CancellationToken cancellationToken)
     {
-        return base.ProcessFileAsync(context, filePath, existing, library, cancellationToken);
+        var fileInfo = new FileInfo(filePath);
+        var fileDiscover = new FileDiscoveryResult(fileInfo.FullName, fileInfo.Exists ? fileInfo.Length : 0, fileInfo.Exists ? fileInfo.LastWriteTimeUtc : DateTime.UtcNow);
+        return base.ProcessFileAsync(context, fileDiscover, existing, library, cancellationToken);
     }
 }
 
@@ -130,6 +138,96 @@ public class BookScannerTests : IDisposable
             Assert.Equal(ScanResult.Skipped, result.Result);
             var count = await _dbContext.MediaItems.CountAsync();
             Assert.Equal(1, count); // No new duplicates
+        }
+        finally
+        {
+            if (File.Exists(destFile)) File.Delete(destFile);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_RequeuesExistingBook_WhenStrictAndMissingAuthor()
+    {
+        // Arrange
+        var scanner = new TestableBookScanner(
+            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object, _mockMediaAnalysis.Object, _mockQueue.Object)
+        {
+            IsStrictEnrichment = true
+        };
+            
+        var tempFile = Path.GetTempFileName();
+        var destFile = tempFile + " - Frank Herbert - Dune.epub";
+        File.Move(tempFile, destFile);
+        var fileInfo = new FileInfo(destFile);
+        
+        try
+        {
+            var library = new Library { Id = Guid.NewGuid(), Name = "Books", Type = LibraryType.Book };
+
+            var existingResource = new MediaItem
+            {
+                Id = Guid.NewGuid(),
+                LibraryId = library.Id,
+                Path = fileInfo.FullName,
+                Title = "Dune",
+                Type = MediaType.Book,
+                MetadataJson = "{\"poster\": \"http://example.com/poster.jpg\"}" // Has poster but no cast/publisher
+            };
+            
+            _dbContext.MediaItems.Add(existingResource);
+            await _dbContext.SaveChangesAsync();
+
+            // Act
+            var result = await scanner.ProcessFileAsync(_dbContext, fileInfo.FullName, existingResource, library, CancellationToken.None);
+
+            // Assert
+            Assert.Equal(ScanResult.Updated, result.Result);
+            Assert.True(result.EnqueueMetadata); 
+        }
+        finally
+        {
+            if (File.Exists(destFile)) File.Delete(destFile);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_SkipsExistingBook_WhenRelaxedAndHasPoster()
+    {
+        // Arrange
+        var scanner = new TestableBookScanner(
+            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object, _mockMediaAnalysis.Object, _mockQueue.Object)
+        {
+            IsStrictEnrichment = false
+        };
+            
+        var tempFile = Path.GetTempFileName();
+        var destFile = tempFile + " - Frank Herbert - Dune.epub";
+        File.Move(tempFile, destFile);
+        var fileInfo = new FileInfo(destFile);
+        
+        try
+        {
+            var library = new Library { Id = Guid.NewGuid(), Name = "Books", Type = LibraryType.Book };
+
+            var existingResource = new MediaItem
+            {
+                Id = Guid.NewGuid(),
+                LibraryId = library.Id,
+                Path = fileInfo.FullName,
+                Title = "Dune",
+                Type = MediaType.Book,
+                MetadataJson = "{\"poster\": \"http://example.com/poster.jpg\"}" // Has poster but no cast/publisher
+            };
+            
+            _dbContext.MediaItems.Add(existingResource);
+            await _dbContext.SaveChangesAsync();
+
+            // Act
+            var result = await scanner.ProcessFileAsync(_dbContext, fileInfo.FullName, existingResource, library, CancellationToken.None);
+
+            // Assert
+            Assert.Equal(ScanResult.Skipped, result.Result);
+            Assert.False(result.EnqueueMetadata);
         }
         finally
         {

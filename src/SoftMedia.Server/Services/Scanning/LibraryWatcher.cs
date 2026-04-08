@@ -34,6 +34,10 @@ public class LibraryWatcher : BackgroundService, IDisposable
 
     // Track file watcher issues for admin visibility
     private readonly ConcurrentDictionary<string, FileWatcherIssue> _fileIssues = new();
+
+    // Concurrency control for single-file processing (C5 fix)
+    // Limits parallel scope/DbContext creation to prevent SQLite write contention
+    private readonly SemaphoreSlim _stableFileSemaphore = new(3, 3);
     
     /// <summary>Gets current file watcher issues for admin dashboard.</summary>
     public IEnumerable<FileWatcherIssue> GetFileIssues() => _fileIssues.Values.ToList();
@@ -158,6 +162,7 @@ public class LibraryWatcher : BackgroundService, IDisposable
             watcher.Dispose();
         }
         _watchers.Clear();
+        _stableFileSemaphore.Dispose();
         
         await base.StopAsync(cancellationToken);
     }
@@ -341,8 +346,8 @@ public class LibraryWatcher : BackgroundService, IDisposable
                     _logger.LogInformation("File ready for scanning: {Path} (stable for {Seconds}s)", 
                         pending.Path, stableSeconds);
                     
-                    // Use single-file processing for individual stable files
-                    _ = ProcessStableFileAsync(pending.Path, pending.LibraryId);
+                    // Process with bounded concurrency instead of fire-and-forget
+                    _ = ProcessStableFileWithThrottleAsync(pending.Path, pending.LibraryId);
                     filesToRemove.Add(kvp.Key);
                     continue;
                 }
@@ -467,6 +472,31 @@ public class LibraryWatcher : BackgroundService, IDisposable
         catch
         {
             return true; // Other errors = file exists but can't be accessed for other reasons
+        }
+    }
+
+    /// <summary>
+    /// Throttled wrapper around ProcessStableFileAsync.
+    /// Limits concurrent file processing to prevent SQLite write contention
+    /// when many files stabilize in the same check cycle.
+    /// </summary>
+    private async Task ProcessStableFileWithThrottleAsync(string filePath, Guid libraryId)
+    {
+        try
+        {
+            await _stableFileSemaphore.WaitAsync();
+            try
+            {
+                await ProcessStableFileAsync(filePath, libraryId);
+            }
+            finally
+            {
+                _stableFileSemaphore.Release();
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            // Semaphore disposed during shutdown — ignore gracefully
         }
     }
 

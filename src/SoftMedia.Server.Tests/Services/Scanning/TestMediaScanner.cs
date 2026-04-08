@@ -27,6 +27,9 @@ public class TestMediaScanner : BaseMediaScanner
     public List<string> ProcessedFiles { get; } = new();
     public int ProcessFileCallCount => ProcessedFiles.Count;
 
+    // Expose protected field for testing
+    public bool IsStrictEnrichment => _strictEnrichment;
+
     // Simulate work delay to test concurrency
     public int SimulateWorkDelayMs { get; set; } = 0;
 
@@ -46,22 +49,23 @@ public class TestMediaScanner : BaseMediaScanner
         return VirtualFileSystem.Keys;
     }
 
-    protected override IEnumerable<string> EnumerateFilesCurrentDir(string dirPath)
+    protected override IEnumerable<FileDiscoveryResult> EnumerateFilesCurrentDir(string dirPath)
     {
         if (VirtualFileSystem.TryGetValue(dirPath, out var files))
         {
-            return files;
+            return files.Select(f => new FileDiscoveryResult(f, 0, DateTime.UtcNow));
         }
-        return Enumerable.Empty<string>();
+        return Enumerable.Empty<FileDiscoveryResult>();
     }
 
     protected override async Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
-        string filePath,
+        FileDiscoveryResult file,
         MediaItem? existing,
         Library library,
         CancellationToken cancellationToken)
     {
+        var filePath = file.Path;
         if (SimulateWorkDelayMs > 0)
         {
             await Task.Delay(SimulateWorkDelayMs, cancellationToken);

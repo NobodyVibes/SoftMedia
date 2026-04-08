@@ -61,4 +61,98 @@ public class OpenLibraryProviderTests
         Assert.Equal("J.R.R. Tolkien", result.Cast.First().Name);
         Assert.Equal("https://covers.openlibrary.org/b/id/123456-L.jpg", result.PosterUrl);
     }
+
+    [Fact]
+    public async Task FetchMetadataAsync_UsesAuthorParam_WhenAuthorInMetadataJson()
+    {
+        // Arrange
+        var item = new MediaItem
+        {
+            Title = "Dune",
+            Year = 1965,
+            Type = MediaType.Book,
+            MetadataJson = """{"author":"Frank Herbert"}"""
+        };
+
+        var mockResponse = new { docs = new[] { new { title = "Dune", first_publish_year = 1965, cover_i = (int?)1, author_name = new[] { "Frank Herbert" } } } };
+
+        var handlerMock = new Mock<HttpMessageHandler>();
+        var response = new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent(JsonSerializer.Serialize(mockResponse)),
+        };
+
+        HttpRequestMessage? capturedRequest = null;
+        handlerMock
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => capturedRequest = req)
+            .ReturnsAsync(response);
+
+        var httpClient = new HttpClient(handlerMock.Object);
+        var loggerMock = new Mock<ILogger<OpenLibraryProvider>>();
+        var rateLimiterFactory = new SoftMedia.Server.Helpers.RateLimiterFactory();
+        var provider = new OpenLibraryProvider(httpClient, loggerMock.Object, rateLimiterFactory);
+
+        // Act
+        await provider.FetchMetadataAsync(item);
+
+        // Assert — should use structured title= and author= params
+        Assert.NotNull(capturedRequest);
+        var requestUrl = capturedRequest!.RequestUri!.ToString();
+        Assert.Contains("title=", requestUrl);
+        Assert.Contains("author=Frank", requestUrl);
+        Assert.DoesNotContain("q=", requestUrl);
+    }
+
+    [Fact]
+    public async Task FetchMetadataAsync_UsesGenericQuery_WhenNoAuthorInMetadataJson()
+    {
+        // Arrange
+        var item = new MediaItem
+        {
+            Title = "Dune",
+            Year = 1965,
+            Type = MediaType.Book,
+            MetadataJson = null // No author context
+        };
+
+        var mockResponse = new { docs = new[] { new { title = "Dune", first_publish_year = 1965, cover_i = (int?)1, author_name = new[] { "Frank Herbert" } } } };
+
+        var handlerMock = new Mock<HttpMessageHandler>();
+        var response = new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent(JsonSerializer.Serialize(mockResponse)),
+        };
+
+        HttpRequestMessage? capturedRequest = null;
+        handlerMock
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => capturedRequest = req)
+            .ReturnsAsync(response);
+
+        var httpClient = new HttpClient(handlerMock.Object);
+        var loggerMock = new Mock<ILogger<OpenLibraryProvider>>();
+        var rateLimiterFactory = new SoftMedia.Server.Helpers.RateLimiterFactory();
+        var provider = new OpenLibraryProvider(httpClient, loggerMock.Object, rateLimiterFactory);
+
+        // Act
+        await provider.FetchMetadataAsync(item);
+
+        // Assert — should use generic q= param
+        Assert.NotNull(capturedRequest);
+        var requestUrl = capturedRequest!.RequestUri!.ToString();
+        Assert.Contains("q=", requestUrl);
+        Assert.DoesNotContain("title=", requestUrl);
+        Assert.DoesNotContain("author=", requestUrl);
+    }
 }

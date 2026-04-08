@@ -36,11 +36,12 @@ public class BookScanner : BaseMediaScanner
     /// </summary>
     protected override async Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
-        string filePath,
+        FileDiscoveryResult file,
         MediaItem? existing,
         Library library,
         CancellationToken cancellationToken)
     {
+        var filePath = file.Path;
         try
         {
             // Parse author and title from filename
@@ -59,8 +60,8 @@ public class BookScanner : BaseMediaScanner
             book.SortTitle = MediaStringHelpers.GetSortTitle(title);
             book.Path = filePath;
             book.Type = MediaType.Book;
-            book.Size = new FileInfo(filePath).Length;
-            book.DateModified = File.GetLastWriteTimeUtc(filePath);
+            book.Size = file.Size;
+            book.DateModified = file.LastWriteUtc;
 
             // Store parsed author in MetadataJson for OpenLibraryProvider search enrichment.
             // Do NOT append author to Title — that corrupts the display name.
@@ -85,8 +86,7 @@ public class BookScanner : BaseMediaScanner
             else
             {
                 // Check if metadata needs refresh
-                var needsEnrichment = string.IsNullOrEmpty(existing!.MetadataJson) ||
-                    !existing.MetadataJson.Contains("\"poster\"");
+                var needsEnrichment = MetadataEnrichmentPolicy.NeedsEnrichment(existing!, _strictEnrichment);
 
                 if (needsEnrichment)
                 {
@@ -99,7 +99,7 @@ public class BookScanner : BaseMediaScanner
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[BookScanner] Error processing file: {Path}", filePath);
+            _logger.LogWarning(ex, "[BookScanner] Error processing file: {Path}", filePath);
             return new ScanOperationResult(ScanResult.Skipped, Guid.Empty, false);
         }
     }

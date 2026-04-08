@@ -99,7 +99,6 @@ public static class ServiceCollectionExtensions
         
         services.AddScoped<EmbeddedMusicProvider>(); 
         services.AddScoped<ITvMetadataEnricher, TvMetadataEnricher>();
-        services.AddScoped<IMusicMetadataResolver, MusicMetadataResolver>();
         services.AddScoped<IMetadataAggregator, MetadataAggregator>();
         services.AddScoped<IMetadataRouter, MetadataRouter>();
 

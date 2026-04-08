@@ -35,8 +35,32 @@ public class OpenLibraryProvider : IMetadataProvider
                 return null;
             }
 
-            // Search API: https://openlibrary.org/search.json?q=the+lord+of+the+rings
-            var url = $"https://openlibrary.org/search.json?q={Uri.EscapeDataString(title)}";
+            // Build search URL using structured params when author context is available.
+            // OpenLibrary's search API supports title= and author= for more accurate results.
+            string? author = null;
+            if (!string.IsNullOrEmpty(item.MetadataJson))
+            {
+                try
+                {
+                    using var metaDoc = JsonDocument.Parse(item.MetadataJson);
+                    if (metaDoc.RootElement.TryGetProperty("author", out var authorProp) &&
+                        authorProp.ValueKind == JsonValueKind.String)
+                    {
+                        author = authorProp.GetString();
+                    }
+                }
+                catch (JsonException) { /* Ignore malformed JSON */ }
+            }
+
+            string url;
+            if (!string.IsNullOrWhiteSpace(author))
+            {
+                url = $"https://openlibrary.org/search.json?title={Uri.EscapeDataString(title)}&author={Uri.EscapeDataString(author)}&limit=10";
+            }
+            else
+            {
+                url = $"https://openlibrary.org/search.json?q={Uri.EscapeDataString(title)}&limit=10";
+            }
             
             var response = await _httpClient.GetStringAsync(url);
             

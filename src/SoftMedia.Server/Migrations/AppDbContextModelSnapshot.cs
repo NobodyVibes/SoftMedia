@@ -183,6 +183,9 @@ namespace SoftMedia.Server.Migrations
                     b.Property<string>("AudioTracksJson")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("BackdropUrl")
+                        .HasColumnType("TEXT");
+
                     b.Property<int?>("BitDepth")
                         .HasColumnType("INTEGER");
 
@@ -222,9 +225,6 @@ namespace SoftMedia.Server.Migrations
                     b.Property<double?>("FrameRate")
                         .HasColumnType("REAL");
 
-                    b.Property<string>("Genres")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("HdrFormat")
                         .HasColumnType("TEXT");
 
@@ -241,6 +241,9 @@ namespace SoftMedia.Server.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("IsFavorite")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsRetryExhausted")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("LastPlayed")
@@ -264,6 +267,9 @@ namespace SoftMedia.Server.Migrations
 
                     b.Property<int>("PlayCount")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("PosterUrl")
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("ReleaseDate")
                         .HasColumnType("TEXT");
@@ -342,10 +348,15 @@ namespace SoftMedia.Server.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("MediaItemId1")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("Order")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("MediaItemId", "PersonId", "Character");
+
+                    b.HasIndex("MediaItemId1");
 
                     b.HasIndex("PersonId");
 
@@ -360,9 +371,14 @@ namespace SoftMedia.Server.Migrations
                     b.Property<int>("GenreId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<Guid?>("MediaItemId1")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("MediaItemId", "GenreId");
 
                     b.HasIndex("GenreId");
+
+                    b.HasIndex("MediaItemId1");
 
                     b.ToTable("MediaItemGenres");
                 });
@@ -686,6 +702,10 @@ namespace SoftMedia.Server.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("SoftMedia.Server.Models.MediaItem", null)
+                        .WithMany("MediaItemCasts")
+                        .HasForeignKey("MediaItemId1");
+
                     b.HasOne("SoftMedia.Server.Models.Person", "Person")
                         .WithMany()
                         .HasForeignKey("PersonId")
@@ -710,6 +730,10 @@ namespace SoftMedia.Server.Migrations
                         .HasForeignKey("MediaItemId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.HasOne("SoftMedia.Server.Models.MediaItem", null)
+                        .WithMany("MediaItemGenres")
+                        .HasForeignKey("MediaItemId1");
 
                     b.Navigation("Genre");
 
@@ -774,6 +798,13 @@ namespace SoftMedia.Server.Migrations
                     b.Navigation("Series");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.MediaItem", b =>
+                {
+                    b.Navigation("MediaItemCasts");
+
+                    b.Navigation("MediaItemGenres");
                 });
 #pragma warning restore 612, 618
         }

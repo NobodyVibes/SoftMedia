@@ -11,6 +11,7 @@ using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Scanning;
 using SoftMedia.Server.Services.Metadata;
+using SoftMedia.Server.Services.Infrastructure;
 using Xunit;
 
 namespace SoftMedia.Server.Tests.Services.Scanning;
@@ -21,6 +22,7 @@ public class BaseMediaScannerTests
     private readonly Mock<ILogger<TestMediaScanner>> _mockLogger;
     private readonly Mock<IMediaNotificationService> _mockNotificationService;
     private readonly Mock<IMetadataQueue> _mockMetadataQueue;
+    private readonly Mock<ISettingsService> _mockSettingsService;
     private readonly string _dbName;
 
     public BaseMediaScannerTests()
@@ -32,6 +34,10 @@ public class BaseMediaScannerTests
         _mockLogger = new Mock<ILogger<TestMediaScanner>>();
         _mockNotificationService = new Mock<IMediaNotificationService>();
         _mockMetadataQueue = new Mock<IMetadataQueue>();
+        _mockSettingsService = new Mock<ISettingsService>();
+
+        _mockSettingsService.Setup(x => x.GetSettingAsync("MetadataEnrichmentMode", "Relaxed"))
+                            .ReturnsAsync("Relaxed");
 
         // Setup CreateScope to return a NEW scope with a NEW context each time
         _mockScopeFactory.Setup(x => x.CreateScope()).Returns(() => {
@@ -42,6 +48,7 @@ public class BaseMediaScannerTests
             var context = CreateNewContext();
             
             serviceProvider.Setup(x => x.GetService(typeof(AppDbContext))).Returns(context);
+            serviceProvider.Setup(x => x.GetService(typeof(ISettingsService))).Returns(_mockSettingsService.Object);
             scope.Setup(x => x.ServiceProvider).Returns(serviceProvider.Object);
             
             return scope.Object;
@@ -110,5 +117,44 @@ public class BaseMediaScannerTests
         // Actually, Parallel.ForEachAsync might reuse threads/tasks but the code does `using var scope = _scopeFactory.CreateScope()` inside the loop body.
         // So Scopes created >= 12.
         _mockScopeFactory.Verify(x => x.CreateScope(), Times.AtLeast(12));
+    }
+
+    [Fact]
+    public async Task ScanContext_ReadsStrictEnrichment_FromSettingsOnce()
+    {
+        // Arrange
+        _mockSettingsService.Setup(x => x.GetSettingAsync("MetadataEnrichmentMode", "Relaxed"))
+                            .ReturnsAsync("Strict");
+
+        var scanner = CreateScanner();
+        var library = new Library { Id = Guid.NewGuid(), Name = "TestLib", Paths = new List<string> { "/root" } };
+        scanner.VirtualFileSystem.Add("/root", new List<string> { "/root/file1.mkv", "/root/file2.mp4", "/root/file3.mkv" });
+
+        // Act
+        await scanner.ScanLibraryAsync(library);
+
+        // Assert
+        Assert.True(scanner.IsStrictEnrichment);
+        
+        // Ensure it's read exactly once, regardless of how many directories/files
+        _mockSettingsService.Verify(x => x.GetSettingAsync("MetadataEnrichmentMode", "Relaxed"), Times.Once);
+    }
+
+    [Fact]
+    public async Task ScanContext_DefaultsToRelaxed_WhenSettingMissing()
+    {
+        // Arrange
+        _mockSettingsService.Setup(x => x.GetSettingAsync("MetadataEnrichmentMode", "Relaxed"))
+                            .ReturnsAsync("Relaxed"); // default value returned by service when missing
+
+        var scanner = CreateScanner();
+        var library = new Library { Id = Guid.NewGuid(), Name = "TestLib", Paths = new List<string> { "/root" } };
+        scanner.VirtualFileSystem.Add("/root", new List<string> { "/root/file1.mkv" });
+
+        // Act
+        await scanner.ScanLibraryAsync(library);
+
+        // Assert
+        Assert.False(scanner.IsStrictEnrichment);
     }
 }

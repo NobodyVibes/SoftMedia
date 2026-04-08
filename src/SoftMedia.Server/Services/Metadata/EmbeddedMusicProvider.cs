@@ -17,6 +17,13 @@ public class EmbeddedMusicProvider : IMetadataProvider
 
     public Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
     {
+        // This provider only handles audio tracks (files with embedded ID3/Vorbis tags).
+        // Albums and Artists are directories — TagLib cannot process them.
+        if (item.Type != MediaType.Audio)
+        {
+            return Task.FromResult<MetadataResult?>(null);
+        }
+
         var title = item.Title;
         var path = item.Path;
 
@@ -46,6 +53,8 @@ public class EmbeddedMusicProvider : IMetadataProvider
         {
             if (File.Exists(path))
             {
+                _logger.LogWarning("[EmbeddedMusicProvider] TagLib fallback triggered for item: {Title}. This indicates a legacy format missing 'scannedTags' flag. Path: {Path}", title, path);
+
                 using var tfile = TagLib.File.Create(path);
                 var tag = tfile.Tag;
 

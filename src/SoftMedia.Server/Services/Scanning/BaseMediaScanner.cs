@@ -11,6 +11,8 @@ namespace SoftMedia.Server.Services.Scanning;
 
 public record ScanOperationResult(ScanResult Result, Guid ItemId = default, bool EnqueueMetadata = false);
 
+public record FileDiscoveryResult(string Path, long Size, DateTime LastWriteUtc);
+
 /// <summary>
 /// Base class for media scanners providing shared functionality.
 /// Uses the template method pattern for consistent scan behavior.
@@ -47,6 +49,12 @@ public abstract class BaseMediaScanner : IMediaScanner
     protected readonly IMetadataQueue _metadataQueue;
 
     /// <summary>
+    /// Whether strict enrichment mode is enabled for this scan.
+    /// Read once from MetadataEnrichmentMode setting at scan start.
+    /// </summary>
+    protected bool _strictEnrichment;
+
+    /// <summary>
     /// Striped locks for parent entities to ensure thread safety without unbounded memory growth.
     /// </summary>
     private readonly SemaphoreSlim[] _stripedLocks;
@@ -75,22 +83,21 @@ public abstract class BaseMediaScanner : IMediaScanner
 
         try
         {
+            // 0. Read enrichment mode setting once per scan (avoids per-file DB lookup)
+            using (var settingsScope = _scopeFactory.CreateScope())
+            {
+                var settingsService = settingsScope.ServiceProvider.GetRequiredService<ISettingsService>();
+                var enrichmentMode = await settingsService.GetSettingAsync("MetadataEnrichmentMode", "Relaxed");
+                _strictEnrichment = enrichmentMode == "Strict";
+            }
+
             // 1. Enumerate all directories first (Producer)
             var directories = EnumerateDirectories(library.Paths).ToList();
             totalDirs = directories.Count;
             _logger.LogInformation("[{Scanner}] Found {Count} directories to process", DisplayName, totalDirs);
 
-            // 2. Pre-load existing paths strategy might need adjustment for massive libraries.
-            // For now, we load ALL paths. Ideally, we'd load per directory, but that requires exact path matching.
-            // Let's stick to loading all but using a concurrent dictionary?
-            // Actually, we can fetch existing paths PER DIRECTORY inside the loop to enable massive libraries.
-            // BUT, verifying duplicates/moves across directories is harder.
-            // Let's keep the global "GetExistingPaths" call for now (assumed < 100k items).
-            // We need a thread-safe way to read/remove from it.
-            // We can make a ConcurrentDictionary or just lock it if we only read.
-            // CleanupOrphans needs the remaining list.
-            
-            // NOTE: DbContext is NOT thread safe. We need a transient one for GetExistingPaths or use one scope.
+            // 2. Pre-load existing paths for orphan detection.
+            // NOTE: DbContext is NOT thread safe. We need a transient one for GetExistingPaths.
             Dictionary<string, Guid> existingPaths;
             using (var scope = _scopeFactory.CreateScope())
             {
@@ -125,8 +132,9 @@ public abstract class BaseMediaScanner : IMediaScanner
                 // List for deferred metadata enqueueing
                 var deferredQueue = new List<(Guid Id, LibraryType Type)>();
 
-                foreach (var filePath in filesInDir)
+                foreach (var fileResult in filesInDir)
                 {
+                    var filePath = fileResult.Path;
                     ct.ThrowIfCancellationRequested();
                     try 
                     {
@@ -137,7 +145,7 @@ public abstract class BaseMediaScanner : IMediaScanner
                             existing = await context.MediaItems.FindAsync(new object[] { existingId }, ct);
                         }
 
-                        var opResult = await ProcessFileAsync(context, filePath, existing, library, ct);
+                        var opResult = await ProcessFileAsync(context, fileResult, existing, library, ct);
 
                         processedFiles.TryAdd(filePath, 0);
 
@@ -220,20 +228,24 @@ public abstract class BaseMediaScanner : IMediaScanner
          }
     }
 
-    protected virtual IEnumerable<string> EnumerateFilesCurrentDir(string dirPath)
+    protected virtual IEnumerable<FileDiscoveryResult> EnumerateFilesCurrentDir(string dirPath)
     {
-        if (!Directory.Exists(dirPath)) yield break;
+        var dirInfo = new DirectoryInfo(dirPath);
+        if (!dirInfo.Exists) yield break;
         
-        IEnumerable<string> files = Enumerable.Empty<string>();
+        IEnumerable<FileInfo> files = Enumerable.Empty<FileInfo>();
         try
         {
-            files = Directory.EnumerateFiles(dirPath, "*.*", SearchOption.TopDirectoryOnly);
+            files = dirInfo.EnumerateFiles("*.*", SearchOption.TopDirectoryOnly);
         }
         catch { /* Permission ignored */ }
 
         foreach (var file in files)
         {
-            if (CanHandleFile(file)) yield return file;
+            if (CanHandleFile(file.FullName)) 
+            {
+                yield return new FileDiscoveryResult(file.FullName, file.Length, file.LastWriteTimeUtc);
+            }
         }
     }
 
@@ -275,7 +287,10 @@ public abstract class BaseMediaScanner : IMediaScanner
         var existing = await context.MediaItems
             .FirstOrDefaultAsync(m => m.Path == filePath && m.LibraryId == library.Id, cancellationToken);
 
-        var opResult = await ProcessFileAsync(context, filePath, existing, library, cancellationToken);
+        var fileInfo = new FileInfo(filePath);
+        var fileResult = new FileDiscoveryResult(fileInfo.FullName, fileInfo.Exists ? fileInfo.Length : 0, fileInfo.Exists ? fileInfo.LastWriteTimeUtc : DateTime.UtcNow);
+
+        var opResult = await ProcessFileAsync(context, fileResult, existing, library, cancellationToken);
         await context.SaveChangesAsync(cancellationToken);
 
         if (opResult.EnqueueMetadata && opResult.ItemId != Guid.Empty)
@@ -335,40 +350,6 @@ public abstract class BaseMediaScanner : IMediaScanner
     }
 
     /// <summary>
-    /// Enumerate media files in the library paths.
-    /// </summary>
-    protected virtual IEnumerable<string> EnumerateMediaFiles(List<string> libraryPaths)
-    {
-        foreach (var path in libraryPaths)
-        {
-            if (!Directory.Exists(path))
-            {
-                _logger.LogWarning("[{Scanner}] Library path does not exist: {Path}", DisplayName, path);
-                continue;
-            }
-
-            IEnumerable<string> files;
-            try
-            {
-                files = Directory.EnumerateFiles(path, "*.*", SearchOption.AllDirectories);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "[{Scanner}] Error enumerating files in: {Path}", DisplayName, path);
-                continue;
-            }
-
-            foreach (var file in files)
-            {
-                if (CanHandleFile(file))
-                {
-                    yield return file;
-                }
-            }
-        }
-    }
-
-    /// <summary>
     /// Remove items from database that no longer exist on disk.
     /// </summary>
     protected async Task CleanupOrphansAsync(
@@ -400,7 +381,7 @@ public abstract class BaseMediaScanner : IMediaScanner
     /// </summary>
     protected abstract Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
-        string filePath,
+        FileDiscoveryResult file,
         MediaItem? existing,
         Library library,
         CancellationToken cancellationToken);

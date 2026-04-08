@@ -7,6 +7,7 @@ using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Media;
+using Microsoft.AspNetCore.Hosting;
 using TagLib;
 using SoftMedia.Server.Services.Metadata;
 
@@ -18,6 +19,7 @@ namespace SoftMedia.Server.Services.Scanning;
 public class MusicScanner : BaseMediaScanner
 {
     private readonly IMediaAnalysisService _mediaAnalysisService;
+    private readonly IWebHostEnvironment _env;
 
     // Session caches — pre-loaded at scan start, used for O(1) lookups during parallel directory processing
     private readonly ConcurrentDictionary<string, MediaItem> _artistCache = new(StringComparer.OrdinalIgnoreCase);
@@ -47,10 +49,12 @@ public class MusicScanner : BaseMediaScanner
         ILogger<MusicScanner> logger,
         IMediaNotificationService notificationService,
         IMediaAnalysisService mediaAnalysisService,
-        IMetadataQueue metadataQueue)
+        IMetadataQueue metadataQueue,
+        IWebHostEnvironment env)
         : base(scopeFactory, logger, notificationService, metadataQueue)
     {
         _mediaAnalysisService = mediaAnalysisService;
+        _env = env;
     }
 
     /// <summary>
@@ -103,11 +107,12 @@ public class MusicScanner : BaseMediaScanner
     /// </summary>
     protected override async Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
-        string filePath,
+        FileDiscoveryResult file,
         MediaItem? existing,
         Library library,
         CancellationToken cancellationToken)
     {
+        var filePath = file.Path;
         try
         {
             // Parse metadata using TagLib
@@ -140,24 +145,42 @@ public class MusicScanner : BaseMediaScanner
             track.DiscNumber = (int?)tag.Disc > 0 ? (int)tag.Disc : null;
             track.Year = (int?)tag.Year > 0 ? (int)tag.Year : null;
             track.Duration = tagFile.Properties.Duration.TotalSeconds;
-            track.Size = new FileInfo(filePath).Length;
-            track.DateModified = System.IO.File.GetLastWriteTimeUtc(filePath);
+            track.Size = file.Size;
+            track.DateModified = file.LastWriteUtc;
 
-            // Store metadata for frontend display (artist name, album name, genre)
-            var metadata = new Dictionary<string, object>
+            // Store metadata for frontend display and to signal EmbeddedMusicProvider
+            // that tags have already been read (avoids redundant TagLib.File.Create).
+            var metadataResult = new MetadataResult
             {
-                { "artist", artistName },
-                { "album", albumName }
+                Artist = artistName,
+                Album = albumName,
+                Title = trackTitle,
+                Duration = tagFile.Properties.Duration.TotalSeconds,
+                HasEmbeddedArt = tagFile.Tag.Pictures.Length > 0,
+                Extra = new Dictionary<string, System.Text.Json.JsonElement>()
             };
-            if (!string.IsNullOrEmpty(tag.FirstGenre))
+
+            metadataResult.Extra["scannedTags"] = System.Text.Json.JsonSerializer.SerializeToElement(true);
+            
+            if (tag.TrackCount > 0)
             {
-                metadata["genre"] = tag.FirstGenre;
+                metadataResult.Extra["totalTracks"] = System.Text.Json.JsonSerializer.SerializeToElement((int)tag.TrackCount);
             }
+            if (tag.Genres.Length > 0)
+            {
+                metadataResult.Genres = tag.Genres.ToList();
+            }
+            else if (!string.IsNullOrEmpty(tag.FirstGenre))
+            {
+                metadataResult.Genres = new List<string> { tag.FirstGenre };
+            }
+            
             if (tag.AlbumArtists.Length > 0 && tag.AlbumArtists[0] != artistName)
             {
-                metadata["albumArtist"] = tag.AlbumArtists[0];
+                metadataResult.Extra["albumArtist"] = System.Text.Json.JsonSerializer.SerializeToElement(tag.AlbumArtists[0]);
             }
-            track.MetadataJson = System.Text.Json.JsonSerializer.Serialize(metadata);
+
+            track.MetadataJson = System.Text.Json.JsonSerializer.Serialize(metadataResult);
 
             // Audio codec info
             track.AudioCodec = tagFile.Properties.Codecs
@@ -286,7 +309,9 @@ public class MusicScanner : BaseMediaScanner
                 Type = MediaType.Album,
                 ArtistId = artist.Id,
                 Year = (int?)tagFile.Tag.Year > 0 ? (int)tagFile.Tag.Year : null,
-                DateModified = DateTime.UtcNow
+                DateModified = DateTime.UtcNow,
+                // Seed artist context so metadata providers can search accurately
+                MetadataJson = System.Text.Json.JsonSerializer.Serialize(new { artist = artist.Title })
             };
 
             // Resolve cover art (priority: local file > embedded > deferred)
@@ -336,9 +361,10 @@ public class MusicScanner : BaseMediaScanner
                 p.Type == PictureType.Other) ?? pictures[0];
 
             // Extract to cache
-            var cacheDir = Path.Combine(
-                Environment.CurrentDirectory,
-                "wwwroot", "cache", "images", "music");
+            var webRoot = !string.IsNullOrEmpty(_env.WebRootPath)
+                ? _env.WebRootPath
+                : Path.Combine(Environment.CurrentDirectory, "wwwroot");
+            var cacheDir = Path.Combine(webRoot, "cache", "images", "music");
             Directory.CreateDirectory(cacheDir);
 
             var extension = GetImageExtension(coverPic.MimeType);

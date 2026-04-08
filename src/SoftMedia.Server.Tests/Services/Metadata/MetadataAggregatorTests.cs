@@ -22,7 +22,6 @@ public class MetadataAggregatorTests : IDisposable
     private readonly Mock<ISettingsService> _mockSettings;
     private readonly Mock<IImageUrlExtractorService> _mockImageExtractor;
     private readonly Mock<ITvMetadataEnricher> _mockTvEnricher;
-    private readonly Mock<IMusicMetadataResolver> _mockMusicResolver;
     private readonly Mock<ILogger<MetadataAggregator>> _mockLogger;
     private readonly AppDbContext _dbContext;
 
@@ -38,7 +37,6 @@ public class MetadataAggregatorTests : IDisposable
         _mockSettings = new Mock<ISettingsService>();
         _mockImageExtractor = new Mock<IImageUrlExtractorService>();
         _mockTvEnricher = new Mock<ITvMetadataEnricher>();
-        _mockMusicResolver = new Mock<IMusicMetadataResolver>();
         _mockLogger = new Mock<ILogger<MetadataAggregator>>();
 
         // Default: ExtractAndQueueAsync returns true (images found)
@@ -60,7 +58,6 @@ public class MetadataAggregatorTests : IDisposable
             _mockSettings.Object,
             _mockImageExtractor.Object,
             _mockTvEnricher.Object,
-            _mockMusicResolver.Object,
             _dbContext,
             _mockLogger.Object);
     }
@@ -193,5 +190,180 @@ public class MetadataAggregatorTests : IDisposable
         _mockImageExtractor.Verify(x => x.ExtractAndQueueAsync(
             It.IsAny<MediaItem>(),
             It.IsAny<MetadataResult>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EnrichMediaItemAsync_ShouldPromotePosterUrl()
+    {
+        // Arrange
+        var aggregator = CreateAggregator();
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Poster Movie", Type = MediaType.Movie };
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        var result = new MetadataResult
+        {
+            Title = "Poster Movie",
+            PosterUrl = "http://example.com/promoted-poster.jpg"
+        };
+
+        _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Movie))
+            .ReturnsAsync(result);
+
+        // Act
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie);
+
+        // Assert — PosterUrl should be promoted to the column before image extraction strips it
+        var savedItem = await _dbContext.MediaItems.FindAsync(item.Id);
+        Assert.Equal("http://example.com/promoted-poster.jpg", savedItem!.PosterUrl);
+    }
+
+    [Fact]
+    public async Task EnrichMediaItemAsync_ShouldNotOverwritePosterUrl_WhenNull()
+    {
+        // Arrange
+        var aggregator = CreateAggregator();
+        var item = new MediaItem
+        {
+            Id = Guid.NewGuid(),
+            Title = "No Poster Movie",
+            Type = MediaType.Movie,
+            PosterUrl = "http://example.com/existing-poster.jpg"
+        };
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        var result = new MetadataResult
+        {
+            Title = "No Poster Movie",
+            PosterUrl = null // Provider returned no poster
+        };
+
+        _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Movie))
+            .ReturnsAsync(result);
+
+        // Act
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie);
+
+        // Assert — existing PosterUrl should be preserved
+        var savedItem = await _dbContext.MediaItems.FindAsync(item.Id);
+        Assert.Equal("http://example.com/existing-poster.jpg", savedItem!.PosterUrl);
+    }
+
+    [Fact]
+    public async Task PersistGenresAsync_ShouldCreateNewGenres_InSingleBatch()
+    {
+        // Arrange
+        var aggregator = CreateAggregator();
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Genre Movie", Type = MediaType.Movie };
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        var result = new MetadataResult
+        {
+            Title = "Genre Movie",
+            Genres = new List<string> { "Action", "Sci-Fi", "Drama" },
+            PosterUrl = "http://example.com/poster.jpg"
+        };
+
+        _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Movie))
+            .ReturnsAsync(result);
+
+        // Act
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie);
+        await _dbContext.SaveChangesAsync();
+
+        // Assert — all 3 genres should exist
+        var genres = await _dbContext.Genres.ToListAsync();
+        Assert.Equal(3, genres.Count);
+
+        var junctions = await _dbContext.MediaItemGenres
+            .Where(mg => mg.MediaItemId == item.Id)
+            .ToListAsync();
+        Assert.Equal(3, junctions.Count);
+    }
+
+    [Fact]
+    public async Task PersistGenresAsync_DiffBased_ShouldOnlyAddMissing()
+    {
+        // Arrange
+        var aggregator = CreateAggregator();
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Diff Movie", Type = MediaType.Movie };
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        // First enrichment: Action + Sci-Fi
+        var result1 = new MetadataResult
+        {
+            Title = "Diff Movie",
+            Genres = new List<string> { "Action", "Sci-Fi" },
+            PosterUrl = "http://example.com/poster.jpg"
+        };
+        _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Movie)).ReturnsAsync(result1);
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie);
+        await _dbContext.SaveChangesAsync();
+
+        // Second enrichment: Action + Drama (Sci-Fi removed, Drama added)
+        var result2 = new MetadataResult
+        {
+            Title = "Diff Movie",
+            Genres = new List<string> { "Action", "Drama" },
+            PosterUrl = "http://example.com/poster.jpg"
+        };
+        _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Movie)).ReturnsAsync(result2);
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie);
+        await _dbContext.SaveChangesAsync();
+
+        // Assert — should have Action and Drama, not Sci-Fi
+        var junctions = await _dbContext.MediaItemGenres
+            .Where(mg => mg.MediaItemId == item.Id)
+            .Include(mg => mg.Genre)
+            .ToListAsync();
+        Assert.Equal(2, junctions.Count);
+        Assert.Contains(junctions, j => j.Genre!.Name == "Action");
+        Assert.Contains(junctions, j => j.Genre!.Name == "Drama");
+        Assert.DoesNotContain(junctions, j => j.Genre!.Name == "Sci-Fi");
+    }
+
+    [Fact]
+    public async Task PersistCastAsync_ShouldReuseExistingPerson()
+    {
+        // Arrange — pre-create a Person entity
+        var existingPerson = new Person { Name = "Tom Hanks", ExternalId = 31 };
+        _dbContext.Persons.Add(existingPerson);
+        await _dbContext.SaveChangesAsync();
+
+        var aggregator = CreateAggregator();
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Cast Movie", Type = MediaType.Movie };
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        var result = new MetadataResult
+        {
+            Title = "Cast Movie",
+            Cast = new List<CastMember>
+            {
+                new CastMember { Id = 31, Name = "Tom Hanks", Character = "Forrest" }
+            },
+            PosterUrl = "http://example.com/poster.jpg"
+        };
+
+        _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Movie))
+            .ReturnsAsync(result);
+
+        // Act
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie);
+        await _dbContext.SaveChangesAsync();
+
+        // Assert — should not create a duplicate Person
+        var persons = await _dbContext.Persons.ToListAsync();
+        Assert.Single(persons);
+        Assert.Equal("Tom Hanks", persons[0].Name);
+
+        var castEntry = await _dbContext.MediaItemCasts
+            .FirstOrDefaultAsync(mc => mc.MediaItemId == item.Id);
+        Assert.NotNull(castEntry);
+        Assert.Equal(existingPerson.Id, castEntry!.PersonId);
+        Assert.Equal("Forrest", castEntry.Character);
     }
 }

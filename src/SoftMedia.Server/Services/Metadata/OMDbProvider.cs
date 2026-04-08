@@ -159,12 +159,16 @@ public class OMDbProvider : IKeyedMetadataProvider
         }
     }
 
+    /// <summary>
+    /// OMDb requires an API key. Direct calls to this method bypass key resolution.
+    /// All calls must go through MetadataRouter, which handles IKeyedMetadataProvider.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Always thrown — use MetadataRouter instead.</exception>
     public Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
     {
-        // This method is called by MetadataRouter which should pass the resolved API key
-        // For direct calls, we return null as the key context isn't available
-        _logger.LogDebug("FetchMetadataAsync called directly - use FetchMetadataWithKeyAsync instead");
-        return Task.FromResult<MetadataResult?>(null);
+        throw new InvalidOperationException(
+            $"OMDbProvider.FetchMetadataAsync must not be called directly. " +
+            $"Use MetadataRouter.FetchMetadataAsync or IKeyedMetadataProvider.FetchMetadataWithKeyAsync instead.");
     }
 
     /// <summary>
@@ -213,7 +217,7 @@ public class OMDbProvider : IKeyedMetadataProvider
                             _logger.LogInformation("Using cached IMDb ID for '{Title}': {Id}", title, existingId);
                             
                             // Direct ID Fetch (Cost: 1 request)
-                            var directUrl = $"http://www.omdbapi.com/?apikey={apiKey}&i={existingId}&plot=full";
+                            var directUrl = $"https://www.omdbapi.com/?apikey={apiKey}&i={existingId}&plot=full";
                             var directResponse = await _httpClient.GetStringAsync(directUrl);
                             
                             if (mode == "custom") await RecordRequestAsync();
@@ -257,7 +261,7 @@ public class OMDbProvider : IKeyedMetadataProvider
             }
 
             // Build search URL with full plot
-            var searchUrl = $"http://www.omdbapi.com/?apikey={apiKey}&t={Uri.EscapeDataString(cleanTitle)}&type=movie&plot=full";
+            var searchUrl = $"https://www.omdbapi.com/?apikey={apiKey}&t={Uri.EscapeDataString(cleanTitle)}&type=movie&plot=full";
             if (year != null)
             {
                 searchUrl += $"&y={year}";
@@ -292,7 +296,7 @@ public class OMDbProvider : IKeyedMetadataProvider
                     _logger.LogDebug("Exact match failed for '{Title}', trying search...", title);
                     
                     // Fallback: Use search API (&s=) instead of exact match (&t=)
-                    var searchApiUrl = $"http://www.omdbapi.com/?apikey={apiKey}&s={Uri.EscapeDataString(cleanTitle)}&type=movie";
+                    var searchApiUrl = $"https://www.omdbapi.com/?apikey={apiKey}&s={Uri.EscapeDataString(cleanTitle)}&type=movie";
                     if (year != null)
                     {
                         searchApiUrl += $"&y={year}";
@@ -320,7 +324,7 @@ public class OMDbProvider : IKeyedMetadataProvider
                             _logger.LogInformation("Found via search: '{Title}' -> {ImdbId}", title, imdbId);
                             
                             // Fetch full details by IMDb ID
-                            var detailUrl = $"http://www.omdbapi.com/?apikey={apiKey}&i={imdbId}&plot=full";
+                            var detailUrl = $"https://www.omdbapi.com/?apikey={apiKey}&i={imdbId}&plot=full";
                             var detailResponse = await _httpClient.GetStringAsync(detailUrl);
                             
                             if (mode == "custom")

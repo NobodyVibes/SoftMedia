@@ -37,11 +37,12 @@ public class GameScanner : BaseMediaScanner
 
     protected override async Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
-        string filePath,
+        FileDiscoveryResult file,
         MediaItem? existing,
         Library library,
         CancellationToken cancellationToken)
     {
+        var filePath = file.Path;
         try
         {
             // Parse title and year from filename using game parser to strip release tags
@@ -61,8 +62,8 @@ public class GameScanner : BaseMediaScanner
             game.Path = filePath;
             game.Type = MediaType.Game;
             game.Year = year;
-            game.Size = new FileInfo(filePath).Length;
-            game.DateModified = File.GetLastWriteTimeUtc(filePath);
+            game.Size = file.Size;
+            game.DateModified = file.LastWriteUtc;
             game.Container = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
 
             if (isNew)
@@ -80,7 +81,7 @@ public class GameScanner : BaseMediaScanner
             else
             {
                 // Check if metadata needs refresh (if no description/overview)
-                var needsEnrichment = string.IsNullOrEmpty(game.Overview);
+                var needsEnrichment = MetadataEnrichmentPolicy.NeedsEnrichment(game, _strictEnrichment);
 
                 if (needsEnrichment)
                 {
@@ -89,14 +90,14 @@ public class GameScanner : BaseMediaScanner
                 }
                 else
                 {
-                    _logger.LogDebug("[GameScanner] Updated game: {Title}", title);
-                    return new ScanOperationResult(ScanResult.Updated, game.Id, EnqueueMetadata: false);
+                    _logger.LogDebug("[GameScanner] Skipped game (metadata complete): {Title}", title);
+                    return new ScanOperationResult(ScanResult.Skipped, game.Id, EnqueueMetadata: false);
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing game file {Path}", filePath);
+            _logger.LogWarning(ex, "[GameScanner] Error processing file: {FilePath}", filePath);
             return new ScanOperationResult(ScanResult.Skipped);
         }
     }

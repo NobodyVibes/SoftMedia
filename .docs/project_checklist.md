@@ -23,3 +23,11 @@
 - [ ] Deferred: Music routing consolidation into MetadataRouter
 - [ ] Future: Book/Game analysis strategies, frontend normalized genre/cast display
 
+## Metadata Architecture Refactoring (April 2026)
+- [x] Phase 1: Schema & Column Promotions (PosterUrl, BackdropUrl, IsRetryExhausted)
+- [x] Phase 2: MetadataAggregator Batching & Dedup Fix (Genres, Cast batch persistence)
+- [x] Phase 3: Settings Caching & Enrichment Policy Optimization (IMemoryCache, Single JSON parse)
+- [x] Phase 4: DTO & Image Resolution Consolidation (ResolvePosterPath, ResolveBackdropPath)
+- [x] Phase 5: Scanner Performance Optimization (FileDiscoveryResult caching, O(1) TV Episode lookups)
+- [x] Phase 6: MetadataJson Dual-Write Cleanup (Removed legacy Genres column)
+

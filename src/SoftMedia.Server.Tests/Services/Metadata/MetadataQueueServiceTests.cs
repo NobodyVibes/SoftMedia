@@ -89,7 +89,97 @@ public class MetadataQueueServiceTests : IDisposable
 
         _mockNotificationService.Verify(x => x.NotifyItemUpdated(mediaId), Times.Once);
     }
-    
+    [Fact]
+    public async Task ProcessItem_RetriesInStrictMode_WhenUnchangedAndMissingDescription()
+    {
+        // Arrange
+        var mockRetryService = new Mock<IMetadataRetryService>();
+        _mockServiceProvider.Setup(x => x.GetService(typeof(IMetadataRetryService))).Returns(mockRetryService.Object);
+        _mockSettingsService.Setup(x => x.GetSettingAsync("MetadataEnrichmentMode", "Relaxed"))
+                            .ReturnsAsync("Strict");
+        _mockSettingsService.Setup(x => x.GetSettingAsync<string>("MovieProvider", It.IsAny<string>()))
+            .ReturnsAsync("Wikidata");
+
+        var service = new MetadataQueueService(_mockScopeFactory.Object, _mockNotificationService.Object, _mockLogger.Object);
+        var mediaId = Guid.NewGuid();
+        
+        // Movie with poster but no description
+        var initialMetadata = """{"poster":"http://example.com/poster.jpg"}""";
+        var item = new MediaItem 
+        { 
+            Id = mediaId, 
+            Title = "Test Movie", 
+            Type = MediaType.Movie, 
+            LibraryId = Guid.NewGuid(),
+            MetadataJson = initialMetadata
+        };
+        
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        // Aggregator does nothing (metadata unchanged)
+        _mockAggregator.Setup(x => x.EnrichMediaItemAsync(It.IsAny<MediaItem>(), It.IsAny<LibraryType>(), It.IsAny<bool>(), It.IsAny<bool>()))
+            .Callback<MediaItem, LibraryType, bool, bool>((m, _, _, _) => {
+                // Do not change MetadataJson
+            })
+            .Returns(Task.CompletedTask);
+
+        // Act
+        await service.EnqueueMetadataRefreshAsync(mediaId, LibraryType.Movie);
+        await service.StartAsync(CancellationToken.None);
+        await Task.Delay(100); 
+        await service.StopAsync(CancellationToken.None);
+
+        // Assert - should enqueue retry because strict mode requires description
+        mockRetryService.Verify(x => x.EnqueueRetryAsync(mediaId, LibraryType.Movie, 0), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessItem_NoRetryInRelaxedMode_WhenUnchangedAndHasPoster()
+    {
+        // Arrange
+        var mockRetryService = new Mock<IMetadataRetryService>();
+        _mockServiceProvider.Setup(x => x.GetService(typeof(IMetadataRetryService))).Returns(mockRetryService.Object);
+        // Relaxed mode
+        _mockSettingsService.Setup(x => x.GetSettingAsync("MetadataEnrichmentMode", "Relaxed"))
+                            .ReturnsAsync("Relaxed");
+        _mockSettingsService.Setup(x => x.GetSettingAsync<string>("MovieProvider", It.IsAny<string>()))
+            .ReturnsAsync("Wikidata");
+
+        var service = new MetadataQueueService(_mockScopeFactory.Object, _mockNotificationService.Object, _mockLogger.Object);
+        var mediaId = Guid.NewGuid();
+        
+        // Movie with poster but no description
+        var initialMetadata = """{"poster":"http://example.com/poster.jpg"}""";
+        var item = new MediaItem 
+        { 
+            Id = mediaId, 
+            Title = "Test Movie", 
+            Type = MediaType.Movie, 
+            LibraryId = Guid.NewGuid(),
+            MetadataJson = initialMetadata
+        };
+        
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        // Aggregator does nothing (metadata unchanged)
+        _mockAggregator.Setup(x => x.EnrichMediaItemAsync(It.IsAny<MediaItem>(), It.IsAny<LibraryType>(), It.IsAny<bool>(), It.IsAny<bool>()))
+            .Callback<MediaItem, LibraryType, bool, bool>((m, _, _, _) => {
+                // Do not change MetadataJson
+            })
+            .Returns(Task.CompletedTask);
+
+        // Act
+        await service.EnqueueMetadataRefreshAsync(mediaId, LibraryType.Movie);
+        await service.StartAsync(CancellationToken.None);
+        await Task.Delay(100); 
+        await service.StopAsync(CancellationToken.None);
+
+        // Assert - should NOT enqueue retry because relaxed mode is satisfied by poster
+        mockRetryService.Verify(x => x.EnqueueRetryAsync(It.IsAny<Guid>(), It.IsAny<LibraryType>(), It.IsAny<int>()), Times.Never);
+    }
+
     public void Dispose()
     {
         _dbContext.Dispose();

@@ -98,7 +98,8 @@ public class TvMetadataEnricher : ITvMetadataEnricher
         {
             _logger.LogInformation("[TvMetadataEnricher] Propagated metadata to {Count} episodes for '{Series}'", 
                 updated, series.Title);
-            await _context.SaveChangesAsync();
+            // NOTE: SaveChangesAsync is NOT called here. The caller (MetadataQueueService.ProcessItemAsync)
+            // performs a single SaveChangesAsync after all enrichment steps complete, ensuring atomicity.
         }
     }
 }

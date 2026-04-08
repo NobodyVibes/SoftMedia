@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 
@@ -17,11 +18,13 @@ public class SettingsService : ISettingsService
 {
     private readonly AppDbContext _context;
     private readonly ILogger<SettingsService> _logger;
+    private readonly IMemoryCache _memoryCache;
 
-    public SettingsService(AppDbContext context, ILogger<SettingsService> logger)
+    public SettingsService(AppDbContext context, ILogger<SettingsService> logger, IMemoryCache memoryCache)
     {
         _context = context;
         _logger = logger;
+        _memoryCache = memoryCache;
     }
 
     public async Task<List<AppSetting>> GetAllSettingsAsync()
@@ -40,20 +43,29 @@ public class SettingsService : ISettingsService
             }
             else
             {
-                _context.Settings.Add(setting);
             }
+            // Remove from cache (handle both typed and raw entity requests)
+            _memoryCache.Remove($"Setting_{setting.Key}_Entity");
+            _memoryCache.Remove($"Setting_{setting.Key}_String");
         }
         await _context.SaveChangesAsync();
     }
 
     public async Task<T> GetSettingAsync<T>(string key, T defaultValue)
     {
-        var setting = await _context.Settings.FindAsync(key);
-        if (setting == null) return defaultValue;
+        var stringValue = await _memoryCache.GetOrCreateAsync($"Setting_{key}_String", async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60);
+            
+            var setting = await _context.Settings.FindAsync(key);
+            return setting?.Value;
+        });
+
+        if (stringValue == null) return defaultValue;
 
         try
         {
-            return (T)Convert.ChangeType(setting.Value, typeof(T));
+            return (T)Convert.ChangeType(stringValue, typeof(T));
         }
         catch
         {
@@ -63,7 +75,11 @@ public class SettingsService : ISettingsService
     
     public async Task<AppSetting?> GetSettingAsync(string key)
     {
-        return await _context.Settings.FindAsync(key);
+        return await _memoryCache.GetOrCreateAsync($"Setting_{key}_Entity", async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60);
+            return await _context.Settings.FindAsync(key);
+        });
     }
 
     public async Task InitializeDefaultsAsync()
@@ -95,6 +111,7 @@ public class SettingsService : ISettingsService
             new() { Key = "MetadataRefreshIntervalDays", Value = "30", Group = "Scanning", Description = "Days between automatic refresh of metadata. 0 = disabled." },
             new() { Key = "MetadataRefreshMode", Value = "Running", Group = "Scanning", Description = "Running (active shows only), Variable (all metadata except images), or All (everything)." },
             new() { Key = "MetadataRefreshOnStartup", Value = "false", Group = "Scanning", Description = "Run metadata refresh when server starts." },
+            new() { Key = "MetadataEnrichmentMode", Value = "Relaxed", Group = "Scanning", Description = "Enrichment completeness check. Relaxed: item is complete when it has a poster/cover. Strict: requires type-specific fields (description for movies, author for books, etc.). Strict mode may trigger re-fetching of metadata for existing items on next scan." },
             
             // Metadata
             new() { Key = "MovieProvider", Value = "Wikidata", Group = "Metadata", Description = "Primary API for Movie metadata." },

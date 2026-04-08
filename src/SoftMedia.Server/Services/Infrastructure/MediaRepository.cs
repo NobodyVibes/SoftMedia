@@ -18,13 +18,16 @@ public class MediaRepository : IMediaRepository
     {
         return await _context.MediaItems
             .Include(m => m.Library)
+            .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
             .AsNoTracking()
             .FirstOrDefaultAsync(m => m.Id == id);
     }
 
     public async Task<MediaItem?> GetByIdAsync(Guid id)
     {
-        return await _context.MediaItems.FindAsync(id);
+        return await _context.MediaItems
+            .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
+            .FirstOrDefaultAsync(m => m.Id == id);
     }
 
     public async Task<IEnumerable<MediaItem>> GetSeriesSeasonsAsync(Guid seriesId)
@@ -135,6 +138,7 @@ public class MediaRepository : IMediaRepository
         return await query
             .Include(m => m.Series)
             .Include(m => m.Album)
+            .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
             .OrderByDescending(m => m.DateAdded)
             .Take(limit * 25)
             .ToListAsync();
@@ -154,6 +158,7 @@ public class MediaRepository : IMediaRepository
     {
         return await _context.MediaItems
             .AsNoTracking()
+            .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
             .Where(m => ids.Contains(m.Id))
             .ToListAsync();
     }

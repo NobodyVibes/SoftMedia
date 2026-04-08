@@ -37,11 +37,12 @@ public class MovieScanner : BaseMediaScanner
     /// </summary>
     protected override async Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
-        string filePath,
+        FileDiscoveryResult file,
         MediaItem? existing,
         Library library,
         CancellationToken cancellationToken)
     {
+        var filePath = file.Path;
         try
         {
             // Parse title and year from filename
@@ -61,8 +62,8 @@ public class MovieScanner : BaseMediaScanner
             movie.Path = filePath;
             movie.Type = MediaType.Movie;
             movie.Year = year;
-            movie.Size = new FileInfo(filePath).Length;
-            movie.DateModified = File.GetLastWriteTimeUtc(filePath);
+            movie.Size = file.Size;
+            movie.DateModified = file.LastWriteUtc;
 
             // Delegate technical analysis to MediaAnalysisService (Smart Probe)
             var refreshMode = isNew ? MetadataRefreshMode.Full : MetadataRefreshMode.Missing;
@@ -84,8 +85,7 @@ public class MovieScanner : BaseMediaScanner
             else
             {
                 // Check if metadata needs refresh
-                var needsEnrichment = string.IsNullOrEmpty(existing!.MetadataJson) ||
-                    !existing.MetadataJson.Contains("\"poster\"");
+                var needsEnrichment = MetadataEnrichmentPolicy.NeedsEnrichment(existing!, _strictEnrichment);
 
                 if (needsEnrichment)
                 {

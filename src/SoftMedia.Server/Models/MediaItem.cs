@@ -55,9 +55,27 @@ public class MediaItem
     public string? Overview { get; set; }
     public double? CommunityRating { get; set; }
     public string? ContentRating { get; set; }
-    public string? Genres { get; set; }    // Comma-separated (e.g. "Action, Drama")
     public string? Studio { get; set; }
     public string? Director { get; set; }
+
+    /// <summary>
+    /// Original remote poster URL from the metadata provider.
+    /// Promoted from MetadataJson to avoid JSON parsing on every DTO serialization.
+    /// The local cached copy is resolved via ImageCacheService at serving time.
+    /// </summary>
+    public string? PosterUrl { get; set; }
+
+    /// <summary>
+    /// Original remote backdrop URL from the metadata provider.
+    /// Promoted from MetadataJson to avoid JSON parsing on every DTO serialization.
+    /// </summary>
+    public string? BackdropUrl { get; set; }
+
+    /// <summary>
+    /// Indicates that metadata retries have been exhausted for this item.
+    /// Replaces the legacy "retryExhausted" flag previously stored in MetadataJson.
+    /// </summary>
+    public bool IsRetryExhausted { get; set; }
 
     /// <summary>
     /// Average rating of all users on this SoftMedia server.
@@ -96,6 +114,9 @@ public class MediaItem
     public Guid? AlbumId { get; set; }
     public MediaItem? Album { get; set; }
 
+    public ICollection<MediaItemGenre> MediaItemGenres { get; set; } = new List<MediaItemGenre>();
+    public ICollection<MediaItemCast> MediaItemCasts { get; set; } = new List<MediaItemCast>();
+
     /// <summary>
     /// Path to cover art file (for albums/artists) or cached extraction.
     /// SECURITY: Must be validated before file access to prevent path traversal.
@@ -119,6 +140,5 @@ public enum MediaType
     // New Types
     Season = 7,
     Artist = 8,
-    Album = 9,
-    Track = 10
+    Album = 9
 }

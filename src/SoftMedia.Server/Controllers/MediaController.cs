@@ -38,6 +38,7 @@ public class MediaController : ControllerBase
             .Include(m => m.Library)
             .Include(m => m.Series)
             .Include(m => m.Album)
+            .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
             .FirstOrDefaultAsync(m => m.Id == id);
 
         if (item == null)
@@ -153,6 +154,7 @@ public class MediaController : ControllerBase
         {
             var libraryItems = await _context.MediaItems
                 .AsNoTracking()
+                .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
                 .Where(m => m.LibraryId == library.Id)
                 .Where(m => !excludedTypes.Contains(m.Type))
                 .Where(m => m.Title.ToLower().Contains(searchTerm))

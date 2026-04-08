@@ -8,6 +8,7 @@ using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Transcoding;
 using SoftMedia.Server.Services.Infrastructure;
+using Microsoft.Extensions.Caching.Memory;
 using Xunit;
 
 namespace SoftMedia.Tests.Services;
@@ -40,7 +41,8 @@ public class TranscodingIntegrationTests : IDisposable
 
         _context = new AppDbContext(options);
         _settingsLoggerMock = new Mock<ILogger<SettingsService>>();
-        _settingsService = new SettingsService(_context, _settingsLoggerMock.Object);
+        var memoryCache = new MemoryCache(new MemoryCacheOptions());
+        _settingsService = new SettingsService(_context, _settingsLoggerMock.Object, memoryCache);
         _mediaProbeMock = new Mock<IMediaProbeService>();
         _subtitleMock = new Mock<ISubtitleService>();
         _ffmpegLoggerMock = new Mock<ILogger<FFmpegService>>();

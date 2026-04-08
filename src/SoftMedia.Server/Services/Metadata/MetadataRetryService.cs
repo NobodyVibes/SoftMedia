@@ -142,7 +142,7 @@ public class MetadataRetryService : BackgroundService, IMetadataRetryService
     }
 
     /// <summary>
-    /// Mark a MediaItem as retry-exhausted in its MetadataJson.
+    /// Mark a MediaItem as retry-exhausted via dedicated column.
     /// </summary>
     private async Task MarkAsExhaustedAsync(Guid mediaItemId)
     {
@@ -154,19 +154,7 @@ public class MetadataRetryService : BackgroundService, IMetadataRetryService
 
             if (item != null)
             {
-                Dictionary<string, object> metadataDict = new();
-                if (!string.IsNullOrEmpty(item.MetadataJson))
-                {
-                    try
-                    {
-                        var extracted = JsonSerializer.Deserialize<Dictionary<string, object>>(item.MetadataJson);
-                        if (extracted != null) metadataDict = extracted;
-                    }
-                    catch { /* Ignore parsing errors */ }
-                }
-
-                metadataDict["retryExhausted"] = true;
-                item.MetadataJson = JsonSerializer.Serialize(metadataDict);
+                item.IsRetryExhausted = true;
 
                 // Also remove any pending retry entry for this item
                 var pendingRetry = await dbContext.MetadataRetries

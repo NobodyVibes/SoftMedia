@@ -26,6 +26,10 @@ public class ExifMetadataProvider : IMetadataProvider
 
             var directories = ImageMetadataReader.ReadMetadata(path);
             var metadata = new MetadataResult();
+
+            // Photo-specific EXIF fields (camera, iso, fstop, exposure, gps, dateTaken)
+            // remain in Extra by design — they are display-only and do not require
+            // relational querying. Year is promoted to MetadataResult.Year for consistency.
             var extraData = new Dictionary<string, string>();
 
             // Helper to find tag value across directories

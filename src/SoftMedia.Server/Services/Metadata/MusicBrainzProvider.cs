@@ -4,6 +4,9 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Net;
 using System.Threading.RateLimiting;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
+using SoftMedia.Server.Data;
 
 namespace SoftMedia.Server.Services.Metadata;
 
@@ -12,15 +15,17 @@ public class MusicBrainzProvider : IMetadataProvider
     private readonly HttpClient _httpClient;
     private readonly ILogger<MusicBrainzProvider> _logger;
     private readonly RateLimiter _rateLimiter;
+    private readonly IServiceScopeFactory _scopeFactory;
 
     public LibraryType SupportedType => LibraryType.Music;
     public string ProviderName => "MusicBrainz";
 
-    public MusicBrainzProvider(HttpClient httpClient, ILogger<MusicBrainzProvider> logger, RateLimiterFactory rateLimiterFactory)
+    public MusicBrainzProvider(HttpClient httpClient, ILogger<MusicBrainzProvider> logger, RateLimiterFactory rateLimiterFactory, IServiceScopeFactory scopeFactory)
     {
         _httpClient = httpClient;
         _logger = logger;
         _rateLimiter = rateLimiterFactory.GetLimiter("MusicBrainz");
+        _scopeFactory = scopeFactory;
         // User-Agent is MANDATORY for MusicBrainz
         if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
         {
@@ -30,6 +35,19 @@ public class MusicBrainzProvider : IMetadataProvider
 
     public async Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
     {
+        // Type-aware search branching: use the appropriate MusicBrainz endpoint
+        // based on the media item type to improve search accuracy.
+        if (item.Type == Models.MediaType.Artist)
+        {
+            return await FetchArtistMetadataAsync(item);
+        }
+        if (item.Type == Models.MediaType.Album)
+        {
+            return await FetchReleaseGroupMetadataAsync(item);
+        }
+
+        // Default: Track/Audio — search recordings (existing behavior)
+
         // 1. Context Strategy: Prefer Embedded Tags (ID3) over Path Parsing
         // The Aggregator should have already populated embedded tags into item.MetadataJson
         
@@ -240,24 +258,39 @@ public class MusicBrainzProvider : IMetadataProvider
                             releaseGroupId = rgid.GetString();
                         }
 
+                        // Validate CoverArt Archive URL via HEAD request before storing.
+                        // Per CAA docs: 307 = art exists, 404 = no art available.
                         if (!string.IsNullOrEmpty(releaseGroupId))
                         {
-                            result.PosterUrl = $"https://coverartarchive.org/release-group/{releaseGroupId}/front";
+                            var coverUrl = $"https://coverartarchive.org/release-group/{releaseGroupId}/front";
+                            if (await ValidateCoverArtUrlAsync(coverUrl))
+                            {
+                                result.PosterUrl = coverUrl;
+                            }
                         }
-                        else if (rel.TryGetProperty("id", out var rid)) // Fallback to Release ID
+                        
+                        if (string.IsNullOrEmpty(result.PosterUrl) && rel.TryGetProperty("id", out var rid))
                         {
                             var rId = rid.GetString();
                             if (!string.IsNullOrEmpty(rId))
                             {
-                                result.PosterUrl = $"https://coverartarchive.org/release/{rId}/front";
+                                var coverUrl = $"https://coverartarchive.org/release/{rId}/front";
+                                if (await ValidateCoverArtUrlAsync(coverUrl))
+                                {
+                                    result.PosterUrl = coverUrl;
+                                }
                             }
                         }
 
                         if (rel.TryGetProperty("date", out var rd)) 
                         {
                             var dateStr = rd.GetString();
-                            if (!string.IsNullOrEmpty(dateStr) && DateTime.TryParse(dateStr.Substring(0, Math.Min(4, dateStr.Length)), out var d))
-                                result.Year = d.Year;
+                            if (!string.IsNullOrEmpty(dateStr))
+                            {
+                                var yearPart = dateStr.Length >= 4 ? dateStr.Substring(0, 4) : dateStr;
+                                if (int.TryParse(yearPart, out var parsedYear))
+                                    result.Year = parsedYear;
+                            }
                         }
                     }
                     
@@ -282,6 +315,172 @@ public class MusicBrainzProvider : IMetadataProvider
         return null;
     }
 
+    /// <summary>
+    /// Fetches metadata for an Artist-type item using /ws/2/artist endpoint.
+    /// </summary>
+    private async Task<MetadataResult?> FetchArtistMetadataAsync(MediaItem item)
+    {
+        var artistName = CleanName(item.Title);
+        _logger.LogInformation("MusicBrainz artist search for: '{Artist}'", artistName);
+
+        using var lease = await _rateLimiter.AcquireAsync(1);
+        if (!lease.IsAcquired)
+        {
+            _logger.LogWarning("MusicBrainz rate limit exceeded for artist '{Artist}'", artistName);
+            return null;
+        }
+
+        var query = $"artist:\"{artistName}\"";
+        var url = $"https://musicbrainz.org/ws/2/artist?query={WebUtility.UrlEncode(query)}&fmt=json&limit=5";
+        
+        var response = await _httpClient.GetAsync(url);
+        if (!response.IsSuccessStatusCode) return null;
+
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+        
+        if (doc.RootElement.TryGetProperty("artists", out var artists) && artists.GetArrayLength() > 0)
+        {
+            var best = artists[0];
+            var result = new MetadataResult
+            {
+                Title = best.TryGetProperty("name", out var n) ? n.GetString() : artistName
+            };
+
+            if (best.TryGetProperty("disambiguation", out var dis) && dis.ValueKind == JsonValueKind.String)
+            {
+                result.Description = dis.GetString();
+            }
+
+            if (best.TryGetProperty("type", out var typeVal) && typeVal.ValueKind == JsonValueKind.String)
+            {
+                result.Extra ??= new Dictionary<string, JsonElement>();
+                result.Extra["artistType"] = JsonSerializer.SerializeToElement(typeVal.GetString());
+            }
+
+            if (best.TryGetProperty("tags", out var tags) && tags.GetArrayLength() > 0)
+            {
+                result.Genres = tags.EnumerateArray()
+                    .Where(t => t.TryGetProperty("name", out _))
+                    .Select(t => t.GetProperty("name").GetString()!)
+                    .Take(5)
+                    .ToList();
+            }
+
+            _logger.LogInformation("MusicBrainz artist match: '{Name}'", result.Title);
+            return result;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Fetches metadata for an Album-type item using /ws/2/release-group endpoint.
+    /// </summary>
+    private async Task<MetadataResult?> FetchReleaseGroupMetadataAsync(MediaItem item)
+    {
+        var albumName = CleanName(item.Title);
+        string? artistName = null;
+
+        // Try to get artist context from metadata
+        if (!string.IsNullOrEmpty(item.MetadataJson))
+        {
+            var tags = MetadataJsonHelper.Parse(item.MetadataJson);
+            if (tags.TryGetValue("artist", out var a))
+                artistName = a.ToString();
+        }
+
+        // Fallback: resolve artist name from ArtistId FK (for existing items without seeded MetadataJson)
+        if (string.IsNullOrEmpty(artistName) && item.ArtistId.HasValue)
+        {
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var parentArtist = await db.MediaItems
+                    .AsNoTracking()
+                    .Where(m => m.Id == item.ArtistId.Value && m.Type == MediaType.Artist)
+                    .Select(m => m.Title)
+                    .FirstOrDefaultAsync();
+                if (!string.IsNullOrEmpty(parentArtist))
+                {
+                    artistName = parentArtist;
+                    _logger.LogDebug("Resolved artist '{Artist}' from ArtistId FK for album '{Album}'", artistName, albumName);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to resolve ArtistId FK for album '{Album}'", albumName);
+            }
+        }
+
+        _logger.LogInformation("MusicBrainz release-group search for: '{Album}' by '{Artist}'", albumName, artistName);
+
+        using var lease = await _rateLimiter.AcquireAsync(1);
+        if (!lease.IsAcquired)
+        {
+            _logger.LogWarning("MusicBrainz rate limit exceeded for album '{Album}'", albumName);
+            return null;
+        }
+
+        var queryParts = new List<string> { $"releasegroup:\"{albumName}\"" };
+        if (!string.IsNullOrWhiteSpace(artistName))
+            queryParts.Add($"artist:\"{artistName}\"");
+
+        var query = string.Join(" AND ", queryParts);
+        var url = $"https://musicbrainz.org/ws/2/release-group?query={WebUtility.UrlEncode(query)}&fmt=json&limit=5";
+
+        var response = await _httpClient.GetAsync(url);
+        if (!response.IsSuccessStatusCode) return null;
+
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+
+        if (doc.RootElement.TryGetProperty("release-groups", out var groups) && groups.GetArrayLength() > 0)
+        {
+            var best = groups[0];
+            var result = new MetadataResult
+            {
+                Title = best.TryGetProperty("title", out var t) ? t.GetString() : albumName
+            };
+
+            // Year from first-release-date
+            if (best.TryGetProperty("first-release-date", out var frd) && frd.ValueKind == JsonValueKind.String)
+            {
+                var dateStr = frd.GetString();
+                if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 4 && int.TryParse(dateStr.Substring(0, 4), out var year))
+                {
+                    result.Year = year;
+                }
+            }
+
+            // Cover art from release-group ID
+            if (best.TryGetProperty("id", out var rgId))
+            {
+                var coverUrl = $"https://coverartarchive.org/release-group/{rgId.GetString()}/front";
+                if (await ValidateCoverArtUrlAsync(coverUrl))
+                {
+                    result.PosterUrl = coverUrl;
+                }
+            }
+
+            // Tags/genres
+            if (best.TryGetProperty("tags", out var tags) && tags.GetArrayLength() > 0)
+            {
+                result.Genres = tags.EnumerateArray()
+                    .Where(tg => tg.TryGetProperty("name", out _))
+                    .Select(tg => tg.GetProperty("name").GetString()!)
+                    .Take(5)
+                    .ToList();
+            }
+
+            _logger.LogInformation("MusicBrainz release-group match: '{Title}' ({Year})", result.Title, result.Year);
+            return result;
+        }
+
+        return null;
+    }
+
     private string CleanName(string name)
     {
         // Remove "Discography (YYYY-YYYY)" or "YYYY - " prefix
@@ -300,5 +499,43 @@ public class MusicBrainzProvider : IMetadataProvider
         n = Regex.Replace(n, @"\s*\(.*?\)", "");
         
         return n.Trim();
+    }
+
+    /// <summary>
+    /// Validates a CoverArt Archive URL via HEAD request.
+    /// Per CAA API docs: 307 = cover art exists (redirect to image),
+    /// 404 = no cover art available, 503 = rate limited.
+    /// </summary>
+    private async Task<bool> ValidateCoverArtUrlAsync(string coverUrl)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Head, coverUrl);
+            // Don't follow redirects — we just need to know if art exists
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+
+            if (response.IsSuccessStatusCode || 
+                response.StatusCode == System.Net.HttpStatusCode.TemporaryRedirect ||
+                response.StatusCode == System.Net.HttpStatusCode.Redirect)
+            {
+                return true;
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                _logger.LogDebug("CoverArt Archive returned 404 for {Url}", coverUrl);
+                return false;
+            }
+
+            // 503 (rate limit) or other errors — assume art MAY exist, don't block
+            _logger.LogDebug("CoverArt Archive returned {Status} for {Url}", response.StatusCode, coverUrl);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to validate CoverArt Archive URL: {Url}", coverUrl);
+            // Network error — don't block, assume URL might be valid
+            return true;
+        }
     }
 }

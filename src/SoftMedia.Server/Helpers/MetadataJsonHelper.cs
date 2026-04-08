@@ -29,6 +29,26 @@ public static class MetadataJsonHelper
     }
 
     /// <summary>
+    /// Parse MetadataJson string to a type-safe <see cref="JsonElement"/> dictionary.
+    /// Preserves JSON value types (arrays, objects, numbers) without lossy boxing.
+    /// Used by <see cref="MetadataJsonMerger"/> for non-destructive merges.
+    /// </summary>
+    public static Dictionary<string, JsonElement> ParseElements(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new Dictionary<string, JsonElement>();
+
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json) ?? new Dictionary<string, JsonElement>();
+        }
+        catch (JsonException)
+        {
+            return new Dictionary<string, JsonElement>();
+        }
+    }
+
+    /// <summary>
     /// Safely get a string value from parsed metadata.
     /// Handles both raw strings and JsonElement values.
     /// </summary>

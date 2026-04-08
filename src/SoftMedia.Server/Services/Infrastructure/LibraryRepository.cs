@@ -77,6 +77,8 @@ public class LibraryRepository : ILibraryRepository
             .AsNoTracking()
             .Include(m => m.Series)
             .Include(m => m.Album)
+            .Include(m => m.MediaItemGenres)
+                .ThenInclude(mg => mg.Genre)
             .Where(m => m.LibraryId == libraryId);
 
         // TV Library: Show only Series
@@ -129,8 +131,7 @@ public class LibraryRepository : ILibraryRepository
 
         if (!string.IsNullOrWhiteSpace(filter.Genre))
         {
-            // Simple JSON string match for SQLite
-            joinedQuery = joinedQuery.Where(x => x.Media.MetadataJson != null && x.Media.MetadataJson.Contains(filter.Genre));
+            joinedQuery = joinedQuery.Where(x => x.Media.MediaItemGenres.Any(mg => mg.Genre != null && mg.Genre.Name.ToLower() == filter.Genre.ToLower()));
         }
 
         if (filter.MinRating.HasValue)
@@ -192,40 +193,13 @@ public class LibraryRepository : ILibraryRepository
 
     public async Task<IEnumerable<string>> GetLibraryGenresAsync(Guid libraryId)
     {
-         var metadataJsons = await _context.MediaItems
+        var genres = await _context.MediaItemGenres
             .AsNoTracking()
-            .Where(m => m.LibraryId == libraryId && m.MetadataJson != null)
-            .Select(m => m.MetadataJson)
+            .Where(mg => mg.MediaItem != null && mg.MediaItem.LibraryId == libraryId && mg.Genre != null)
+            .Select(mg => mg.Genre!.Name)
+            .Distinct()
             .ToListAsync();
 
-        var allGenres = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var json in metadataJsons)
-        {
-            if (string.IsNullOrEmpty(json)) continue;
-
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(json!);
-                if (doc.RootElement.TryGetProperty("genres", out var genresElement) &&
-                    genresElement.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    foreach (var genre in genresElement.EnumerateArray())
-                    {
-                        var genreStr = genre.GetString();
-                        if (!string.IsNullOrWhiteSpace(genreStr))
-                        {
-                            allGenres.Add(genreStr.Trim());
-                        }
-                    }
-                }
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                // Skip invalid JSON
-            }
-        }
-
-        return allGenres.OrderBy(g => g);
+        return genres.OrderBy(g => g);
     }
 }

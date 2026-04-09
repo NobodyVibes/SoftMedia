@@ -9,6 +9,9 @@ namespace SoftMedia.Server.Models;
 /// </summary>
 public class MediaItemCast
 {
+    [Key]
+    public int Id { get; set; }
+
     [Required]
     public Guid MediaItemId { get; set; }
 

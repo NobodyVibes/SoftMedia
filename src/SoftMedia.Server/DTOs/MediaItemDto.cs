@@ -131,24 +131,43 @@ public class MediaItemDto
             Height = item.Height
         };
 
-        // Deserialize audio tracks JSON if present
-        if (!string.IsNullOrEmpty(item.AudioTracksJson))
+        // Map audio tracks if present
+        if (item.AudioTracks != null && item.AudioTracks.Any())
         {
-            try
+            dto.AudioTracks = item.AudioTracks.Select(at => new AudioTrackDto
             {
-                dto.AudioTracks = System.Text.Json.JsonSerializer.Deserialize<List<AudioTrackDto>>(item.AudioTracksJson);
-            }
-            catch { /* Ignore deserialization errors */ }
+                Index = at.Index,
+                Codec = at.Codec,
+                Language = at.Language,
+                Channels = at.Channels,
+                ChannelLayout = at.ChannelLayout,
+                Title = at.Title,
+                IsDefault = at.IsDefault
+            }).ToList();
         }
 
-        // Deserialize subtitle tracks JSON if present
-        if (!string.IsNullOrEmpty(item.SubtitleTracksJson))
+        // Map subtitle tracks if present
+        if (item.SubtitleTracks != null && item.SubtitleTracks.Any())
         {
-            try
+            dto.SubtitleTracks = item.SubtitleTracks.Select(st => new SubtitleTrackDto
             {
-                dto.SubtitleTracks = System.Text.Json.JsonSerializer.Deserialize<List<SubtitleTrackDto>>(item.SubtitleTracksJson);
-            }
-            catch { /* Ignore deserialization errors */ }
+                Index = st.Index,
+                Codec = st.Codec,
+                Language = st.Language,
+                Title = st.Title,
+                IsDefault = st.IsDefault,
+                IsForced = st.IsForced
+            }).ToList();
+        }
+
+        // Map chapters if present (Promoted to relational table in Phase 1)
+        if (item.Chapters != null && item.Chapters.Count > 0)
+        {
+            dto.Chapters = item.Chapters.OrderBy(c => c.StartTime).Select(c => new ChapterDto
+            {
+                StartTime = c.StartTime,
+                Title = c.Title
+            }).ToList();
         }
 
 
@@ -230,26 +249,6 @@ public class MediaItemDto
                             if (double.TryParse(creditsStartObj.ToString(), out var creditsStart))
                             {
                                 dto.CreditsStart = creditsStart;
-                            }
-                        }
-                        
-                        // Extract all chapters for progress bar markers
-                        if (metadata.TryGetValue("chapters", out var chaptersObj) && chaptersObj is System.Text.Json.JsonElement chaptersElement && chaptersElement.ValueKind == System.Text.Json.JsonValueKind.Array)
-                        {
-                            dto.Chapters = new List<ChapterDto>();
-                            foreach (var chapter in chaptersElement.EnumerateArray())
-                            {
-                                var chapterDto = new ChapterDto();
-                                if (chapter.TryGetProperty("startTime", out var startEl))
-                                {
-                                    double.TryParse(startEl.ToString(), out var st);
-                                    chapterDto.StartTime = st;
-                                }
-                                if (chapter.TryGetProperty("title", out var titleEl))
-                                {
-                                    chapterDto.Title = titleEl.GetString() ?? "";
-                                }
-                                dto.Chapters.Add(chapterDto);
                             }
                         }
                     }

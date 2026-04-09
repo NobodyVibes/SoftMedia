@@ -143,36 +143,33 @@ public class MediaController : ControllerBase
             return Ok(new List<GlobalSearchResultDto>());
         }
 
-        var searchTerm = query.ToLower();
-        var libraries = await _context.Libraries.OrderBy(l => l.Order).ToListAsync();
-        var results = new List<GlobalSearchResultDto>();
-
-        // Types to exclude from search results (child items)
+        var searchPattern = $"%{query}%";
         var excludedTypes = new[] { MediaType.Episode, MediaType.Audio };
+        var globalLimit = limit * 5; // Bounded global search to prevent explosive memory allocation 
 
-        foreach (var library in libraries)
-        {
-            var libraryItems = await _context.MediaItems
-                .AsNoTracking()
-                .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
-                .Where(m => m.LibraryId == library.Id)
-                .Where(m => !excludedTypes.Contains(m.Type))
-                .Where(m => m.Title.ToLower().Contains(searchTerm))
-                .OrderBy(m => m.Title)
-                .Take(limit)
-                .ToListAsync();
+        // Consolidated table scan — a single query across all libraries is exponentially faster than looping
+        var matchingItems = await _context.MediaItems
+            .AsNoTracking()
+            .Include(m => m.Library)
+            .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
+            .Where(m => !excludedTypes.Contains(m.Type))
+            .Where(m => EF.Functions.Like(m.Title, searchPattern))
+            .OrderBy(m => m.Library!.Order)
+            .ThenBy(m => m.Title)
+            .Take(globalLimit)
+            .ToListAsync();
 
-            if (libraryItems.Count > 0)
+        var results = matchingItems
+            .GroupBy(m => m.Library)
+            .Where(g => g.Key != null)
+            .Select(g => new GlobalSearchResultDto
             {
-                results.Add(new GlobalSearchResultDto
-                {
-                    LibraryId = library.Id,
-                    LibraryName = library.Name,
-                    LibraryType = library.Type.ToString(),
-                    Items = libraryItems.Select(i => MediaItemDto.FromMediaItem(i, "/api/v1/image/proxy")).ToList()
-                });
-            }
-        }
+                LibraryId = g.Key!.Id,
+                LibraryName = g.Key.Name,
+                LibraryType = g.Key.Type.ToString(),
+                Items = g.Take(limit).Select(i => MediaItemDto.FromMediaItem(i, "/api/v1/image/proxy")).ToList()
+            })
+            .ToList();
 
         return Ok(results);
     }

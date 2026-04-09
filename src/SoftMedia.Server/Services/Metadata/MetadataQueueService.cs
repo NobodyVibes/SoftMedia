@@ -19,8 +19,8 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
     // Key: Channel Name (Music, TV, Shared)
     private readonly Dictionary<string, Channel<MetadataQueueItem>> _channels;
     
-    // Track dirty state of libraries for cache update
-    private readonly ConcurrentDictionary<Guid, bool> _dirtyLibraries = new();
+    // Event-driven channel for cache updates
+    private readonly Channel<Guid> _cacheUpdateChannel;
 
     // Deduplication guard — prevents the same media item from being enqueued multiple times
     private readonly ConcurrentDictionary<Guid, byte> _pendingIds = new();
@@ -43,39 +43,37 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
             { "TV", Channel.CreateBounded<MetadataQueueItem>(new BoundedChannelOptions(5000) { FullMode = BoundedChannelFullMode.Wait }) },
             { "Shared", Channel.CreateBounded<MetadataQueueItem>(new BoundedChannelOptions(5000) { FullMode = BoundedChannelFullMode.Wait }) }
         };
+
+        _cacheUpdateChannel = Channel.CreateBounded<Guid>(new BoundedChannelOptions(100) 
+        { 
+            FullMode = BoundedChannelFullMode.DropOldest 
+        });
         
     }
     
     private async Task CacheUpdateLoopAsync(CancellationToken ct)
     {
-        _logger.LogInformation("Recently Added Cache Update Loop started.");
+        _logger.LogInformation("Recently Added Cache Update Loop started with Event-Driven Channel.");
         try
         {
-            while (!ct.IsCancellationRequested)
+            await foreach (var libId in _cacheUpdateChannel.Reader.ReadAllAsync(ct))
             {
-                // Check every 2 seconds
-                await Task.Delay(2000, ct);
+                // Debounce slightly to allow batches of updates
+                await Task.Delay(500, ct);
                 
-                var dirtyLibs = _dirtyLibraries.Keys.ToList();
-                foreach (var libId in dirtyLibs)
+                try
                 {
-                    if (_dirtyLibraries.TryRemove(libId, out _))
-                    {
-                        try
-                        {
-                            using var scope = _scopeFactory.CreateScope();
-                            var libService = scope.ServiceProvider.GetRequiredService<ILibraryService>();
-                            await libService.UpdateRecentlyAddedCacheAsync(libId);
-                            
-                            // Notify Frontend to refresh
-                            _notificationService.NotifyLibraryRecentUpdated(libId);
-                            _logger.LogDebug("Updated cache and notified for Library {LibraryId}", libId);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Failed to update recent cache for {LibraryId}", libId);
-                        }
-                    }
+                    using var scope = _scopeFactory.CreateScope();
+                    var libService = scope.ServiceProvider.GetRequiredService<ILibraryService>();
+                    await libService.UpdateRecentlyAddedCacheAsync(libId);
+                    
+                    // Notify Frontend to refresh
+                    _notificationService.NotifyLibraryRecentUpdated(libId);
+                    _logger.LogDebug("Updated cache and notified for Library {LibraryId}", libId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to update recent cache for {LibraryId}", libId);
                 }
             }
         }
@@ -173,8 +171,8 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
                 _logger.LogDebug("Metadata queue item {Id} not found in DB (likely deleted during rescan)", item.MediaId);
                 return;
             }
-            // Snapshot MetadataJson before enrichment to detect if anything changed
-            var metadataBefore = mediaItem.MetadataJson;
+            // Snapshot MetadataHash before enrichment to detect if anything changed securely
+            var metadataBefore = mediaItem.MetadataHash;
 
             // Enrich
             await aggregator.EnrichMediaItemAsync(mediaItem, item.Type, deferImageCaching: false, refreshImages: item.RefreshImages);
@@ -189,7 +187,7 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
             // This avoids retry loops for:
             //  - Album/Artist items with seeded MetadataJson (already have context)
             //  - Items where the provider legitimately found no match
-            var metadataUnchanged = mediaItem.MetadataJson == metadataBefore;
+            var metadataUnchanged = mediaItem.MetadataHash == metadataBefore;
             var settingsService = scope.ServiceProvider.GetRequiredService<ISettingsService>();
             var enrichmentMode = await settingsService.GetSettingAsync("MetadataEnrichmentMode", "Relaxed");
             var strictMode = enrichmentMode == "Strict";
@@ -206,8 +204,8 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
                 }
             }
 
-            // Mark library as dirty for cache update
-            _dirtyLibraries.TryAdd(mediaItem.LibraryId, true);
+            // Fire event to cache channel
+            _cacheUpdateChannel.Writer.TryWrite(mediaItem.LibraryId);
         }
         catch (Exception ex)
         {

@@ -121,12 +121,12 @@ public class MetadataRouter : IMetadataRouter
         // - Albums: need title + art (artist is on parent, not in MetadataResult)
         // - Artists: need title (art is optional, often not available from embedded)
         bool sufficient = primaryData != null && !string.IsNullOrEmpty(primaryData.Title);
-        if (sufficient && item.Type == MediaType.Audio)
+        if (sufficient && primaryData != null && item.Type == MediaType.Audio)
         {
             sufficient = !string.IsNullOrEmpty(primaryData.Artist)
                 && (primaryData.HasEmbeddedArt || !string.IsNullOrEmpty(primaryData.PosterUrl));
         }
-        else if (sufficient && item.Type == MediaType.Album)
+        else if (sufficient && primaryData != null && item.Type == MediaType.Album)
         {
             sufficient = primaryData.HasEmbeddedArt || !string.IsNullOrEmpty(primaryData.PosterUrl);
         }

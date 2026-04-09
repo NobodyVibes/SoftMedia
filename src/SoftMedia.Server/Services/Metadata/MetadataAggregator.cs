@@ -125,6 +125,11 @@ public class MetadataAggregator : IMetadataAggregator
         {
             item.MetadataJson = updatedResultJson;
         }
+
+        // Assign stable MetadataHash to easily inform the queue if data actually mutated
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        var hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(updatedResultJson));
+        item.MetadataHash = Convert.ToBase64String(hashBytes);
     }
 
     /// <summary>
@@ -269,23 +274,51 @@ public class MetadataAggregator : IMetadataAggregator
                 await _dbContext.SaveChangesAsync();
             }
 
-            // Diff-based cast association update
+            // Diff-based cast association update (avoids destructive delete-and-rebuild)
             var existingAssociations = await _dbContext.MediaItemCasts
                 .Where(mc => mc.MediaItemId == item.Id)
+                .OrderBy(mc => mc.Order)
                 .ToListAsync();
 
-            // For cast, order and character matter — rebuild associations
-            _dbContext.MediaItemCasts.RemoveRange(existingAssociations);
+            var newEntries = new List<MediaItemCast>();
 
-            var castEntries = resolvedPersons.Select(rp => new MediaItemCast
+            for (int i = 0; i < resolvedPersons.Count; i++)
             {
-                MediaItemId = item.Id,
-                PersonId = rp.Person.Id,
-                Character = string.IsNullOrEmpty(rp.Member.Character) ? string.Empty : rp.Member.Character,
-                Order = rp.Order
-            }).ToList();
+                var rp = resolvedPersons[i];
+                var character = string.IsNullOrWhiteSpace(rp.Member.Character) ? null : rp.Member.Character;
 
-            _dbContext.MediaItemCasts.AddRange(castEntries);
+                if (i < existingAssociations.Count)
+                {
+                    // Map over existing entity, preserving the surrogate Id Key
+                    var existing = existingAssociations[i];
+                    existing.PersonId = rp.Person.Id;
+                    existing.Character = character;
+                    existing.Order = rp.Order;
+                }
+                else
+                {
+                    // Append new entity
+                    newEntries.Add(new MediaItemCast
+                    {
+                        MediaItemId = item.Id,
+                        PersonId = rp.Person.Id,
+                        Character = character,
+                        Order = rp.Order
+                    });
+                }
+            }
+
+            // Remove any trailing stale associations
+            if (existingAssociations.Count > resolvedPersons.Count)
+            {
+                var toRemove = existingAssociations.Skip(resolvedPersons.Count).ToList();
+                _dbContext.MediaItemCasts.RemoveRange(toRemove);
+            }
+
+            if (newEntries.Count > 0)
+            {
+                _dbContext.MediaItemCasts.AddRange(newEntries);
+            }
         }
         catch (Exception ex)
         {

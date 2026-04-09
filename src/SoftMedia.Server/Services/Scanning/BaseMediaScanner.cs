@@ -96,20 +96,8 @@ public abstract class BaseMediaScanner : IMediaScanner
             totalDirs = directories.Count;
             _logger.LogInformation("[{Scanner}] Found {Count} directories to process", DisplayName, totalDirs);
 
-            // 2. Pre-load existing paths for orphan detection.
-            // NOTE: DbContext is NOT thread safe. We need a transient one for GetExistingPaths.
-            Dictionary<string, Guid> existingPaths;
-            using (var scope = _scopeFactory.CreateScope())
-            {
-                var ctx = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                existingPaths = await GetExistingPathsAsync(ctx, library.Id, cancellationToken);
-            }
-            
-            // Wrap existingPaths in a ConcurrentDictionary for partial updates/removals if needed?
-            // Actually, we track "processedFiles" separately to indentify orphans.
-            var processedFiles = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
-
-            // 3. Process Directories in Parallel (Consumer)
+            // 2. Record scan start time for Db-driven orphan detection
+            var scanStartTime = DateTime.UtcNow;
             var parallelOptions = new ParallelOptions 
             { 
                 CancellationToken = cancellationToken,
@@ -138,16 +126,17 @@ public abstract class BaseMediaScanner : IMediaScanner
                     ct.ThrowIfCancellationRequested();
                     try 
                     {
-                        // Look up existing item from DB if we know about it
-                        MediaItem? existing = null;
-                        if (existingPaths.TryGetValue(filePath, out var existingId))
+                        // Look up existing item from DB directly to avoid massive GC memory blobs
+                        MediaItem? existing = await context.MediaItems
+                            .FirstOrDefaultAsync(m => m.LibraryId == library.Id && m.Path == filePath, ct);
+
+                        if (existing != null)
                         {
-                            existing = await context.MediaItems.FindAsync(new object[] { existingId }, ct);
+                            // Ensure updated item doesn't get orphaned
+                            existing.LastScannedUtc = DateTime.UtcNow;
                         }
 
                         var opResult = await ProcessFileAsync(context, fileResult, existing, library, ct);
-
-                        processedFiles.TryAdd(filePath, 0);
 
                         switch (opResult.Result)
                         {
@@ -191,7 +180,7 @@ public abstract class BaseMediaScanner : IMediaScanner
             using (var cleanupScope = _scopeFactory.CreateScope())
             {
                 var context = cleanupScope.ServiceProvider.GetRequiredService<AppDbContext>();
-                await CleanupOrphansAsync(context, library, existingPaths, new HashSet<string>(processedFiles.Keys), cancellationToken);
+                await CleanupOrphansAsync(context, library, scanStartTime, cancellationToken);
                 await CleanupEmptyContainersAsync(context, library, cancellationToken);
                 await context.SaveChangesAsync(cancellationToken);
             }
@@ -313,18 +302,16 @@ public abstract class BaseMediaScanner : IMediaScanner
     }
 
     /// <summary>
-    /// Get existing media item paths for the library (leaf items only).
-    /// Container items (Series, Season, Artist, Album) are excluded because they are
-    /// managed by EnsureXAsync methods and cleaned up by CleanupEmptyContainersAsync.
-    /// Including them would cause false orphan deletions since their directory paths
-    /// never appear in the processedFiles set.
+    /// Remove items from database that no longer exist on disk.
+    /// Uses database-level ExecutionDeleteAsync for ultra-high performance.
+    /// Containers (Series, Albums) are excluded since they don't map cleanly to leaf file paths.
     /// </summary>
-    protected async Task<Dictionary<string, Guid>> GetExistingPathsAsync(
+    protected async Task CleanupOrphansAsync(
         AppDbContext context,
-        Guid libraryId,
+        Library library,
+        DateTime scanStartTime,
         CancellationToken cancellationToken)
     {
-        // Container types are managed separately — only track leaf media items
         var containerTypes = new[]
         {
             MediaType.Series,
@@ -333,46 +320,36 @@ public abstract class BaseMediaScanner : IMediaScanner
             MediaType.Album
         };
 
-        var items = await context.MediaItems
-            .Where(m => m.LibraryId == libraryId
-                     && m.Path != null
-                     && !containerTypes.Contains(m.Type))
-            .Select(m => new { m.Path, m.Id })
-            .ToListAsync(cancellationToken);
+        int deletedCount = 0;
 
-        // Group by path in case of duplicates and take the first ID
-        return items
-            .GroupBy(m => m.Path!, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                g => g.Key,
-                g => g.First().Id,
-                StringComparer.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Remove items from database that no longer exist on disk.
-    /// </summary>
-    protected async Task CleanupOrphansAsync(
-        AppDbContext context,
-        Library library,
-        Dictionary<string, Guid> existingPaths,
-        HashSet<string> processedFiles,
-        CancellationToken cancellationToken)
-    {
-        var orphanPaths = existingPaths.Keys
-            .Where(p => !processedFiles.Contains(p))
-            .ToList();
-
-        if (orphanPaths.Count == 0) return;
-
-        _logger.LogInformation("[{Scanner}] Removing {Count} orphaned items", DisplayName, orphanPaths.Count);
-
-        var orphanIds = orphanPaths.Select(p => existingPaths[p]).ToList();
-        var deletedCount = await context.MediaItems
-            .Where(m => orphanIds.Contains(m.Id))
-            .ExecuteDeleteAsync(cancellationToken);
+        // ExecuteDeleteAsync is highly performant but unsupported by InMemory test provider
+        if (context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            var orphans = await context.MediaItems
+                .Where(m => m.LibraryId == library.Id 
+                         && !containerTypes.Contains(m.Type) 
+                         && m.LastScannedUtc < scanStartTime)
+                .ToListAsync(cancellationToken);
+                
+            if (orphans.Count > 0)
+            {
+                context.MediaItems.RemoveRange(orphans);
+                deletedCount = orphans.Count;
+            }
+        }
+        else
+        {
+            deletedCount = await context.MediaItems
+                .Where(m => m.LibraryId == library.Id 
+                         && !containerTypes.Contains(m.Type) 
+                         && m.LastScannedUtc < scanStartTime)
+                .ExecuteDeleteAsync(cancellationToken);
+        }
             
-        _logger.LogDebug("[{Scanner}] Bulk removed {Count} orphans", DisplayName, deletedCount);
+        if (deletedCount > 0)
+        {
+            _logger.LogInformation("[{Scanner}] Bulk removed {Count} orphans", DisplayName, deletedCount);
+        }
     }
 
     /// <summary>

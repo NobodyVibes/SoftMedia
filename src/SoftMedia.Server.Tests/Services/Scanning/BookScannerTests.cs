@@ -30,7 +30,7 @@ public class TestableBookScanner : BookScanner
         set => _strictEnrichment = value;
     }
 
-    public new Task<ScanOperationResult> ProcessFileAsync(
+    public Task<ScanOperationResult> ProcessFileAsync(
         AppDbContext context,
         string filePath,
         MediaItem? existing,

@@ -46,8 +46,10 @@ public class MediaItem
     public double? FrameRate { get; set; }  // Frames per second
     public int? Width { get; set; }  // Video width in pixels
     public int? Height { get; set; }  // Video height in pixels
-    public string? AudioTracksJson { get; set; }  // JSON array of AudioTrackInfo
-    public string? SubtitleTracksJson { get; set; }  // JSON array of SubtitleTrackInfo
+    
+    // Tracking & Queuing logic
+    public DateTime LastScannedUtc { get; set; } = DateTime.UtcNow;
+    public string? MetadataHash { get; set; }
 
     // Rich Metadata (Promoted from JSON)
     public int? Year { get; set; }
@@ -116,6 +118,10 @@ public class MediaItem
 
     public ICollection<MediaItemGenre> MediaItemGenres { get; set; } = new List<MediaItemGenre>();
     public ICollection<MediaItemCast> MediaItemCasts { get; set; } = new List<MediaItemCast>();
+
+    public ICollection<AudioTrack> AudioTracks { get; set; } = new List<AudioTrack>();
+    public ICollection<SubtitleTrack> SubtitleTracks { get; set; } = new List<SubtitleTrack>();
+    public ICollection<Chapter> Chapters { get; set; } = new List<Chapter>();
 
     /// <summary>
     /// Path to cover art file (for albums/artists) or cached extraction.

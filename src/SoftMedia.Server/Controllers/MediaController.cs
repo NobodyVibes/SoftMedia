@@ -39,6 +39,7 @@ public class MediaController : ControllerBase
             .Include(m => m.Series)
             .Include(m => m.Album)
             .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
+            .Include(m => m.MediaItemCasts).ThenInclude(mc => mc.Person)
             .FirstOrDefaultAsync(m => m.Id == id);
 
         if (item == null)

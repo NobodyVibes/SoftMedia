@@ -56,43 +56,10 @@ public class MusicBrainzProvider : IMetadataProvider
         string trackTitle = item.Title;
         string path = item.Path;
 
-        // Try Embedded Metadata first
-        if (!string.IsNullOrEmpty(item.MetadataJson))
-        {
-            try 
-            {
-                var tags = MetadataJsonHelper.Parse(item.MetadataJson);
-                if (tags != null)
-                {
-                    if (tags.TryGetValue("artist", out var a)) artist = a.ToString();
-                    if (tags.TryGetValue("album", out var al)) 
-                    {
-                        album = al.ToString();
-                        // Clean embedded album title (remove (CD X), (Deluxe Edition), year suffixes, etc.)
-                        // This aligns embedded tags with MusicBrainz naming conventions
-                        if (!string.IsNullOrEmpty(album))
-                        {
-                            album = Regex.Replace(album, @"\s*\(CDS?\s*\d+\)", "", RegexOptions.IgnoreCase);
-                            album = Regex.Replace(album, @"\s*\(Discs?\s*\d+\)", "", RegexOptions.IgnoreCase);
-                            album = Regex.Replace(album, @"\s*\(.*(Edition|Version|Remaster|Live).*\)", "", RegexOptions.IgnoreCase);
-                        }
-                    }
-                    if (tags.TryGetValue("title", out var t)) 
-                    {
-                        var et = t.ToString();
-                        if (!string.IsNullOrEmpty(et))
-                        {
-                            // Clean slash from title (e.g. "Song 1 / Song 2")
-                            trackTitle = et.Replace("/", " ").Replace("-", " ");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to parse existing metadata for context");
-            }
-        }
+        // Use direct properties from MediaItem instead of parsing MetadataJson.
+        // The MusicScanner already populates ArtistId/AlbumId/Title during scan.
+        if (item.Artist != null) artist = item.Artist.Title;
+        if (item.Album != null) album = item.Album.Title;
 
         // Fallback: Path Parsing (folder structure)
         if (string.IsNullOrEmpty(artist) || string.IsNullOrEmpty(album))
@@ -382,16 +349,8 @@ public class MusicBrainzProvider : IMetadataProvider
         var albumName = CleanName(item.Title);
         string? artistName = null;
 
-        // Try to get artist context from metadata
-        if (!string.IsNullOrEmpty(item.MetadataJson))
-        {
-            var tags = MetadataJsonHelper.Parse(item.MetadataJson);
-            if (tags.TryGetValue("artist", out var a))
-                artistName = a.ToString();
-        }
-
-        // Fallback: resolve artist name from ArtistId FK (for existing items without seeded MetadataJson)
-        if (string.IsNullOrEmpty(artistName) && item.ArtistId.HasValue)
+        // Resolve artist context from ArtistId FK
+        if (item.ArtistId.HasValue)
         {
             try
             {

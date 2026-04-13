@@ -69,25 +69,22 @@ public class EmbeddedMusicProviderTests
     }
 
     [Fact]
-    public async Task FetchMetadataAsync_ProcessesAudioType_WhenScannedTagsPresent()
+    public async Task FetchMetadataAsync_SkipsAudioType_WhenRecentlyAdded()
     {
-        // Arrange — Audio items with pre-scanned tags should be deserialized
+        // Arrange — Audio items with recent DateAdded should skip TagLib
         var item = new MediaItem
         {
             Id = Guid.NewGuid(),
             Title = "Test Track",
             Path = "/music/artist/album/track.mp3",
             Type = MediaType.Audio,
-            MetadataJson = """{"Extra":{"scannedTags":true},"Title":"Test Track","Artist":"Test Artist","Year":2024}"""
+            DateAdded = DateTime.UtcNow // Recently added!
         };
 
         // Act
         var result = await _provider.FetchMetadataAsync(item);
 
-        // Assert — should use pre-scanned metadata path (not TagLib)
-        Assert.NotNull(result);
-        Assert.Equal("Test Track", result.Title);
-        Assert.Equal("Test Artist", result.Artist);
-        Assert.Equal(2024, result.Year);
+        // Assert — should return null immediately without hitting TagLib
+        Assert.Null(result);
     }
 }

@@ -92,8 +92,8 @@ public class MetadataAggregatorTests : IDisposable
 
         // 2. Verify metadata was saved to DB
         var savedItem = await _dbContext.MediaItems.FindAsync(item.Id);
-        Assert.NotNull(savedItem!.MetadataJson);
-        Assert.Contains("2023", savedItem.MetadataJson);
+        Assert.NotNull(savedItem!.PosterUrl);
+        Assert.Equal(2023, savedItem.Year);
     }
 
     [Fact]
@@ -155,14 +155,9 @@ public class MetadataAggregatorTests : IDisposable
         await aggregator.EnrichMediaItemAsync(item, LibraryType.TV);
 
         // Assert
-        // Verify ImageUrlExtractorService was called with the series item
         _mockImageExtractor.Verify(x => x.ExtractAndQueueAsync(
             It.Is<MediaItem>(m => m.Id == item.Id && m.Type == MediaType.Series),
             It.IsAny<MetadataResult>()), Times.Once);
-        
-        // Verify metadata was saved
-        var savedItem = await _dbContext.MediaItems.FindAsync(item.Id);
-        Assert.NotNull(savedItem!.MetadataJson);
     }
 
     [Fact]

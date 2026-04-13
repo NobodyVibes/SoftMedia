@@ -17,15 +17,18 @@ namespace SoftMedia.Server.Controllers;
 public class MusicController : ControllerBase
 {
     private readonly IMusicImageService _imageService;
+    private readonly IThumbnailService _thumbnailService;
     private readonly AppDbContext _context;
     private readonly ILogger<MusicController> _logger;
 
     public MusicController(
         IMusicImageService imageService,
+        IThumbnailService thumbnailService,
         AppDbContext context,
         ILogger<MusicController> logger)
     {
         _imageService = imageService;
+        _thumbnailService = thumbnailService;
         _context = context;
         _logger = logger;
     }
@@ -38,16 +41,9 @@ public class MusicController : ControllerBase
     [HttpGet("album/{albumId}/cover")]
     [AllowAnonymous] // Allow anonymous - browser img tags don't send auth headers
     [ResponseCache(Duration = 86400)] // Cache for 24 hours
-    public async Task<IActionResult> GetAlbumCover(Guid albumId)
+    public async Task<IActionResult> GetAlbumCover(Guid albumId, [FromQuery] int? width)
     {
-        var result = await _imageService.GetImageBytesAsync(albumId);
-        if (result == null)
-        {
-            _logger.LogDebug("Album cover not found: {AlbumId}", albumId);
-            return NotFound();
-        }
-
-        return File(result.Value.Data, result.Value.MimeType);
+        return await ServeImageAsync(albumId, width, "Album cover");
     }
 
     /// <summary>
@@ -58,16 +54,9 @@ public class MusicController : ControllerBase
     [HttpGet("artist/{artistId}/image")]
     [AllowAnonymous] // Allow anonymous - browser img tags don't send auth headers
     [ResponseCache(Duration = 86400)] // Cache for 24 hours
-    public async Task<IActionResult> GetArtistImage(Guid artistId)
+    public async Task<IActionResult> GetArtistImage(Guid artistId, [FromQuery] int? width)
     {
-        var result = await _imageService.GetImageBytesAsync(artistId);
-        if (result == null)
-        {
-            _logger.LogDebug("Artist image not found: {ArtistId}", artistId);
-            return NotFound();
-        }
-
-        return File(result.Value.Data, result.Value.MimeType);
+        return await ServeImageAsync(artistId, width, "Artist image");
     }
 
     /// <summary>
@@ -78,15 +67,48 @@ public class MusicController : ControllerBase
     [HttpGet("track/{trackId}/cover")]
     [AllowAnonymous] // Allow anonymous - browser img tags don't send auth headers
     [ResponseCache(Duration = 86400)] // Cache for 24 hours
-    public async Task<IActionResult> GetTrackCover(Guid trackId)
+    public async Task<IActionResult> GetTrackCover(Guid trackId, [FromQuery] int? width)
     {
-        var result = await _imageService.GetImageBytesAsync(trackId);
-        if (result == null)
+        return await ServeImageAsync(trackId, width, "Track cover");
+    }
+
+    private const int MinThumbnailWidth = 64;
+    private const int MaxThumbnailWidth = 800;
+
+    /// <summary>
+    /// Resolve and stream an image file with ETag support.
+    /// Uses PhysicalFile for zero-copy kernel-level streaming instead of buffering bytes in memory.
+    /// Supports optional thumbnail generation via the width parameter.
+    /// </summary>
+    private async Task<IActionResult> ServeImageAsync(Guid mediaItemId, int? width, string debugLabel)
+    {
+        var info = await _imageService.GetImageInfoAsync(mediaItemId);
+        if (info == null)
         {
-            _logger.LogDebug("Track cover not found: {TrackId}", trackId);
+            _logger.LogDebug("{Label} not found: {Id}", debugLabel, mediaItemId);
             return NotFound();
         }
 
-        return File(result.Value.Data, result.Value.MimeType);
+        var servePath = info.Value.Path;
+        var serveMime = info.Value.MimeType;
+
+        // Generate thumbnail if width is requested and within allowed range
+        if (width.HasValue && width.Value >= MinThumbnailWidth && width.Value <= MaxThumbnailWidth)
+        {
+            var thumbPath = await _thumbnailService.GetOrCreateThumbnailAsync(
+                info.Value.Path, mediaItemId, width.Value);
+            if (thumbPath != null)
+            {
+                servePath = thumbPath;
+                serveMime = "image/webp";
+            }
+            // Fall through to full-size if thumbnail generation fails
+        }
+
+        var lastModified = System.IO.File.GetLastWriteTimeUtc(servePath);
+        Response.Headers["ETag"] = $"\"{lastModified.Ticks}\"";
+        Response.Headers["Last-Modified"] = lastModified.ToString("R");
+
+        return PhysicalFile(servePath, serveMime, enableRangeProcessing: true);
     }
 }

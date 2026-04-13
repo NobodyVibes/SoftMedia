@@ -128,6 +128,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IHlsManifestService, HlsManifestService>();
         services.AddScoped<IRecommendationService, RecommendationService>();
         services.AddScoped<IMusicImageService, MusicImageService>();
+        services.AddSingleton<IThumbnailService, ThumbnailService>();
         services.AddScoped<IMediaRetrievalService, MediaRetrievalService>();
         services.AddScoped<IUserMediaInteractionService, UserMediaInteractionService>();
         

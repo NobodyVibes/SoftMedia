@@ -1,4 +1,3 @@
-using System.Text.Json;
 using SoftMedia.Server.Models;
 
 namespace SoftMedia.Server.Services.Metadata;
@@ -27,12 +26,12 @@ public static class MetadataEnrichmentPolicy
     /// Determines whether the given <paramref name="item"/> needs metadata enrichment.
     /// <para>
     /// <b>Relaxed mode (<paramref name="strictMode"/> = false):</b> Item is considered
-    /// complete if it has a poster URL with a non-null value. This preserves existing behavior.
+    /// complete if it has a poster URL or cover art path. This preserves existing behavior.
     /// </para>
     /// <para>
     /// <b>Strict mode (<paramref name="strictMode"/> = true):</b> Checks type-specific
     /// required fields beyond just a poster. Movies/Series also need a description.
-    /// Books also need an author or publisher. Albums need poster or cover art on disk.
+    /// Books also need cast entries. Albums need poster or cover art on disk.
     /// Enabling strict mode may cause existing items to be re-queued for enrichment.
     /// </para>
     /// </summary>
@@ -45,62 +44,40 @@ public static class MetadataEnrichmentPolicy
             return false;
         }
 
-        // No metadata at all — definitely needs enrichment
-        if (string.IsNullOrEmpty(item.MetadataJson))
+        // Check promoted columns instead of parsing MetadataJson.
+        bool hasPoster = !string.IsNullOrEmpty(item.PosterUrl)
+                      || !string.IsNullOrEmpty(item.CoverArtPath);
+
+        // No metadata hash means metadata has never been fetched (except for sparse types like Artists)
+        if (string.IsNullOrEmpty(item.MetadataHash) && !hasPoster && item.Type != MediaType.Artist)
             return true;
 
-        try
+        if (!strictMode)
         {
-            using var doc = JsonDocument.Parse(item.MetadataJson);
-            var root = doc.RootElement;
-            
-            bool hasPoster = HasKey(root, "poster");
-
-            if (!strictMode)
-            {
-                // Relaxed: poster alone is sufficient (current behavior)
-                return !hasPoster;
-            }
-
-            // Strict: type-aware completeness checks
-            bool hasDescription = HasKey(root, "description")
-                               || !string.IsNullOrEmpty(item.Overview);
-
-            return item.Type switch
-            {
-                // Movies/Series: require poster AND description
-                MediaType.Movie or MediaType.Series => !hasPoster || !hasDescription,
-
-                // Albums: require poster URL or cover art file on disk
-                MediaType.Album => !hasPoster && string.IsNullOrEmpty(item.CoverArtPath),
-
-                // Artists: require a title in MetadataJson (metadata is sparse by nature)
-                MediaType.Artist => !HasKey(root, "title"),
-
-                // Books: require poster AND (author/cast or publisher)
-                MediaType.Book => !hasPoster || (!HasKey(root, "cast")
-                                              && !HasKey(root, "publisher")),
-
-                // Default (Games, Photos, Audio): poster is sufficient
-                _ => !hasPoster,
-            };
+            // Relaxed: poster alone is sufficient (current behavior)
+            return !hasPoster;
         }
-        catch (JsonException)
+
+        // Strict: type-aware completeness checks
+        bool hasDescription = !string.IsNullOrEmpty(item.Overview);
+
+        return item.Type switch
         {
-            return true; // If JSON is invalid, it needs enrichment
-        }
-    }
+            // Movies/Series: require poster AND description
+            MediaType.Movie or MediaType.Series => !hasPoster || !hasDescription,
 
-    /// <summary>
-    /// Checks whether a JSON element contains a specific key with a non-null value.
-    /// </summary>
-    private static bool HasKey(JsonElement root, string key)
-    {
-        if (root.TryGetProperty(key, out var value))
-        {
-            return value.ValueKind != JsonValueKind.Null &&
-                   value.ValueKind != JsonValueKind.Undefined;
-        }
-        return false;
+            // Albums: require poster URL or cover art file on disk
+            MediaType.Album => !hasPoster,
+
+            // Artists: always considered complete (metadata is sparse by nature)
+            MediaType.Artist => false,
+
+            // Books: require poster AND (author/director or studio/publisher)
+            MediaType.Book => !hasPoster || (string.IsNullOrEmpty(item.Director)
+                                          && string.IsNullOrEmpty(item.Studio)),
+
+            // Default (Games, Photos, Audio): poster is sufficient
+            _ => !hasPoster,
+        };
     }
 }

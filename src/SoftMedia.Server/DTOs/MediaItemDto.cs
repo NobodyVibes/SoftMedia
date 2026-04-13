@@ -36,6 +36,16 @@ public class SubtitleTrackDto
     public bool IsForced { get; set; }
 }
 
+public class CastMemberDto
+{
+    public int Id { get; set; }
+    public int? ExternalId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? ImageUrl { get; set; }
+    public List<string> Characters { get; set; } = new();
+    public int Order { get; set; }
+}
+
 public class MediaItemDto
 {
     public Guid Id { get; set; }
@@ -83,6 +93,7 @@ public class MediaItemDto
     public int? Height { get; set; }  // Video height
     public List<AudioTrackDto>? AudioTracks { get; set; }
     public List<SubtitleTrackDto>? SubtitleTracks { get; set; }
+    public List<CastMemberDto>? Cast { get; set; }
 
     public Guid? SeriesId { get; set; }
     public int? SeasonNumber { get; set; }
@@ -197,73 +208,27 @@ public class MediaItemDto
                     .ToList();
             }
 
-            // Fallback to MetadataJson for extra fields or if promoted fields are null (migration scenario)
-            if (!string.IsNullOrEmpty(item.MetadataJson))
+            // Read cast from relational junction (Person + MediaItemCast)
+            if (item.MediaItemCasts != null && item.MediaItemCasts.Count > 0)
             {
-                try
-                {
-                    var metadata = Helpers.MetadataJsonHelper.Parse(item.MetadataJson);
-                    if (metadata != null)
+                dto.Cast = item.MediaItemCasts
+                    .Where(mc => mc.Person != null)
+                    .OrderBy(mc => mc.Order)
+                    .Select(mc => new CastMemberDto
                     {
-                        dto.Metadata = metadata; // Expose full metadata to frontend
-
-                        // Only map if not already set by promoted properties
-                        if (dto.Year == null && metadata.TryGetValue("year", out var yearObj) && int.TryParse(yearObj.ToString(), out var year))
-                        {
-                            dto.Year = year;
-                        }
-                        
-                        if (string.IsNullOrEmpty(dto.Description) && metadata.TryGetValue("description", out var descObj)) 
-                        {
-                            dto.Description = descObj.ToString();
-                        }
-
-                        // Map content rating from JSON if model property is null
-                        if (string.IsNullOrEmpty(dto.Rating))
-                        {
-                            if (metadata.TryGetValue("contentRating", out var crObj))
-                            {
-                                dto.Rating = crObj.ToString();
-                            }
-                            else if (metadata.TryGetValue("rating", out var ratingObj))
-                            {
-                                var rStr = ratingObj.ToString();
-                                if (!double.TryParse(rStr, out _))
-                                {
-                                    dto.Rating = rStr;
-                                }
-                            }
-                        }
-
-                        if (dto.CommunityRating == null && metadata.TryGetValue("imdbRating", out var imdbRatingObj) && double.TryParse(imdbRatingObj.ToString(), out var imdbScore))
-                        {
-                            dto.CommunityRating = imdbScore;
-                        }
-
-                        if (metadata.TryGetValue("duration", out var durationObj)) dto.Duration = durationObj.ToString();
-                        if (metadata.TryGetValue("quality", out var qualityObj)) dto.Quality = qualityObj.ToString();
-                        
-                        // Extract credits start timecode for progress bar marker
-                        if (metadata.TryGetValue("creditsStart", out var creditsStartObj))
-                        {
-                            if (double.TryParse(creditsStartObj.ToString(), out var creditsStart))
-                            {
-                                dto.CreditsStart = creditsStart;
-                            }
-                        }
-                    }
-                }
-                catch
-                {
-                    // Ignore metadata parsing errors
-                }
+                        Id = mc.Person!.Id,
+                        ExternalId = mc.Person.ExternalId,
+                        Name = mc.Person.Name,
+                        ImageUrl = ResolveCastImageUrl(mc.Person.ImagePath, imageProxyBaseUrl),
+                        Characters = SplitCharacters(mc.Character),
+                        Order = mc.Order
+                    })
+                    .ToList();
             }
 
-            dto.PosterPath = ResolvePosterPath(item, imageProxyBaseUrl, dto.Metadata);
-            dto.BackdropPath = ResolveBackdropPath(item, imageProxyBaseUrl, dto.Metadata);
 
-            // Fallback for Duration if not in metadata but in technical details
-            if (string.IsNullOrEmpty(dto.Duration) && item.Duration > 0)
+            // Duration formatting from promoted column
+            if (item.Duration > 0)
             {
                 var ts = TimeSpan.FromSeconds(item.Duration);
                 if (ts.TotalHours >= 1)
@@ -276,10 +241,13 @@ public class MediaItemDto
                 }
             }
 
+            dto.PosterPath = ResolvePosterPath(item, imageProxyBaseUrl);
+            dto.BackdropPath = ResolveBackdropPath(item, imageProxyBaseUrl);
+
         return dto;
     }
 
-    private static string? ResolvePosterPath(MediaItem item, string? imageProxyBaseUrl, Dictionary<string, object>? parsedMetadata)
+    private static string? ResolvePosterPath(MediaItem item, string? imageProxyBaseUrl)
     {
         string? url = item.PosterUrl;
 
@@ -291,37 +259,12 @@ public class MediaItemDto
                 url = item.Album.PosterUrl;
         }
 
-        if (string.IsNullOrEmpty(url) && parsedMetadata != null && parsedMetadata.TryGetValue("poster", out var posterObj))
-        {
-            url = posterObj?.ToString();
-        }
-
-        if (string.IsNullOrEmpty(url))
-        {
-            if (item.Series != null && !string.IsNullOrEmpty(item.Series.MetadataJson))
-            {
-                var fallbackMeta = Helpers.MetadataJsonHelper.Parse(item.Series.MetadataJson);
-                if (fallbackMeta != null && fallbackMeta.TryGetValue("poster", out var pObj))
-                    url = pObj?.ToString();
-            }
-            else if (item.Album != null && !string.IsNullOrEmpty(item.Album.MetadataJson))
-            {
-                var fallbackMeta = Helpers.MetadataJsonHelper.Parse(item.Album.MetadataJson);
-                if (fallbackMeta != null && fallbackMeta.TryGetValue("poster", out var pObj))
-                    url = pObj?.ToString();
-            }
-        }
-
         if (!string.IsNullOrEmpty(url))
         {
             if (url.StartsWith("http") && !string.IsNullOrEmpty(imageProxyBaseUrl))
                 return $"{imageProxyBaseUrl}?url={Uri.EscapeDataString(url)}";
             return url;
         }
-
-        bool hasEmbeddedArt = parsedMetadata != null && parsedMetadata.ContainsKey("hasEmbeddedArt");
-        if (hasEmbeddedArt && (item.Type == MediaType.Audio || item.Type == MediaType.Album))
-            return $"/api/v1/audio/{item.Id}/cover";
 
         if (!string.IsNullOrEmpty(item.CoverArtPath))
         {
@@ -340,14 +283,9 @@ public class MediaItemDto
         return null;
     }
 
-    private static string? ResolveBackdropPath(MediaItem item, string? imageProxyBaseUrl, Dictionary<string, object>? parsedMetadata)
+    private static string? ResolveBackdropPath(MediaItem item, string? imageProxyBaseUrl)
     {
         string? url = item.BackdropUrl;
-
-        if (string.IsNullOrEmpty(url) && parsedMetadata != null && parsedMetadata.TryGetValue("backdrop", out var backdropObj))
-        {
-            url = backdropObj?.ToString();
-        }
 
         if (!string.IsNullOrEmpty(url))
         {
@@ -357,5 +295,22 @@ public class MediaItemDto
         }
 
         return null;
+    }
+
+    private static string? ResolveCastImageUrl(string? path, string? imageProxyBaseUrl)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        if (path.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrEmpty(imageProxyBaseUrl))
+            return $"{imageProxyBaseUrl}?url={Uri.EscapeDataString(path)}";
+        return path;
+    }
+
+    private static List<string> SplitCharacters(string? character)
+    {
+        if (string.IsNullOrWhiteSpace(character)) return new List<string>();
+        return character
+            .Split(" / ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
     }
 }

@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Cryptography;
 using System.Text;
+using System.Collections.Concurrent;
+using SoftMedia.Server.Services.Media;
 
 namespace SoftMedia.Server.Controllers;
 
@@ -11,10 +13,18 @@ public class ImageController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<ImageController> _logger;
+    private readonly IThumbnailService _thumbnailService;
     private readonly string _proxyCacheDir;
-    
+
     // Maximum file size: 10MB (same as ImageCacheService)
     private const long MaxFileSizeBytes = 10 * 1024 * 1024;
+
+    // Thumbnail width bounds (same as MusicController)
+    private const int MinThumbnailWidth = 64;
+    private const int MaxThumbnailWidth = 800;
+
+    // Limit concurrent outbound fetches to avoid overwhelming upstream hosts
+    private static readonly SemaphoreSlim _fetchSemaphore = new(8, 8);
     
     // Allowed hosts for SSRF prevention (same as ImageCacheService)
     private static readonly HashSet<string> AllowedHosts = new(StringComparer.OrdinalIgnoreCase)
@@ -35,11 +45,12 @@ public class ImageController : ControllerBase
         "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"
     };
 
-    public ImageController(IHttpClientFactory httpClientFactory, IWebHostEnvironment env, ILogger<ImageController> logger)
+    public ImageController(IHttpClientFactory httpClientFactory, IWebHostEnvironment env, ILogger<ImageController> logger, IThumbnailService thumbnailService)
     {
         _httpClientFactory = httpClientFactory;
         _env = env;
         _logger = logger;
+        _thumbnailService = thumbnailService;
         
         // Use wwwroot/cache/images/proxy for hash-based proxy caching
         _proxyCacheDir = Path.Combine(_env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"), 
@@ -53,7 +64,7 @@ public class ImageController : ControllerBase
     /// </summary>
     [HttpGet("proxy")]
     [ResponseCache(Duration = 604800, Location = ResponseCacheLocation.Client)] // Cache for 7 days in browser
-    public async Task<IActionResult> ProxyImage([FromQuery] string url)
+    public async Task<IActionResult> ProxyImage([FromQuery] string url, [FromQuery] int? width)
     {
         if (string.IsNullOrEmpty(url))
         {
@@ -77,24 +88,42 @@ public class ImageController : ControllerBase
         var extension = GetExtensionFromUrl(url);
         var cachedFilePath = Path.Combine(_proxyCacheDir, hash + extension);
 
+        var sentinelPath = cachedFilePath + ".404";
+
         // Check proxy cache first
         if (System.IO.File.Exists(cachedFilePath))
         {
-            var contentType = GetContentType(cachedFilePath);
-            return PhysicalFile(cachedFilePath, contentType, enableRangeProcessing: true);
+            return await ServeCachedImageAsync(cachedFilePath, hash, width);
         }
 
+        // Check negative cache — upstream previously returned non-success for this URL
+        if (System.IO.File.Exists(sentinelPath))
+        {
+            return NotFound("Image not found at source.");
+        }
+
+        await _fetchSemaphore.WaitAsync();
         try
         {
+            // Re-check caches after acquiring semaphore (another request may have populated it)
+            if (System.IO.File.Exists(cachedFilePath))
+            {
+                return await ServeCachedImageAsync(cachedFilePath, hash, width);
+            }
+            if (System.IO.File.Exists(sentinelPath))
+                return NotFound("Image not found at source.");
+
             var client = _httpClientFactory.CreateClient();
             client.DefaultRequestHeaders.UserAgent.ParseAdd(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-            client.Timeout = TimeSpan.FromSeconds(30);
-            
+            client.Timeout = TimeSpan.FromSeconds(15);
+
             using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Upstream returned {Status} for {Url}", response.StatusCode, url);
+                // Write negative cache sentinel so retries skip the network request
+                await System.IO.File.WriteAllTextAsync(sentinelPath, ((int)response.StatusCode).ToString());
                 return NotFound("Image not found at source.");
             }
 
@@ -135,7 +164,7 @@ public class ImageController : ControllerBase
             }
 
             _logger.LogDebug("Cached proxy image: {Url} -> {Path}", url, cachedFilePath);
-            return PhysicalFile(cachedFilePath, contentType, enableRangeProcessing: true);
+            return await ServeCachedImageAsync(cachedFilePath, hash, width);
         }
         catch (TaskCanceledException)
         {
@@ -147,6 +176,37 @@ public class ImageController : ControllerBase
             _logger.LogError(ex, "Error proxying image: {Url}", url);
             return StatusCode(502, "Error fetching upstream image.");
         }
+        finally
+        {
+            _fetchSemaphore.Release();
+        }
+    }
+
+    /// <summary>
+    /// Serve a cached image, optionally generating a resized WebP thumbnail.
+    /// </summary>
+    private async Task<IActionResult> ServeCachedImageAsync(string cachedFilePath, string urlHash, int? width)
+    {
+        var servePath = cachedFilePath;
+        var serveMime = GetContentType(cachedFilePath);
+
+        if (width.HasValue && width.Value >= MinThumbnailWidth && width.Value <= MaxThumbnailWidth)
+        {
+            // Derive a deterministic GUID from the URL hash for ThumbnailService's file naming
+            var guidBytes = new byte[16];
+            Array.Copy(SHA256.HashData(Encoding.UTF8.GetBytes(urlHash)), guidBytes, 16);
+            var proxyGuid = new Guid(guidBytes);
+
+            var thumbPath = await _thumbnailService.GetOrCreateThumbnailAsync(
+                cachedFilePath, proxyGuid, width.Value);
+            if (thumbPath != null)
+            {
+                servePath = thumbPath;
+                serveMime = "image/webp";
+            }
+        }
+
+        return PhysicalFile(servePath, serveMime, enableRangeProcessing: true);
     }
 
     private static string GetExtensionFromUrl(string url)

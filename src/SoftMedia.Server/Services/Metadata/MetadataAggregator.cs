@@ -92,6 +92,7 @@ public class MetadataAggregator : IMetadataAggregator
         {
             await _tvMetadataEnricher.FilterToLocalEpisodesAsync(item, metadata);
             await _tvMetadataEnricher.PropagateEpisodeMetadataAsync(item, metadata);
+            await _tvMetadataEnricher.PropagateSeasonMetadataAsync(item, metadata);
         }
 
         if (deferImageCaching || !refreshImages)
@@ -107,29 +108,37 @@ public class MetadataAggregator : IMetadataAggregator
         // Process images (ExtractAndQueueAsync nulls out remote URLs to prevent hotlinking)
         bool imagesEnqueued = await _imageUrlExtractor.ExtractAndQueueAsync(item, metadata);
 
-        // Re-serialize the MetadataResult (with image URLs now stripped) and MERGE
-        // into the existing MetadataJson to preserve scanner-injected keys (e.g. "author"
-        // from BookScanner, "hasEmbeddedArt" from IMediaAnalysisService).
-        var jsonOptions = new JsonSerializerOptions 
-        { 
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-        };
-        var updatedResultJson = JsonSerializer.Serialize(metadata, jsonOptions);
-
-        try
-        {
-            item.MetadataJson = MetadataJsonMerger.MergeJson(item.MetadataJson, updatedResultJson);
-        }
-        catch
-        {
-            item.MetadataJson = updatedResultJson;
-        }
-
-        // Assign stable MetadataHash to easily inform the queue if data actually mutated
+        // Compute stable MetadataHash from promoted strongly-typed fields.
+        // This avoids the old JSON-ordering instability that triggered false-positive
+        // "data changed" signals and unnecessary enrichment retries.
         using var sha256 = System.Security.Cryptography.SHA256.Create();
-        var hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(updatedResultJson));
+        var hashInput = $"{item.Year}|{item.Overview}|{item.CommunityRating}|{item.ContentRating}|{item.Studio}|{item.Director}|{item.PosterUrl}|{item.BackdropUrl}|{item.ImdbId}|{item.TvMazeId}|{item.MusicBrainzId}";
+        var hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(hashInput));
         item.MetadataHash = Convert.ToBase64String(hashBytes);
+
+        // Store raw payload in cache for scanners to use (e.g. instant episode naming)
+        if (!string.IsNullOrEmpty(metadata.RawPayload))
+        {
+            var providerName = "TVMaze"; // Currently only TVMaze provides full embedded data
+            var existingCache = await _dbContext.ProviderMetadataCaches
+                .FirstOrDefaultAsync(c => c.MediaItemId == item.Id && c.ProviderId == providerName);
+            
+            if (existingCache == null)
+            {
+                _dbContext.ProviderMetadataCaches.Add(new ProviderMetadataCache
+                {
+                    MediaItemId = item.Id,
+                    ProviderId = providerName,
+                    RawPayload = metadata.RawPayload,
+                    LastUpdated = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                existingCache.RawPayload = metadata.RawPayload;
+                existingCache.LastUpdated = DateTime.UtcNow;
+            }
+        }
     }
 
     /// <summary>

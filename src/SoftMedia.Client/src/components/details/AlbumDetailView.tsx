@@ -1,6 +1,7 @@
+import { Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { Play, Shuffle, Clock, Heart, Share2 } from 'lucide-react';
+import { Play, Shuffle, Clock, Heart, Share2, Disc3 } from 'lucide-react';
 import api from '../../services/api';
 import { type MediaItem } from '../../types';
 import { useAudioStore } from '../../store/audioStore';
@@ -109,32 +110,57 @@ export default function AlbumDetailView({ item }: AlbumDetailViewProps) {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
-                        {tracks?.map((track) => {
-                            const isHighlighted = track.id === highlightTrackId;
-                            return (
-                                <tr
-                                    key={track.id}
-                                    className={cn(
-                                        "hover:bg-white/5 transition-colors cursor-pointer group",
-                                        isHighlighted && "bg-primary/10 border-l-2 border-primary"
-                                    )}
-                                    onClick={() => handlePlayTrack(track)}
-                                >
-                                    <td className={cn(
-                                        "px-6 py-4 group-hover:text-primary transition-colors",
-                                        isHighlighted && "text-primary"
-                                    )}>
-                                        <span className="group-hover:hidden">{track.trackNumber}</span>
-                                        <Play className="w-4 h-4 hidden group-hover:block fill-current" />
-                                    </td>
-                                    <td className={cn(
-                                        "px-6 py-4 font-medium",
-                                        isHighlighted ? "text-primary" : "text-white"
-                                    )}>{track.title}</td>
-                                    <td className="px-6 py-4 text-right">{formatDuration(track.durationSeconds || 0)}</td>
-                                </tr>
+                        {(() => {
+                            const distinctDiscs = new Set(
+                                (tracks ?? []).map(t => t.discNumber ?? 1)
                             );
-                        })}
+                            const showDiscHeaders = distinctDiscs.size > 1;
+                            let lastDisc: number | null = null;
+
+                            return tracks?.map((track) => {
+                                const isHighlighted = track.id === highlightTrackId;
+                                const disc = track.discNumber ?? 1;
+                                const showHeader = showDiscHeaders && disc !== lastDisc;
+                                lastDisc = disc;
+                                return (
+                                    <Fragment key={track.id}>
+                                        {showHeader && (
+                                            <tr className="bg-white/[0.07] border-t border-white/10">
+                                                <td
+                                                    colSpan={3}
+                                                    className="px-6 py-3 text-xs font-semibold uppercase tracking-wider"
+                                                >
+                                                    <span className="inline-flex items-center gap-2 bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
+                                                        <Disc3 className="w-4 h-4 text-violet-400" />
+                                                        Disc {disc}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        )}
+                                        <tr
+                                            className={cn(
+                                                "hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 transition-colors cursor-pointer group",
+                                                isHighlighted && "bg-primary/10 border-l-2 border-primary"
+                                            )}
+                                            onClick={() => handlePlayTrack(track)}
+                                        >
+                                            <td className={cn(
+                                                "px-6 py-4 group-hover:text-primary transition-colors",
+                                                isHighlighted && "text-primary"
+                                            )}>
+                                                <span className="group-hover:hidden">{track.trackNumber}</span>
+                                                <Play className="w-4 h-4 hidden group-hover:block fill-current" />
+                                            </td>
+                                            <td className={cn(
+                                                "px-6 py-4 font-medium",
+                                                isHighlighted ? "text-primary" : "text-white"
+                                            )}>{track.title}</td>
+                                            <td className="px-6 py-4 text-right">{formatDuration(track.durationSeconds || 0)}</td>
+                                        </tr>
+                                    </Fragment>
+                                );
+                            });
+                        })()}
                     </tbody>
                 </table>
             </div>

@@ -11,6 +11,10 @@ interface HoverableMediaCardWrapperProps {
     height?: number;
     width?: string | number;
     libraryType?: string;
+    /** Optional batch/cascade coordination — forwarded to MediaCard → LoadingImage. */
+    groupReady?: boolean;
+    onImageLoad?: () => void;
+    onImageError?: () => void;
 }
 
 export default function HoverableMediaCardWrapper({
@@ -24,7 +28,10 @@ export default function HoverableMediaCardWrapper({
     expandedWidth: _expandedWidth,
     height,
     width = 192,
-    libraryType
+    libraryType,
+    groupReady,
+    onImageLoad,
+    onImageError,
 }: HoverableMediaCardWrapperProps) {
     const isHovered = hoveredId === item.id;
     const isAudio = libraryType === 'Music' ||
@@ -62,7 +69,14 @@ export default function HoverableMediaCardWrapper({
                     damping: 30
                 }}
             >
-                <MediaCard item={item} enableHoverScale={false} libraryType={libraryType} />
+                <MediaCard
+                    item={item}
+                    enableHoverScale={false}
+                    libraryType={libraryType}
+                    groupReady={groupReady}
+                    onImageLoad={onImageLoad}
+                    onImageError={onImageError}
+                />
             </motion.div>
         </motion.div>
     );

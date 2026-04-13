@@ -59,6 +59,8 @@ public abstract class BaseMediaScanner : IMediaScanner
     /// </summary>
     private readonly SemaphoreSlim[] _stripedLocks;
     private const int LockStripeCount = 1024;
+    
+    protected static readonly SemaphoreSlim _dbWriteLock = new(1, 1);
 
     /// <summary>
     /// Template method for scanning a library.
@@ -96,6 +98,23 @@ public abstract class BaseMediaScanner : IMediaScanner
             totalDirs = directories.Count;
             _logger.LogInformation("[{Scanner}] Found {Count} directories to process", DisplayName, totalDirs);
 
+            // 1.5. Build an O(1) bulk dictionary lookup to prevent N+1 queries during parallel scan
+            _logger.LogDebug("[{Scanner}] Bulk-loading existing media items into memory for library '{LibraryName}'", DisplayName, library.Name);
+            var knownFilesCache = new ConcurrentDictionary<string, MediaItem>(StringComparer.OrdinalIgnoreCase);
+            using (var initScope = _scopeFactory.CreateScope())
+            {
+                var initContext = initScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var allItems = await initContext.MediaItems
+                    .AsNoTracking()
+                    .Where(m => m.LibraryId == library.Id && m.Path != null)
+                    .ToListAsync(cancellationToken);
+                    
+                foreach(var item in allItems)
+                {
+                    knownFilesCache[item.Path!] = item;
+                }
+            }
+
             // 2. Record scan start time for Db-driven orphan detection
             var scanStartTime = DateTime.UtcNow;
             var parallelOptions = new ParallelOptions 
@@ -126,13 +145,26 @@ public abstract class BaseMediaScanner : IMediaScanner
                     ct.ThrowIfCancellationRequested();
                     try 
                     {
-                        // Look up existing item from DB directly to avoid massive GC memory blobs
-                        MediaItem? existing = await context.MediaItems
-                            .FirstOrDefaultAsync(m => m.LibraryId == library.Id && m.Path == filePath, ct);
-
-                        if (existing != null)
+                        // Look up existing item using O(1) in-memory cache
+                        MediaItem? existing = null;
+                        if (knownFilesCache.TryGetValue(filePath, out var cachedItem))
                         {
-                            // Ensure updated item doesn't get orphaned
+                            existing = cachedItem;
+                            
+                            // Safe attachment: Check if context is already tracking an item with this ID.
+                            // This prevents conflicts if multiple threads/files share parent entities.
+                            var tracked = context.ChangeTracker.Entries<MediaItem>()
+                                .FirstOrDefault(e => e.Entity.Id == existing.Id);
+
+                            if (tracked == null)
+                            {
+                                context.Attach(existing);
+                            }
+                            else
+                            {
+                                existing = tracked.Entity;
+                            }
+                            
                             existing.LastScannedUtc = DateTime.UtcNow;
                         }
 
@@ -163,7 +195,16 @@ public abstract class BaseMediaScanner : IMediaScanner
                     }
                 }
                 
-                await context.SaveChangesAsync(ct);
+                // Wrap Db SaveChanges with lock to fix SQLite concurrent writer panics
+                await _dbWriteLock.WaitAsync(ct);
+                try
+                {
+                    await context.SaveChangesAsync(ct);
+                }
+                finally
+                {
+                    _dbWriteLock.Release();
+                }
                 
                 // Process deferred queue AFTER save
                 foreach (var item in deferredQueue)

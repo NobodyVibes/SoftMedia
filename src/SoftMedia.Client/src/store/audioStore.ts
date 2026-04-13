@@ -192,14 +192,11 @@ export const useAudioStore = create<AudioState>()(
                 // Keep the FULL original queue for un-shuffling or repeating, don't filter out the started track
                 const originalQueue = [...tracks];
 
-                // The active queue should be everything AFTER the current track
-                // If shuffling, we take the *remaining* tracks and shuffle them (standard behavior) 
-                // OR we shuffle the *whole* playlist and put current track first?
-                // Standard: Shuffle the *entire* list, find current track, move to front? 
-                // OR: Just shuffle everything else.
-                // Let's stick to "everything else" to respect the user's choice of starting track.
-
-                let queue = tracks.filter((_, i) => i !== startIndex);
+                // The active queue is everything AFTER the start track. When the queue
+                // drains, `next()` reloads from `originalQueue` if repeat='all', which
+                // produces correct album-loop behavior (loop after the LAST track of the
+                // LAST disc, not after the current track).
+                let queue = tracks.slice(startIndex + 1);
 
                 // Shuffle if needed
                 if (shuffleMode) {

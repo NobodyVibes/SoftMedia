@@ -37,20 +37,9 @@ public class OpenLibraryProvider : IMetadataProvider
 
             // Build search URL using structured params when author context is available.
             // OpenLibrary's search API supports title= and author= for more accurate results.
-            string? author = null;
-            if (!string.IsNullOrEmpty(item.MetadataJson))
-            {
-                try
-                {
-                    using var metaDoc = JsonDocument.Parse(item.MetadataJson);
-                    if (metaDoc.RootElement.TryGetProperty("author", out var authorProp) &&
-                        authorProp.ValueKind == JsonValueKind.String)
-                    {
-                        author = authorProp.GetString();
-                    }
-                }
-                catch (JsonException) { /* Ignore malformed JSON */ }
-            }
+            // Use the promoted Director column for author context.
+            // BookScanner stores parsed author in Director as the generic "primary creator" field.
+            string? author = item.Director;
 
             string url;
             if (!string.IsNullOrWhiteSpace(author))

@@ -9,56 +9,27 @@ public class MetadataEnrichmentPolicyTests
     [Fact]
     public void NeedsEnrichment_ReturnsFalse_WhenRetryExhausted()
     {
-        // Arrange — IsRetryExhausted column is set by MetadataRetryService after max retries
         var item = new MediaItem
         {
             Id = Guid.NewGuid(),
             IsRetryExhausted = true,
-            MetadataJson = """{"title":"Test"}"""
+            Title = "Test"
         };
 
-        // Act
         var result = MetadataEnrichmentPolicy.NeedsEnrichment(item);
-
-        // Assert — permanently failed items should never be re-queued
         Assert.False(result);
     }
 
     [Fact]
-    public void NeedsEnrichment_ReturnsTrue_WhenMetadataJsonIsNull()
+    public void NeedsEnrichment_ReturnsTrue_WhenNoPosterAndNoHash()
     {
         var item = new MediaItem
         {
             Id = Guid.NewGuid(),
-            MetadataJson = null
+            MetadataHash = null,
+            PosterUrl = null
         };
 
-        Assert.True(MetadataEnrichmentPolicy.NeedsEnrichment(item));
-    }
-
-    [Fact]
-    public void NeedsEnrichment_ReturnsTrue_WhenMetadataJsonIsEmpty()
-    {
-        var item = new MediaItem
-        {
-            Id = Guid.NewGuid(),
-            MetadataJson = ""
-        };
-
-        Assert.True(MetadataEnrichmentPolicy.NeedsEnrichment(item));
-    }
-
-    [Fact]
-    public void NeedsEnrichment_ReturnsTrue_WhenPosterIsNull()
-    {
-        // Arrange — poster key exists but value is null (provider returned null)
-        var item = new MediaItem
-        {
-            Id = Guid.NewGuid(),
-            MetadataJson = """{"title":"Test","poster":null}"""
-        };
-
-        // Act & Assert — null poster means enrichment still needed
         Assert.True(MetadataEnrichmentPolicy.NeedsEnrichment(item));
     }
 
@@ -68,20 +39,20 @@ public class MetadataEnrichmentPolicyTests
         var item = new MediaItem
         {
             Id = Guid.NewGuid(),
-            MetadataJson = """{"title":"Test","poster":"http://example.com/poster.jpg"}"""
+            PosterUrl = "http://example.com/poster.jpg"
         };
 
         Assert.False(MetadataEnrichmentPolicy.NeedsEnrichment(item));
     }
 
     [Fact]
-    public void NeedsEnrichment_ReturnsTrue_WhenNoPosterKey()
+    public void NeedsEnrichment_ReturnsTrue_WhenNoPosterAndHashPresent()
     {
-        // Arrange — has metadata but no poster key at all
         var item = new MediaItem
         {
             Id = Guid.NewGuid(),
-            MetadataJson = """{"title":"Test","year":2024}"""
+            MetadataHash = "hash123",
+            PosterUrl = null
         };
 
         Assert.True(MetadataEnrichmentPolicy.NeedsEnrichment(item));
@@ -90,29 +61,14 @@ public class MetadataEnrichmentPolicyTests
     [Fact]
     public void NeedsEnrichment_ReturnsFalse_WhenRetryExhaustedAndNoPoster()
     {
-        // Arrange — IsRetryExhausted takes priority even without poster
         var item = new MediaItem
         {
             Id = Guid.NewGuid(),
             IsRetryExhausted = true,
-            MetadataJson = """{}"""
+            PosterUrl = null
         };
 
         Assert.False(MetadataEnrichmentPolicy.NeedsEnrichment(item));
-    }
-
-    [Fact]
-    public void NeedsEnrichment_ReturnsTrue_WhenNotExhaustedAndIncomplete()
-    {
-        // Arrange — IsRetryExhausted is false, metadata is incomplete
-        var item = new MediaItem
-        {
-            Id = Guid.NewGuid(),
-            IsRetryExhausted = false,
-            MetadataJson = """{"title":"Test"}"""
-        };
-
-        Assert.True(MetadataEnrichmentPolicy.NeedsEnrichment(item));
     }
 
     // ---- Strict Mode Tests ----
@@ -124,10 +80,9 @@ public class MetadataEnrichmentPolicyTests
         {
             Id = Guid.NewGuid(),
             Type = MediaType.Movie,
-            MetadataJson = """{"poster":"http://example.com/poster.jpg"}"""
+            PosterUrl = "http://example.com/poster.jpg"
         };
 
-        // Relaxed: poster alone is sufficient
         Assert.False(MetadataEnrichmentPolicy.NeedsEnrichment(item, strictMode: false));
     }
 
@@ -138,10 +93,10 @@ public class MetadataEnrichmentPolicyTests
         {
             Id = Guid.NewGuid(),
             Type = MediaType.Movie,
-            MetadataJson = """{"poster":"http://example.com/poster.jpg"}"""
+            PosterUrl = "http://example.com/poster.jpg",
+            Overview = null
         };
 
-        // Strict: movie needs poster AND description
         Assert.True(MetadataEnrichmentPolicy.NeedsEnrichment(item, strictMode: true));
     }
 
@@ -152,7 +107,8 @@ public class MetadataEnrichmentPolicyTests
         {
             Id = Guid.NewGuid(),
             Type = MediaType.Movie,
-            MetadataJson = """{"poster":"http://example.com/poster.jpg","description":"A great movie."}"""
+            PosterUrl = "http://example.com/poster.jpg",
+            Overview = "A great movie."
         };
 
         Assert.False(MetadataEnrichmentPolicy.NeedsEnrichment(item, strictMode: true));
@@ -166,10 +122,9 @@ public class MetadataEnrichmentPolicyTests
             Id = Guid.NewGuid(),
             Type = MediaType.Album,
             CoverArtPath = "/music/artist/album/cover.jpg",
-            MetadataJson = """{"title":"Album"}"""
+            Title = "Album"
         };
 
-        // Album: poster OR CoverArtPath on disk is sufficient
         Assert.False(MetadataEnrichmentPolicy.NeedsEnrichment(item, strictMode: true));
     }
 
@@ -180,7 +135,7 @@ public class MetadataEnrichmentPolicyTests
         {
             Id = Guid.NewGuid(),
             Type = MediaType.Album,
-            MetadataJson = """{"title":"Album"}"""
+            Title = "Album"
         };
 
         Assert.True(MetadataEnrichmentPolicy.NeedsEnrichment(item, strictMode: true));
@@ -193,7 +148,7 @@ public class MetadataEnrichmentPolicyTests
         {
             Id = Guid.NewGuid(),
             Type = MediaType.Artist,
-            MetadataJson = """{"title":"Artist Name"}"""
+            Title = "Artist Name"
         };
 
         Assert.False(MetadataEnrichmentPolicy.NeedsEnrichment(item, strictMode: true));
@@ -206,10 +161,10 @@ public class MetadataEnrichmentPolicyTests
         {
             Id = Guid.NewGuid(),
             Type = MediaType.Book,
-            MetadataJson = """{"poster":"http://example.com/cover.jpg"}"""
+            PosterUrl = "http://example.com/cover.jpg",
+            Director = null // Author
         };
 
-        // Book: needs poster AND (cast or publisher)
         Assert.True(MetadataEnrichmentPolicy.NeedsEnrichment(item, strictMode: true));
     }
 
@@ -220,7 +175,8 @@ public class MetadataEnrichmentPolicyTests
         {
             Id = Guid.NewGuid(),
             Type = MediaType.Book,
-            MetadataJson = """{"poster":"http://example.com/cover.jpg","cast":[{"name":"J.R.R. Tolkien"}]}"""
+            PosterUrl = "http://example.com/cover.jpg",
+            Director = "J.R.R. Tolkien"
         };
 
         Assert.False(MetadataEnrichmentPolicy.NeedsEnrichment(item, strictMode: true));
@@ -233,7 +189,8 @@ public class MetadataEnrichmentPolicyTests
         {
             Id = Guid.NewGuid(),
             Type = MediaType.Book,
-            MetadataJson = """{"poster":"http://example.com/cover.jpg","publisher":"Penguin Random House"}"""
+            PosterUrl = "http://example.com/cover.jpg",
+            Studio = "Penguin Random House"
         };
 
         Assert.False(MetadataEnrichmentPolicy.NeedsEnrichment(item, strictMode: true));
@@ -246,7 +203,7 @@ public class MetadataEnrichmentPolicyTests
         {
             Id = Guid.NewGuid(),
             Type = MediaType.Movie,
-            MetadataJson = """{"title":"Movie without poster"}"""
+            Title = "Movie without poster"
         };
 
         Assert.True(MetadataEnrichmentPolicy.NeedsEnrichment(item, strictMode: false));
@@ -255,13 +212,12 @@ public class MetadataEnrichmentPolicyTests
     [Fact]
     public void NeedsEnrichment_StillReturnsFalse_WhenRetryExhausted_InStrictMode()
     {
-        // IsRetryExhausted takes priority over strict mode requirements
         var item = new MediaItem
         {
             Id = Guid.NewGuid(),
             Type = MediaType.Movie,
             IsRetryExhausted = true,
-            MetadataJson = """{"poster":"http://example.com/poster.jpg"}"""
+            PosterUrl = "http://example.com/poster.jpg"
         };
 
         Assert.False(MetadataEnrichmentPolicy.NeedsEnrichment(item, strictMode: true));

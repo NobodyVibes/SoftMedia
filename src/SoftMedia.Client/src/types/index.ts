@@ -57,6 +57,16 @@ export interface MediaItem {
     height?: number; // Video height in pixels
     audioTracks?: AudioTrack[]; // All audio tracks
     subtitleTracks?: SubtitleTrack[]; // All subtitle tracks
+    cast?: CastMember[];
+}
+
+export interface CastMember {
+    id: number;
+    externalId?: number;
+    name: string;
+    imageUrl?: string;
+    characters: string[];
+    order: number;
 }
 
 export interface Chapter {

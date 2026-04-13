@@ -134,7 +134,7 @@ public class InteractionLogicTests : IDisposable
             Id = Guid.NewGuid(),
             Title = "Rated Movie",
             InternalRating = 4.2,
-            MetadataJson = "{\"rating\": \"PG-13\"}"
+            ContentRating = "PG-13"
         };
 
         // Act

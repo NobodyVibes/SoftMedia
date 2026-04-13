@@ -7,6 +7,7 @@ import HoverableMediaCardWrapper from '../components/items/HoverableMediaCardWra
 import { FilterBar } from '../components/library/FilterBar';
 import { type MediaItem, type PagedResult, type Library } from '../types';
 import { useMediaHub } from '../hooks/useMediaHub';
+import useSequentialReveal from '../hooks/useSequentialReveal';
 
 export default function LibraryPage() {
     const { ref, inView } = useInView();
@@ -82,6 +83,17 @@ export default function LibraryPage() {
 
     const allItems = data?.pages.flatMap((page: PagedResult<MediaItem>) => page.items) || [];
 
+    // Sequential left-to-right cascade reveal.
+    // Count growth from infinite-scroll does NOT reset the cascade — new items
+    // cascade in from where the cursor stopped.
+    const reveal = useSequentialReveal(allItems.length);
+
+    // Explicitly reset the cascade when the result set changes (filter/sort/nav).
+    useEffect(() => {
+        reveal.reset();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id, search, sortBy, genre, year, minRating, isFavorite, watched, viewMode]);
+
     // Render content area based on state
     const renderContent = () => {
         if (isLoading) {
@@ -124,13 +136,16 @@ export default function LibraryPage() {
                         gap: '2rem' // gap-8
                     }}
                 >
-                    {allItems.map((item: MediaItem) => (
+                    {allItems.map((item: MediaItem, i: number) => (
                         <HoverableMediaCardWrapper
                             key={item.id}
                             item={item}
                             hoveredId={hoveredId}
                             setHoveredId={setHoveredId}
                             libraryType={library?.type}
+                            groupReady={reveal.isRevealed(i)}
+                            onImageLoad={() => reveal.onImageLoad(i)}
+                            onImageError={() => reveal.onImageError(i)}
                         />
                     ))}
                 </div>

@@ -27,10 +27,12 @@ public class TvScanner : BaseMediaScanner
     private readonly ConcurrentDictionary<string, MediaItem> _seriesCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<(Guid SeriesId, int SeasonNum), MediaItem> _seasonCache = new();
     
-    // Track new series IDs for deferred image caching (to avoid race condition)
-    private readonly ConcurrentDictionary<Guid, byte> _newSeriesIds = new();
+    // Track series IDs that need metadata enrichment after the scan completes.
+    // Deferred to post-scan so all seasons/episodes exist in the DB before
+    // FilterToLocalEpisodesAsync runs, preventing image loss for later-discovered seasons.
+    private readonly ConcurrentDictionary<Guid, byte> _seriesNeedingEnrichment = new();
 
-    // Cache parsed series MetadataJson to avoid O(N) re-parsing per episode
+    // Cache parsed series ProviderMetadataCache (TVMaze payloads) to avoid O(N) re-parsing per episode
     private readonly ConcurrentDictionary<Guid, Dictionary<string, object>?> _parsedSeriesMetadataCache = new();
 
 
@@ -59,7 +61,7 @@ public class TvScanner : BaseMediaScanner
         // Clear session caches
         _seriesCache.Clear();
         _seasonCache.Clear();
-        _newSeriesIds.Clear();
+        _seriesNeedingEnrichment.Clear();
         _parsedSeriesMetadataCache.Clear();
 
         // Bulk pre-load all existing Series for this library
@@ -86,11 +88,41 @@ public class TvScanner : BaseMediaScanner
                     _seasonCache.TryAdd((s.SeriesId.Value, s.SeasonNumber ?? 0), s);
             }
 
-            _logger.LogInformation("[TvScanner] Pre-loaded {SeriesCount} series and {SeasonCount} seasons for library {LibraryId}",
-                existingSeries.Count, existingSeasons.Count, library.Id);
+            // Bulk pre-load Provider Metadata Caches (TVMaze payloads) for the series in this library
+            var seriesIds = existingSeries.Select(s => s.Id).ToList();
+            var caches = await context.ProviderMetadataCaches
+                .AsNoTracking()
+                .Where(c => seriesIds.Contains(c.MediaItemId) && c.ProviderId == "TVMaze")
+                .ToListAsync(cancellationToken);
+
+            foreach (var cache in caches)
+            {
+                try
+                {
+                    var parsed = JsonSerializer.Deserialize<Dictionary<string, object>>(cache.RawPayload);
+                    if (parsed != null)
+                        _parsedSeriesMetadataCache.TryAdd(cache.MediaItemId, parsed);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[TvScanner] Failed to parse cached metadata for series {Id}", cache.MediaItemId);
+                }
+            }
+
+            _logger.LogInformation("[TvScanner] Pre-loaded series: {SeriesCount}, seasons: {SeasonCount}, caches: {CacheCount} for library: {LibraryId}",
+                existingSeries.Count, existingSeasons.Count, caches.Count, library.Id);
         }
 
         await base.ScanLibraryAsync(library, progress, cancellationToken);
+
+        // Deferred metadata enrichment: enqueue ALL series that need enrichment AFTER
+        // the scan completes. This guarantees every season and episode exists in the DB
+        // before FilterToLocalEpisodesAsync runs, so no season images are lost.
+        _logger.LogInformation("[TvScanner] Enqueueing deferred metadata enrichment for {Count} series", _seriesNeedingEnrichment.Count);
+        foreach (var seriesId in _seriesNeedingEnrichment.Keys)
+        {
+            await _metadataQueue.EnqueueMetadataRefreshAsync(seriesId, LibraryType.TV);
+        }
     }
 
 
@@ -245,12 +277,11 @@ public class TvScanner : BaseMediaScanner
             context.MediaItems.Add(series);
             await context.SaveChangesAsync(cancellationToken);
 
-            // Queue metadata enrichment
-            await _metadataQueue.EnqueueMetadataRefreshAsync(series.Id, LibraryType.TV);
-
             // Add to cache for subsequent lookups
             _seriesCache.TryAdd(showName, series);
-            _newSeriesIds.TryAdd(series.Id, 0);
+
+            // Mark for deferred metadata enrichment (runs after scan completes)
+            _seriesNeedingEnrichment.TryAdd(series.Id, 0);
 
             _logger.LogInformation("[TvScanner] Created series: {ShowName}", showName);
             return series;
@@ -305,170 +336,101 @@ public class TvScanner : BaseMediaScanner
             // Add to cache for subsequent lookups
             _seasonCache.TryAdd(cacheKey, season);
 
+            // New season discovered — mark series for deferred enrichment so
+            // FilterToLocalEpisodesAsync includes this season's images.
+            _seriesNeedingEnrichment.TryAdd(series.Id, 0);
+
             _logger.LogInformation("[TvScanner] Created season: {Show} - Season {Num}", series.Title, seasonNum);
             return season;
         }
     }
 
     /// <summary>
-    /// Populate season metadata from series metadata JSON.
+    /// Populate season metadata from series metadata.
+    /// Now a no-op: TvMetadataEnricher propagates metadata to seasons/episodes
+    /// via promoted columns during enrichment in MetadataAggregator.
     /// </summary>
     private void PopulateSeasonMetadata(MediaItem season, MediaItem series, int seasonNum)
     {
-        if (string.IsNullOrEmpty(series.MetadataJson))
-            return;
-
-        try
-        {
-            var seriesMeta = MetadataJsonHelper.Parse(series.MetadataJson);
-            if (seriesMeta != null && seriesMeta.TryGetValue("seasons", out var sObj) && sObj is JsonElement sArr)
-            {
-                foreach (var s in sArr.EnumerateArray())
-                {
-                    if (s.TryGetProperty("number", out var n) && n.GetInt32() == seasonNum)
-                    {
-                        var meta = !string.IsNullOrEmpty(season.MetadataJson) 
-                            ? MetadataJsonHelper.Parse(season.MetadataJson)
-                            : new Dictionary<string, object>();
-
-                        if (s.TryGetProperty("poster", out var p) && p.ValueKind != JsonValueKind.Null)
-                            meta["poster"] = p.GetString() ?? string.Empty;
-                        if (s.TryGetProperty("summary", out var sum) && sum.ValueKind != JsonValueKind.Null)
-                        {
-                            var overview = sum.GetString() ?? string.Empty;
-                            meta["overview"] = overview;
-                            season.Overview = overview;
-                        }
-                        if (s.TryGetProperty("premiereDate", out var pd) && pd.ValueKind != JsonValueKind.Null)
-                            meta["premiereDate"] = pd.GetString() ?? string.Empty;
-
-                        if (meta.Count > 0)
-                            season.MetadataJson = JsonSerializer.Serialize(meta);
-
-                        break;
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "[TvScanner] Failed to parse season metadata for {Show} S{Season}",
-                series.Title, seasonNum);
-        }
-    }
-
-    // Cache parsed series MetadataJson to avoid O(N) re-parsing per episode
-    private readonly ConcurrentDictionary<Guid, Dictionary<(int season, int episode), JsonElement>?> _parsedEpisodeCache = new();
-
-    /// <summary>
-    /// Get or parse the series episodes into an O(1) lookup dictionary.
-    /// Uses a per-scan cache to avoid redundant parsing for every episode.
-    /// </summary>
-    private Dictionary<(int season, int episode), JsonElement>? GetCachedEpisodes(MediaItem series)
-    {
-        return _parsedEpisodeCache.GetOrAdd(series.Id, _ =>
-        {
-            if (string.IsNullOrEmpty(series.MetadataJson))
-                return null;
-            try
-            {
-                var parsedMeta = MetadataJsonHelper.Parse(series.MetadataJson);
-                var dict = new Dictionary<(int season, int episode), JsonElement>();
-
-                if (parsedMeta != null && parsedMeta.TryGetValue("episodes", out var eObj) && eObj is JsonElement eArr)
-                {
-                    foreach (var ep in eArr.EnumerateArray())
-                    {
-                        int s = ep.TryGetProperty("season", out var _s) ? _s.GetInt32() : 0;
-                        int e = ep.TryGetProperty("episode", out var _e) ? _e.GetInt32() : 0;
-                        dict[(s, e)] = ep;
-                    }
-                }
-                return dict;
-            }
-            catch
-            {
-                return null;
-            }
-        });
+        // Season metadata (poster, overview, premiere date) is now written to promoted
+        // columns by TvMetadataEnricher.PropagateEpisodeMetadataAsync() during enrichment.
+        // No action needed during scanning.
     }
 
     /// <summary>
-    /// Get episode title from series metadata (TVMaze).
-    /// Uses cached O(1) lookup to avoid re-parsing and linear scans per episode.
+    /// Get episode title from previously-enriched episode data.
+    /// Since TvMetadataEnricher writes titles directly to episode.Title during enrichment,
+    /// existing episodes already have correct titles in the DB.
+    /// Returns null for new episodes (titles come from enrichment post-scan).
     /// </summary>
     private string? GetEpisodeTitleFromMetadata(MediaItem series, int seasonNum, int episodeNum)
     {
-        var episodes = GetCachedEpisodes(series);
-        if (episodes == null)
+        if (!_parsedSeriesMetadataCache.TryGetValue(series.Id, out var metadata) || metadata == null)
             return null;
 
-        if (episodes.TryGetValue((seasonNum, episodeNum), out var ep))
+        // The TVMaze JSON contains an "episodes" array in the "_embedded" property
+        if (metadata.TryGetValue("_embedded", out var embeddedObj) && embeddedObj is JsonElement embedded)
         {
-            if (ep.TryGetProperty("name", out var name) && name.ValueKind != JsonValueKind.Null)
+            if (embedded.TryGetProperty("episodes", out var episodes) && episodes.ValueKind == JsonValueKind.Array)
             {
-                return name.GetString();
+                foreach (var ep in episodes.EnumerateArray())
+                {
+                    if (ep.TryGetProperty("season", out var s) && s.GetInt32() == seasonNum &&
+                        ep.TryGetProperty("number", out var n) && n.GetInt32() == episodeNum)
+                    {
+                        if (ep.TryGetProperty("name", out var name))
+                            return name.GetString();
+                    }
+                }
             }
         }
-
         return null;
     }
 
     /// <summary>
-    /// Populate episode metadata (still, summary, airdate) from series metadata.
-    /// Uses cached O(1) lookup to avoid re-parsing and linear scans per episode.
+    /// Populate episode metadata from series metadata.
+    /// Now a no-op: TvMetadataEnricher propagates metadata to promoted columns
+    /// during enrichment in MetadataAggregator.
     /// </summary>
     private void PopulateEpisodeMetadata(MediaItem episode, MediaItem series, int seasonNum, int episodeNum)
     {
-        var episodes = GetCachedEpisodes(series);
-        if (episodes == null)
+        if (!_parsedSeriesMetadataCache.TryGetValue(series.Id, out var metadata) || metadata == null)
             return;
 
-        try
+        if (metadata.TryGetValue("_embedded", out var embeddedObj) && embeddedObj is JsonElement embedded)
         {
-            if (episodes.TryGetValue((seasonNum, episodeNum), out var ep))
+            if (embedded.TryGetProperty("episodes", out var episodes) && episodes.ValueKind == JsonValueKind.Array)
             {
-                var epMeta = !string.IsNullOrEmpty(episode.MetadataJson) 
-                     ? MetadataJsonHelper.Parse(episode.MetadataJson)
-                     : new Dictionary<string, object>();
-
-                // Extract still image URL
-                if (ep.TryGetProperty("still", out var stillProp) && stillProp.ValueKind != JsonValueKind.Null)
+                foreach (var ep in episodes.EnumerateArray())
                 {
-                    var stillUrl = stillProp.GetString();
-                    if (!string.IsNullOrEmpty(stillUrl))
-                        epMeta["still"] = stillUrl;
-                }
-
-                // Extract summary/description
-                if (ep.TryGetProperty("summary", out var summaryProp) && summaryProp.ValueKind != JsonValueKind.Null)
-                {
-                    var summary = summaryProp.GetString();
-                    if (!string.IsNullOrEmpty(summary))
+                    if (ep.TryGetProperty("season", out var s) && s.GetInt32() == seasonNum &&
+                        ep.TryGetProperty("number", out var n) && n.GetInt32() == episodeNum)
                     {
-                        epMeta["summary"] = summary;
-                        episode.Overview = summary;
+                        // Summary
+                        if (ep.TryGetProperty("summary", out var summary))
+                        {
+                            var summaryText = summary.GetString();
+                            if (!string.IsNullOrEmpty(summaryText))
+                                episode.Overview = System.Text.RegularExpressions.Regex.Replace(summaryText, "<.*?>", "");
+                        }
+
+                        // Air date
+                        if (ep.TryGetProperty("airdate", out var airdate) && DateTime.TryParse(airdate.GetString(), out var date))
+                            episode.ReleaseDate = date;
+
+                        // Still image -> Backdrop (promoted column)
+                        if (ep.TryGetProperty("image", out var img) && img.ValueKind != JsonValueKind.Null)
+                        {
+                             if (img.TryGetProperty("original", out var original))
+                                 episode.BackdropUrl = original.GetString();
+                             else if (img.TryGetProperty("medium", out var medium))
+                                 episode.BackdropUrl = medium.GetString();
+                        }
+                        
+                        break;
                     }
                 }
-
-                // Extract airdate
-                if (ep.TryGetProperty("airdate", out var airdateProp) && airdateProp.ValueKind != JsonValueKind.Null)
-                {
-                    var airdate = airdateProp.GetString();
-                    if (!string.IsNullOrEmpty(airdate))
-                        epMeta["airdate"] = airdate;
-                }
-
-                if (epMeta.Count > 0)
-                {
-                    episode.MetadataJson = JsonSerializer.Serialize(epMeta);
-                }
             }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "[TvScanner] Failed to parse episode metadata for S{Season}E{Episode}",
-                seasonNum, episodeNum);
         }
     }
 

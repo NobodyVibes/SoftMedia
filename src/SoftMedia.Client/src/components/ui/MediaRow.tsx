@@ -3,6 +3,7 @@ import { ArrowRight } from 'lucide-react';
 import { type MediaItem } from '../../types';
 import HoverableMediaCardWrapper from '../items/HoverableMediaCardWrapper';
 import HorizontalScrollList from './HorizontalScrollList';
+import useSequentialReveal from '../../hooks/useSequentialReveal';
 
 interface MediaRowProps {
     title: string;
@@ -13,6 +14,10 @@ interface MediaRowProps {
 
 export default function MediaRow({ title, items, viewAllLink, libraryType }: MediaRowProps) {
     const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+    // Sequential left-to-right cascade reveal. The browser parallel-loads images,
+    // and the cascade's stuck-timeout handles any out-of-order arrivals.
+    const reveal = useSequentialReveal(items?.length ?? 0);
 
     if (!items || items.length === 0) return null;
 
@@ -42,7 +47,7 @@ export default function MediaRow({ title, items, viewAllLink, libraryType }: Med
                     {/* Scroll Spacer for edge-to-edge alignment */}
                     <div className="flex-shrink-0 w-6 h-1" />
 
-                    {items.map((item) => (
+                    {items.map((item, i) => (
                         <div key={item.id} className="flex-shrink-0" style={{ width: '192px' }}>
                             <HoverableMediaCardWrapper
                                 item={item}
@@ -50,6 +55,9 @@ export default function MediaRow({ title, items, viewAllLink, libraryType }: Med
                                 setHoveredId={setHoveredId}
                                 libraryType={libraryType}
                                 width="100%"
+                                groupReady={reveal.isRevealed(i)}
+                                onImageLoad={() => reveal.onImageLoad(i)}
+                                onImageError={() => reveal.onImageError(i)}
                             />
                         </div>
                     ))}

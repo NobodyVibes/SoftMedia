@@ -129,7 +129,7 @@ public class GameScannerTests : IDisposable
                 Path = fileInfo.FullName,
                 Title = "Test Game",
                 Type = MediaType.Game,
-                MetadataJson = "{\"poster\": \"http://example.com/poster.jpg\"}" 
+                PosterUrl = "http://example.com/poster.jpg"
             };
             
             _dbContext.MediaItems.Add(existingResource);

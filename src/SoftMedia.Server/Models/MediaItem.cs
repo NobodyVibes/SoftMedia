@@ -61,6 +61,12 @@ public class MediaItem
     public string? Director { get; set; }
 
     /// <summary>
+    /// Start time (in seconds) of the credits chapter, used for progress bar markers.
+    /// Promoted from MetadataJson to avoid JSON parsing on every DTO serialization.
+    /// </summary>
+    public double? CreditsStart { get; set; }
+
+    /// <summary>
     /// Original remote poster URL from the metadata provider.
     /// Promoted from MetadataJson to avoid JSON parsing on every DTO serialization.
     /// The local cached copy is resolved via ImageCacheService at serving time.
@@ -96,8 +102,6 @@ public class MediaItem
     public int? TvMazeId { get; set; }
     public string? MusicBrainzId { get; set; }
 
-    // Type-Specific Metadata (JSON)
-    public string? MetadataJson { get; set; }
 
     public MediaType Type { get; set; }
 

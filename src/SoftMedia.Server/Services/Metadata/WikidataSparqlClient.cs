@@ -105,24 +105,21 @@ public abstract class WikidataSparqlClient : IMetadataProvider
     }
 
     /// <summary>
-    /// Try to extract a cached entity ID (e.g., IMDb ID) from an item's MetadataJson.
+    /// Try to extract a cached entity ID from an item's promoted columns.
     /// </summary>
     protected static string? TryGetCachedId(MediaItem item, string jsonKey, string? expectedPrefix = null)
     {
-        if (string.IsNullOrEmpty(item.MetadataJson))
-            return null;
-
-        try
+        // Map known JSON keys to promoted columns
+        string? id = jsonKey switch
         {
-            using var doc = JsonDocument.Parse(item.MetadataJson);
-            if (doc.RootElement.TryGetProperty(jsonKey, out var idProp))
-            {
-                var id = idProp.GetString();
-                if (!string.IsNullOrEmpty(id) && (expectedPrefix == null || id.StartsWith(expectedPrefix)))
-                    return id;
-            }
-        }
-        catch { }
+            "imdbId" => item.ImdbId,
+            "tvmazeId" => item.TvMazeId?.ToString(),
+            "musicBrainzId" => item.MusicBrainzId,
+            _ => null
+        };
+
+        if (!string.IsNullOrEmpty(id) && (expectedPrefix == null || id.StartsWith(expectedPrefix)))
+            return id;
 
         return null;
     }

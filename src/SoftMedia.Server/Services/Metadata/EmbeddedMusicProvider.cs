@@ -27,23 +27,12 @@ public class EmbeddedMusicProvider : IMetadataProvider
         var title = item.Title;
         var path = item.Path;
 
-        // Optimization: If MusicScanner already extracted all tags (indicated by "scannedTags": true),
-        // we can just deserialize the existing MetadataJson and return it, skipping the TagLib read entirely.
-        if (!string.IsNullOrEmpty(item.MetadataJson) && item.MetadataJson.Contains("\"scannedTags\""))
+        // Optimization: If the item was recently added by MusicScanner during an initial scan,
+        // it already extracted the base tags and populated the DB. We can skip hitting TagLib again.
+        if (item.DateAdded >= DateTime.UtcNow.AddMinutes(-5))
         {
-            try
-            {
-                var existingResult = JsonSerializer.Deserialize<MetadataResult>(item.MetadataJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (existingResult != null)
-                {
-                    _logger.LogInformation("Using pre-scanned metadata from MusicScanner for {Path}", path);
-                    return Task.FromResult<MetadataResult?>(existingResult);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to deserialize pre-scanned MetadataResult for {Path}. Falling back to TagLib.", path);
-            }
+            _logger.LogInformation("Skipping redundant TagLib read for freshly scanned item {Path}", path);
+            return Task.FromResult<MetadataResult?>(null);
         }
 
         // Fallback: Legacy item or scanner didn't fully scan it

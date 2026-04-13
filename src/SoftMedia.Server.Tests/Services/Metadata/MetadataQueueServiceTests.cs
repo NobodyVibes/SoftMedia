@@ -103,15 +103,15 @@ public class MetadataQueueServiceTests : IDisposable
         var service = new MetadataQueueService(_mockScopeFactory.Object, _mockNotificationService.Object, _mockLogger.Object);
         var mediaId = Guid.NewGuid();
         
-        // Movie with poster but no description
-        var initialMetadata = """{"poster":"http://example.com/poster.jpg"}""";
         var item = new MediaItem 
         { 
             Id = mediaId, 
             Title = "Test Movie", 
             Type = MediaType.Movie, 
             LibraryId = Guid.NewGuid(),
-            MetadataJson = initialMetadata
+            PosterUrl = "http://example.com/poster.jpg",
+            MetadataHash = "hash123",
+            Overview = null // Missing description for strict mode
         };
         
         _dbContext.MediaItems.Add(item);
@@ -120,7 +120,7 @@ public class MetadataQueueServiceTests : IDisposable
         // Aggregator does nothing (metadata unchanged)
         _mockAggregator.Setup(x => x.EnrichMediaItemAsync(It.IsAny<MediaItem>(), It.IsAny<LibraryType>(), It.IsAny<bool>(), It.IsAny<bool>()))
             .Callback<MediaItem, LibraryType, bool, bool>((m, _, _, _) => {
-                // Do not change MetadataJson
+                // Do not change MetadataHash so it shows up as unchanged
             })
             .Returns(Task.CompletedTask);
 
@@ -149,15 +149,14 @@ public class MetadataQueueServiceTests : IDisposable
         var service = new MetadataQueueService(_mockScopeFactory.Object, _mockNotificationService.Object, _mockLogger.Object);
         var mediaId = Guid.NewGuid();
         
-        // Movie with poster but no description
-        var initialMetadata = """{"poster":"http://example.com/poster.jpg"}""";
         var item = new MediaItem 
         { 
             Id = mediaId, 
             Title = "Test Movie", 
             Type = MediaType.Movie, 
             LibraryId = Guid.NewGuid(),
-            MetadataJson = initialMetadata
+            PosterUrl = "http://example.com/poster.jpg",
+            MetadataHash = "hash123"
         };
         
         _dbContext.MediaItems.Add(item);
@@ -166,7 +165,7 @@ public class MetadataQueueServiceTests : IDisposable
         // Aggregator does nothing (metadata unchanged)
         _mockAggregator.Setup(x => x.EnrichMediaItemAsync(It.IsAny<MediaItem>(), It.IsAny<LibraryType>(), It.IsAny<bool>(), It.IsAny<bool>()))
             .Callback<MediaItem, LibraryType, bool, bool>((m, _, _, _) => {
-                // Do not change MetadataJson
+                // Do not change MetadataHash
             })
             .Returns(Task.CompletedTask);
 

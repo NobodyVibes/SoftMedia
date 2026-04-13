@@ -1,4 +1,4 @@
-import { useState, useLayoutEffect, useMemo, memo } from 'react';
+import { useMemo, memo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Play, ListMusic, Heart, Check, Clock, Star } from 'lucide-react';
 import { type MediaItem, MediaType } from '../../types';
@@ -6,72 +6,20 @@ import QualityBadge from '../ui/QualityBadge';
 import { useAudioStore } from '../../store/audioStore';
 import api from '../../services/api';
 import { getGenreGradient, getGenreColors } from '../../lib/genreColors';
-
-// Loading image component with skeleton placeholder and fade-in transition
-function LoadingImage({
-    src,
-    alt,
-    className = '',
-    fallback
-}: {
-    src: string | null | undefined;
-    alt: string;
-    className?: string;
-    fallback?: React.ReactNode;
-}) {
-    const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>(src ? 'loading' : 'error');
-
-    // Immediate check for cached images
-    useLayoutEffect(() => {
-        if (!src) {
-            setStatus('error');
-            return;
-        }
-
-        const img = new Image();
-        img.src = src;
-
-        if (img.complete) {
-            if (img.naturalWidth === 0) {
-                setStatus('error');
-            } else {
-                setStatus('loaded');
-            }
-        } else {
-            setStatus('loading');
-        }
-    }, [src]);
-
-    if (!src || status === 'error') {
-        return fallback ? <>{fallback}</> : null;
-    }
-
-    return (
-        <div className="relative w-full h-full overflow-hidden">
-            {/* Skeleton placeholder - visible while loading */}
-            {status === 'loading' && (
-                <div className="absolute inset-0 bg-gradient-to-br from-gray-800 via-gray-700 to-gray-800 animate-pulse z-10" />
-            )}
-            {/* Actual image with fade-in */}
-            <img
-                src={src}
-                alt={alt}
-                className={`${className} transition-opacity duration-500 ${status === 'loaded' ? 'opacity-100' : 'opacity-0'}`}
-                onLoad={() => setStatus('loaded')}
-                onError={() => setStatus('error')}
-                loading="lazy"
-            />
-        </div>
-    );
-}
+import LoadingImage from '../ui/LoadingImage';
+import { resolveCardPosterUrl } from '../../lib/mediaImageUrl';
 
 interface MediaCardProps {
     item: MediaItem;
     libraryType?: string;
     enableHoverScale?: boolean;
+    /** Optional batch/cascade coordination — forwarded to the inner LoadingImage. */
+    groupReady?: boolean;
+    onImageLoad?: () => void;
+    onImageError?: () => void;
 }
 
-export default memo(function MediaCard({ item, libraryType }: MediaCardProps) {
+export default memo(function MediaCard({ item, libraryType, groupReady, onImageLoad, onImageError }: MediaCardProps) {
     const navigate = useNavigate();
     const { playTrack, addToQueue } = useAudioStore();
 
@@ -85,6 +33,10 @@ export default memo(function MediaCard({ item, libraryType }: MediaCardProps) {
         item.type === MediaType.Artist ||
         item.type === MediaType.Album,
         [libraryType, item.type]);
+
+    // Request thumbnail-sized images for card display (300px wide)
+    const cardPosterSrc = useMemo(() => resolveCardPosterUrl(item.posterPath), [item.posterPath]);
+
     const isMovie = libraryType === 'Movie' || item.type === MediaType.Movie;
     // For TV: if it has an episodeNumber, it's an episode; otherwise treat as a series
     const isTVEpisode = (libraryType === 'TV' && !!item.episodeNumber) || item.type === MediaType.Episode;
@@ -150,9 +102,12 @@ export default memo(function MediaCard({ item, libraryType }: MediaCardProps) {
                 <div className={`relative ${isAudio ? 'aspect-square' : 'aspect-[2/3]'} w-full bg-gray-900 overflow-hidden`}>
                     {/* Poster Image */}
                     <LoadingImage
-                        src={item.posterPath}
+                        src={cardPosterSrc}
                         alt={item.title}
                         className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover/card:scale-105"
+                        groupReady={groupReady}
+                        onLoad={onImageLoad}
+                        onError={onImageError}
                         fallback={
                             <div className="flex h-full w-full items-center justify-center bg-slate-800 text-slate-500">
                                 <span className="text-4xl font-thin opacity-50">?</span>

@@ -43,71 +43,48 @@ public class TVMazeProvider : IMetadataProvider
                 return null;
             }
 
-            // 1. First, check for cached IDs in MetadataJson to skip search
-            if (!string.IsNullOrEmpty(item.MetadataJson))
+            // 1. First, check for promoted IDs to skip search
+            // Priority A: TVMaze ID (Native)
+            if (item.TvMazeId.HasValue && item.TvMazeId.Value > 0)
             {
+                var tvmazeId = item.TvMazeId.Value;
+                _logger.LogInformation($"Using promoted TVMaze ID for '{title}': {tvmazeId}");
+                var directUrl = $"https://api.tvmaze.com/shows/{tvmazeId}?embed[]=cast&embed[]=seasons&embed[]=episodes";
+                try 
+                {
+                    var response = await _httpClient.GetStringAsync(directUrl);
+                    using var doc = System.Text.Json.JsonDocument.Parse(response);
+                    if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Null)
+                    {
+                        return ProcessShowMetadata(doc.RootElement, title, response);
+                    }
+                }
+                catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    _logger.LogWarning($"Promoted TVMaze ID {tvmazeId} not found, falling back to search");
+                }
+            } 
+            // Priority B: IMDb ID (Lookup)
+            else if (!string.IsNullOrEmpty(item.ImdbId) && item.ImdbId.StartsWith("tt"))
+            {
+                _logger.LogInformation($"Using promoted IMDb ID for '{title}': {item.ImdbId}");
+                var lookupUrl = $"https://api.tvmaze.com/lookup/shows?imdb={item.ImdbId}";
                 try
                 {
-                    using var existingDoc = System.Text.Json.JsonDocument.Parse(item.MetadataJson);
-                    
-                    // Priority A: TVMaze ID (Native)
-                    if (existingDoc.RootElement.TryGetProperty("tvmazeId", out var idProp) && idProp.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    var response = await _httpClient.GetStringAsync(lookupUrl);
+                    using var doc = System.Text.Json.JsonDocument.Parse(response);
+                    if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Null && doc.RootElement.TryGetProperty("id", out var idEl))
                     {
-                        var tvmazeId = idProp.GetInt32();
-                        _logger.LogInformation($"Using cached TVMaze ID for '{title}': {tvmazeId}");
-                        var directUrl = $"https://api.tvmaze.com/shows/{tvmazeId}?embed[]=cast&embed[]=seasons&embed[]=episodes";
-                        try 
-                        {
-                            var response = await _httpClient.GetStringAsync(directUrl);
-                            using var doc = System.Text.Json.JsonDocument.Parse(response);
-                            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Null)
-                            {
-                                return ProcessShowMetadata(doc.RootElement, title);
-                            }
-                        }
-                        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-                        {
-                            _logger.LogWarning($"Cached TVMaze ID {tvmazeId} not found, falling back to search");
-                        }
-                    } 
-                    
-                    // Priority B: IMDb ID (Lookup)
-                    else if (existingDoc.RootElement.TryGetProperty("imdbId", out var imdbProp))
-                    {
-                         var imdbId = imdbProp.GetString();
-                         if (!string.IsNullOrEmpty(imdbId) && imdbId.StartsWith("tt"))
-                         {
-                             _logger.LogInformation($"Using cached IMDb ID for '{title}': {imdbId}");
-                             // Add embed=cast to lookup (TVMaze redirects, but usually preserves params or we can get ID and refetch)
-                             var lookupUrl = $"https://api.tvmaze.com/lookup/shows?imdb={imdbId}";
-                             try
-                             {
-                                 var response = await _httpClient.GetStringAsync(lookupUrl);
-                                 // The lookup returns the show object directly (following redirect)
-                                 // However, the redirect might drop the 'embed' param if not handled by API.
-                                 // Safe bet: Parse ID from response and refetch with embed if _embedded is missing, 
-                                 // OR just assume lookup returns basic info and we need to refetch.
-                                 // Better: Parse response, get ID, then fetch full info with embed.
-                                 using var doc = System.Text.Json.JsonDocument.Parse(response);
-                                 if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Null && doc.RootElement.TryGetProperty("id", out var idEl))
-                                 {
-                                     var resolvedId = idEl.GetInt32();
-                                      var fullDetailUrl = $"https://api.tvmaze.com/shows/{resolvedId}?embed[]=cast&embed[]=seasons&embed[]=episodes";
-                                     var fullResponse = await _httpClient.GetStringAsync(fullDetailUrl);
-                                     using var fullDoc = System.Text.Json.JsonDocument.Parse(fullResponse);
-                                     return ProcessShowMetadata(fullDoc.RootElement, title);
-                                 }
-                             }
-                             catch (Exception ex)
-                             {
-                                  _logger.LogDebug(ex, "Failed lookup by IMDb ID");
-                             }
-                         }
+                        var resolvedId = idEl.GetInt32();
+                        var fullDetailUrl = $"https://api.tvmaze.com/shows/{resolvedId}?embed[]=cast&embed[]=seasons&embed[]=episodes";
+                        var fullResponse = await _httpClient.GetStringAsync(fullDetailUrl);
+                        using var fullDoc = System.Text.Json.JsonDocument.Parse(fullResponse);
+                        return ProcessShowMetadata(fullDoc.RootElement, title, fullResponse);
                     }
                 }
                 catch (Exception ex)
                 {
-                     _logger.LogDebug(ex, "Failed to parse existing metadata for ID check");
+                    _logger.LogDebug(ex, "Failed lookup by IMDb ID");
                 }
             }
             
@@ -227,7 +204,7 @@ public class TVMazeProvider : IMetadataProvider
             var detailResponse = await _httpClient.GetStringAsync(detailUrl);
             using var detailDoc = System.Text.Json.JsonDocument.Parse(detailResponse);
             
-            return ProcessShowMetadata(detailDoc.RootElement, title);
+            return ProcessShowMetadata(detailDoc.RootElement, title, detailResponse);
         }
         catch (Exception ex)
         {
@@ -240,9 +217,10 @@ public class TVMazeProvider : IMetadataProvider
     /// Parses the full show response (with ?embed[]=cast&embed[]=seasons&embed[]=episodes)
     /// into a MetadataResult. Eliminates the need for separate API calls for seasons and episodes.
     /// </summary>
-    private MetadataResult ProcessShowMetadata(System.Text.Json.JsonElement root, string title)
+    private MetadataResult ProcessShowMetadata(System.Text.Json.JsonElement root, string title, string rawPayload)
     {
             var result = new MetadataResult();
+            result.RawPayload = rawPayload;
             
             // Store TVMaze show ID for season/episode lookups
             if (root.TryGetProperty("id", out var idVal))

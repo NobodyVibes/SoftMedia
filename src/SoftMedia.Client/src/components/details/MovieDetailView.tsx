@@ -1,6 +1,7 @@
 import { type MediaItem } from '../../types';
 import { Trophy, DollarSign, Film, Pen } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
+import CastStripItem from './CastStripItem';
 
 interface MovieDetailViewProps {
     item: MediaItem;
@@ -10,8 +11,6 @@ export default function MovieDetailView({ item }: MovieDetailViewProps) {
     const metadata = item.metadata || {};
     const { isSidebarCollapsed } = useUIStore();
 
-    // Extract metadata fields
-    const cast = (metadata.cast as any[]) || [];
     const director = metadata.director as string;
     const writer = metadata.writer as string;
     const studio = metadata.studio || metadata.production as string;
@@ -42,26 +41,16 @@ export default function MovieDetailView({ item }: MovieDetailViewProps) {
             <div className="space-y-8 relative z-10">
 
                 {/* Cast Grid */}
-                {cast.length > 0 && (
+                {item.cast && item.cast.length > 0 && (
                     <div>
                         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
                             <Film className="w-5 h-5 text-violet-400" />
                             Cast
                         </h2>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-                            {cast.slice(0, 12).map((actor: any, index: number) => {
-                                const name = typeof actor === 'string' ? actor : actor.name;
-                                const character = typeof actor === 'string' ? null : actor.character;
-                                return (
-                                    <div
-                                        key={index}
-                                        className="bg-white/5 p-3 rounded-xl border border-white/10 hover:border-violet-500/30 hover:bg-white/10 transition-all flex flex-col justify-center"
-                                    >
-                                        <div className="font-medium text-gray-200 text-sm line-clamp-1" title={name}>{name}</div>
-                                        {character && <div className="text-xs text-gray-400 mt-1 line-clamp-1" title={character}>{character}</div>}
-                                    </div>
-                                );
-                            })}
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 justify-items-center">
+                            {item.cast.slice(0, 12).map((member) => (
+                                <CastStripItem key={member.id} member={member} />
+                            ))}
                         </div>
                     </div>
                 )}

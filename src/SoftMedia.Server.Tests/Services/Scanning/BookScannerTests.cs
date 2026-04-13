@@ -125,7 +125,7 @@ public class BookScannerTests : IDisposable
                 Path = fileInfo.FullName,
                 Title = "Dune",
                 Type = MediaType.Book,
-                MetadataJson = "{\"poster\": \"http://example.com/poster.jpg\"}" // Needs actual metadata to trigger Skip
+                PosterUrl = "http://example.com/poster.jpg" // Needs actual metadata to trigger Skip
             };
             
             _dbContext.MediaItems.Add(existingResource);
@@ -155,9 +155,10 @@ public class BookScannerTests : IDisposable
             IsStrictEnrichment = true
         };
             
-        var tempFile = Path.GetTempFileName();
-        var destFile = tempFile + " - Frank Herbert - Dune.epub";
-        File.Move(tempFile, destFile);
+        var tempFile = Path.GetTempPath();
+        var destFile = Path.Combine(tempFile, "Dune.epub"); // No " - " separator, author will be empty
+        if (File.Exists(destFile)) File.Delete(destFile);
+        File.WriteAllText(destFile, "dummy content");
         var fileInfo = new FileInfo(destFile);
         
         try
@@ -171,7 +172,7 @@ public class BookScannerTests : IDisposable
                 Path = fileInfo.FullName,
                 Title = "Dune",
                 Type = MediaType.Book,
-                MetadataJson = "{\"poster\": \"http://example.com/poster.jpg\"}" // Has poster but no cast/publisher
+                PosterUrl = "http://example.com/poster.jpg" // Has poster but no cast/publisher
             };
             
             _dbContext.MediaItems.Add(existingResource);
@@ -216,7 +217,7 @@ public class BookScannerTests : IDisposable
                 Path = fileInfo.FullName,
                 Title = "Dune",
                 Type = MediaType.Book,
-                MetadataJson = "{\"poster\": \"http://example.com/poster.jpg\"}" // Has poster but no cast/publisher
+                PosterUrl = "http://example.com/poster.jpg" // Has poster but no cast/publisher
             };
             
             _dbContext.MediaItems.Add(existingResource);

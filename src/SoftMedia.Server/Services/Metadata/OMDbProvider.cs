@@ -202,42 +202,27 @@ public class OMDbProvider : IKeyedMetadataProvider
                 return null;
             }
 
-            // 1. First, check if we already have an IMDb ID cached in MetadataJson
+            // 1. First, check if we already have an IMDb ID in the promoted column.
             // This allows us to skip search/fuzzy matching on refreshes and use a single direct API call.
-            if (!string.IsNullOrEmpty(item.MetadataJson))
+            if (!string.IsNullOrEmpty(item.ImdbId) && item.ImdbId.StartsWith("tt"))
             {
-                try
-                {
-                    using var existingDoc = JsonDocument.Parse(item.MetadataJson);
-                    if (existingDoc.RootElement.TryGetProperty("imdbId", out var idProp))
-                    {
-                        var existingId = idProp.GetString();
-                        if (!string.IsNullOrEmpty(existingId) && existingId.StartsWith("tt"))
-                        {
-                            _logger.LogInformation("Using cached IMDb ID for '{Title}': {Id}", title, existingId);
-                            
-                            // Direct ID Fetch (Cost: 1 request)
-                            var directUrl = $"https://www.omdbapi.com/?apikey={apiKey}&i={existingId}&plot=full";
-                            var directResponse = await _httpClient.GetStringAsync(directUrl);
-                            
-                            if (mode == "custom") await RecordRequestAsync();
+                _logger.LogInformation("Using promoted IMDb ID for '{Title}': {Id}", title, item.ImdbId);
+                
+                // Direct ID Fetch (Cost: 1 request)
+                var directUrl = $"https://www.omdbapi.com/?apikey={apiKey}&i={item.ImdbId}&plot=full";
+                var directResponse = await _httpClient.GetStringAsync(directUrl);
+                
+                if (mode == "custom") await RecordRequestAsync();
 
-                            using var directDoc = JsonDocument.Parse(directResponse);
-                             // Check for valid response
-                            if (directDoc.RootElement.TryGetProperty("Response", out var resp) && resp.GetString() == "True")
-                            {
-                                // Return valid result immediately
-                                return ProcessProcessAndSerialize(directDoc.RootElement, title);
-                            }
-                            
-                             _logger.LogWarning("Cached IMDb ID {Id} failed lookup, falling back to title search", existingId);
-                        }
-                    }
-                }
-                catch (Exception ex)
+                using var directDoc = JsonDocument.Parse(directResponse);
+                // Check for valid response
+                if (directDoc.RootElement.TryGetProperty("Response", out var resp) && resp.GetString() == "True")
                 {
-                    _logger.LogDebug(ex, "Failed to parse existing metadata for ID check");
+                    // Return valid result immediately
+                    return ProcessProcessAndSerialize(directDoc.RootElement, title);
                 }
+                
+                _logger.LogWarning("Promoted IMDb ID {Id} failed lookup, falling back to title search", item.ImdbId);
             }
 
             // 2. Fallback: Search by Title + Year

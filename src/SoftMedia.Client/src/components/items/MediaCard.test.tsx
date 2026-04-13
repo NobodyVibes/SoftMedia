@@ -15,6 +15,11 @@ vi.mock('react-router-dom', async () => {
     };
 });
 
+// Mock intersection observer for lazy-loaded images
+vi.mock('react-intersection-observer', () => ({
+    useInView: () => ({ ref: vi.fn(), inView: true }),
+}));
+
 // Mock hooks
 vi.mock('../../store/audioStore', () => ({
     useAudioStore: vi.fn(),

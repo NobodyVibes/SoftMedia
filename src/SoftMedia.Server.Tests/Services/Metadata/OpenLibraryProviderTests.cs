@@ -63,7 +63,7 @@ public class OpenLibraryProviderTests
     }
 
     [Fact]
-    public async Task FetchMetadataAsync_UsesAuthorParam_WhenAuthorInMetadataJson()
+    public async Task FetchMetadataAsync_UsesAuthorParam_WhenAuthorIsSetInDirector()
     {
         // Arrange
         var item = new MediaItem
@@ -71,7 +71,7 @@ public class OpenLibraryProviderTests
             Title = "Dune",
             Year = 1965,
             Type = MediaType.Book,
-            MetadataJson = """{"author":"Frank Herbert"}"""
+            Director = "Frank Herbert"
         };
 
         var mockResponse = new { docs = new[] { new { title = "Dune", first_publish_year = 1965, cover_i = (int?)1, author_name = new[] { "Frank Herbert" } } } };
@@ -110,7 +110,7 @@ public class OpenLibraryProviderTests
     }
 
     [Fact]
-    public async Task FetchMetadataAsync_UsesGenericQuery_WhenNoAuthorInMetadataJson()
+    public async Task FetchMetadataAsync_UsesGenericQuery_WhenNoAuthorIsSetInDirector()
     {
         // Arrange
         var item = new MediaItem
@@ -118,7 +118,7 @@ public class OpenLibraryProviderTests
             Title = "Dune",
             Year = 1965,
             Type = MediaType.Book,
-            MetadataJson = null // No author context
+            Director = null // No author context
         };
 
         var mockResponse = new { docs = new[] { new { title = "Dune", first_publish_year = 1965, cover_i = (int?)1, author_name = new[] { "Frank Herbert" } } } };

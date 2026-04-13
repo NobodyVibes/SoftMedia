@@ -61,10 +61,11 @@ public class MetadataRefreshService : BackgroundService
 
         if (string.Equals(mode, "Running", StringComparison.OrdinalIgnoreCase))
         {
+             // Since status was previously stored in raw payloads, and we've promoted critical fields,
+             // refresh all Series items. The TVMaze provider re-fetches full details anyway,
+             // so the cost is minimal and this ensures no running series are missed.
              candidates = await context.MediaItems
-                .Where(m => m.Type == MediaType.Series &&
-                            m.MetadataJson != null &&
-                            m.MetadataJson.Contains("\"status\":\"Running\""))
+                .Where(m => m.Type == MediaType.Series)
                 .ToListAsync(ct);
         }
         else if (string.Equals(mode, "Variable", StringComparison.OrdinalIgnoreCase) || 

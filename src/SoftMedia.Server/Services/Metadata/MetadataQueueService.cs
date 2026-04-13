@@ -39,44 +39,64 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
         // TV/Shared: Moderate capacity.
         _channels = new Dictionary<string, Channel<MetadataQueueItem>>
         {
-            { "Music", Channel.CreateBounded<MetadataQueueItem>(new BoundedChannelOptions(10000) { FullMode = BoundedChannelFullMode.Wait }) },
-            { "TV", Channel.CreateBounded<MetadataQueueItem>(new BoundedChannelOptions(5000) { FullMode = BoundedChannelFullMode.Wait }) },
-            { "Shared", Channel.CreateBounded<MetadataQueueItem>(new BoundedChannelOptions(5000) { FullMode = BoundedChannelFullMode.Wait }) }
+            { "Music", Channel.CreateUnbounded<MetadataQueueItem>() },
+            { "TV", Channel.CreateUnbounded<MetadataQueueItem>() },
+            { "Shared", Channel.CreateUnbounded<MetadataQueueItem>() }
         };
 
-        _cacheUpdateChannel = Channel.CreateBounded<Guid>(new BoundedChannelOptions(100) 
-        { 
-            FullMode = BoundedChannelFullMode.DropOldest 
-        });
+        _cacheUpdateChannel = Channel.CreateUnbounded<Guid>();
         
     }
     
     private async Task CacheUpdateLoopAsync(CancellationToken ct)
     {
-        _logger.LogInformation("Recently Added Cache Update Loop started with Event-Driven Channel.");
+        _logger.LogInformation("Recently Added Cache Update Loop started (Debounced).");
+        var batch = new HashSet<Guid>();
+        
         try
         {
-            await foreach (var libId in _cacheUpdateChannel.Reader.ReadAllAsync(ct))
+            while (await _cacheUpdateChannel.Reader.WaitToReadAsync(ct))
             {
-                // Debounce slightly to allow batches of updates
-                await Task.Delay(500, ct);
+                // Collect all currently available items
+                while (_cacheUpdateChannel.Reader.TryRead(out var libId))
+                {
+                    batch.Add(libId);
+                }
+
+                if (batch.Count == 0) continue;
+
+                // Debounce: Wait for more items to arrive during the storm
+                await Task.Delay(2000, ct);
                 
-                try
+                // Read again after delay
+                while (_cacheUpdateChannel.Reader.TryRead(out var libId))
                 {
-                    using var scope = _scopeFactory.CreateScope();
-                    var libService = scope.ServiceProvider.GetRequiredService<ILibraryService>();
-                    await libService.UpdateRecentlyAddedCacheAsync(libId);
-                    
-                    // Notify Frontend to refresh
-                    _notificationService.NotifyLibraryRecentUpdated(libId);
-                    _logger.LogDebug("Updated cache and notified for Library {LibraryId}", libId);
+                    batch.Add(libId);
                 }
-                catch (Exception ex)
+
+                _logger.LogDebug("Processing batch cache update for {Count} libraries", batch.Count);
+
+                foreach (var libId in batch)
                 {
-                    _logger.LogError(ex, "Failed to update recent cache for {LibraryId}", libId);
+                    try
+                    {
+                        using var scope = _scopeFactory.CreateScope();
+                        var libService = scope.ServiceProvider.GetRequiredService<ILibraryService>();
+                        await libService.UpdateRecentlyAddedCacheAsync(libId);
+                        
+                        // Notify Frontend to refresh
+                        _notificationService.NotifyLibraryRecentUpdated(libId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to update recent cache for {LibraryId}", libId);
+                    }
                 }
+                
+                batch.Clear();
             }
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
              _logger.LogError(ex, "Cache Update Loop failed unexpectedly");

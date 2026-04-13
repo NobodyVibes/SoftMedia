@@ -58,7 +58,7 @@ public class ImageDownloadQueueServiceTests
             Id = Guid.NewGuid(), 
             Title = "Test Movie", 
             Type = MediaType.Movie, 
-            MetadataJson = System.Text.Json.JsonSerializer.Serialize(new { poster = remoteUrl }) 
+            PosterUrl = remoteUrl 
         };
         _dbContext.MediaItems.Add(mediaItem);
         await _dbContext.SaveChangesAsync();
@@ -81,7 +81,7 @@ public class ImageDownloadQueueServiceTests
 
         _dbContext.ChangeTracker.Clear();
         var updatedItem = await _dbContext.MediaItems.FindAsync(mediaItem.Id);
-        Assert.Contains(localPath, updatedItem!.MetadataJson);
+        Assert.Equal(localPath, updatedItem!.PosterUrl);
     }
     
     [Fact]
@@ -97,12 +97,7 @@ public class ImageDownloadQueueServiceTests
             Id = seriesId, 
             Title = "Test Series", 
             Type = MediaType.Series, 
-            MetadataJson = System.Text.Json.JsonSerializer.Serialize(new { 
-                title = "Test Series",
-                seasons = new[] {
-                    new { number = 1, poster = remoteUrl }
-                }
-            }) 
+            PosterUrl = null
         };
         _dbContext.MediaItems.Add(mediaItem);
         
@@ -112,7 +107,7 @@ public class ImageDownloadQueueServiceTests
             SeriesId = seriesId, 
             Type = MediaType.Season, 
             SeasonNumber = 1,
-            MetadataJson = "{}" 
+            PosterUrl = null
         };
         _dbContext.MediaItems.Add(seasonItem);
         await _dbContext.SaveChangesAsync();
@@ -130,12 +125,7 @@ public class ImageDownloadQueueServiceTests
         _mockImageCache.Verify(x => x.CacheSeasonPosterAsync(mediaItem.Id, 1, remoteUrl), Times.Once);
         
         _dbContext.ChangeTracker.Clear();
-        // Check Series Metadata updated
-        var updatedSeries = await _dbContext.MediaItems.FindAsync(seriesId);
-        Assert.Contains(localPath, updatedSeries!.MetadataJson);
-        
-        // Check Season Metadata updated (via UpdateSeasonEntityMetadata)
         var updatedSeason = await _dbContext.MediaItems.FindAsync(seasonItem.Id);
-        Assert.Contains(localPath, updatedSeason!.MetadataJson);
+        Assert.Equal(localPath, updatedSeason!.PosterUrl);
     }
 }

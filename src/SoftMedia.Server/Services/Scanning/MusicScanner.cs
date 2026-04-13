@@ -148,39 +148,8 @@ public class MusicScanner : BaseMediaScanner
             track.Size = file.Size;
             track.DateModified = file.LastWriteUtc;
 
-            // Store metadata for frontend display and to signal EmbeddedMusicProvider
-            // that tags have already been read (avoids redundant TagLib.File.Create).
-            var metadataResult = new MetadataResult
-            {
-                Artist = artistName,
-                Album = albumName,
-                Title = trackTitle,
-                Duration = tagFile.Properties.Duration.TotalSeconds,
-                HasEmbeddedArt = tagFile.Tag.Pictures.Length > 0,
-                Extra = new Dictionary<string, System.Text.Json.JsonElement>()
-            };
-
-            metadataResult.Extra["scannedTags"] = System.Text.Json.JsonSerializer.SerializeToElement(true);
-            
-            if (tag.TrackCount > 0)
-            {
-                metadataResult.Extra["totalTracks"] = System.Text.Json.JsonSerializer.SerializeToElement((int)tag.TrackCount);
-            }
-            if (tag.Genres.Length > 0)
-            {
-                metadataResult.Genres = tag.Genres.ToList();
-            }
-            else if (!string.IsNullOrEmpty(tag.FirstGenre))
-            {
-                metadataResult.Genres = new List<string> { tag.FirstGenre };
-            }
-            
-            if (tag.AlbumArtists.Length > 0 && tag.AlbumArtists[0] != artistName)
-            {
-                metadataResult.Extra["albumArtist"] = System.Text.Json.JsonSerializer.SerializeToElement(tag.AlbumArtists[0]);
-            }
-
-            track.MetadataJson = System.Text.Json.JsonSerializer.Serialize(metadataResult);
+            // Note: Since MetadataJson was dropped, MusicScanner now relies on promoted properties.
+            // infers base tag presence by looking at DateAdded and base properties.
 
             // Audio codec info
             track.AudioCodec = tagFile.Properties.Codecs
@@ -309,11 +278,8 @@ public class MusicScanner : BaseMediaScanner
                 Type = MediaType.Album,
                 ArtistId = artist.Id,
                 Year = (int?)tagFile.Tag.Year > 0 ? (int)tagFile.Tag.Year : null,
-                DateModified = DateTime.UtcNow,
-                // Seed artist context so metadata providers can search accurately
-                MetadataJson = System.Text.Json.JsonSerializer.Serialize(new { artist = artist.Title })
+                DateModified = DateTime.UtcNow
             };
-
             // Resolve cover art (priority: local file > embedded > deferred)
             await ResolveAlbumCoverAsync(album, albumDir, tagFile, cancellationToken);
 

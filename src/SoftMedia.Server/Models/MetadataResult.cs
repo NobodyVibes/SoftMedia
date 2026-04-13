@@ -100,6 +100,9 @@ public class MetadataResult
     [JsonPropertyName("pageCount")]
     public int? PageCount { get; set; }
     
+    [JsonPropertyName("rawPayload")]
+    public string? RawPayload { get; set; }
+
     // Extensibility & Backward Compatibility — unmapped legacy fields
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Extra { get; set; }

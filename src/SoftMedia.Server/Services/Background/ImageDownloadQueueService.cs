@@ -155,123 +155,61 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
                         updated = true;
                     }
                 }
-                else 
+                else if (request.ImageType == ImageType.SeasonPoster && request.SeasonNumber.HasValue)
                 {
-                    if (string.IsNullOrEmpty(item.MetadataJson))
+                    // Update specific Season Item
+                    var seasonItem = await context.MediaItems
+                        .FirstOrDefaultAsync(m => m.SeriesId == request.MediaId && m.SeasonNumber == request.SeasonNumber && m.Type == MediaType.Season, ct);
+
+                    if (seasonItem != null && seasonItem.PosterUrl != localPath)
                     {
-                        item.MetadataJson = "{}";
+                        seasonItem.PosterUrl = localPath;
+                        updated = true;
+                        _logger.LogDebug("Updated Season item {Id} poster", seasonItem.Id);
                     }
+                }
+                else if (request.ImageType == ImageType.Still && request.SeasonNumber.HasValue && request.EpisodeNumber.HasValue)
+                {
+                    // Update specific Episode Item (Stills are stored in BackdropUrl for episodes)
+                    var episodeItem = await context.MediaItems
+                        .FirstOrDefaultAsync(m => m.SeriesId == request.MediaId && m.SeasonNumber == request.SeasonNumber && m.EpisodeNumber == request.EpisodeNumber && m.Type == MediaType.Episode, ct);
 
-                    var meta = MetadataJsonHelper.Parse(item.MetadataJson);
-                    
-                    string key = request.ImageType.ToString().ToLowerInvariant();
-                    if (request.ImageType == ImageType.Backdrop) key = "backdrop";
-
-                    // Handle Season/Episode updates in JSON
-                    if (request.ImageType == ImageType.SeasonPoster && request.SeasonNumber.HasValue)
+                    if (episodeItem != null && episodeItem.BackdropUrl != localPath)
                     {
-                        // Update Series Metadata
-                        if (meta.ContainsKey("seasons") && meta["seasons"] is JsonElement seasonsEl)
-                        {
-                             var seasons = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(seasonsEl.GetRawText());
-                             if (seasons != null)
-                             {
-                                 var season = seasons.FirstOrDefault(s => s.ContainsKey("number") && s["number"].ToString() == request.SeasonNumber.ToString());
-                                 if (season != null)
-                                 {
-                                     season["poster"] = localPath;
-                                     meta["seasons"] = seasons;
-                                     updated = true;
-                                 }
-                             }
-                        }
-
-                        // Update specific Season Item
-                        var seasonItem = await context.MediaItems
-                            .FirstOrDefaultAsync(m => m.SeriesId == request.MediaId && m.SeasonNumber == request.SeasonNumber && m.Type == MediaType.Season, ct);
-
-                        if (seasonItem != null)
-                        {
-                            var seasonMeta = string.IsNullOrEmpty(seasonItem.MetadataJson) 
-                                ? new Dictionary<string, object>() 
-                                : MetadataJsonHelper.Parse(seasonItem.MetadataJson);
-                            
-                            seasonMeta["poster"] = localPath;
-                            seasonItem.MetadataJson = JsonSerializer.Serialize(seasonMeta);
-                            updated = true;
-                            _logger.LogDebug("Updated Season item {Id} poster", seasonItem.Id);
-                        }
+                        episodeItem.BackdropUrl = localPath;
+                        updated = true;
+                        _logger.LogDebug("Updated Episode item {Id} still", episodeItem.Id);
                     }
-                    else if (request.ImageType == ImageType.Still && request.SeasonNumber.HasValue && request.EpisodeNumber.HasValue)
+                }
+                else if (request.ImageType == ImageType.CastImage && request.PersonId.HasValue)
+                {
+                    // Update the specific cast member's image in the Person table
+                    var person = await context.Persons.FindAsync(new object[] { request.PersonId.Value }, ct);
+
+                    if (person != null && person.ImagePath != localPath)
                     {
-                         // Update Series Metadata (Episode list)
-                         if (meta.ContainsKey("episodes") && meta["episodes"] is JsonElement epsEl)
-                         {
-                             var episodes = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(epsEl.GetRawText());
-                             if (episodes != null)
-                             {
-                                 var ep = episodes.FirstOrDefault(e => 
-                                     e.ContainsKey("season") && e["season"].ToString() == request.SeasonNumber.ToString() &&
-                                     e.ContainsKey("episode") && e["episode"].ToString() == request.EpisodeNumber.ToString());
-                                 
-                                 if (ep != null)
-                                 {
-                                     ep["still"] = localPath;
-                                     meta["episodes"] = episodes;
-                                     updated = true;
-                                 }
-                             }
-                         }
-
-                         // Update specific Episode Item
-                        var episodeItem = await context.MediaItems
-                            .FirstOrDefaultAsync(m => m.SeriesId == request.MediaId && m.SeasonNumber == request.SeasonNumber && m.EpisodeNumber == request.EpisodeNumber && m.Type == MediaType.Episode, ct);
-
-                        if (episodeItem != null)
-                        {
-                            var epMeta = string.IsNullOrEmpty(episodeItem.MetadataJson) 
-                                ? new Dictionary<string, object>() 
-                                : MetadataJsonHelper.Parse(episodeItem.MetadataJson);
-                            
-                            epMeta["still"] = localPath;
-                            episodeItem.MetadataJson = JsonSerializer.Serialize(epMeta);
-                            updated = true;
-                            _logger.LogDebug("Updated Episode item {Id} still", episodeItem.Id);
-                        }
+                        person.ImagePath = localPath;
+                        updated = true;
+                        _logger.LogDebug("Updated cast image for person {PersonId}", request.PersonId);
                     }
-                    else if (request.ImageType == ImageType.CastImage && request.PersonId.HasValue)
+                }
+                else if (!request.SeasonNumber.HasValue) // Top level item
+                {
+                    if (request.ImageType == ImageType.Poster)
                     {
-                        // Update the specific cast member's image in the cast array
-                        if (meta.ContainsKey("cast") && meta["cast"] is JsonElement castEl)
+                        if (item.PosterUrl != localPath)
                         {
-                            var castList = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(castEl.GetRawText());
-                            if (castList != null)
-                            {
-                                var member = castList.FirstOrDefault(c =>
-                                    c.ContainsKey("id") && c["id"].ToString() == request.PersonId.ToString());
-
-                                if (member != null)
-                                {
-                                    member["image"] = localPath;
-                                    meta["cast"] = castList;
-                                    updated = true;
-                                    _logger.LogDebug("Updated cast image for person {PersonId}", request.PersonId);
-                                }
-                            }
-                        }
-                    }
-                    else if (!request.SeasonNumber.HasValue) // Top level item
-                    {
-                        if (!meta.ContainsKey(key) || meta[key].ToString() != localPath)
-                        {
-                            meta[key] = localPath;
+                            item.PosterUrl = localPath;
                             updated = true;
                         }
                     }
-
-                    if (updated)
+                    else if (request.ImageType == ImageType.Backdrop)
                     {
-                        item.MetadataJson = JsonSerializer.Serialize(meta);
+                        if (item.BackdropUrl != localPath)
+                        {
+                            item.BackdropUrl = localPath;
+                            updated = true;
+                        }
                     }
                 }
 

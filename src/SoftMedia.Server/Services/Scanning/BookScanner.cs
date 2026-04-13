@@ -63,11 +63,12 @@ public class BookScanner : BaseMediaScanner
             book.Size = file.Size;
             book.DateModified = file.LastWriteUtc;
 
-            // Store parsed author in MetadataJson for OpenLibraryProvider search enrichment.
+            // Store parsed author in the Director promoted column for OpenLibraryProvider search enrichment.
+            // Director serves as the generic "primary creator" field across media types.
             // Do NOT append author to Title — that corrupts the display name.
-            if (!string.IsNullOrEmpty(author) && string.IsNullOrEmpty(book.MetadataJson))
+            if (!string.IsNullOrEmpty(author) && string.IsNullOrEmpty(book.Director))
             {
-                book.MetadataJson = System.Text.Json.JsonSerializer.Serialize(new { author });
+                book.Director = author;
             }
 
             if (isNew)

@@ -10,6 +10,7 @@ import MediaQualityInfo from '../ui/MediaQualityInfo';
 import { StarRating } from '../ui/StarRating';
 import { cn } from '../../lib/utils';
 import { getGenreColors } from '../../lib/genreColors';
+import { resolveHeroPosterUrl, resolveBackdropUrl } from '../../lib/mediaImageUrl';
 
 interface MediaDetailLayoutProps {
     item: MediaItem;
@@ -47,8 +48,11 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
         }
     });
 
-    // Use override if provided, otherwise default to item backdrop
-    const effectiveBackdrop = backdropOverride ?? item.backdropPath;
+    // Use override if provided, otherwise default to item backdrop.
+    // Request smaller thumbnails for both backdrop (blurred, doesn't need full res)
+    // and hero poster — avoids tying up browser connection slots while album art loads.
+    const effectiveBackdrop = resolveBackdropUrl(backdropOverride ?? item.backdropPath);
+    const heroPoster = resolveHeroPosterUrl(item.posterPath);
 
     return (
         <div className="min-h-screen bg-background relative overflow-x-hidden">
@@ -93,9 +97,9 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                     : "aspect-[2/3]"
                             )}
                         >
-                            {item.posterPath ? (
+                            {heroPoster ? (
                                 <img
-                                    src={item.posterPath}
+                                    src={heroPoster}
                                     alt={item.title}
                                     className="w-full h-full object-cover"
                                 />

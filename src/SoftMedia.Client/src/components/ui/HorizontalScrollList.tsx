@@ -1,12 +1,27 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useImperativeHandle, useCallback } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+
+export interface HorizontalScrollListHandle {
+    scrollToIndex: (index: number) => void;
+}
 
 interface HorizontalScrollListProps {
-    children: React.ReactNode;
+    children?: React.ReactNode;
     className?: string;
     gap?: string;
     showArrows?: boolean;
     showSlider?: boolean;
+    /** Opt-in virtualized mode for very long lists. Requires itemCount + renderItem. */
+    virtualized?: boolean;
+    itemCount?: number;
+    /** Per-slot width in px, including the inter-item gap. */
+    estimateItemSize?: number;
+    /** Explicit scroller height (px) required in virtualized mode, since absolutely-positioned items have no intrinsic height. */
+    itemHeightPx?: number;
+    renderItem?: (index: number) => React.ReactNode;
+    overscan?: number;
+    ref?: React.Ref<HorizontalScrollListHandle>;
 }
 
 export default function HorizontalScrollList({
@@ -14,7 +29,14 @@ export default function HorizontalScrollList({
     className = '',
     gap = 'gap-4',
     showArrows = true,
-    showSlider = true
+    showSlider = true,
+    virtualized = false,
+    itemCount = 0,
+    estimateItemSize = 304,
+    itemHeightPx,
+    renderItem,
+    overscan = 6,
+    ref,
 }: HorizontalScrollListProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const sliderRef = useRef<HTMLDivElement>(null);
@@ -22,8 +44,24 @@ export default function HorizontalScrollList({
     const [canScrollLeft, setCanScrollLeft] = useState(false);
     const [canScrollRight, setCanScrollRight] = useState(true);
 
+    const virtualizer = useVirtualizer({
+        count: virtualized ? itemCount : 0,
+        getScrollElement: () => scrollRef.current,
+        estimateSize: () => estimateItemSize,
+        horizontal: true,
+        overscan,
+    });
+
+    useImperativeHandle(ref, () => ({
+        scrollToIndex: (index: number) => {
+            if (virtualized) {
+                virtualizer.scrollToIndex(index, { align: 'start' });
+            }
+        },
+    }), [virtualized, virtualizer]);
+
     // Update thumb position directly via DOM for smooth performance
-    const updateThumbPosition = () => {
+    const updateThumbPosition = useCallback(() => {
         if (!scrollRef.current || !thumbRef.current) return;
         const { scrollLeft, scrollWidth, clientWidth } = scrollRef.current;
         const maxScroll = scrollWidth - clientWidth;
@@ -33,9 +71,17 @@ export default function HorizontalScrollList({
 
         thumbRef.current.style.width = `${thumbWidth}%`;
         thumbRef.current.style.marginLeft = `${thumbPosition}%`;
-    };
+    }, []);
 
-    // Initialize thumb size on mount and when children change
+    const updateScrollState = useCallback(() => {
+        if (!scrollRef.current) return;
+        const { scrollLeft, scrollWidth, clientWidth } = scrollRef.current;
+        setCanScrollLeft(scrollLeft > 0);
+        setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 10);
+        updateThumbPosition();
+    }, [updateThumbPosition]);
+
+    // Initialize thumb size on mount and when content changes
     useEffect(() => {
         // Small delay to ensure DOM is measured correctly
         const timer = setTimeout(() => {
@@ -43,15 +89,7 @@ export default function HorizontalScrollList({
             updateScrollState();
         }, 50);
         return () => clearTimeout(timer);
-    }, [children]);
-
-    const updateScrollState = () => {
-        if (!scrollRef.current) return;
-        const { scrollLeft, scrollWidth, clientWidth } = scrollRef.current;
-        setCanScrollLeft(scrollLeft > 0);
-        setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 10);
-        updateThumbPosition();
-    };
+    }, [children, virtualized, itemCount, updateThumbPosition, updateScrollState]);
 
     const scroll = (direction: 'left' | 'right') => {
         if (!scrollRef.current) return;
@@ -127,10 +165,40 @@ export default function HorizontalScrollList({
                 <div
                     ref={scrollRef}
                     onScroll={updateScrollState}
-                    className={`flex-1 flex overflow-x-auto scrollbar-none transition-all ${gap} ${className}`}
-                    style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+                    className={`flex-1 ${virtualized ? '' : `flex ${gap}`} overflow-x-auto scrollbar-none transition-all ${className}`}
+                    style={{
+                        scrollbarWidth: 'none',
+                        msOverflowStyle: 'none',
+                        ...(virtualized && itemHeightPx ? { height: `${itemHeightPx}px` } : null),
+                    }}
                 >
-                    {children}
+                    {virtualized && renderItem ? (
+                        <div
+                            style={{
+                                width: `${virtualizer.getTotalSize()}px`,
+                                height: '100%',
+                                position: 'relative',
+                            }}
+                        >
+                            {virtualizer.getVirtualItems().map(vItem => (
+                                <div
+                                    key={vItem.key}
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        height: '100%',
+                                        width: `${vItem.size}px`,
+                                        transform: `translateX(${vItem.start}px)`,
+                                    }}
+                                >
+                                    {renderItem(vItem.index)}
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        children
+                    )}
                 </div>
 
                 {/* Right Arrow Overlay */}

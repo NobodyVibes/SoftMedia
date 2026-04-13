@@ -22,7 +22,7 @@ public class AudioController : ControllerBase
     public async Task<IActionResult> DumpBooks()
     {
         var books = await _context.MediaItems.Where(m => m.Type == Models.MediaType.Book).ToListAsync();
-        return Ok(books.Select(b => new { b.Id, b.Title, b.MetadataJson, b.CoverArtPath }));
+        return Ok(books.Select(b => new { b.Id, b.Title, b.PosterUrl, b.CoverArtPath, b.Overview }));
     }
 
     [HttpGet("{id}/cover")]

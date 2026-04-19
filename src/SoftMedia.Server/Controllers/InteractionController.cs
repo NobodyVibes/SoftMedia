@@ -69,7 +69,7 @@ public class InteractionController : ControllerBase
     public async Task<IActionResult> UpdateProgress(Guid mediaId, [FromBody] ProgressRequest request)
     {
         var userId = GetUserId();
-        await _interactionService.UpdateProgressAsync(userId, mediaId, request.Position);
+        await _interactionService.UpdateProgressAsync(userId, mediaId, request.Position, request.BookLocation);
         return Ok();
     }
 
@@ -82,6 +82,7 @@ public class InteractionController : ControllerBase
         return Ok(new ProgressResponse
         {
             Position = interaction?.PlaybackPosition ?? 0,
+            BookLocation = interaction?.BookLocation,
             LastPlayed = interaction?.LastPlayed
         });
     }
@@ -272,11 +273,14 @@ public class WatchedRequest
 public class ProgressRequest
 {
     public double Position { get; set; }
+    /// <summary>Opaque location string for books (e.g., EPUB CFI). Null for video/audio.</summary>
+    public string? BookLocation { get; set; }
 }
 
 public class ProgressResponse
 {
     public double Position { get; set; }
+    public string? BookLocation { get; set; }
     public DateTime? LastPlayed { get; set; }
 }
 

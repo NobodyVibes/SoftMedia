@@ -48,6 +48,16 @@ public static class MetadataEnrichmentPolicy
         bool hasPoster = !string.IsNullOrEmpty(item.PosterUrl)
                       || !string.IsNullOrEmpty(item.CoverArtPath);
 
+        // Comics have no external PosterUrl by design (covers live as page-1 images
+        // inside the archive). Using `!hasPoster` as the relaxed-mode signal would
+        // cause them to retry forever. Instead, treat comics as enriched once we've
+        // attempted fetch at least once — MetadataAggregator stamps a sentinel
+        // MetadataHash on null-result paths to represent that attempt.
+        if (item.Type == MediaType.ComicSeries || item.Type == MediaType.ComicIssue)
+        {
+            return string.IsNullOrEmpty(item.MetadataHash);
+        }
+
         // No metadata hash means metadata has never been fetched (except for sparse types like Artists)
         if (string.IsNullOrEmpty(item.MetadataHash) && !hasPoster && item.Type != MediaType.Artist)
             return true;
@@ -75,6 +85,9 @@ public static class MetadataEnrichmentPolicy
             // Books: require poster AND (author/director or studio/publisher)
             MediaType.Book => !hasPoster || (string.IsNullOrEmpty(item.Director)
                                           && string.IsNullOrEmpty(item.Studio)),
+
+            // Comics are handled earlier (short-circuit on MetadataHash) since
+            // their cover/metadata model differs fundamentally from other book types.
 
             // Default (Games, Photos, Audio): poster is sufficient
             _ => !hasPoster,

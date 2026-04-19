@@ -1,6 +1,8 @@
 import { type MediaItem } from '../../types';
 import { BookOpen } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { getProgress } from '../../services/bookService';
 
 interface BookDetailViewProps {
     item: MediaItem;
@@ -8,6 +10,22 @@ interface BookDetailViewProps {
 
 export default function BookDetailView({ item }: BookDetailViewProps) {
     const metadata = item.metadata || {};
+
+    const { data: progress } = useQuery({
+        queryKey: ['book-progress', item.id],
+        queryFn: () => getProgress(item.id),
+        staleTime: 30_000,
+    });
+
+    const resumePage = progress && progress.position > 0 ? Math.floor(progress.position) : 0;
+    const hasEpubResume = !!progress?.bookLocation;
+    const ext = (item.path?.split('.').pop() ?? '').toLowerCase();
+    const showResume = (ext === 'pdf' || ext === 'cbz') ? resumePage > 1 : hasEpubResume;
+    const readLabel = !showResume
+        ? 'Read Now'
+        : ext === 'epub'
+            ? 'Continue Reading'
+            : `Continue from page ${resumePage}`;
 
     // Extract author: prefer direct "author" key (from BookScanner), fall back to cast array (from OpenLibrary)
     let author = metadata.author as string | undefined;
@@ -79,9 +97,9 @@ export default function BookDetailView({ item }: BookDetailViewProps) {
                 {/* Read Button */}
                 <Link
                     to={`/read/${item.id}`}
-                    className="inline-flex items-center justify-center w-full py-3 bg-primary hover:bg-primary/90 text-white rounded-lg font-bold transition-colors"
+                    className="inline-flex items-center justify-center w-full py-3 bg-primary hover:bg-primary/90 text-white rounded-lg font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
                 >
-                    Read Now
+                    {readLabel}
                 </Link>
             </div>
 

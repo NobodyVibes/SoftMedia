@@ -181,6 +181,13 @@ public class LibrariesController : ControllerBase
         return Ok(seasons);
     }
 
+    [HttpGet("comics/{seriesId}/issues")]
+    public async Task<ActionResult<IEnumerable<MediaItemDto>>> GetComicIssues(Guid seriesId)
+    {
+        var issues = await _libraryService.GetComicIssuesAsync(seriesId, GetUserId());
+        return Ok(issues);
+    }
+
     [HttpGet("artists/{artistId}/albums")]
     public async Task<ActionResult<IEnumerable<MediaItemDto>>> GetArtistAlbums(Guid artistId)
     {

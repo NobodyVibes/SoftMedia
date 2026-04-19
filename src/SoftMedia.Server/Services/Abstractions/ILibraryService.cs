@@ -17,6 +17,7 @@ public interface ILibraryService
     Task<IEnumerable<object>> GetSeriesSeasonsAsync(Guid seriesId);
 
     Task<IEnumerable<MediaItemDto>> GetSeriesEpisodesAsync(Guid seriesId, Guid userId);
+    Task<IEnumerable<MediaItemDto>> GetComicIssuesAsync(Guid seriesId, Guid userId);
     Task<IEnumerable<MediaItemDto>> GetArtistAlbumsAsync(Guid artistId, Guid userId);
     Task<IEnumerable<MediaItemDto>> GetAlbumTracksAsync(Guid albumId, Guid userId);
 

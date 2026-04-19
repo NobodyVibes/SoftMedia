@@ -124,6 +124,8 @@ public class SettingsService : ISettingsService
             new() { Key = "MusicProviderPrimary", Value = "Embedded", Group = "Metadata", Description = "Primary API for Music metadata." },
             new() { Key = "MusicProviderFallback", Value = "MusicBrainz", Group = "Metadata", Description = "Fallback API for Music metadata." },
             new() { Key = "BookProvider", Value = "Open Library", Group = "Metadata", Description = "Primary API for Book metadata." },
+            new() { Key = "ComicProvider", Value = "ComicInfo", Group = "Metadata", Description = "Primary provider for Comic metadata. ComicInfo reads embedded ComicInfo.xml; Wikidata queries the public SPARQL endpoint." },
+            new() { Key = "ComicFallbackProvider", Value = "Wikidata", Group = "Metadata", Description = "Fallback provider when the primary Comic provider returns nothing usable. 'None' disables fallback." },
             new() { Key = "GameProvider", Value = "Wikidata", Group = "Metadata", Description = "Primary API for Game metadata." },
             new() { Key = "PhotoProvider", Value = "Exif", Group = "Metadata", Description = "Primary API for Photo metadata." },
             

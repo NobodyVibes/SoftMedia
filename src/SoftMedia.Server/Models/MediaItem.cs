@@ -146,9 +146,14 @@ public enum MediaType
     Book = 4,
     Game = 5,
     Photo = 6,
-    
+
     // New Types
     Season = 7,
     Artist = 8,
-    Album = 9
+    Album = 9,
+
+    // Comic hierarchy (Book library): parent series + child issues, mirroring Series/Episode.
+    // Issues reuse EpisodeNumber for issue number and SeriesId to point at the parent series.
+    ComicSeries = 10,
+    ComicIssue = 11
 }

@@ -193,6 +193,157 @@ public class MetadataRouterTests
         tvMaze.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Never);
     }
 
+    // ---- Comic routing tests ----
+
+    [Fact]
+    public async Task FetchComicMetadata_RoutesToComicProvider_NotOpenLibrary()
+    {
+        var comicInfoResult = new MetadataResult { Title = "Amazing-Man Comics", Description = "Series summary", PosterUrl = "poster.jpg" };
+        var comicInfo = CreateMockProvider("ComicInfo", LibraryType.Book, comicInfoResult);
+        var wikidata = CreateMockProvider("Wikidata", LibraryType.Book);
+        var openLibrary = CreateMockProvider("Open Library", LibraryType.Book);
+
+        _mockSettings.Setup(s => s.GetSettingAsync("ComicProvider", "ComicInfo")).ReturnsAsync("ComicInfo");
+        _mockSettings.Setup(s => s.GetSettingAsync("ComicFallbackProvider", "Wikidata")).ReturnsAsync("Wikidata");
+
+        var router = CreateRouter(comicInfo.Object, wikidata.Object, openLibrary.Object);
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Amazing-Man Comics", Type = MediaType.ComicSeries };
+
+        var fetched = await router.FetchMetadataAsync(item, LibraryType.Book);
+
+        Assert.NotNull(fetched);
+        Assert.Equal("Amazing-Man Comics", fetched!.Title);
+        comicInfo.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Once);
+        openLibrary.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Never);  // must never hit OL for comics
+        wikidata.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Never);     // primary sufficient → no fallback
+    }
+
+    [Fact]
+    public async Task FetchBookMetadata_UnchangedPath_RoutesToOpenLibrary()
+    {
+        var openLibResult = new MetadataResult { Title = "Pride and Prejudice" };
+        var comicInfo = CreateMockProvider("ComicInfo", LibraryType.Book);
+        var wikidata = CreateMockProvider("Wikidata", LibraryType.Book);
+        var openLibrary = CreateMockProvider("Open Library", LibraryType.Book, openLibResult);
+
+        _mockSettings.Setup(s => s.GetSettingAsync("BookProvider", "Open Library")).ReturnsAsync("Open Library");
+
+        var router = CreateRouter(comicInfo.Object, wikidata.Object, openLibrary.Object);
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Pride and Prejudice", Type = MediaType.Book };
+
+        var fetched = await router.FetchMetadataAsync(item, LibraryType.Book);
+
+        Assert.Equal("Pride and Prejudice", fetched?.Title);
+        openLibrary.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Once);
+        comicInfo.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Never);
+        wikidata.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task FetchComicMetadata_InsufficientPrimary_FallsBackAndMerges()
+    {
+        // Primary returns only a title (no description/cover) → insufficient
+        var primaryResult = new MetadataResult { Title = "Mystery Men Comics" };
+        var fallbackResult = new MetadataResult { Description = "Series summary", PosterUrl = "poster.jpg", Year = 1940, Publisher = "Fox Features" };
+        var comicInfo = CreateMockProvider("ComicInfo", LibraryType.Book, primaryResult);
+        var wikidata = CreateMockProvider("Wikidata", LibraryType.Book, fallbackResult);
+
+        _mockSettings.Setup(s => s.GetSettingAsync("ComicProvider", "ComicInfo")).ReturnsAsync("ComicInfo");
+        _mockSettings.Setup(s => s.GetSettingAsync("ComicFallbackProvider", "Wikidata")).ReturnsAsync("Wikidata");
+
+        var router = CreateRouter(comicInfo.Object, wikidata.Object);
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Mystery Men Comics", Type = MediaType.ComicSeries };
+
+        var fetched = await router.FetchMetadataAsync(item, LibraryType.Book);
+
+        Assert.NotNull(fetched);
+        Assert.Equal("Mystery Men Comics", fetched!.Title);        // primary wins
+        Assert.Equal("Series summary", fetched.Description);       // fallback filled
+        Assert.Equal("poster.jpg", fetched.PosterUrl);             // fallback filled
+        Assert.Equal(1940, fetched.Year);                          // fallback filled
+        Assert.Equal("Fox Features", fetched.Publisher);           // fallback filled
+        comicInfo.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Once);
+        wikidata.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task FetchComicMetadata_FallbackNone_DisablesFallback()
+    {
+        var primaryResult = new MetadataResult { Title = "Weird Fantasy" }; // insufficient, no desc/cover
+        var comicInfo = CreateMockProvider("ComicInfo", LibraryType.Book, primaryResult);
+        var wikidata = CreateMockProvider("Wikidata", LibraryType.Book);
+
+        _mockSettings.Setup(s => s.GetSettingAsync("ComicProvider", "ComicInfo")).ReturnsAsync("ComicInfo");
+        _mockSettings.Setup(s => s.GetSettingAsync("ComicFallbackProvider", "Wikidata")).ReturnsAsync("None");
+
+        var router = CreateRouter(comicInfo.Object, wikidata.Object);
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Weird Fantasy", Type = MediaType.ComicSeries };
+
+        var fetched = await router.FetchMetadataAsync(item, LibraryType.Book);
+
+        Assert.NotNull(fetched);
+        Assert.Equal("Weird Fantasy", fetched!.Title);
+        wikidata.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Never); // disabled
+    }
+
+    [Fact]
+    public async Task FetchComicMetadata_PrimaryReturnsNull_RunsFallback()
+    {
+        var comicInfo = CreateMockProvider("ComicInfo", LibraryType.Book, null); // no ComicInfo.xml available
+        var wikidata = CreateMockProvider("Wikidata", LibraryType.Book, new MetadataResult { Title = "Series", Description = "From Wikidata", PosterUrl = "img" });
+
+        _mockSettings.Setup(s => s.GetSettingAsync("ComicProvider", "ComicInfo")).ReturnsAsync("ComicInfo");
+        _mockSettings.Setup(s => s.GetSettingAsync("ComicFallbackProvider", "Wikidata")).ReturnsAsync("Wikidata");
+
+        var router = CreateRouter(comicInfo.Object, wikidata.Object);
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Series", Type = MediaType.ComicSeries };
+
+        var fetched = await router.FetchMetadataAsync(item, LibraryType.Book);
+
+        Assert.NotNull(fetched);
+        Assert.Equal("From Wikidata", fetched!.Description);
+        wikidata.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task FetchComicMetadata_BothNull_ReturnsNull()
+    {
+        var comicInfo = CreateMockProvider("ComicInfo", LibraryType.Book, null);
+        var wikidata = CreateMockProvider("Wikidata", LibraryType.Book, null);
+
+        _mockSettings.Setup(s => s.GetSettingAsync("ComicProvider", "ComicInfo")).ReturnsAsync("ComicInfo");
+        _mockSettings.Setup(s => s.GetSettingAsync("ComicFallbackProvider", "Wikidata")).ReturnsAsync("Wikidata");
+
+        var router = CreateRouter(comicInfo.Object, wikidata.Object);
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Unknown", Type = MediaType.ComicIssue };
+
+        var fetched = await router.FetchMetadataAsync(item, LibraryType.Book);
+
+        Assert.Null(fetched);
+    }
+
+    [Fact]
+    public async Task FetchComicMetadata_ComicIssueAlsoRouted()
+    {
+        // Same branch should handle ComicIssue items too.
+        var result = new MetadataResult { Title = "Issue #5", Description = "Issue summary", PosterUrl = "cover.jpg" };
+        var comicInfo = CreateMockProvider("ComicInfo", LibraryType.Book, result);
+        var wikidata = CreateMockProvider("Wikidata", LibraryType.Book);
+        var openLibrary = CreateMockProvider("Open Library", LibraryType.Book);
+
+        _mockSettings.Setup(s => s.GetSettingAsync("ComicProvider", "ComicInfo")).ReturnsAsync("ComicInfo");
+        _mockSettings.Setup(s => s.GetSettingAsync("ComicFallbackProvider", "Wikidata")).ReturnsAsync("Wikidata");
+
+        var router = CreateRouter(comicInfo.Object, wikidata.Object, openLibrary.Object);
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Issue #5", Type = MediaType.ComicIssue };
+
+        var fetched = await router.FetchMetadataAsync(item, LibraryType.Book);
+
+        Assert.Equal("Issue #5", fetched?.Title);
+        comicInfo.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Once);
+        openLibrary.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Never);
+    }
+
     [Fact]
     public async Task FetchMetadata_HandlesKeyedProvider()
     {

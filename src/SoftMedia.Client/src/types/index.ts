@@ -105,7 +105,9 @@ export const MediaType = {
     Season: 'Season',
     Artist: 'Artist',
     Album: 'Album',
-    Track: 'Track'
+    Track: 'Track',
+    ComicSeries: 'ComicSeries',
+    ComicIssue: 'ComicIssue'
 } as const;
 
 export type MediaType = typeof MediaType[keyof typeof MediaType];

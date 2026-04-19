@@ -35,6 +35,7 @@ public interface IMediaRepository
     Task<bool> ExistsAsync(Guid id);
 
     Task<IEnumerable<(MediaItem Media, UserMediaInteraction? Interaction)>> GetSeriesEpisodesWithInteractionsAsync(Guid seriesId, Guid userId);
+    Task<IEnumerable<(MediaItem Media, UserMediaInteraction? Interaction)>> GetComicIssuesWithInteractionsAsync(Guid seriesId, Guid userId);
     Task<IEnumerable<(MediaItem Media, UserMediaInteraction? Interaction)>> GetArtistAlbumsWithInteractionsAsync(Guid artistId, Guid userId);
     Task<IEnumerable<(MediaItem Media, UserMediaInteraction? Interaction)>> GetAlbumTracksWithInteractionsAsync(Guid albumId, Guid userId);
     

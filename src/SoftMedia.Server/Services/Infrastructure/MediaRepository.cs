@@ -76,6 +76,26 @@ public class MediaRepository : IMediaRepository
         return items.Select(x => (x.Media, (UserMediaInteraction?)x.Interaction)).ToList();
     }
 
+    public async Task<IEnumerable<(MediaItem Media, UserMediaInteraction? Interaction)>> GetComicIssuesWithInteractionsAsync(Guid seriesId, Guid userId)
+    {
+        // Issue number lives in the EpisodeNumber column. Null-number one-shots sort
+        // last by date; numbered issues sort ascending.
+        var query = _context.MediaItems.AsNoTracking()
+            .Where(m => m.SeriesId == seriesId && m.Type == MediaType.ComicIssue)
+            .OrderBy(m => m.EpisodeNumber == null)
+            .ThenBy(m => m.EpisodeNumber)
+            .ThenBy(m => m.DateAdded);
+
+        var joinedQuery = from m in query
+                          join umi in _context.UserMediaInteractions.AsNoTracking()
+                            on new { MediaItemId = m.Id, UserId = userId } equals new { umi.MediaItemId, umi.UserId } into umis
+                          from umi in umis.DefaultIfEmpty()
+                          select new { Media = m, Interaction = umi };
+
+        var items = await joinedQuery.ToListAsync();
+        return items.Select(x => (x.Media, (UserMediaInteraction?)x.Interaction)).ToList();
+    }
+
     public async Task<IEnumerable<(MediaItem Media, UserMediaInteraction? Interaction)>> GetArtistAlbumsWithInteractionsAsync(Guid artistId, Guid userId)
     {
         var query = _context.MediaItems.AsNoTracking()

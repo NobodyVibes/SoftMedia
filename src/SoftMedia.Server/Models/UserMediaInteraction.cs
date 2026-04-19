@@ -21,7 +21,14 @@ public class UserMediaInteraction
     public DateTime? LastPlayed { get; set; }
     
     /// <summary>
-    /// Playback position in seconds for resume functionality
+    /// Playback position in seconds for resume functionality.
+    /// For books: page number (1-based) for PDF/CBZ; unused for EPUB.
     /// </summary>
     public double? PlaybackPosition { get; set; }
+
+    /// <summary>
+    /// Opaque location string for formats that can't express position as a number.
+    /// Currently used for EPUB CFI (Canonical Fragment Identifier).
+    /// </summary>
+    public string? BookLocation { get; set; }
 }

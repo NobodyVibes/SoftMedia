@@ -19,9 +19,19 @@ public class TestableBookScanner : BookScanner
         ILogger<BookScanner> logger,
         IMediaNotificationService notificationService,
         IMediaAnalysisService mediaAnalysisService,
-        IMetadataQueue metadataQueue) 
-        : base(scopeFactory, logger, notificationService, mediaAnalysisService, metadataQueue)
+        IMetadataQueue metadataQueue,
+        IBookMetadataExtractor? bookMetadataExtractor = null)
+        : base(scopeFactory, logger, notificationService, mediaAnalysisService, metadataQueue,
+               bookMetadataExtractor ?? new NullBookMetadataExtractor())
     {
+    }
+
+    /// <summary>No-op extractor so existing filename-only tests keep exercising
+    /// the <see cref="FileNameParser"/> path without needing real EPUB/PDF bytes.</summary>
+    private sealed class NullBookMetadataExtractor : IBookMetadataExtractor
+    {
+        public Task<BookFileMetadata?> ExtractAsync(string filePath, CancellationToken ct = default)
+            => Task.FromResult<BookFileMetadata?>(null);
     }
 
     public bool IsStrictEnrichment
@@ -233,6 +243,185 @@ public class BookScannerTests : IDisposable
         finally
         {
             if (File.Exists(destFile)) File.Delete(destFile);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────── Comic pipeline
+
+    [Fact]
+    public async Task ProcessFileAsync_Comic_CreatesSeriesAndIssue()
+    {
+        var scanner = new TestableBookScanner(
+            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object, _mockMediaAnalysis.Object, _mockQueue.Object);
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tmpDir);
+        var cbzPath = Path.Combine(tmpDir, "Amazing-Man Comics Issue 005.cbz");
+        File.WriteAllBytes(cbzPath, new byte[] { 0x50, 0x4B, 0x03, 0x04 }); // Minimal zip header
+
+        try
+        {
+            var library = new Library { Id = Guid.NewGuid(), Name = "Books", Type = LibraryType.Book };
+
+            var result = await scanner.ProcessFileAsync(_dbContext, cbzPath, null, library, CancellationToken.None);
+            await _dbContext.SaveChangesAsync();
+
+            Assert.Equal(ScanResult.New, result.Result);
+            Assert.True(result.EnqueueMetadata, "New comic issues must be enqueued for metadata enrichment");
+
+            var series = await _dbContext.MediaItems.FirstOrDefaultAsync(m => m.Type == MediaType.ComicSeries);
+            var issue = await _dbContext.MediaItems.FirstOrDefaultAsync(m => m.Type == MediaType.ComicIssue);
+
+            Assert.NotNull(series);
+            Assert.NotNull(issue);
+            Assert.Equal("Amazing Man Comics", series!.Title);
+            Assert.Equal(series.Id, issue!.SeriesId);
+            Assert.Equal(5, issue.EpisodeNumber);
+            Assert.Equal("Issue #5", issue.Title);
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_ExistingComicIssue_SkipsEnqueueWhenComplete()
+    {
+        var scanner = new TestableBookScanner(
+            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object, _mockMediaAnalysis.Object, _mockQueue.Object)
+        {
+            IsStrictEnrichment = false
+        };
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tmpDir);
+        var cbzPath = Path.Combine(tmpDir, "Amazing-Man Comics Issue 005.cbz");
+        File.WriteAllBytes(cbzPath, new byte[] { 0x50, 0x4B, 0x03, 0x04 });
+
+        try
+        {
+            var library = new Library { Id = Guid.NewGuid(), Name = "Books", Type = LibraryType.Book };
+            // Already-enriched issue: MetadataHash is set, indicating a prior enrichment attempt.
+            // The comic enrichment policy uses MetadataHash (not poster) as the signal because
+            // comic covers live inside the archive, not as external URLs.
+            var existing = new MediaItem
+            {
+                Id = Guid.NewGuid(),
+                LibraryId = library.Id,
+                Path = cbzPath,
+                Type = MediaType.ComicIssue,
+                Title = "The Beginning",
+                EpisodeNumber = 5,
+                MetadataHash = "some-prior-hash"
+            };
+            _dbContext.MediaItems.Add(existing);
+            await _dbContext.SaveChangesAsync();
+
+            var result = await scanner.ProcessFileAsync(_dbContext, cbzPath, existing, library, CancellationToken.None);
+
+            Assert.Equal(ScanResult.Updated, result.Result);
+            Assert.False(result.EnqueueMetadata, "Already-enriched issue should not re-enqueue");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_Comic_ReusesExistingSeriesForSecondIssue()
+    {
+        var scanner = new TestableBookScanner(
+            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object, _mockMediaAnalysis.Object, _mockQueue.Object);
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tmpDir);
+        var cbzA = Path.Combine(tmpDir, "Mystery Men Comics Issue 012.cbz");
+        var cbzB = Path.Combine(tmpDir, "Mystery Men Comics Issue 013.cbz");
+        File.WriteAllBytes(cbzA, new byte[] { 0x50, 0x4B, 0x03, 0x04 });
+        File.WriteAllBytes(cbzB, new byte[] { 0x50, 0x4B, 0x03, 0x04 });
+
+        try
+        {
+            var library = new Library { Id = Guid.NewGuid(), Name = "Books", Type = LibraryType.Book };
+
+            await scanner.ProcessFileAsync(_dbContext, cbzA, null, library, CancellationToken.None);
+            await scanner.ProcessFileAsync(_dbContext, cbzB, null, library, CancellationToken.None);
+            await _dbContext.SaveChangesAsync();
+
+            var seriesCount = await _dbContext.MediaItems.CountAsync(m => m.Type == MediaType.ComicSeries);
+            var issueCount = await _dbContext.MediaItems.CountAsync(m => m.Type == MediaType.ComicIssue);
+
+            Assert.Equal(1, seriesCount);   // Both issues share one series parent
+            Assert.Equal(2, issueCount);
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_Comic_OneShotWithoutIssueNumber()
+    {
+        var scanner = new TestableBookScanner(
+            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object, _mockMediaAnalysis.Object, _mockQueue.Object);
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tmpDir);
+        var cbzPath = Path.Combine(tmpDir, "Watchmen Special.cbz");
+        File.WriteAllBytes(cbzPath, new byte[] { 0x50, 0x4B, 0x03, 0x04 });
+
+        try
+        {
+            var library = new Library { Id = Guid.NewGuid(), Name = "Books", Type = LibraryType.Book };
+            await scanner.ProcessFileAsync(_dbContext, cbzPath, null, library, CancellationToken.None);
+            await _dbContext.SaveChangesAsync();
+
+            var series = await _dbContext.MediaItems.FirstOrDefaultAsync(m => m.Type == MediaType.ComicSeries);
+            var issue = await _dbContext.MediaItems.FirstOrDefaultAsync(m => m.Type == MediaType.ComicIssue);
+
+            Assert.NotNull(series);
+            Assert.NotNull(issue);
+            Assert.Equal("Watchmen Special", series!.Title);
+            Assert.Null(issue!.EpisodeNumber);
+            // One-shot falls back to the series name as title (not "Issue #null")
+            Assert.Equal("Watchmen Special", issue.Title);
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_FlatBook_StillWorks()
+    {
+        // Regression guard: .pdf/.epub still routed through the flat-book pipeline.
+        var scanner = new TestableBookScanner(
+            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object, _mockMediaAnalysis.Object, _mockQueue.Object);
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tmpDir);
+        var pdfPath = Path.Combine(tmpDir, "Jane Austen - Pride and Prejudice.pdf");
+        File.WriteAllBytes(pdfPath, new byte[] { 0x25, 0x50, 0x44, 0x46 });
+
+        try
+        {
+            var library = new Library { Id = Guid.NewGuid(), Name = "Books", Type = LibraryType.Book };
+            await scanner.ProcessFileAsync(_dbContext, pdfPath, null, library, CancellationToken.None);
+            await _dbContext.SaveChangesAsync();
+
+            var book = await _dbContext.MediaItems.FirstOrDefaultAsync();
+            Assert.NotNull(book);
+            Assert.Equal(MediaType.Book, book!.Type);
+            Assert.Null(book.SeriesId);
+            Assert.Equal("Pride and Prejudice", book.Title);
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
         }
     }
 

@@ -37,3 +37,4 @@ data/
 transcode-temp/
 **/cache/
 **/wwwroot/cache/
+test-fixtures/

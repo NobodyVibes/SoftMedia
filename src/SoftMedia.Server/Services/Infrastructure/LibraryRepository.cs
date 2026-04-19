@@ -86,6 +86,11 @@ public class LibraryRepository : ILibraryRepository
         {
             query = query.Where(m => m.Type == MediaType.Series);
         }
+        // Book Library: Hide comic issues — they're reached via their ComicSeries parent
+        else if (library.Type == LibraryType.Book)
+        {
+            query = query.Where(m => m.Type != MediaType.ComicIssue);
+        }
         // Music Library: Handle View Modes
         else if (library.Type == LibraryType.Music)
         {

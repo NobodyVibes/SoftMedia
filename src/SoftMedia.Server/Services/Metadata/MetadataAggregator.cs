@@ -48,7 +48,25 @@ public class MetadataAggregator : IMetadataAggregator
         {
             // Use MetadataRouter to get metadata from the user's preferred provider
             var result = await _metadataRouter.FetchMetadataAsync(item, type);
-            if (result == null) return;
+            if (result == null)
+            {
+                // For comics, providers frequently return null for obscure titles
+                // (Wikidata doesn't index them; the archive lacks ComicInfo.xml).
+                // Mark a sentinel MetadataHash so NeedsEnrichment recognises the
+                // attempt and the retry loop can exit. Without this, the retry
+                // service spins indefinitely on items no provider can help.
+                if (item.Type == MediaType.ComicSeries || item.Type == MediaType.ComicIssue)
+                {
+                    if (string.IsNullOrEmpty(item.MetadataHash))
+                    {
+                        item.MetadataHash = "EMPTY";
+                        _logger.LogInformation(
+                            "[MetadataAggregator] No provider data for comic '{Title}' — marking attempted to break retry loop",
+                            item.Title);
+                    }
+                }
+                return;
+            }
 
             await ProcessMetadataResultAsync(item, result, deferImageCaching, refreshImages);
         }

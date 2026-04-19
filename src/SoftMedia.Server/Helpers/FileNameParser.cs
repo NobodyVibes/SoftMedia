@@ -111,20 +111,272 @@ public static class FileNameParser
         return (cleanName, null);
     }
 
-    public static (string Author, string Title) ParseBook(string fileName)
+    /// <summary>
+    /// Parses a book filename into (Author, Title, Year).
+    /// <para>
+    /// Real-world book libraries use wildly inconsistent naming, so this is a
+    /// best-effort heuristic chain rather than a single regex. Every rule is
+    /// tried in order; the first one that produces a plausible split wins.
+    /// Fall back to embedded file metadata (EPUB OPF / PDF Info dict) when
+    /// the filename is unambiguous junk.
+    /// </para>
+    /// Supported patterns (non-exhaustive):
+    ///   "Author - Title"                                 classic convention
+    ///   "Author - Title (YYYY)"                          plus publication year
+    ///   "1 - Title - Author (YYYY)"                      series ordinal prefix
+    ///   "Series 1 - Title"                               series + ordinal inline
+    ///   "Title by Author"                                English-language style
+    ///   "Lastname, Firstname - Title"                    library-catalog style
+    ///   "(Tag) Author - Title"                           bracketed pre-tags
+    ///   "Title"                                          degenerate — whole filename
+    /// </summary>
+    public static (string Author, string Title, int? Year) ParseBook(string fileName)
     {
         var cleanName = Path.GetFileNameWithoutExtension(fileName);
-        
-        // Expected format: "Author Name - Book Title"
-        var parts = cleanName.Split(new[] { " - " }, 2, StringSplitOptions.RemoveEmptyEntries);
-        
-        if (parts.Length == 2)
+        if (string.IsNullOrWhiteSpace(cleanName))
+            return (string.Empty, string.Empty, null);
+
+        // 1. Capture + strip trailing "(YYYY)".
+        int? year = null;
+        var yearMatch = Regex.Match(cleanName, @"\s*\((?<y>(19|20)\d{2})\)\s*$");
+        if (yearMatch.Success && int.TryParse(yearMatch.Groups["y"].Value, out var y) && y >= 1900 && y <= 2100)
         {
-            return (parts[0].Trim(), CleanName(parts[1].Trim()));
+            year = y;
+            cleanName = cleanName.Substring(0, yearMatch.Index).TrimEnd();
         }
-        
-        // Fallback: entire filename is the title
-        return (string.Empty, CleanName(cleanName));
+
+        // 2. Strip leading bracketed tags, e.g. "(Ebook - Comic) Manara, Milo - ...".
+        //    Loop because some rippers stack multiple brackets.
+        while (true)
+        {
+            var bracketMatch = Regex.Match(cleanName, @"^\s*[\(\[][^\)\]]+[\)\]]\s*");
+            if (!bracketMatch.Success) break;
+            cleanName = cleanName.Substring(bracketMatch.Length).TrimStart();
+            if (string.IsNullOrEmpty(cleanName)) return (string.Empty, string.Empty, year);
+        }
+
+        // 3. Strip a leading series-ordinal prefix like "1 - ", "2.5 - ", "Book 3 - ".
+        //    The ordinal signals position-in-series, not author, and throws off the
+        //    naive split below.
+        var ordinalMatch = Regex.Match(cleanName, @"^(?:Book\s+)?\d+(?:\.\d+)?\s*-\s*", RegexOptions.IgnoreCase);
+        if (ordinalMatch.Success)
+        {
+            cleanName = cleanName.Substring(ordinalMatch.Length).TrimStart();
+        }
+
+        // 4. "Title by Author" — English prose convention; the "by" is unambiguous.
+        var byMatch = Regex.Match(cleanName, @"^(?<title>.+?)\s+by\s+(?<author>[^-]+?)\s*$",
+            RegexOptions.IgnoreCase);
+        if (byMatch.Success)
+        {
+            var t = CleanName(byMatch.Groups["title"].Value.Trim());
+            var a = NormalizeAuthor(byMatch.Groups["author"].Value.Trim());
+            if (!string.IsNullOrEmpty(t) && !string.IsNullOrEmpty(a))
+                return (a, t, year);
+        }
+
+        // 5. "Lastname, Firstname - Title" — library-catalog convention.
+        //    The comma inside the author segment prevents the naive split from
+        //    working, so we detect it up front.
+        var commaMatch = Regex.Match(cleanName,
+            @"^(?<last>[A-Z][A-Za-zÀ-ÿ'\-]+)\s*,\s*(?<first>[A-Z][A-Za-zÀ-ÿ'\-\.\s]+?)\s*-\s*(?<title>.+)$");
+        if (commaMatch.Success)
+        {
+            var a = $"{commaMatch.Groups["first"].Value.Trim()} {commaMatch.Groups["last"].Value.Trim()}";
+            var t = CleanName(commaMatch.Groups["title"].Value.Trim());
+            return (a, t, year);
+        }
+
+        // 6. " - " split. Filename may have multiple " - " separators, so we
+        //    look at both ends and keep whichever end looks like an author name.
+        var parts = cleanName.Split(new[] { " - " }, StringSplitOptions.RemoveEmptyEntries)
+                             .Select(p => p.Trim())
+                             .Where(p => p.Length > 0)
+                             .ToList();
+
+        if (parts.Count >= 2)
+        {
+            // 6a. Strip a leading "Series Name N" prefix when the first segment
+            //     ends in a digit (e.g. "Heroes of Dune 1 - Paul of Dune"). The
+            //     series+ordinal is context, not author. Only apply when this
+            //     leaves us a real remainder — otherwise we lose the whole name.
+            if (parts.Count >= 2 && Regex.IsMatch(parts[0], @"\s\d+(?:\.\d+)?$"))
+            {
+                parts.RemoveAt(0);
+                if (parts.Count == 1)
+                    return (string.Empty, CleanName(parts[0]), year);
+            }
+
+            bool firstIsName = LooksLikePersonalName(parts[0]);
+            bool lastIsName = LooksLikePersonalName(parts[^1]);
+
+            // 6b. Both ends look like names — typically happens when the title is
+            //     a single capitalized word (e.g. "Dune - Frank Herbert"). Prefer
+            //     the segment with more words as the author, since full person
+            //     names are usually 2+ tokens while titles-of-one-word are common.
+            if (firstIsName && lastIsName)
+            {
+                int firstWords = parts[0].Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+                int lastWords = parts[^1].Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+                if (lastWords > firstWords)
+                {
+                    var author = NormalizeAuthor(parts[^1]);
+                    var title = CleanName(string.Join(" - ", parts.Take(parts.Count - 1)));
+                    return (author, title, year);
+                }
+                // Tie or first has more words → classic Author-Title.
+                return (NormalizeAuthor(parts[0]),
+                        CleanName(string.Join(" - ", parts.Skip(1))),
+                        year);
+            }
+
+            // 6c. Classic "Author - Title" — only the first segment is a name.
+            if (firstIsName)
+            {
+                return (NormalizeAuthor(parts[0]),
+                        CleanName(string.Join(" - ", parts.Skip(1))),
+                        year);
+            }
+
+            // 6d. "Title - Author" — only the last segment is a name.
+            //     Everything before it is the title (joined back so a title that
+            //     itself contained " - " is preserved).
+            if (lastIsName)
+            {
+                return (NormalizeAuthor(parts[^1]),
+                        CleanName(string.Join(" - ", parts.Take(parts.Count - 1))),
+                        year);
+            }
+
+            // 6e. Neither end looks like a name — no author in the filename.
+            return (string.Empty, CleanName(string.Join(" - ", parts)), year);
+        }
+
+        // 7. Degenerate: whole filename is the title. OpenLibraryProvider has a
+        //    separate guard against "title that's really just an author name".
+        return (string.Empty, CleanName(cleanName), year);
+    }
+
+    /// <summary>
+    /// A heuristic "does this string look like a person's name?" check. We use it
+    /// to decide which end of a " - " split is the author vs the title. The rule
+    /// is deliberately strict — a false positive hands the user a book with the
+    /// title as author, which is more confusing than leaving author blank.
+    /// </summary>
+    private static bool LooksLikePersonalName(string s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return false;
+
+        // Reject obvious non-names first — anything with digits or excessive
+        // punctuation is almost certainly a title.
+        if (Regex.IsMatch(s, @"\d")) return false;
+        if (s.Contains('(') || s.Contains(')') || s.Contains(':')) return false;
+
+        var words = s.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length < 1 || words.Length > 5) return false;
+
+        // Titles frequently start with an article ("The Sandworms", "A Tale", etc.);
+        // names never do. This one test eliminates most false positives.
+        if (words[0].Equals("The", StringComparison.OrdinalIgnoreCase)
+         || words[0].Equals("A", StringComparison.OrdinalIgnoreCase)
+         || words[0].Equals("An", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Every word must start uppercase. A single lowercase word like "of" or
+        // "and" inside the segment reads as a title ("Pride and Prejudice",
+        // "Paul of Dune") — real author strings don't have those. Middle
+        // initials like "J." are accepted because they start uppercase.
+        foreach (var w in words)
+        {
+            if (w.Length == 0) continue;
+            if (!char.IsUpper(w[0])) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Cleans up an author string: collapses whitespace, strips ampersand noise,
+    /// and normalizes "Lastname, Firstname" → "Firstname Lastname".
+    /// </summary>
+    private static string NormalizeAuthor(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+
+        var author = raw.Replace("_", " ").Trim();
+        author = Regex.Replace(author, @"\s+", " ");
+
+        // "King, Stephen" → "Stephen Lastname"
+        var parts = author.Split(',', 2);
+        if (parts.Length == 2 && !string.IsNullOrWhiteSpace(parts[1]))
+        {
+            author = $"{parts[1].Trim()} {parts[0].Trim()}";
+        }
+
+        return author;
+    }
+
+    /// <summary>
+    /// Parses a comic filename into (SeriesName, IssueNumber, Year).
+    /// Supports common conventions:
+    ///   "Series Name 001"
+    ///   "Series Name #001"
+    ///   "Series Name Issue 001"
+    ///   "Series Name Vol 1 #001"
+    ///   "Series Name 001 (2023)"
+    ///   "Series Name - 001"
+    /// Issue number and year are optional; if issue isn't detected the whole
+    /// cleaned name becomes the series (one-shot comic).
+    /// </summary>
+    public static (string SeriesName, int? IssueNumber, int? Year) ParseComic(string fileName)
+    {
+        var baseName = Path.GetFileNameWithoutExtension(fileName);
+        if (string.IsNullOrWhiteSpace(baseName))
+            return (string.Empty, null, null);
+
+        // Extract year from (YYYY) before stripping parens so we don't lose it.
+        int? year = null;
+        var yearMatch = Regex.Match(baseName, @"\((\d{4})\)");
+        if (yearMatch.Success && int.TryParse(yearMatch.Groups[1].Value, out var y) && y >= 1900 && y <= 2100)
+        {
+            year = y;
+        }
+
+        // Try patterns in order of specificity. Each returns (seriesName, issueNumber).
+        // We anchor issue tokens so "Star Wars 1977" (a year-like trailing number)
+        // isn't misread as issue 1977 — we require an explicit marker (#, Issue, or
+        // an issue that's at the end AND not inside parens).
+        var patterns = new[]
+        {
+            // "Series #NNN" or "Series #NNN.N"
+            @"^(?<series>.+?)\s*#\s*(?<issue>\d{1,4})(?:\.\d+)?\s*(?:\(\d{4}\))?\s*$",
+            // "Series Issue NNN"
+            @"^(?<series>.+?)\s+(?:Issue|Iss\.?|No\.?|Number)\s+(?<issue>\d{1,4})\s*(?:\(\d{4}\))?\s*$",
+            // "Series - NNN"
+            @"^(?<series>.+?)\s-\s*(?<issue>\d{1,4})\s*(?:\(\d{4}\))?\s*$",
+            // "Series NNN (YYYY)" — requires parenthesized year to disambiguate
+            @"^(?<series>.+?)\s+(?<issue>\d{1,4})\s*\(\d{4}\)\s*$",
+            // Vol suffix: "Series v1 #NNN" / "Series Vol 2 #NNN"
+            @"^(?<series>.+?)\s+(?:v|Vol\.?)\s*\d{1,2}\s*#?\s*(?<issue>\d{1,4})\s*(?:\(\d{4}\))?\s*$",
+        };
+
+        foreach (var pattern in patterns)
+        {
+            var m = Regex.Match(baseName, pattern, RegexOptions.IgnoreCase);
+            if (m.Success && int.TryParse(m.Groups["issue"].Value, out var iss))
+            {
+                var rawSeries = m.Groups["series"].Value.Trim();
+                // Strip a trailing (YYYY) from the series — it belongs to the year.
+                rawSeries = Regex.Replace(rawSeries, @"\s*\(\d{4}\)\s*$", "").Trim();
+                // Strip a trailing volume marker ("v1", "Vol 2", "Volume 3").
+                rawSeries = Regex.Replace(rawSeries, @"\s+(?:v|Vol\.?|Volume)\s*\d{1,2}\s*$", "",
+                    RegexOptions.IgnoreCase).Trim();
+                return (CleanName(rawSeries), iss, year);
+            }
+        }
+
+        // Fallback: no issue number — one-shot. Strip year parens, clean rest.
+        var fallback = Regex.Replace(baseName, @"\s*\(\d{4}\)\s*$", "").Trim();
+        return (CleanName(fallback), null, year);
     }
 
     public static (string Title, int? Year) ParseGame(string filePath)

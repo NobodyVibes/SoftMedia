@@ -31,6 +31,15 @@ public class MetadataRouter : IMetadataRouter
             return await FetchMusicMetadataAsync(item);
         }
 
+        // Book libraries contain two distinct media kinds: flat ebooks (MediaType.Book) and
+        // the comic hierarchy (MediaType.ComicSeries / ComicIssue). Comics need their own
+        // provider chain — ebooks would waste calls on comic providers that can't help, and
+        // vice-versa.
+        if (type == LibraryType.Book && (item.Type == MediaType.ComicSeries || item.Type == MediaType.ComicIssue))
+        {
+            return await FetchComicMetadataAsync(item);
+        }
+
         // 1. Determine which provider to use based on settings
         string? preferredProvider = null;
         switch (type)
@@ -167,6 +176,84 @@ public class MetadataRouter : IMetadataRouter
         }
 
         if (!string.IsNullOrEmpty(merged.Title) || !string.IsNullOrEmpty(merged.Artist) || merged.Year.HasValue)
+        {
+            return merged;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Comic routing: primary + fallback strategy mirroring the music provider pattern.
+    /// Defaults: ComicInfo (local file) primary, Wikidata fallback. Users configure both
+    /// via the "Comics" row in Settings. Fallback key value "None" disables fallback.
+    /// </summary>
+    private async Task<MetadataResult?> FetchComicMetadataAsync(MediaItem item)
+    {
+        var primaryName = await _settingsService.GetSettingAsync("ComicProvider", "ComicInfo");
+        var fallbackName = await _settingsService.GetSettingAsync("ComicFallbackProvider", "Wikidata");
+
+        // All comic providers register as LibraryType.Book with a distinct ProviderName.
+        var comicProviders = _providers.Where(p => p.SupportedType == LibraryType.Book).ToList();
+        var primary = comicProviders.FirstOrDefault(p => p.ProviderName == primaryName);
+        var fallback = string.Equals(fallbackName, "None", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : comicProviders.FirstOrDefault(p => p.ProviderName == fallbackName);
+
+        // Guard against misconfiguration: if primary == fallback (or fallback resolves to
+        // the same provider as primary), don't double-call.
+        if (fallback != null && ReferenceEquals(fallback, primary))
+            fallback = null;
+
+        _logger.LogInformation("Comic routing: Primary={Primary}, Fallback={Fallback} for '{Title}'",
+            primary?.ProviderName ?? "none", fallback?.ProviderName ?? "none", item.Title);
+
+        MetadataResult? primaryData = null;
+        if (primary != null)
+        {
+            try { primaryData = await primary.FetchMetadataAsync(item); }
+            catch (Exception ex) { _logger.LogError(ex, "Error fetching from {Provider}", primary.ProviderName); }
+        }
+
+        // Sufficiency: a comic result is useful if it has a title AND either a summary or a cover.
+        bool sufficient = primaryData != null
+            && !string.IsNullOrEmpty(primaryData.Title)
+            && (!string.IsNullOrEmpty(primaryData.Description) || !string.IsNullOrEmpty(primaryData.PosterUrl));
+
+        if (sufficient || fallback == null)
+        {
+            return primaryData;
+        }
+
+        MetadataResult? fallbackData = null;
+        try { fallbackData = await fallback.FetchMetadataAsync(item); }
+        catch (Exception ex) { _logger.LogError(ex, "Error fetching from {Provider}", fallback.ProviderName); }
+
+        // Merge: primary wins, fallback fills gaps (mirrors FetchMusicMetadataAsync).
+        var merged = primaryData ?? new MetadataResult();
+        if (fallbackData != null)
+        {
+            if (primaryData == null)
+            {
+                merged = fallbackData;
+            }
+            else
+            {
+                if (string.IsNullOrEmpty(merged.Title)) merged.Title = fallbackData.Title;
+                if (string.IsNullOrEmpty(merged.Description)) merged.Description = fallbackData.Description;
+                if (string.IsNullOrEmpty(merged.PosterUrl)) merged.PosterUrl = fallbackData.PosterUrl;
+                if (string.IsNullOrEmpty(merged.Publisher)) merged.Publisher = fallbackData.Publisher;
+                if (string.IsNullOrEmpty(merged.Studio)) merged.Studio = fallbackData.Studio;
+                if (string.IsNullOrEmpty(merged.Director)) merged.Director = fallbackData.Director;
+                if (!merged.Year.HasValue) merged.Year = fallbackData.Year;
+                if (merged.Genres == null || merged.Genres.Count == 0) merged.Genres = fallbackData.Genres;
+                if (string.IsNullOrEmpty(merged.ContentRating)) merged.ContentRating = fallbackData.ContentRating;
+            }
+        }
+
+        // Return null if we truly have nothing to show.
+        if (!string.IsNullOrEmpty(merged.Title) || !string.IsNullOrEmpty(merged.Description) ||
+            !string.IsNullOrEmpty(merged.PosterUrl) || merged.Year.HasValue)
         {
             return merged;
         }

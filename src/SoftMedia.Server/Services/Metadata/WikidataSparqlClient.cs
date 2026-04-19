@@ -31,6 +31,10 @@ public abstract class WikidataSparqlClient : IMetadataProvider
 
     public async Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
     {
+        // Subclass opt-out (e.g. ComicWikidataProvider skips non-comic items in a Book library).
+        if (!ShouldFetch(item))
+            return null;
+
         try
         {
             // Acquire rate limit lease
@@ -62,6 +66,13 @@ public abstract class WikidataSparqlClient : IMetadataProvider
             return null;
         }
     }
+
+    /// <summary>
+    /// Override to short-circuit before any network/rate-limit work when the
+    /// provider doesn't apply to this item (e.g. a comic provider receiving an ebook).
+    /// Default: always fetch.
+    /// </summary>
+    protected virtual bool ShouldFetch(MediaItem item) => true;
 
     /// <summary>
     /// Build the SPARQL query for the given media item.

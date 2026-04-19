@@ -367,6 +367,8 @@ export default function SettingsPage() {
     const tvProviders = ["TVMaze"];
     const musicProviders = ["MusicBrainz", "Embedded"];
     const bookProviders = ["Open Library"];
+    const comicProviders = ["ComicInfo", "Wikidata"];
+    const comicFallbackProviders = ["Wikidata", "ComicInfo", "None"];
     const gameProviders = ["Wikidata"];
     const photoProviders = ["Exif"];
 
@@ -746,6 +748,22 @@ export default function SettingsPage() {
                                     onChange={(val) => handleChange(setting.key, val)}
                                     options={bookProviders}
                                     placeholder="Select book provider..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'ComicProvider' ? (
+                                <Combobox
+                                    value={setting.value}
+                                    onChange={(val) => handleChange(setting.key, val)}
+                                    options={comicProviders}
+                                    placeholder="Select primary comic provider..."
+                                    className="max-w-md"
+                                />
+                            ) : setting.key === 'ComicFallbackProvider' ? (
+                                <Combobox
+                                    value={setting.value}
+                                    onChange={(val) => handleChange(setting.key, val)}
+                                    options={comicFallbackProviders}
+                                    placeholder="Select fallback comic provider..."
                                     className="max-w-md"
                                 />
                             ) : setting.key === 'GameProvider' ? (
@@ -1245,6 +1263,42 @@ export default function SettingsPage() {
                                                         placeholder="Select provider..."
                                                         className="w-full"
                                                     />
+                                                </div>
+                                            );
+                                        })()}
+
+                                        {/* Comic Provider (Primary + Fallback) */}
+                                        {(() => {
+                                            const primary = localSettings.find(s => s.key === 'ComicProvider');
+                                            const fallback = localSettings.find(s => s.key === 'ComicFallbackProvider');
+                                            if (!primary) return null;
+                                            return (
+                                                <div className="bg-black/20 rounded-lg p-4 border border-white/5">
+                                                    <label className="text-sm font-medium text-gray-300 block mb-2">💬 Comics</label>
+                                                    <div className="space-y-2">
+                                                        <div>
+                                                            <span className="text-xs text-gray-500 block mb-1">Primary</span>
+                                                            <Combobox
+                                                                value={primary.value}
+                                                                onChange={(val) => handleChange(primary.key, val)}
+                                                                options={comicProviders}
+                                                                placeholder="Select primary..."
+                                                                className="w-full"
+                                                            />
+                                                        </div>
+                                                        {fallback && (
+                                                            <div>
+                                                                <span className="text-xs text-gray-500 block mb-1">Fallback</span>
+                                                                <Combobox
+                                                                    value={fallback.value}
+                                                                    onChange={(val) => handleChange(fallback.key, val)}
+                                                                    options={comicFallbackProviders}
+                                                                    placeholder="Select fallback..."
+                                                                    className="w-full"
+                                                                />
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             );
                                         })()}

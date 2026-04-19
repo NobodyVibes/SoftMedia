@@ -41,9 +41,10 @@ public static class ServiceCollectionExtensions
                     OnMessageReceived = context =>
                     {
                         var path = context.HttpContext.Request.Path;
-                        if (path.StartsWithSegments("/api/transcode") || 
+                        if (path.StartsWithSegments("/api/transcode") ||
                             path.StartsWithSegments("/api/v1/stream") ||
                             path.StartsWithSegments("/api/v1/audio") ||
+                            path.StartsWithSegments("/api/v1/books") ||
                             path.StartsWithSegments("/api/media") ||
                             path.StartsWithSegments("/hubs/media"))
                         {
@@ -77,7 +78,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMediaScanner, MovieScanner>();
         services.AddScoped<IMediaScanner, GameScanner>();
         services.AddScoped<IMediaScanner, BookScanner>();
-        
+        services.AddSingleton<IBookMetadataExtractor, BookMetadataExtractor>();
+
         services.AddTransient<SoftMediaUserAgentHandler>();
         
         // Metadata Providers
@@ -85,9 +87,11 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<TVMazeProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
         services.AddHttpClient<OMDbProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
         services.AddHttpClient<MusicBrainzProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
-        services.AddHttpClient<OpenLibraryProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+        services.AddHttpClient<OpenLibraryProvider>(c => c.Timeout = TimeSpan.FromSeconds(15))
+                .AddHttpMessageHandler<SoftMediaUserAgentHandler>();
         services.AddHttpClient<GameMetadataProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
-        
+        services.AddHttpClient<ComicWikidataProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+
         services.AddScoped<IMetadataProvider, WikidataProvider>();
         services.AddScoped<IMetadataProvider, TVMazeProvider>();
         services.AddScoped<IMetadataProvider, OMDbProvider>();
@@ -96,6 +100,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMetadataProvider, OpenLibraryProvider>();
         services.AddScoped<IMetadataProvider, GameMetadataProvider>();
         services.AddScoped<IMetadataProvider, ExifMetadataProvider>();
+        services.AddScoped<IMetadataProvider, ComicInfoXmlProvider>();
+        services.AddScoped<IMetadataProvider, ComicWikidataProvider>();
         
         services.AddScoped<EmbeddedMusicProvider>(); 
         services.AddScoped<ITvMetadataEnricher, TvMetadataEnricher>();
@@ -131,6 +137,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IThumbnailService, ThumbnailService>();
         services.AddScoped<IMediaRetrievalService, MediaRetrievalService>();
         services.AddScoped<IUserMediaInteractionService, UserMediaInteractionService>();
+        services.AddSingleton<IComicArchiveService, ComicArchiveService>();
         
         // System / Infrastructure
         services.AddScoped<ISettingsService, SettingsService>();

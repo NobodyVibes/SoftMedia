@@ -10,6 +10,7 @@ import MusicDetailView from '../components/details/MusicDetailView';
 import ArtistDetailView from '../components/details/ArtistDetailView';
 import AlbumDetailView from '../components/details/AlbumDetailView';
 import BookDetailView from '../components/details/BookDetailView';
+import ComicSeriesDetailView from '../components/details/ComicSeriesDetailView';
 import GameDetailView from '../components/details/GameDetailView';
 import PhotoDetailView from '../components/details/PhotoDetailView';
 import { useAudioStore } from '../store/audioStore';
@@ -172,6 +173,17 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
     const handlePlay = async () => {
         if (type === 'Music') {
             playTrack(item);
+        } else if (item.type === MediaType.ComicSeries) {
+            // Open the first issue in the reader (chronological by issue number).
+            try {
+                const res = await api.get<MediaItem[]>(`/libraries/comics/${item.id}/issues`);
+                const first = res.data?.[0];
+                if (first) {
+                    navigate(`/read/${first.id}`);
+                }
+            } catch (err) {
+                console.error('Failed to fetch comic issues:', err);
+            }
         } else if (type === 'Book') {
             navigate(`/read/${item.id}`);
         } else if (type === 'TV') {
@@ -224,6 +236,12 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
 
         if (item.type === MediaType.Artist) return <ArtistDetailView item={item} />;
         if (item.type === MediaType.Album) return <AlbumDetailView item={item} />;
+
+        // Comic hierarchy: series shows the issue list; individual issues go straight to the reader.
+        if (item.type === MediaType.ComicSeries) return <ComicSeriesDetailView item={item} />;
+        if (item.type === MediaType.ComicIssue) {
+            return <Navigate to={`/read/${item.id}`} replace />;
+        }
 
         if (item.type === MediaType.Audio || item.type === MediaType.Track) {
             if (item.albumId) {

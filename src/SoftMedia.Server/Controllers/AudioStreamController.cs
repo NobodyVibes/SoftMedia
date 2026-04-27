@@ -63,7 +63,7 @@ public class AudioStreamController : ControllerBase
         catch (InvalidOperationException ex)
         {
             _logger.LogWarning(ex, "Failed to compute audio stream plan for {Id}", id);
-            return NotFound(ex.Message);
+            return NotFound("Audio stream plan could not be computed for this media item.");
         }
     }
 

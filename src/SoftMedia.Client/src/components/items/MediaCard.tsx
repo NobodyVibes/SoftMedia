@@ -127,7 +127,7 @@ export default memo(function MediaCard({ item, libraryType, groupReady, onImageL
                         </div>
 
                         {/* Right Side: Quality, Favorite, Watched */}
-                        <div className="flex flex-col items-end gap-1.5 translate-y-2 group-hover/card:translate-y-0 opacity-0 group-hover/card:opacity-100 transition-all duration-300">
+                        <div className="flex flex-col items-end gap-1.5 translate-y-2 group-hover/card:translate-y-0 group-focus-within/card:translate-y-0 opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 transition-all duration-300">
                             <QualityBadge quality={item.quality} />
 
                             {item.isFavorite && (
@@ -153,8 +153,11 @@ export default memo(function MediaCard({ item, libraryType, groupReady, onImageL
                         </div>
                     )}
 
-                    {/* Play Overlay - Centered */}
-                    <div className="absolute inset-0 flex items-center justify-center z-20 opacity-0 group-hover/card:opacity-100 transition-opacity duration-300 pointer-events-none">
+                    {/* Play Overlay - Centered. The overlay also opens on
+                        focus-within so keyboard users tabbing into the card
+                        can see the play button instead of hitting an invisible
+                        focused element (SDD §8.3 universal-client a11y). */}
+                    <div className="absolute inset-0 flex items-center justify-center z-20 opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 transition-opacity duration-300 pointer-events-none">
                         {/* Play Button wrapped in pointer-events-auto to capture clicks */}
                         <div className="relative group/play pointer-events-auto">
                             <div className={`absolute inset-0 bg-gradient-to-br ${glowGradient} blur-lg opacity-50 rounded-full scale-75 group-hover/play:scale-110 transition-transform duration-500`} />

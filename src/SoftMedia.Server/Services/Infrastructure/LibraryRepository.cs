@@ -3,16 +3,19 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Security.ContentRating;
 
 namespace SoftMedia.Server.Services.Infrastructure;
 
 public class LibraryRepository : ILibraryRepository
 {
     private readonly AppDbContext _context;
+    private readonly IUserContentRatingProvider _ratingProvider;
 
-    public LibraryRepository(AppDbContext context)
+    public LibraryRepository(AppDbContext context, IUserContentRatingProvider ratingProvider)
     {
         _context = context;
+        _ratingProvider = ratingProvider;
     }
 
     public async Task<Library?> GetByIdAsync(Guid id)
@@ -73,8 +76,13 @@ public class LibraryRepository : ILibraryRepository
             };
         }
 
+        // Apply parental-control gate BEFORE the type-specific narrowing below.
+        // Counts and pagination then operate on the post-filter set, so a child
+        // user sees a smaller item count and never paginates past blocked items.
+        var ceilings = await _ratingProvider.GetCurrentAsync();
         var query = _context.MediaItems
             .AsNoTracking()
+            .ApplyContentRatingFilter(ceilings)
             .Include(m => m.Series)
             .Include(m => m.Album)
             .Include(m => m.MediaItemGenres)

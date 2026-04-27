@@ -144,4 +144,124 @@ describe('Universal Client a11y guard', () => {
         }
         expect(violations).toEqual([]);
     });
+
+    /**
+     * Files whose icon-only buttons MUST carry `aria-label` and whose `hover:`
+     * classes MUST be paired with `focus-visible:` classes. Adding a file
+     * here is a one-way ratchet: once on the list, regressions fail CI.
+     *
+     * Add a file here only after it has been verified clean. Do NOT add a
+     * file with known violations — fix it first, then add.
+     */
+    const STRICT_A11Y_FILES = new Set<string>([
+        // Player surface
+        'player/ProgressBar.tsx',
+        'player/VideoPlayer.tsx',
+        'player/PersistentPlayer.tsx',
+        'player/NextEpisodeOverlay.tsx',
+        'player/PlayerDebugPanel.tsx',
+        'player/visualizers/VisualizerSelector.tsx',
+        // Library card
+        'items/MediaCard.tsx',
+        // Reader surface
+        'reader/BookReader.tsx',
+        'reader/BookmarksDrawer.tsx',
+        'reader/HighlightsDrawer.tsx',
+        'reader/ReaderSettingsPanel.tsx',
+        'reader/SearchDrawer.tsx',
+        'reader/ShortcutHelpSheet.tsx',
+        'reader/TocDrawer.tsx',
+        'reader/TtsNowPlayingBar.tsx',
+        'reader/PdfHighlightOverlay.tsx',
+        'reader/EpubView.tsx',
+    ]);
+
+    /**
+     * SVG-only icon buttons in strictly-audited files MUST carry `aria-label`
+     * so VoiceOver / NVDA / ChromeVox can announce their action. The 2026-04-26
+     * audit found ~10 unlabelled buttons in VideoPlayer.tsx; D2 fixed them and
+     * this guard prevents the regression.
+     */
+    it('icon-only <button> elements in audited files must have aria-label', () => {
+        const buttonPattern = /<button\b([^>]*?)>([\s\S]*?)<\/button>/g;
+        const violations: string[] = [];
+
+        for (const file of files) {
+            const rel = relative(COMPONENTS_ROOT, file).replace(/\\/g, '/');
+            if (!STRICT_A11Y_FILES.has(rel)) continue;
+
+            const source = readFileSync(file, 'utf-8');
+            let m: RegExpExecArray | null;
+            while ((m = buttonPattern.exec(source)) !== null) {
+                const openTag = m[1];
+                const body = m[2];
+
+                if (/\baria-label\s*=/.test(openTag)) continue;
+
+                // No <svg> child → button is probably text-only and its
+                // visible text is its label.
+                if (!/<svg\b/.test(body)) continue;
+
+                // Strip JSX expressions, SVG blocks, and tags; what's left is
+                // the rendered text. Non-empty means the icon has visible
+                // accompanying text — skip.
+                const stripped = body
+                    .replace(/<svg\b[\s\S]*?<\/svg>/g, '')
+                    .replace(/\{[\s\S]*?\}/g, '')
+                    .replace(/<[^>]*>/g, '')
+                    .trim();
+                if (stripped.length > 0) continue;
+
+                violations.push(`${rel}:${lineOf(source, m.index)}`);
+            }
+        }
+
+        if (violations.length > 0) {
+            throw new Error(
+                `Found ${violations.length} icon-only <button> element(s) in ` +
+                    `audited files without aria-label. Add aria-label="<the ` +
+                    `action>" so screen-reader and TV-remote users hear ` +
+                    `something meaningful. \`title=\` is NOT a substitute — ` +
+                    `it isn't reliably announced.\n` +
+                    violations.map((v) => `  • ${v}`).join('\n')
+            );
+        }
+        expect(violations).toEqual([]);
+    });
+
+    /**
+     * Hover treatments on interactive elements MUST be paired with a focus-
+     * visible treatment so keyboard / remote users see the same affordance.
+     * SDD §8.3 Universal Client rule 2. Same scoping as above.
+     */
+    it('every <button> with hover: classes in audited files has focus-visible: pair', () => {
+        const buttonPattern = /<button\b([^>]*)>/g;
+        const violations: string[] = [];
+
+        for (const file of files) {
+            const rel = relative(COMPONENTS_ROOT, file).replace(/\\/g, '/');
+            if (!STRICT_A11Y_FILES.has(rel)) continue;
+
+            const source = readFileSync(file, 'utf-8');
+            let m: RegExpExecArray | null;
+            while ((m = buttonPattern.exec(source)) !== null) {
+                const tag = m[1];
+                if (!/\bhover:[a-z-]+/.test(tag)) continue;
+                if (/\bfocus-visible:/.test(tag)) continue;
+
+                violations.push(`${rel}:${lineOf(source, m.index)}`);
+            }
+        }
+
+        if (violations.length > 0) {
+            throw new Error(
+                `Found ${violations.length} <button> with hover: classes but no ` +
+                    `focus-visible: pair (in audited files). Add a focus-visible: ` +
+                    `variant — e.g. ` +
+                    `\`focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:outline-none\`.\n` +
+                    violations.map((v) => `  • ${v}`).join('\n')
+            );
+        }
+        expect(violations).toEqual([]);
+    });
 });

@@ -122,7 +122,12 @@ public class FileServingControllerIntegrationTests : IntegrationTestBase
                 var item = new MediaItem
                 {
                     Id = Guid.NewGuid(), LibraryId = lib.Id, Title = "x", SortTitle = "x",
-                    Path = mediaFile, Container = "mkv", Size = 1024
+                    Path = mediaFile, Container = "mkv", Size = 1024,
+                    Type = MediaType.Movie, ContentRating = "G",
+                    // ContentRating set explicitly so the parental-control filter
+                    // (default user ceiling MaxRating="PG-13") does not fail-safe
+                    // hide a null-rated item. The test is about file serving,
+                    // not parental controls.
                 };
                 db.Libraries.Add(lib);
                 db.MediaItems.Add(item);

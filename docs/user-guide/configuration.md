@@ -77,7 +77,7 @@ Because the token appears in the URL's query string, it **will** show up in:
 Mitigations already in place:
 - Every `<img>` rendered by the client sets `referrerPolicy="no-referrer"` so the token does not leak to external domains.
 - Access tokens have a **15-minute lifetime**, so a log leak has a bounded exposure window before the token becomes worthless.
-- Refresh tokens are never passed in the URL — they live in an `HttpOnly; SameSite=Strict` cookie scoped to `/api/v1/auth/`.
+- Refresh tokens are never passed in the URL — they live in an `HttpOnly; SameSite=Lax` cookie scoped to `Path=/api/v1/auth/`. (Lax is sufficient against CSRF for this design because mutating requests carry the JWT in the `Authorization` header — browsers do not auto-attach `Authorization` cross-origin — and the `Path` scope further prevents the cookie from riding on cross-site sub-resource POSTs to other API routes. See SDD §6.2.)
 
 Operator responsibilities:
 - Configure your reverse proxy to **strip `access_token` and `token` query parameters** before logging. nginx: `map $request_uri $logged_uri { default $request_uri; "~(.*?)([?&])(access_token|token)=[^&]*(.*)$" $1$4; }` then `log_format scrubbed ... $logged_uri; access_log /var/log/nginx/access.log scrubbed;`
@@ -105,4 +105,4 @@ The startup validator rejects a secret that is:
 | `JwtSettings:ExpiryMinutes` | `15` | Access-token lifetime in minutes. Short by design — the refresh-token flow (see `/api/v1/auth/refresh-token`) rotates cookies transparently. Bump only if you fully understand the security trade-off. |
 | `ConnectionStrings:DefaultConnection` | `Data Source=softmedia.db` | SQLite file path. |
 | `Cors:AllowedOrigins` | `["http://localhost:5173","http://127.0.0.1:5173"]` | Explicit origin allowlist. |
-| `Cors:AllowAnyOriginForLAN` | `true` | If `true`, any origin is permitted — **only safe on a trusted LAN**. Disable before exposing the server beyond your local network. |
+| `Cors:AllowAnyOriginForLAN` | `false` (production) / `true` (development override) | When `true`, any origin is permitted — **only safe on a trusted LAN**. The shipped `appsettings.json` defaults this to `false`; `appsettings.Development.json` overrides to `true` so the Vite dev proxy works. The server logs a startup `[WARN]` when the flag is on, so an operator who flips it on for production is reminded of the implication. |

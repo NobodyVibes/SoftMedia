@@ -35,16 +35,9 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 // Register Application Services via Extensions
 builder.Services.AddIdentityServices(builder.Configuration);
+builder.Services.AddSecurityServices();
 builder.Services.AddMediaServices();
 builder.Services.AddBackgroundServices();
-builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.IStreamSecurityService, SoftMedia.Server.Services.Security.StreamSecurityService>();
-builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.ILibraryService, SoftMedia.Server.Services.Media.LibraryService>();
-builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.IMediaRepository, SoftMedia.Server.Services.Infrastructure.MediaRepository>();
-builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.ILibraryRepository, SoftMedia.Server.Services.Infrastructure.LibraryRepository>();
-builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.IUserMediaInteractionRepository, SoftMedia.Server.Services.Infrastructure.UserMediaInteractionRepository>();
-builder.Services.AddScoped<SoftMedia.Server.Services.Abstractions.IMediaService, SoftMedia.Server.Services.Media.MediaService>();
-builder.Services.AddScoped<SoftMedia.Server.Services.Transcoding.ITranscodeDebugService, SoftMedia.Server.Services.Transcoding.TranscodeDebugService>();
-builder.Services.AddScoped<SoftMedia.Server.Services.Media.IVideoPreviewService, SoftMedia.Server.Services.Media.VideoPreviewService>();
 
 
 
@@ -52,12 +45,21 @@ builder.Services.AddScoped<SoftMedia.Server.Services.Media.IVideoPreviewService,
 builder.Services.AddSignalR();
 
 // API Configuration
+var corsAllowAnyOrigin = builder.Configuration.GetValue<bool>("Cors:AllowAnyOriginForLAN");
+if (corsAllowAnyOrigin)
+{
+    // Surface this loudly: it is correct for the Vite dev proxy but unsafe when the
+    // server is reachable from outside the LAN (e.g., behind DuckDNS + Caddy).
+    Console.Error.WriteLine(
+        "[WARN] Cors:AllowAnyOriginForLAN=true — credentialed CORS is wide open. " +
+        "This is the dev default. Disable it in production (default in appsettings.json is false).");
+}
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        var allowAnyOriginForLAN = builder.Configuration.GetValue<bool>("Cors:AllowAnyOriginForLAN");
-        if (allowAnyOriginForLAN)
+        if (corsAllowAnyOrigin)
         {
             policy.SetIsOriginAllowed(_ => true)
                   .AllowAnyHeader()

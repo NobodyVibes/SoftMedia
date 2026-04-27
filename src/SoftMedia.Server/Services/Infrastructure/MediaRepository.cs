@@ -2,21 +2,30 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Security.ContentRating;
 
 namespace SoftMedia.Server.Services.Infrastructure;
 
 public class MediaRepository : IMediaRepository
 {
     private readonly AppDbContext _context;
+    private readonly IUserContentRatingProvider _ratingProvider;
 
-    public MediaRepository(AppDbContext context)
+    public MediaRepository(AppDbContext context, IUserContentRatingProvider ratingProvider)
     {
         _context = context;
+        _ratingProvider = ratingProvider;
     }
 
     public async Task<MediaItem?> GetByIdWithLibraryAsync(Guid id)
     {
+        // Parental-control gate: filter applies to user-facing reads. Background
+        // services (scanners) get UserRatingCeilings.Unrestricted, so they bypass
+        // automatically. Direct stream-by-ID flows through MediaService.GetStreamInfoAsync
+        // which calls this method — null return + 404 anti-probe handled upstream.
+        var ceilings = await _ratingProvider.GetCurrentAsync();
         return await _context.MediaItems
+            .ApplyContentRatingFilter(ceilings)
             .Include(m => m.Library)
             .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
             .AsNoTracking()
@@ -25,14 +34,18 @@ public class MediaRepository : IMediaRepository
 
     public async Task<MediaItem?> GetByIdAsync(Guid id)
     {
+        var ceilings = await _ratingProvider.GetCurrentAsync();
         return await _context.MediaItems
+            .ApplyContentRatingFilter(ceilings)
             .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
             .FirstOrDefaultAsync(m => m.Id == id);
     }
 
     public async Task<IEnumerable<MediaItem>> GetSeriesSeasonsAsync(Guid seriesId)
     {
-         return await _context.MediaItems.AsNoTracking()
+        var ceilings = await _ratingProvider.GetCurrentAsync();
+        return await _context.MediaItems.AsNoTracking()
+            .ApplyContentRatingFilter(ceilings)
             .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Season)
             .OrderBy(m => m.SeasonNumber)
             .ToListAsync();
@@ -40,17 +53,21 @@ public class MediaRepository : IMediaRepository
 
     public async Task<List<int>> GetDistinctSeasonNumbersAsync(Guid seriesId)
     {
+        var ceilings = await _ratingProvider.GetCurrentAsync();
         return await _context.MediaItems.AsNoTracking()
+            .ApplyContentRatingFilter(ceilings)
             .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode)
             .Select(m => m.SeasonNumber ?? 1)
             .Distinct()
             .OrderBy(s => s)
             .ToListAsync();
     }
-    
+
     public async Task<int> GetEpisodeCountAsync(Guid seriesId, int seasonNumber)
     {
+        var ceilings = await _ratingProvider.GetCurrentAsync();
         return await _context.MediaItems
+            .ApplyContentRatingFilter(ceilings)
             .CountAsync(e => e.SeriesId == seriesId && e.SeasonNumber == seasonNumber && e.Type == MediaType.Episode);
     }
 
@@ -61,7 +78,9 @@ public class MediaRepository : IMediaRepository
 
     public async Task<IEnumerable<(MediaItem Media, UserMediaInteraction? Interaction)>> GetSeriesEpisodesWithInteractionsAsync(Guid seriesId, Guid userId)
     {
+        var ceilings = await _ratingProvider.GetCurrentAsync();
         var query = _context.MediaItems.AsNoTracking()
+            .ApplyContentRatingFilter(ceilings)
             .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode)
             .OrderBy(m => m.SeasonNumber)
             .ThenBy(m => m.EpisodeNumber);
@@ -143,7 +162,9 @@ public class MediaRepository : IMediaRepository
 
     public async Task<IEnumerable<MediaItem>> GetRecentMediaAsync(int limit, LibraryType? type)
     {
-        IQueryable<MediaItem> query = _context.MediaItems.AsNoTracking();
+        var ceilings = await _ratingProvider.GetCurrentAsync();
+        IQueryable<MediaItem> query = _context.MediaItems.AsNoTracking()
+            .ApplyContentRatingFilter(ceilings);
 
         if (type.HasValue)
         {
@@ -166,8 +187,10 @@ public class MediaRepository : IMediaRepository
 
     public async Task<IEnumerable<MediaItem>> GetEpisodesAsync(Guid seriesId)
     {
+        var ceilings = await _ratingProvider.GetCurrentAsync();
         return await _context.MediaItems
             .AsNoTracking()
+            .ApplyContentRatingFilter(ceilings)
             .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode)
             .OrderBy(m => m.SeasonNumber)
             .ThenBy(m => m.EpisodeNumber)
@@ -176,8 +199,10 @@ public class MediaRepository : IMediaRepository
 
     public async Task<IEnumerable<MediaItem>> GetByIdsAsync(IEnumerable<Guid> ids)
     {
+        var ceilings = await _ratingProvider.GetCurrentAsync();
         return await _context.MediaItems
             .AsNoTracking()
+            .ApplyContentRatingFilter(ceilings)
             .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
             .Where(m => ids.Contains(m.Id))
             .ToListAsync();

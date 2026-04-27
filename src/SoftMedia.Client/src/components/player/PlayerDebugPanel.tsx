@@ -165,8 +165,10 @@ export function PlayerDebugPanel({ mediaId, token, subtitleTrack, clientCapabili
                     </h2>
                     <div className="flex items-center gap-3">
                         <button
+                            type="button"
                             onClick={handleExport}
-                            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${copied
+                            aria-label={copied ? 'Debug info copied to clipboard' : 'Copy debug info to clipboard'}
+                            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${copied
                                 ? 'bg-green-500/20 text-green-400 border border-green-500/50'
                                 : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/30'
                                 }`}
@@ -174,8 +176,10 @@ export function PlayerDebugPanel({ mediaId, token, subtitleTrack, clientCapabili
                             {copied ? '✓ Copied!' : '📤 Export'}
                         </button>
                         <button
+                            type="button"
                             onClick={onClose}
-                            className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-700 rounded-lg"
+                            aria-label="Close debug panel"
+                            className="text-gray-400 hover:text-white transition-colors p-2 min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-gray-700 focus-visible:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded-lg"
                         >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

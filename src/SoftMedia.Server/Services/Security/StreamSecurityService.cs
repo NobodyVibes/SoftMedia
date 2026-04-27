@@ -21,15 +21,16 @@ public class StreamSecurityService : IStreamSecurityService
 
         try
         {
-            var canonicalFilePath = Path.GetFullPath(filePath);
+            // SDD §6.2: canonicalisation MUST resolve symlinks in addition to collapsing `..`.
+            // Path.GetFullPath alone is insufficient on Linux — a symlink under an admin-
+            // declared library root would otherwise re-introduce LFI.
+            var canonicalFilePath = ResolveRealPath(filePath);
 
             foreach (var libPath in libraryPaths)
             {
-                var canonicalLibPath = Path.GetFullPath(libPath);
-                
-                // Ensure the library path ends with a separator to prevent partial matches 
-                // unless it is the root drive
-                if (!canonicalLibPath.EndsWith(Path.DirectorySeparatorChar.ToString()))
+                var canonicalLibPath = ResolveRealPath(libPath);
+
+                if (!canonicalLibPath.EndsWith(Path.DirectorySeparatorChar))
                 {
                     canonicalLibPath += Path.DirectorySeparatorChar;
                 }
@@ -47,6 +48,32 @@ public class StreamSecurityService : IStreamSecurityService
         {
             _logger.LogError(ex, "Error validating path security for file '{FilePath}'.", filePath);
             return false;
+        }
+    }
+
+    // Resolve symlinks AND collapse `..`. ResolveLinkTarget(true) returns the final
+    // target by walking the symlink chain; if the path is not a symlink, it returns
+    // null and we fall back to GetFullPath. Library roots are themselves checked
+    // because admins may add a symlinked directory as a root.
+    private static string ResolveRealPath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        try
+        {
+            FileSystemInfo? info = File.Exists(fullPath)
+                ? new FileInfo(fullPath)
+                : Directory.Exists(fullPath)
+                    ? new DirectoryInfo(fullPath)
+                    : null;
+
+            var resolved = info?.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+            return resolved ?? fullPath;
+        }
+        catch
+        {
+            // ResolveLinkTarget can throw on broken/cyclic links — treat as the literal
+            // path; the caller's StartsWith check will then reject anything escaping.
+            return fullPath;
         }
     }
 

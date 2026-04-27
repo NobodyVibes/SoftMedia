@@ -12,6 +12,8 @@ using SoftMedia.Server.Services.Metadata;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Background;
 using SoftMedia.Server.Services.Media.Strategies;
+using SoftMedia.Server.Services.Security;
+using SoftMedia.Server.Services.Security.ContentRating;
 using SoftMedia.Server.Hubs;
 using SoftMedia.Server.Helpers;
 
@@ -72,9 +74,35 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    // Security-layer services. Tiny on purpose — kept separate from AddMediaServices
+    // so that the path-jail check has an obvious home (and so the call site in
+    // Program.cs reads as "AddSecurityServices()" rather than burying it inside
+    // a media DI block).
+    public static IServiceCollection AddSecurityServices(this IServiceCollection services)
+    {
+        services.AddScoped<IStreamSecurityService, StreamSecurityService>();
+
+        // Parental-control filter — IUserContentRatingProvider needs the
+        // current HttpContext to read the JWT principal and look the user
+        // row up. Repositories inject the provider and call it before
+        // building the IQueryable.
+        services.AddHttpContextAccessor();
+        services.AddScoped<IUserContentRatingProvider, UserContentRatingProvider>();
+        return services;
+    }
+
     public static IServiceCollection AddMediaServices(this IServiceCollection services)
     {
         services.AddHttpClient();
+
+        // Repositories + core media surface (previously registered loose in Program.cs).
+        services.AddScoped<ILibraryRepository, LibraryRepository>();
+        services.AddScoped<IMediaRepository, MediaRepository>();
+        services.AddScoped<IUserMediaInteractionRepository, UserMediaInteractionRepository>();
+        services.AddScoped<ILibraryService, LibraryService>();
+        services.AddScoped<IMediaService, MediaService>();
+        services.AddScoped<ITranscodeDebugService, TranscodeDebugService>();
+        services.AddScoped<IVideoPreviewService, VideoPreviewService>();
 
         // Scanners
         services.AddScoped<IScannerOrchestrator, ScannerOrchestrator>();
@@ -86,7 +114,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IBookMetadataExtractor, BookMetadataExtractor>();
 
         services.AddTransient<SoftMediaUserAgentHandler>();
-        
+
+        // Named HttpClient used by ImageController's outbound proxy. Carries
+        // SoftMediaUserAgentHandler so requests to upstream CDNs (Wikidata,
+        // MusicBrainz, Open Library, TVMaze etc.) carry the SDD §4.3-mandated
+        // User-Agent. See SDD §6.2 — image-proxy compliance.
+        services.AddHttpClient("ImageProxy", c => c.Timeout = TimeSpan.FromSeconds(15))
+                .AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+
         // Metadata Providers
         services.AddHttpClient<WikidataProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
         services.AddHttpClient<TVMazeProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
@@ -191,8 +226,8 @@ public static class ServiceCollectionExtensions
     // Policy "auth": per-IP sliding window on /auth/login and /auth/signup to defeat
     // credential stuffing. 15 attempts per minute is comfortable headroom for users
     // who fat-finger their password a few times while still capping automated attacks.
-    // Sliding window (vs fixed) prevents the "5 fails at 12:00:59 then 5 more at
-    // 12:01:00" burst that fixed-window allows.
+    // Sliding window (vs fixed) prevents the "near-window-edge double burst": a fixed
+    // window of N permits allows 2N attempts in 2 seconds when straddling the boundary.
     //
     // /auth/change-password is intentionally NOT covered by this policy: it requires
     // a valid Bearer token and is one explicit user action — credential stuffing is
@@ -205,6 +240,8 @@ public static class ServiceCollectionExtensions
     //
     // No global limiter by design — would produce false positives on legitimate
     // range-request streaming traffic.
+    public const int AuthPermitLimit = 15;
+
     public static IServiceCollection AddRateLimitingPolicies(this IServiceCollection services)
     {
         services.AddRateLimiter(options =>
@@ -229,12 +266,13 @@ public static class ServiceCollectionExtensions
             };
 
             options.AddPolicy(AuthRateLimitPolicy, httpContext =>
-                RateLimitPartition.GetFixedWindowLimiter(
+                RateLimitPartition.GetSlidingWindowLimiter(
                     partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown-ip",
-                    factory: _ => new FixedWindowRateLimiterOptions
+                    factory: _ => new SlidingWindowRateLimiterOptions
                     {
-                        PermitLimit = 30,
+                        PermitLimit = AuthPermitLimit,
                         Window = TimeSpan.FromMinutes(1),
+                        SegmentsPerWindow = 6,
                         QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                         QueueLimit = 0,
                         AutoReplenishment = true
@@ -274,6 +312,7 @@ public static class ServiceCollectionExtensions
         // Other Background Services
         services.AddHostedService<ThrottleMonitorService>();
         services.AddHostedService<RefreshTokenCleanupService>();
+        services.AddHostedService<TranscodeSegmentCleanupService>();
         services.AddSingleton<MetadataRefreshService>();
         services.AddHostedService(sp => sp.GetRequiredService<MetadataRefreshService>());
         services.AddHostedService<HeroCacheWorker>();

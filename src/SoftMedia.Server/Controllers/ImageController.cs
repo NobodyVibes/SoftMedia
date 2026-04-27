@@ -118,10 +118,11 @@ public class ImageController : ControllerBase
             if (System.IO.File.Exists(sentinelPath))
                 return NotFound("Image not found at source.");
 
-            var client = _httpClientFactory.CreateClient();
-            client.DefaultRequestHeaders.UserAgent.ParseAdd(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-            client.Timeout = TimeSpan.FromSeconds(15);
+            // Named "ImageProxy" client carries SoftMediaUserAgentHandler — see
+            // ServiceCollectionExtensions.AddMediaServices. Do NOT spoof a
+            // browser UA: SDD §4.3 requires honest attribution to upstream
+            // metadata hosts (Wikidata, MusicBrainz, Open Library).
+            var client = _httpClientFactory.CreateClient("ImageProxy");
 
             using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
             if (!response.IsSuccessStatusCode)

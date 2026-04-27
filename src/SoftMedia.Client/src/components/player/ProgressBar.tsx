@@ -82,6 +82,54 @@ export function ProgressBar({
         }
     };
 
+    // SDD §8.3 — keyboard operability for the seek slider. Sighted users get
+    // mouse drag; non-mouse users (Tab focus, TV remote D-pad, screen reader)
+    // need ArrowLeft/Right to advance the time. Browsers do not auto-handle
+    // arrow keys on `role="slider"` divs — we must do it ourselves.
+    //
+    // Keymap mirrors common video-player conventions:
+    //   ArrowLeft / ArrowRight       ±5s
+    //   Shift+Arrow                  ±10s
+    //   Home / End                   start / end of media
+    //   PageUp / PageDown            ±60s
+    //   Space and Enter are NOT captured here so they can fall through to the
+    //   parent player's play/pause toggle.
+    const handleProgressKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (duration <= 0) return;
+
+        const small = e.shiftKey ? 10 : 5;
+        let next: number | null = null;
+
+        switch (e.key) {
+            case 'ArrowLeft':
+                next = Math.max(0, currentTime - small);
+                break;
+            case 'ArrowRight':
+                next = Math.min(duration, currentTime + small);
+                break;
+            case 'Home':
+                next = 0;
+                break;
+            case 'End':
+                next = duration;
+                break;
+            case 'PageDown':
+                next = Math.max(0, currentTime - 60);
+                break;
+            case 'PageUp':
+                next = Math.min(duration, currentTime + 60);
+                break;
+            default:
+                return; // let the event bubble (Space/Enter -> play/pause)
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        onSeekStart();
+        onSeek(next);
+        onSeekEnd();
+    };
+
     // Global mouse up listener when dragging
     useEffect(() => {
         if (isDragging) {
@@ -138,10 +186,26 @@ export function ProgressBar({
                 </div>
             )}
 
-            {/* Progress bar track */}
+            {/* Progress bar track —
+                SDD §8.3 universal-client a11y: `role="slider"` + ARIA value
+                attrs make this announceable by screen readers; `tabIndex={0}`
+                puts it in the Tab order; the inline `onKeyDown` handler
+                provides keyboard seeking; `focus-visible:ring-*` paired with
+                the existing hover treatment satisfies the focus-state rule.
+                The 44px touch-target requirement is met by the transparent
+                wrapper directly below this div (it forwards mouse events
+                without enlarging the visible track). */}
             <div
                 ref={progressRef}
-                className="relative w-full h-1.5 bg-white/20 rounded-full cursor-pointer group/progress hover:h-2.5 transition-all duration-200 ease-out"
+                role="slider"
+                tabIndex={0}
+                aria-label="Seek"
+                aria-valuemin={0}
+                aria-valuemax={Math.max(0, Math.floor(duration))}
+                aria-valuenow={Math.max(0, Math.floor(currentTime))}
+                aria-valuetext={formatDuration(currentTime)}
+                onKeyDown={handleProgressKeyDown}
+                className="relative w-full h-1.5 bg-white/20 rounded-full cursor-pointer group/progress hover:h-2.5 focus-visible:h-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-black/80 transition-all duration-200 ease-out"
                 onMouseDown={handleProgressMouseDown}
                 onMouseMove={handleProgressMouseMove}
                 onMouseLeave={handleProgressMouseLeave}

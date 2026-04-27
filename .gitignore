@@ -38,3 +38,11 @@ transcode-temp/
 **/cache/
 **/wwwroot/cache/
 test-fixtures/
+
+# Test / build output noise (never commit; see Phase 2 / E1 of the hardening plan)
+**/build*.log
+**/build_*.txt
+**/test_log*.txt
+**/test_run_*.txt
+**/test_build_*.txt
+**/errors.log

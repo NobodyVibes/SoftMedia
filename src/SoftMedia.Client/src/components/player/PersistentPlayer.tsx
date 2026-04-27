@@ -570,13 +570,15 @@ export const PersistentPlayer: React.FC = () => {
                                     <VisualizerSelector />
 
                                     {/* Full Screen Toggle */}
-
-                                    {/* Full Screen Toggle */}
                                     <button
+                                        type="button"
                                         onClick={toggleFullScreen}
+                                        aria-label={isFullScreen ? 'Exit fullscreen player' : 'Enter fullscreen player'}
+                                        aria-pressed={isFullScreen}
                                         className={cn(
-                                            "p-2 transition",
-                                            isFullScreen ? "text-primary" : "text-gray-400 hover:text-white"
+                                            "p-2 transition min-w-[44px] min-h-[44px] flex items-center justify-center rounded",
+                                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                                            isFullScreen ? "text-primary" : "text-gray-400 hover:text-white focus-visible:text-white"
                                         )}
                                         title="Toggle Full Screen"
                                     >
@@ -584,10 +586,14 @@ export const PersistentPlayer: React.FC = () => {
                                     </button>
 
                                     <button
+                                        type="button"
                                         onClick={() => setShowQueue(!showQueue)}
+                                        aria-label="Queue"
+                                        aria-pressed={showQueue}
                                         className={cn(
-                                            "p-2 transition relative",
-                                            showQueue ? "text-primary" : "text-gray-400 hover:text-white"
+                                            "p-2 transition relative min-w-[44px] min-h-[44px] flex items-center justify-center rounded",
+                                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                                            showQueue ? "text-primary" : "text-gray-400 hover:text-white focus-visible:text-white"
                                         )}
                                         title="Queue"
                                     >
@@ -600,8 +606,10 @@ export const PersistentPlayer: React.FC = () => {
                                     </button>
 
                                     <button
+                                        type="button"
                                         onClick={closePlayer}
-                                        className="text-gray-400 hover:text-red-500 transition-colors p-2"
+                                        aria-label="Close player"
+                                        className="text-gray-400 hover:text-red-500 focus-visible:text-red-500 transition-colors p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
                                         title="Close Player"
                                     >
                                         <X size={24} />
@@ -662,23 +670,34 @@ export const PersistentPlayer: React.FC = () => {
                                     <div className="grid grid-cols-[1fr_auto_1fr] items-center w-full max-w-4xl mx-auto">
                                         <div className="flex justify-end items-center gap-6 pr-10">
                                             <button
+                                                type="button"
                                                 onClick={toggleShuffle}
+                                                aria-label="Shuffle"
+                                                aria-pressed={shuffleMode}
                                                 className={cn(
-                                                    "transition",
-                                                    shuffleMode ? "text-primary" : "text-gray-400 hover:text-white"
+                                                    "transition p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded",
+                                                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                                                    shuffleMode ? "text-primary" : "text-gray-400 hover:text-white focus-visible:text-white"
                                                 )}
                                                 title="Shuffle (Shift+S)"
                                             >
                                                 <Shuffle size={24} />
                                             </button>
 
-                                            <button onClick={handlePrevious} className="text-gray-400 hover:text-white transition">
+                                            <button
+                                                type="button"
+                                                onClick={handlePrevious}
+                                                aria-label="Previous track"
+                                                className="text-gray-400 hover:text-white focus-visible:text-white transition p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                                            >
                                                 <SkipBack size={32} />
                                             </button>
 
                                             <button
+                                                type="button"
                                                 onClick={handleSeekBackward}
-                                                className="text-gray-400 hover:text-white transition relative"
+                                                aria-label="Seek backward 30 seconds"
+                                                className="text-gray-400 hover:text-white focus-visible:text-white transition relative p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
                                                 title="Seek backward 30s"
                                             >
                                                 <RotateCcw size={24} />
@@ -688,8 +707,10 @@ export const PersistentPlayer: React.FC = () => {
 
                                         <div className="flex justify-center items-center">
                                             <button
+                                                type="button"
                                                 onClick={isPlaying ? pause : resume}
-                                                className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition shadow-lg"
+                                                aria-label={isPlaying ? 'Pause' : 'Play'}
+                                                className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 focus-visible:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 transition shadow-lg"
                                             >
                                                 {isPlaying ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" className="ml-1" />}
                                             </button>
@@ -697,23 +718,33 @@ export const PersistentPlayer: React.FC = () => {
 
                                         <div className="flex justify-start items-center gap-6 pl-10">
                                             <button
+                                                type="button"
                                                 onClick={handleSeekForward}
-                                                className="text-gray-400 hover:text-white transition relative"
+                                                aria-label="Seek forward 30 seconds"
+                                                className="text-gray-400 hover:text-white focus-visible:text-white transition relative p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
                                                 title="Seek forward 30s"
                                             >
                                                 <RotateCw size={24} />
                                                 <span className="absolute text-[10px] font-bold" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>30</span>
                                             </button>
 
-                                            <button onClick={handleSkipNext} className="text-gray-400 hover:text-white transition">
+                                            <button
+                                                type="button"
+                                                onClick={handleSkipNext}
+                                                aria-label="Next track"
+                                                className="text-gray-400 hover:text-white focus-visible:text-white transition p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                                            >
                                                 <SkipForward size={32} />
                                             </button>
 
                                             <button
+                                                type="button"
                                                 onClick={cycleRepeatMode}
+                                                aria-label={`Repeat mode: ${repeatMode}`}
                                                 className={cn(
-                                                    "transition",
-                                                    repeatMode !== 'off' ? "text-primary" : "text-gray-400 hover:text-white"
+                                                    "transition p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded",
+                                                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                                                    repeatMode !== 'off' ? "text-primary" : "text-gray-400 hover:text-white focus-visible:text-white"
                                                 )}
                                                 title={`Repeat: ${repeatMode} (Shift+R)`}
                                             >
@@ -725,7 +756,13 @@ export const PersistentPlayer: React.FC = () => {
 
                                             {/* Volume Control Integrated */}
                                             <div className="relative flex items-center group/volume z-20">
-                                                <button onClick={toggleMute} className="text-gray-400 hover:text-white p-2 transition-colors relative z-10">
+                                                <button
+                                                    type="button"
+                                                    onClick={toggleMute}
+                                                    aria-label={isMuted ? 'Unmute' : 'Mute'}
+                                                    aria-pressed={isMuted}
+                                                    className="text-gray-400 hover:text-white focus-visible:text-white p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 transition-colors relative z-10"
+                                                >
                                                     {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
                                                 </button>
 
@@ -831,8 +868,10 @@ export const PersistentPlayer: React.FC = () => {
                             </div>
                             {/* Expand Button */}
                             <button
+                                type="button"
                                 onClick={() => setIsExpanded(true)}
-                                className="text-gray-400 hover:text-white transition ml-2"
+                                aria-label="Expand player"
+                                className="text-gray-400 hover:text-white focus-visible:text-white transition ml-2 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
                                 title="Expand (Shift+F)"
                             >
                                 <ChevronUp size={20} />
@@ -843,24 +882,35 @@ export const PersistentPlayer: React.FC = () => {
                         <div className="flex-1 flex flex-col items-center justify-center relative z-10 pointer-events-auto">
                             <div className="flex items-center space-x-4 mb-1">
                                 <button
+                                    type="button"
                                     onClick={toggleShuffle}
+                                    aria-label="Shuffle"
+                                    aria-pressed={shuffleMode}
                                     className={cn(
-                                        "transition",
-                                        shuffleMode ? "text-primary" : "text-gray-400 hover:text-white"
+                                        "transition p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded",
+                                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                                        shuffleMode ? "text-primary" : "text-gray-400 hover:text-white focus-visible:text-white"
                                     )}
                                     title="Shuffle (Shift+S)"
                                 >
                                     <Shuffle size={18} />
                                 </button>
 
-                                <button onClick={handlePrevious} className="text-gray-400 hover:text-white transition">
+                                <button
+                                    type="button"
+                                    onClick={handlePrevious}
+                                    aria-label="Previous track"
+                                    className="text-gray-400 hover:text-white focus-visible:text-white transition p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                                >
                                     <SkipBack size={22} />
                                 </button>
 
                                 {/* Seek Backward 30s */}
                                 <button
+                                    type="button"
                                     onClick={handleSeekBackward}
-                                    className="text-gray-400 hover:text-white transition relative"
+                                    aria-label="Seek backward 30 seconds"
+                                    className="text-gray-400 hover:text-white focus-visible:text-white transition relative p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
                                     title="Seek backward 30s"
                                 >
                                     <RotateCcw size={18} />
@@ -868,16 +918,20 @@ export const PersistentPlayer: React.FC = () => {
                                 </button>
 
                                 <button
+                                    type="button"
                                     onClick={isPlaying ? pause : resume}
-                                    className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition"
+                                    aria-label={isPlaying ? 'Pause' : 'Play'}
+                                    className="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full bg-white text-black flex items-center justify-center hover:scale-105 focus-visible:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900 transition"
                                 >
                                     {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
                                 </button>
 
                                 {/* Seek Forward 30s */}
                                 <button
+                                    type="button"
                                     onClick={handleSeekForward}
-                                    className="text-gray-400 hover:text-white transition relative"
+                                    aria-label="Seek forward 30 seconds"
+                                    className="text-gray-400 hover:text-white focus-visible:text-white transition relative p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
                                     title="Seek forward 30s"
                                 >
                                     <RotateCw size={18} />
@@ -885,17 +939,22 @@ export const PersistentPlayer: React.FC = () => {
                                 </button>
 
                                 <button
+                                    type="button"
                                     onClick={handleSkipNext}
-                                    className="text-gray-400 hover:text-white transition"
+                                    aria-label="Next track"
+                                    className="text-gray-400 hover:text-white focus-visible:text-white transition p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
                                 >
                                     <SkipForward size={22} />
                                 </button>
 
                                 <button
+                                    type="button"
                                     onClick={cycleRepeatMode}
+                                    aria-label={`Repeat mode: ${repeatMode}`}
                                     className={cn(
-                                        "transition",
-                                        repeatMode !== 'off' ? "text-primary" : "text-gray-400 hover:text-white"
+                                        "transition p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded",
+                                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                                        repeatMode !== 'off' ? "text-primary" : "text-gray-400 hover:text-white focus-visible:text-white"
                                     )}
                                     title={`Repeat: ${repeatMode} (Shift+R)`}
                                 >
@@ -924,10 +983,14 @@ export const PersistentPlayer: React.FC = () => {
                             <VisualizerSelector className="hidden md:block" direction="up" iconSize={20} />
 
                             <button
+                                type="button"
                                 onClick={toggleFullScreen}
+                                aria-label={isFullScreen ? 'Exit fullscreen player' : 'Enter fullscreen player'}
+                                aria-pressed={isFullScreen}
                                 className={cn(
-                                    "p-2 transition rounded-full hover:bg-white/10",
-                                    isFullScreen ? "text-primary" : "text-gray-400 hover:text-white"
+                                    "p-2 transition rounded-full min-w-[44px] min-h-[44px] flex items-center justify-center",
+                                    "hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                                    isFullScreen ? "text-primary" : "text-gray-400 hover:text-white focus-visible:text-white"
                                 )}
                                 title="Toggle Full Screen"
                             >
@@ -935,10 +998,14 @@ export const PersistentPlayer: React.FC = () => {
                             </button>
 
                             <button
+                                type="button"
                                 onClick={() => setShowQueue(!showQueue)}
+                                aria-label="Queue"
+                                aria-pressed={showQueue}
                                 className={cn(
-                                    "p-2 transition relative rounded-full hover:bg-white/10",
-                                    showQueue ? "text-primary" : "text-gray-400 hover:text-white"
+                                    "p-2 transition relative rounded-full min-w-[44px] min-h-[44px] flex items-center justify-center",
+                                    "hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                                    showQueue ? "text-primary" : "text-gray-400 hover:text-white focus-visible:text-white"
                                 )}
                                 title="Queue"
                             >
@@ -951,7 +1018,13 @@ export const PersistentPlayer: React.FC = () => {
                             </button>
 
                             <div className="relative flex items-center group/volume z-20">
-                                <button onClick={toggleMute} className="text-gray-400 hover:text-white p-2 transition-colors relative z-10 rounded-full hover:bg-white/10">
+                                <button
+                                    type="button"
+                                    onClick={toggleMute}
+                                    aria-label={isMuted ? 'Unmute' : 'Mute'}
+                                    aria-pressed={isMuted}
+                                    className="text-gray-400 hover:text-white focus-visible:text-white p-2 min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors relative z-10 rounded-full hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                                >
                                     {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                                 </button>
 
@@ -975,8 +1048,10 @@ export const PersistentPlayer: React.FC = () => {
                             </div>
 
                             <button
+                                type="button"
                                 onClick={closePlayer}
-                                className="text-gray-400 hover:text-red-500 transition p-2 rounded-full hover:bg-white/10"
+                                aria-label="Close player"
+                                className="text-gray-400 hover:text-red-500 focus-visible:text-red-500 transition p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
                                 title="Close Player"
                             >
                                 <X size={20} />

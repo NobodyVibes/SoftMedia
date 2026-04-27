@@ -1,38 +1,41 @@
 using System.Net;
 using System.Net.Http.Json;
+using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Tests.Helpers;
 using Xunit;
 
 namespace SoftMedia.Server.Tests.Integration;
 
-/// Todo 03 acceptance test: the "auth" rate-limit policy must return 429 on
-/// the 6th attempt from the same IP within the 1-minute fixed window.
-/// Reflection tests verified the attribute is present; this suite verifies
-/// the middleware actually throttles live traffic.
+/// Acceptance test for the "auth" rate-limit policy: per-IP sliding window of
+/// `AuthPermitLimit` requests per minute. The (PermitLimit + 1)-th attempt
+/// from the same IP must return 429.
+///
+/// TestServer passes every request through the same pipeline with the same
+/// RemoteIpAddress (null by default — the limiter's `"unknown-ip"` fallback
+/// partition handles this deterministically).
 public class AuthRateLimitIntegrationTests : IntegrationTestBase
 {
+    private const int Limit = ServiceCollectionExtensions.AuthPermitLimit;
+
     [Fact]
-    public async Task Login_SixthAttemptFromSameIp_Returns429()
+    public async Task Login_AttemptOverLimit_Returns429()
     {
-        // TestServer passes every request through the same pipeline with the
-        // same RemoteIpAddress (null by default — the limiter's fallback
-        // partition `"unknown-ip"` handles this deterministically).
         var client = Factory.CreateClient();
         var payload = new { Username = "nobody", Password = "wrong" };
 
-        // Five 401s are expected (no user "nobody" exists).
-        for (var i = 0; i < 5; i++)
+        // First `Limit` attempts: 401 (no user "nobody" exists).
+        for (var i = 0; i < Limit; i++)
         {
             var r = await client.PostAsJsonAsync("/api/v1/auth/login", payload);
             Assert.Equal(HttpStatusCode.Unauthorized, r.StatusCode);
         }
 
-        var sixth = await client.PostAsJsonAsync("/api/v1/auth/login", payload);
-        Assert.Equal(HttpStatusCode.TooManyRequests, sixth.StatusCode);
+        var overLimit = await client.PostAsJsonAsync("/api/v1/auth/login", payload);
+        Assert.Equal(HttpStatusCode.TooManyRequests, overLimit.StatusCode);
     }
 
     [Fact]
-    public async Task Signup_SixthAttemptFromSameIp_Returns429()
+    public async Task Signup_AttemptOverLimit_Returns429()
     {
         var client = Factory.CreateClient();
         var payload = new
@@ -44,8 +47,8 @@ public class AuthRateLimitIntegrationTests : IntegrationTestBase
             LastName = "D"
         };
 
-        // First succeeds as first-user-setup, rest fail 400 on duplicate username.
-        for (var i = 0; i < 5; i++)
+        // First request can be 200 (first-user-setup), subsequent ones 400/403.
+        for (var i = 0; i < Limit; i++)
         {
             var r = await client.PostAsJsonAsync("/api/v1/auth/signup", payload);
             Assert.True(
@@ -55,7 +58,7 @@ public class AuthRateLimitIntegrationTests : IntegrationTestBase
                 $"Unexpected status {r.StatusCode} at attempt {i + 1}");
         }
 
-        var sixth = await client.PostAsJsonAsync("/api/v1/auth/signup", payload);
-        Assert.Equal(HttpStatusCode.TooManyRequests, sixth.StatusCode);
+        var overLimit = await client.PostAsJsonAsync("/api/v1/auth/signup", payload);
+        Assert.Equal(HttpStatusCode.TooManyRequests, overLimit.StatusCode);
     }
 }

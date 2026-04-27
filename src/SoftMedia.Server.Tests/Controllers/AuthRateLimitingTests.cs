@@ -17,7 +17,6 @@ public class AuthRateLimitingTests
     {
         new object[] { "Login" },
         new object[] { "Signup" },
-        new object[] { "ChangePassword" },
     };
 
     [Theory]
@@ -30,6 +29,21 @@ public class AuthRateLimitingTests
         var attr = method!.GetCustomAttribute<EnableRateLimitingAttribute>();
         Assert.NotNull(attr);
         Assert.Equal(ServiceCollectionExtensions.AuthRateLimitPolicy, attr!.PolicyName);
+    }
+
+    [Fact]
+    public void ChangePassword_IsIntentionallyNotRateLimited()
+    {
+        // /auth/change-password requires a valid Bearer token and is one explicit
+        // user action — credential stuffing is not the threat model. The policy
+        // exclusion is documented inline in ServiceCollectionExtensions.cs;
+        // this guard keeps that decision visible and prevents a future
+        // contributor from "fixing" it without reading the rationale.
+        var method = typeof(AuthController).GetMethod("ChangePassword", BindingFlags.Public | BindingFlags.Instance);
+        Assert.NotNull(method);
+
+        var attr = method!.GetCustomAttribute<EnableRateLimitingAttribute>();
+        Assert.Null(attr);
     }
 
     [Fact]

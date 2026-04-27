@@ -93,9 +93,14 @@ export const VisualizerSelector: React.FC<VisualizerSelectorProps> = ({
         <div className={cn("relative inline-block", className)}>
             <button
                 ref={buttonRef}
+                type="button"
                 onClick={handleToggle}
+                aria-label="Visualizer settings"
+                aria-haspopup="menu"
+                aria-expanded={isOpen}
                 className={cn(
-                    "p-2 transition rounded-full hover:bg-white/10",
+                    "p-2 transition rounded-full min-w-[44px] min-h-[44px] flex items-center justify-center",
+                    "hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
                     isEnabled ? "text-primary" : "text-gray-400 hover:text-white"
                 )}
                 title="Visualizer Settings"
@@ -120,9 +125,13 @@ export const VisualizerSelector: React.FC<VisualizerSelectorProps> = ({
                         {VISUALIZER_OPTIONS.map((option) => (
                             <button
                                 key={option.id}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={option.id === currentSelection}
                                 onClick={() => handleSelect(option.id)}
                                 className={cn(
                                     "w-full text-left px-4 py-2 text-sm transition flex items-center gap-2",
+                                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400",
                                     option.id === currentSelection
                                         ? "bg-primary text-white"
                                         : "text-gray-300 hover:bg-gray-800 hover:text-white"

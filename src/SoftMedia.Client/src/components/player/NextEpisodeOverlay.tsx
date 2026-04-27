@@ -150,8 +150,9 @@ export function NextEpisodeOverlay({
                         </div>
 
                         <button
+                            type="button"
                             onClick={handleReturnToLibrary}
-                            className="w-full py-3 px-6 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2"
+                            className="w-full py-3 px-6 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 focus-visible:from-blue-500 focus-visible:to-violet-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2"
                         >
                             Return to Library
                         </button>
@@ -178,8 +179,10 @@ export function NextEpisodeOverlay({
                         <div className="flex items-center gap-3">
                             {/* X button to dismiss (same as Keep Watching) */}
                             <button
+                                type="button"
                                 onClick={onContinueWatching}
-                                className="text-gray-400 hover:text-white transition-colors p-1.5 hover:bg-white/10 rounded-lg"
+                                aria-label="Dismiss and continue watching"
+                                className="text-gray-400 hover:text-white focus-visible:text-white transition-colors p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded-lg"
                                 title="Dismiss and continue watching"
                             >
                                 <X size={20} />
@@ -187,19 +190,23 @@ export function NextEpisodeOverlay({
 
                             {isPaused ? (
                                 <button
+                                    type="button"
                                     onClick={handleRestart}
-                                    className="text-gray-400 hover:text-white transition-colors p-1"
+                                    aria-label="Resume countdown"
+                                    className="text-gray-400 hover:text-white focus-visible:text-white transition-colors p-1 min-w-[44px] min-h-[44px] flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded-lg"
                                     title="Resume countdown"
                                 >
                                     <RotateCcw size={18} />
                                 </button>
                             ) : (
                                 <button
+                                    type="button"
                                     onClick={() => {
                                         setIsPaused(true);
                                         onPauseVideo(true);
                                     }}
-                                    className="relative w-10 h-10 group cursor-pointer"
+                                    aria-label="Pause countdown and video"
+                                    className="relative w-10 h-10 group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded-full"
                                     title="Pause countdown and video"
                                 >
                                     <svg className="w-10 h-10 -rotate-90">
@@ -294,8 +301,9 @@ export function NextEpisodeOverlay({
                     <div className="grid grid-cols-2 gap-3">
                         {/* Play Next from Beginning */}
                         <button
+                            type="button"
                             onClick={onPlayNextFromStart}
-                            className="py-3 px-3 bg-white/10 hover:bg-white/20 backdrop-blur text-white font-medium rounded-xl transition-all flex items-center justify-center gap-2 border border-white/10 text-sm"
+                            className="py-3 px-3 bg-white/10 hover:bg-white/20 focus-visible:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 backdrop-blur text-white font-medium rounded-xl transition-all flex items-center justify-center gap-2 border border-white/10 text-sm"
                         >
                             <Play size={16} />
                             Play Next: Beginning
@@ -303,8 +311,9 @@ export function NextEpisodeOverlay({
 
                         {/* Play Next from Resume (highlighted as default) */}
                         <button
+                            type="button"
                             onClick={onPlayNextResume}
-                            className="py-3 px-3 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-violet-500/25 text-sm"
+                            className="py-3 px-3 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 focus-visible:from-blue-500 focus-visible:to-violet-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-violet-500/25 text-sm"
                         >
                             <SkipForward size={16} />
                             Play Next: Resume
@@ -312,8 +321,9 @@ export function NextEpisodeOverlay({
 
                         {/* Keep Watching Current */}
                         <button
+                            type="button"
                             onClick={onContinueWatching}
-                            className="py-3 px-3 bg-white/10 hover:bg-white/20 backdrop-blur text-white font-medium rounded-xl transition-all flex items-center justify-center gap-2 border border-white/10 text-sm"
+                            className="py-3 px-3 bg-white/10 hover:bg-white/20 focus-visible:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 backdrop-blur text-white font-medium rounded-xl transition-all flex items-center justify-center gap-2 border border-white/10 text-sm"
                         >
                             <Eye size={16} />
                             Keep Watching
@@ -321,8 +331,9 @@ export function NextEpisodeOverlay({
 
                         {/* Back to Library */}
                         <button
+                            type="button"
                             onClick={handleReturnToLibrary}
-                            className="py-3 px-3 bg-white/10 hover:bg-white/20 backdrop-blur text-white font-medium rounded-xl transition-all flex items-center justify-center gap-2 border border-white/10 text-sm"
+                            className="py-3 px-3 bg-white/10 hover:bg-white/20 focus-visible:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 backdrop-blur text-white font-medium rounded-xl transition-all flex items-center justify-center gap-2 border border-white/10 text-sm"
                         >
                             <Home size={16} />
                             Library

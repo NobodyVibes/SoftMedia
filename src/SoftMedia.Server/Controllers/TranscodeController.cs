@@ -11,7 +11,6 @@ using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Transcoding.Models;
 using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Models;
-using System.IdentityModel.Tokens.Jwt;
 
 namespace SoftMedia.Server.Controllers;
 
@@ -125,7 +124,7 @@ public class TranscodeController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in GetMasterPlaylist for {Id}", id);
-            return StatusCode(500, $"Transcoding error: {ex.Message}");
+            return StatusCode(500, "Transcoding failed. See server logs for details.");
         }
     }
 
@@ -234,40 +233,29 @@ public class TranscodeController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting debug info for {Id}", id);
-            return StatusCode(500, new { error = ex.Message });
+            return StatusCode(500, new { error = "Failed to compute debug info. See server logs for details." });
         }
     }
 
     [HttpGet("{id}/frame")]
-    public async Task<IActionResult> GetFramePreview(Guid id, [FromQuery] double time, [FromQuery] string? token = null)
+    public async Task<IActionResult> GetFramePreview(Guid id, [FromQuery] double time)
     {
+        // Auth: class-level [Authorize] + JwtBearerEvents.OnMessageReceived (which lifts
+        // ?token= for /api/transcode/*) means the standard middleware has already
+        // validated the JWT signature, expiry, issuer, and audience. SDD §4.5 forbids
+        // bespoke JwtSecurityTokenHandler.ReadJwtToken checks here — they only decode.
         try
         {
-            if (!string.IsNullOrEmpty(token))
-            {
-                var tokenHandler = new JwtSecurityTokenHandler();
-                if (tokenHandler.CanReadToken(token))
-                {
-                    var jwtToken = tokenHandler.ReadJwtToken(token);
-                    var userIdClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier || c.Type == "sub");
-                    if (userIdClaim == null) return Unauthorized();
-                }
-            }
-            else
-            {
-                GetUserId(); 
-            }
-            
             var (data, contentType) = await _videoPreviewService.GetPreviewImageAsync(id, time);
             if (data == null || data.Length == 0) return NotFound("Could not extract frame");
-            
+
             return File(data, contentType);
         }
         catch (UnauthorizedAccessException) { return Unauthorized(); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting frame preview for {Id} at {Time}", id, time);
-            return StatusCode(500, ex.Message);
+            return StatusCode(500, "Failed to extract frame.");
         }
     }
 

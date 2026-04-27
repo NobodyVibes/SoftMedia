@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { API_URL } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
+import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 import { cn } from '../../lib/utils';
 import type { MediaItem } from '../../types';
 import { ScrollingText } from '../ui/ScrollingText';
@@ -115,7 +116,7 @@ export const PersistentPlayer: React.FC = () => {
     // Image URL helper
     const getImageUrl = useCallback((path: string | undefined) => {
         if (!path) return '/placeholder-music.png';
-        if (path.startsWith('/api/')) return path;
+        if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
         if (path.startsWith('http')) return path;
         return `${API_URL}${path}`;
     }, []);
@@ -623,6 +624,7 @@ export const PersistentPlayer: React.FC = () => {
                                         <img
                                             src={imageUrl}
                                             alt={currentTrack.title}
+                                            referrerPolicy="no-referrer"
                                             className="w-72 h-72 md:w-96 md:h-96 rounded-lg object-cover shadow-2xl"
                                         />
                                         {isPreloaded && (
@@ -818,6 +820,7 @@ export const PersistentPlayer: React.FC = () => {
                             <img
                                 src={imageUrl}
                                 alt={currentTrack.title}
+                                referrerPolicy="no-referrer"
                                 className="w-14 h-14 rounded object-cover mr-4 bg-gray-800"
                             />
                             <div className="truncate">

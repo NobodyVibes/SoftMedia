@@ -19,6 +19,8 @@ public interface IStreamSecurityService
 
     /// <summary>
     /// Validates that the media item's file exists and is within authorized library paths.
+    /// Accepts a nullable item — a null item is treated as <see cref="MediaAccessResult.FileNotFound"/>
+    /// so callers can pass the result of a repository lookup directly without a pre-check.
     /// </summary>
-    MediaAccessResult ValidateMediaAccess(MediaItem item);
+    MediaAccessResult ValidateMediaAccess(MediaItem? item);
 }

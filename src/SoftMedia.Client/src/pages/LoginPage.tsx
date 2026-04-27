@@ -4,6 +4,28 @@ import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
+import axios from 'axios';
+
+/** Translate an axios error from /auth/* into a user-actionable message. */
+function authErrorMessage(err: unknown, fallback: string): string {
+    if (axios.isAxiosError(err)) {
+        const status = err.response?.status;
+        // Server may return either a string body or { message } JSON.
+        const data = err.response?.data;
+        const serverMessage = typeof data === 'string'
+            ? data
+            : (data && typeof data === 'object' && 'message' in data ? String((data as { message: unknown }).message) : undefined);
+
+        if (status === 429) return 'Too many attempts. Please wait a minute and try again.';
+        if (status === 401) return serverMessage || 'Invalid username or password.';
+        if (status === 400) return serverMessage || 'Request rejected. Check your input and try again.';
+        if (status === 403) return serverMessage || 'Action not allowed.';
+        if (status === undefined) return 'Could not reach the server. Check your connection.';
+        if (status >= 500) return 'Server error. Try again or contact your administrator.';
+        return serverMessage || fallback;
+    }
+    return fallback;
+}
 
 export default function LoginPage() {
     const navigate = useNavigate();
@@ -37,9 +59,9 @@ export default function LoginPage() {
 
             login(user, token);
             navigate('/');
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error(err);
-            setError(err.response?.data?.message || 'Invalid username or password');
+            setError(authErrorMessage(err, 'Invalid username or password'));
             setIsLoading(false);
         }
     };
@@ -74,9 +96,9 @@ export default function LoginPage() {
             login(user, token);
             navigate('/');
 
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error(err);
-            setError(err.response?.data?.message || 'Failed to change password');
+            setError(authErrorMessage(err, 'Failed to change password'));
             setIsLoading(false);
         }
     };

@@ -1,59 +1,82 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
+using SoftMedia.Server.Services.Abstractions;
 using System.IO;
 
 namespace SoftMedia.Server.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/v1/[controller]")]
 public class AudioController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IStreamSecurityService _streamSecurity;
+    private readonly IWebHostEnvironment _env;
     private readonly ILogger<AudioController> _logger;
 
-    public AudioController(AppDbContext context, ILogger<AudioController> logger)
+    public AudioController(
+        AppDbContext context,
+        IStreamSecurityService streamSecurity,
+        IWebHostEnvironment env,
+        ILogger<AudioController> logger)
     {
         _context = context;
+        _streamSecurity = streamSecurity;
+        _env = env;
         _logger = logger;
-    }
-
-    [HttpGet("dump-books")]
-    public async Task<IActionResult> DumpBooks()
-    {
-        var books = await _context.MediaItems.Where(m => m.Type == Models.MediaType.Book).ToListAsync();
-        return Ok(books.Select(b => new { b.Id, b.Title, b.PosterUrl, b.CoverArtPath, b.Overview }));
     }
 
     [HttpGet("{id}/cover")]
     [ResponseCache(Duration = 86400, Location = ResponseCacheLocation.Client)] // Cache for 1 day
     public async Task<IActionResult> GetCoverArt(Guid id)
     {
-        var item = await _context.MediaItems.FindAsync(id);
+        // Include Library so the fallback path can be validated against its jail.
+        var item = await _context.MediaItems
+            .Include(m => m.Library)
+            .FirstOrDefaultAsync(m => m.Id == id);
         if (item == null)
             return NotFound();
 
-        // 1. Try cached cover art path (filesystem)
+        // 1. Try cached cover art path — jailed to wwwroot via StreamSecurityService.
         if (!string.IsNullOrEmpty(item.CoverArtPath))
         {
-            var fullPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", item.CoverArtPath.TrimStart('/'));
-            if (System.IO.File.Exists(fullPath))
+            var wwwroot = Path.GetFullPath(_env.WebRootPath ??
+                Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"));
+            var candidate = Path.Combine(wwwroot, item.CoverArtPath.TrimStart('/', '\\'));
+
+            if (!_streamSecurity.IsPathAuthorized(candidate, new[] { wwwroot }))
             {
-                var mimeType = Path.GetExtension(fullPath).ToLowerInvariant() switch
+                // Stored CoverArtPath escaped wwwroot. Log and fall through to
+                // the embedded-tag extraction path so a broken metadata row
+                // doesn't break the whole endpoint.
+                _logger.LogWarning(
+                    "Cover art path outside wwwroot rejected for item {Id}: {Path}",
+                    id, item.CoverArtPath);
+            }
+            else if (System.IO.File.Exists(candidate))
+            {
+                var mimeType = Path.GetExtension(candidate).ToLowerInvariant() switch
                 {
                     ".jpg" or ".jpeg" => "image/jpeg",
                     ".png" => "image/png",
                     ".webp" => "image/webp",
                     _ => "image/jpeg"
                 };
-                var stream = System.IO.File.OpenRead(fullPath);
+                var stream = System.IO.File.OpenRead(candidate);
                 return File(stream, mimeType);
             }
         }
 
-        // 2. Fallback: extract embedded cover art from audio file via TagLib
-        if (!System.IO.File.Exists(item.Path))
+        // 2. Fallback: extract embedded cover art from the audio file via TagLib.
+        // The audio file path must pass the library-jail check before we open it.
+        var access = _streamSecurity.ValidateMediaAccess(item);
+        if (access != MediaAccessResult.Allowed)
+        {
             return NotFound();
+        }
 
         try
         {

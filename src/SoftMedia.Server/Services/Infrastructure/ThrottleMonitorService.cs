@@ -39,33 +39,40 @@ public class ThrottleMonitorService : BackgroundService
     {
         _logger.LogInformation("ThrottleMonitorService started");
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                // High-frequency: State transitions and crash detection (every 5s)
-                await ProcessStateTransitionsAsync();
-
-                // Medium-frequency: Disk pressure check (every 30s)
-                if ((DateTime.UtcNow - _lastDiskCheck).TotalMilliseconds >= DiskCheckIntervalMs)
+                try
                 {
-                    await CheckDiskPressureAsync();
-                    _lastDiskCheck = DateTime.UtcNow;
+                    // High-frequency: State transitions and crash detection (every 5s)
+                    await ProcessStateTransitionsAsync();
+
+                    // Medium-frequency: Disk pressure check (every 30s)
+                    if ((DateTime.UtcNow - _lastDiskCheck).TotalMilliseconds >= DiskCheckIntervalMs)
+                    {
+                        await CheckDiskPressureAsync();
+                        _lastDiskCheck = DateTime.UtcNow;
+                    }
+
+                    // Low-frequency: Stale session cleanup (every 60min)
+                    if ((DateTime.UtcNow - _lastStaleCheck).TotalMilliseconds >= StaleCheckIntervalMs)
+                    {
+                        CleanupStaleSessions();
+                        _lastStaleCheck = DateTime.UtcNow;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error in ThrottleMonitorService loop");
                 }
 
-                // Low-frequency: Stale session cleanup (every 60min)
-                if ((DateTime.UtcNow - _lastStaleCheck).TotalMilliseconds >= StaleCheckIntervalMs)
-                {
-                    CleanupStaleSessions();
-                    _lastStaleCheck = DateTime.UtcNow;
-                }
+                await Task.Delay(StateCheckIntervalMs, stoppingToken);
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in ThrottleMonitorService loop");
-            }
-
-            await Task.Delay(StateCheckIntervalMs, stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cooperative shutdown — host cancelled. Exit cleanly.
         }
 
         _logger.LogInformation("ThrottleMonitorService stopped");

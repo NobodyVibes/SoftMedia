@@ -10,6 +10,7 @@ import LoadingImage from '../ui/LoadingImage';
 import useSequentialReveal from '../../hooks/useSequentialReveal';
 import HorizontalScrollList, { type HorizontalScrollListHandle } from '../ui/HorizontalScrollList';
 import CastStripItem from './CastStripItem';
+import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 
 interface ScrollToIndexHandle {
     scrollToIndex: (index: number) => void;
@@ -421,14 +422,14 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
     const getEpisodePoster = (ep: MediaItem, width = 400) => {
         if (ep.backdropPath) {
             if (ep.backdropPath.startsWith('/cache/')) return ep.backdropPath;
-            if (ep.backdropPath.startsWith('http')) return `/api/v1/image/proxy?url=${encodeURIComponent(ep.backdropPath)}&width=${width}`;
+            if (ep.backdropPath.startsWith('http')) return attachAuthToApiUrl(`/api/v1/image/proxy?url=${encodeURIComponent(ep.backdropPath)}&width=${width}`);
             return ep.backdropPath;
         }
 
         const stillUrl = (ep.metadata || {}).still;
         if (stillUrl) {
             if (stillUrl.startsWith('/cache/')) return stillUrl;
-            if (stillUrl.startsWith('http')) return `/api/v1/image/proxy?url=${encodeURIComponent(stillUrl)}&width=${width}`;
+            if (stillUrl.startsWith('http')) return attachAuthToApiUrl(`/api/v1/image/proxy?url=${encodeURIComponent(stillUrl)}&width=${width}`);
         }
 
         return ep.posterPath || item.posterPath;
@@ -439,7 +440,7 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
         const season = seasonsData.find(s => s.number === seasonNum);
         const poster = season?.poster || item.posterPath || null;
         if (!poster) return null;
-        if (poster.includes('/image/proxy?')) return `${poster}&width=200`;
+        if (poster.includes('/image/proxy?')) return attachAuthToApiUrl(`${poster}&width=200`);
         return poster;
     }, [seasonsData, item.posterPath]);
 

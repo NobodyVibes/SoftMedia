@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using SoftMedia.Server.Controllers;
+using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
@@ -15,8 +17,25 @@ public class BookControllerTests
     private readonly Mock<IStreamSecurityService> _security = new();
     private readonly Mock<IComicArchiveService> _comic = new();
 
-    private BookController NewController() =>
-        new(_repo.Object, _security.Object, _comic.Object, NullLogger<BookController>.Instance);
+    private BookController NewController()
+    {
+        // ER-023 / ER-032: the controller now takes an AppDbContext for
+        // bookmark/highlight CRUD and an IComicPageThumbnailService for
+        // scrubber previews. The tests in this file target the info / page
+        // endpoints which don't touch either, so a fresh throwaway InMemory
+        // context and a Mock.Of thumbnail service are fine.
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"bookctl-{Guid.NewGuid()}")
+            .Options;
+        var context = new AppDbContext(options);
+        return new BookController(
+            _repo.Object,
+            _security.Object,
+            _comic.Object,
+            Moq.Mock.Of<SoftMedia.Server.Services.Abstractions.IComicPageThumbnailService>(),
+            context,
+            NullLogger<BookController>.Instance);
+    }
 
     private static MediaItem Item(string ext) => new()
     {

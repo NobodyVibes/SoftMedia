@@ -307,7 +307,7 @@ export const UserListTable: React.FC = () => {
             <div className="mb-4 flex items-center justify-end">
                 <button
                     onClick={() => setIsCreateModalOpen(true)}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-md transition-all font-medium flex items-center gap-2"
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 focus-visible:bg-blue-700 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none text-white rounded-md shadow-md transition-all font-medium flex items-center gap-2"
                 >
                     <span className="text-lg">+</span> Create User
                 </button>
@@ -328,18 +328,34 @@ export const UserListTable: React.FC = () => {
                                     { key: 'createdAt', label: 'Created' },
                                     { key: 'status', label: 'Status' },
                                     { key: null, label: 'Actions' }, // No sort
-                                ].map((col, idx) => (
-                                    <th
-                                        key={idx}
-                                        className={`px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider ${col.key ? 'cursor-pointer hover:bg-gray-800 select-none' : ''}`}
-                                        onClick={() => col.key && handleSort(col.key as SortConfig['key'])}
-                                    >
-                                        <div className="flex items-center">
-                                            {col.label}
-                                            {col.key && renderSortIcon(col.key as SortConfig['key'])}
-                                        </div>
-                                    </th>
-                                ))}
+                                ].map((col, idx) => {
+                                    const sortKey = col.key as SortConfig['key'] | null;
+                                    const ariaSort: React.AriaAttributes['aria-sort'] | undefined = sortKey
+                                        ? sortConfig.key === sortKey
+                                            ? sortConfig.direction === 'asc' ? 'ascending' : 'descending'
+                                            : 'none'
+                                        : undefined;
+                                    return (
+                                        <th
+                                            key={idx}
+                                            aria-sort={ariaSort}
+                                            className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider"
+                                        >
+                                            {sortKey ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSort(sortKey)}
+                                                    className="flex items-center w-full text-left bg-transparent border-0 p-0 uppercase tracking-wider text-xs font-medium text-gray-400 hover:text-white focus-visible:text-white focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none rounded select-none cursor-pointer"
+                                                >
+                                                    {col.label}
+                                                    {renderSortIcon(sortKey)}
+                                                </button>
+                                            ) : (
+                                                <div className="flex items-center">{col.label}</div>
+                                            )}
+                                        </th>
+                                    );
+                                })}
                             </tr>
                             {/* Filter Row */}
                             <tr className="bg-gray-850 border-b border-gray-700">
@@ -440,7 +456,7 @@ export const UserListTable: React.FC = () => {
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                             <button
                                                 onClick={() => setRatingsModalUser(user)}
-                                                className="text-primary hover:text-primary/80 underline"
+                                                className="text-primary hover:text-primary/80 focus-visible:text-primary/80 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none underline rounded"
                                             >
                                                 Edit Ratings
                                             </button>
@@ -474,11 +490,11 @@ export const UserListTable: React.FC = () => {
                                                 <button
                                                     onClick={() => handleBan(user)}
                                                     disabled={isCurrentUser}
-                                                    className={`px-3 py-1 rounded transition-colors ${isCurrentUser
+                                                    className={`px-3 py-1 rounded transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none ${isCurrentUser
                                                         ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
                                                         : user.isBanned
-                                                            ? 'bg-green-600 hover:bg-green-700 text-white'
-                                                            : 'bg-yellow-600 hover:bg-yellow-700 text-white'
+                                                            ? 'bg-green-600 hover:bg-green-700 focus-visible:bg-green-700 text-white'
+                                                            : 'bg-yellow-600 hover:bg-yellow-700 focus-visible:bg-yellow-700 text-white'
                                                         }`}
                                                 >
                                                     {user.isBanned ? 'Unban' : 'Ban'}
@@ -488,14 +504,14 @@ export const UserListTable: React.FC = () => {
                                                         <button
                                                             onClick={() => handleApprove(user)}
                                                             disabled={isCurrentUser}
-                                                            className="px-3 py-1 rounded transition-colors bg-green-600 hover:bg-green-700 text-white"
+                                                            className="px-3 py-1 rounded transition-colors bg-green-600 hover:bg-green-700 focus-visible:bg-green-700 focus-visible:ring-2 focus-visible:ring-green-400 focus-visible:outline-none text-white"
                                                         >
                                                             Approve
                                                         </button>
                                                         <button
                                                             onClick={() => handleDeny(user)}
                                                             disabled={isCurrentUser}
-                                                            className="px-3 py-1 rounded transition-colors bg-gray-600 hover:bg-gray-700 text-white"
+                                                            className="px-3 py-1 rounded transition-colors bg-gray-600 hover:bg-gray-700 focus-visible:bg-gray-700 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none text-white"
                                                         >
                                                             Deny
                                                         </button>
@@ -504,9 +520,9 @@ export const UserListTable: React.FC = () => {
                                                 <button
                                                     onClick={() => handleDelete(user)}
                                                     disabled={isCurrentUser}
-                                                    className={`px-3 py-1 rounded transition-colors ${isCurrentUser
+                                                    className={`px-3 py-1 rounded transition-colors focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:outline-none ${isCurrentUser
                                                         ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                                                        : 'bg-red-600 hover:bg-red-700 text-white'
+                                                        : 'bg-red-600 hover:bg-red-700 focus-visible:bg-red-700 text-white'
                                                         }`}
                                                 >
                                                     Delete
@@ -517,9 +533,9 @@ export const UserListTable: React.FC = () => {
                                                         setResetPasswordUser(user);
                                                     }}
                                                     // disabled={isCurrentUser} // Requirement: "change any user's password"
-                                                    className={`px-3 py-1 rounded transition-colors text-white ${isCurrentUser
-                                                        ? 'bg-blue-600/50 hover:bg-blue-600/50 cursor-not-allowed' // Optional: if we wanted to disable it
-                                                        : 'bg-blue-600 hover:bg-blue-700'
+                                                    className={`px-3 py-1 rounded transition-colors text-white focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none ${isCurrentUser
+                                                        ? 'bg-blue-600/50 hover:bg-blue-600/50 cursor-not-allowed'
+                                                        : 'bg-blue-600 hover:bg-blue-700 focus-visible:bg-blue-700'
                                                         }`}
                                                 >
                                                     Password

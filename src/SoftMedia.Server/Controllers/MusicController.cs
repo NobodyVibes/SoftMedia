@@ -13,6 +13,7 @@ namespace SoftMedia.Server.Controllers;
 /// API endpoints for music-related resources (album covers, artist images).
 /// </summary>
 [ApiController]
+[Authorize]
 [Route("api/v1/music")]
 public class MusicController : ControllerBase
 {
@@ -39,7 +40,10 @@ public class MusicController : ControllerBase
     /// <param name="albumId">The album ID.</param>
     /// <returns>The cover image or 404.</returns>
     [HttpGet("album/{albumId}/cover")]
-    [AllowAnonymous] // Allow anonymous - browser img tags don't send auth headers
+    // Browser `<img>` tags cannot set Authorization headers. Clients authenticate
+    // these endpoints via a `?access_token=` query-string parameter, which the
+    // JwtBearer `OnMessageReceived` handler in ServiceCollectionExtensions
+    // lifts into `context.Token` for /api/v1/music and /api/v1/image paths.
     [ResponseCache(Duration = 86400)] // Cache for 24 hours
     public async Task<IActionResult> GetAlbumCover(Guid albumId, [FromQuery] int? width)
     {
@@ -52,7 +56,10 @@ public class MusicController : ControllerBase
     /// <param name="artistId">The artist ID.</param>
     /// <returns>The artist image or 404.</returns>
     [HttpGet("artist/{artistId}/image")]
-    [AllowAnonymous] // Allow anonymous - browser img tags don't send auth headers
+    // Browser `<img>` tags cannot set Authorization headers. Clients authenticate
+    // these endpoints via a `?access_token=` query-string parameter, which the
+    // JwtBearer `OnMessageReceived` handler in ServiceCollectionExtensions
+    // lifts into `context.Token` for /api/v1/music and /api/v1/image paths.
     [ResponseCache(Duration = 86400)] // Cache for 24 hours
     public async Task<IActionResult> GetArtistImage(Guid artistId, [FromQuery] int? width)
     {
@@ -65,7 +72,10 @@ public class MusicController : ControllerBase
     /// <param name="trackId">The track ID.</param>
     /// <returns>The cover image or 404.</returns>
     [HttpGet("track/{trackId}/cover")]
-    [AllowAnonymous] // Allow anonymous - browser img tags don't send auth headers
+    // Browser `<img>` tags cannot set Authorization headers. Clients authenticate
+    // these endpoints via a `?access_token=` query-string parameter, which the
+    // JwtBearer `OnMessageReceived` handler in ServiceCollectionExtensions
+    // lifts into `context.Token` for /api/v1/music and /api/v1/image paths.
     [ResponseCache(Duration = 86400)] // Cache for 24 hours
     public async Task<IActionResult> GetTrackCover(Guid trackId, [FromQuery] int? width)
     {

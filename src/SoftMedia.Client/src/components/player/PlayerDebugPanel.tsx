@@ -148,8 +148,14 @@ export function PlayerDebugPanel({ mediaId, token, subtitleTrack, clientCapabili
 
     return (
         <div
+            role="button"
+            aria-label="Close debug panel"
+            tabIndex={-1}
             className="absolute inset-0 bg-black/85 z-50 flex items-center justify-center p-4"
             onClick={(e) => e.target === e.currentTarget && onClose()}
+            onKeyDown={(e) => {
+                if (e.key === 'Escape') onClose();
+            }}
         >
             <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl border border-gray-700 max-w-4xl w-full max-h-[85vh] overflow-auto shadow-2xl">
                 {/* Header */}

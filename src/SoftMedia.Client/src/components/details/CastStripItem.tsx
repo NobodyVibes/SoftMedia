@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent
 import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { CastMember } from '../../types';
+import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 
 interface CastStripItemProps {
     member: CastMember;
@@ -16,8 +17,9 @@ const MAX_COLUMNS_PER_PAGE = 2;
 
 function resolveImageSrc(imageUrl?: string): string | undefined {
     if (!imageUrl) return undefined;
-    if (imageUrl.startsWith('/cache/') || imageUrl.startsWith('/api/')) return imageUrl;
-    if (imageUrl.startsWith('http')) return `/api/v1/image/proxy?url=${encodeURIComponent(imageUrl)}`;
+    if (imageUrl.startsWith('/cache/')) return imageUrl;
+    if (imageUrl.startsWith('/api/')) return attachAuthToApiUrl(imageUrl);
+    if (imageUrl.startsWith('http')) return attachAuthToApiUrl(`/api/v1/image/proxy?url=${encodeURIComponent(imageUrl)}`);
     return imageUrl;
 }
 

@@ -50,7 +50,7 @@ public class StreamSecurityService : IStreamSecurityService
         }
     }
 
-    public MediaAccessResult ValidateMediaAccess(MediaItem item)
+    public MediaAccessResult ValidateMediaAccess(MediaItem? item)
     {
         if (item == null) 
         {

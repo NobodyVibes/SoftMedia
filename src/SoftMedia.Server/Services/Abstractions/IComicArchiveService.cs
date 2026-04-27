@@ -1,13 +1,15 @@
 namespace SoftMedia.Server.Services.Abstractions;
 
 /// <summary>
-/// Extracts individual image pages from comic archive files (CBZ) for on-demand serving.
-/// CBR (RAR) support requires a third-party library and is not yet implemented.
+/// Extracts individual image pages from comic archive files (CBZ and CBR) for
+/// on-demand serving. CBZ is read via <see cref="System.IO.Compression.ZipArchive"/>;
+/// CBR is read via SharpCompress. Encrypted or malformed archives surface as
+/// exceptions to the caller — controllers catch them and return a clean 500.
 /// </summary>
 public interface IComicArchiveService
 {
     /// <summary>
-    /// True if the given extension is a supported comic archive (currently cbz only).
+    /// True if the given path uses a supported comic archive extension (.cbz or .cbr).
     /// </summary>
     bool IsSupportedArchive(string filePath);
 

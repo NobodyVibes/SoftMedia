@@ -19,6 +19,7 @@ import { SortableQueueItem } from './SortableQueueItem';
 import { API_URL } from '../../services/api';
 import { Volume2 } from 'lucide-react';
 import { ScrollingText } from '../ui/ScrollingText';
+import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 
 export const QueueList: React.FC = () => {
     const { queue, currentTrack, reorderQueue, jumpToQueueIndex } = useAudioStore();
@@ -58,7 +59,7 @@ export const QueueList: React.FC = () => {
 
     const getImageUrl = (path: string | undefined) => {
         if (!path) return '/placeholder-music.png';
-        if (path.startsWith('/api/')) return path;
+        if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
         if (path.startsWith('http')) return path;
         return `${API_URL}${path}`;
     };
@@ -75,6 +76,7 @@ export const QueueList: React.FC = () => {
                         <div className="flex-1 flex items-center gap-3 min-w-0">
                             <img
                                 src={getImageUrl(currentTrack.posterPath)}
+                                referrerPolicy="no-referrer"
                                 alt={currentTrack.title}
                                 className="w-10 h-10 rounded object-cover bg-gray-800 shadow-md"
                             />

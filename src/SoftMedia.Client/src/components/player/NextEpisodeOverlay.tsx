@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Play, X, RotateCcw, Eye, Home, SkipForward, Pause } from 'lucide-react';
 import { StarRating } from '../ui/StarRating';
 import { useNavigate } from 'react-router-dom';
+import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 
 /** Info about the next episode from the API */
 export interface NextEpisodeInfo {
@@ -246,8 +247,9 @@ export function NextEpisodeOverlay({
                         <div className="w-32 h-20 bg-white/10 backdrop-blur rounded-lg overflow-hidden flex-shrink-0 border border-white/10">
                             {nextEpisode.posterPath || nextEpisode.backdropPath ? (
                                 <img
-                                    src={nextEpisode.posterPath || nextEpisode.backdropPath}
+                                    src={attachAuthToApiUrl(nextEpisode.posterPath || nextEpisode.backdropPath || '')}
                                     alt={nextEpisode.title}
+                                    referrerPolicy="no-referrer"
                                     className="w-full h-full object-cover"
                                 />
                             ) : (

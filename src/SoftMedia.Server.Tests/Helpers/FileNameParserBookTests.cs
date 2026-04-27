@@ -81,4 +81,89 @@ public class FileNameParserBookTests
         Assert.Equal("Stephen King", title);
         Assert.Null(year);
     }
+
+    [Fact]
+    public void ParseBook_PathHint_BreaksAmbiguousNameTie_UsingParentDir()
+    {
+        // Regression: "Different Seasons - Stephen King.epub" has two name-shaped
+        // segments; word counts tie (2 each). Without the path hint the parser
+        // picked the first segment as author, inverting author/title. The parent
+        // directory "Stephen King 121 Books Epub Collection 88" contains the
+        // tokens "stephen" and "king", so the path-aware tie-break must prefer
+        // the last segment as the author.
+        var fullPath = Path.Combine(
+            "Stephen King 121 Books Epub Collection 88",
+            "Different Seasons - Stephen King.epub");
+
+        var (author, title, year) = FileNameParser.ParseBook(fullPath);
+
+        Assert.Equal("Stephen King", author);
+        Assert.Equal("Different Seasons", title);
+        Assert.Null(year);
+    }
+
+    [Fact]
+    public void ParseBook_PathHint_LeavesUnambiguousCasesUnchanged()
+    {
+        // Even with a parent directory that could bias the tie-break, an
+        // unambiguous Author-Title filename must still parse the classic way.
+        var fullPath = Path.Combine(
+            "Some Random Folder",
+            "Frank Herbert - Dune (1965).epub");
+
+        var (author, title, year) = FileNameParser.ParseBook(fullPath);
+
+        Assert.Equal("Frank Herbert", author);
+        Assert.Equal("Dune", title);
+        Assert.Equal(1965, year);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Real-world filename patterns from C:\Users\Admin\Videos\book
+    // Every case below is a file that was failing in production before the
+    // Stephen-King-collection investigation. Keep these cases locked in —
+    // they're the regression guard for the whole "25% failure rate" cluster.
+    // ──────────────────────────────────────────────────────────────────────
+
+    private const string KingFolder = "Stephen King 121 Books Epub Collection 88";
+
+    [Theory]
+    // Subtitle-padded title with strong parent-dir hint — previously picked
+    // "Dolores Claiborne_ A Novel" as author because firstWords > lastWords.
+    // CleanName collapses the underscore-dash into single spaces.
+    [InlineData("Dolores Claiborne_ A Novel - Stephen King.epub",
+                "Stephen King", "Dolores Claiborne A Novel", null)]
+    // Co-author pattern — "and" between Joe Hill and Stephen King must be
+    // recognised as a name, not confused with a title-word connector.
+    [InlineData("Throttle - Joe Hill and Stephen King.epub",
+                "Joe Hill and Stephen King", "Throttle", null)]
+    [InlineData("Black House - Stephen King and Peter Straub.epub",
+                "Stephen King and Peter Straub", "Black House", null)]
+    [InlineData("The Talisman - Stephen King and Peter Straub.epub",
+                "Stephen King and Peter Straub", "The Talisman", null)]
+    // 4-digit year prefix — "1922" is a title, NOT a series ordinal. Ordinal
+    // regex must not strip it.
+    [InlineData("1922 - Stephen King.epub",
+                "Stephen King", "1922", null)]
+    // Date-style title "11-22-63" — hyphens attached to digits, no spaces.
+    // Ordinal regex must not grab the leading "11-".
+    [InlineData("11-22-63_A Novel - Stephen King.epub",
+                "Stephen King", "11 22 63 A Novel", null)]
+    // Classic two-name tie broken by parent-dir hint ("Stephen King" appears
+    // in the folder). Single-word title that reads as a name ("Carrie").
+    [InlineData("Carrie - Stephen King.epub",
+                "Stephen King", "Carrie", null)]
+    // "The" article prefix on first segment disables first-as-name; last
+    // segment wins directly.
+    [InlineData("The Dead Zone - Stephen King.epub",
+                "Stephen King", "The Dead Zone", null)]
+    public void ParseBook_RealKingCollectionFilenames(
+        string filename, string expectedAuthor, string expectedTitle, int? expectedYear)
+    {
+        var fullPath = Path.Combine(KingFolder, filename);
+        var (author, title, year) = FileNameParser.ParseBook(fullPath);
+        Assert.Equal(expectedAuthor, author);
+        Assert.Equal(expectedTitle, title);
+        Assert.Equal(expectedYear, year);
+    }
 }

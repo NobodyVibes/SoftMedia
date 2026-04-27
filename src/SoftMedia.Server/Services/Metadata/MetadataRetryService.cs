@@ -92,14 +92,22 @@ public class MetadataRetryService : BackgroundService, IMetadataRetryService
     /// </summary>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Short startup delay to let the app initialize
-        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-
-        while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
+        try
         {
-            await ProcessRetriesAsync();
+            // Short startup delay to let the app initialize
+            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+
+            while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                await ProcessRetriesAsync();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Cooperative shutdown — host triggered stoppingToken. Exit cleanly
+            // rather than propagating, which would abort the whole host startup.
         }
     }
 

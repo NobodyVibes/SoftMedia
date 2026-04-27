@@ -77,10 +77,10 @@ export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ isOpen, 
                         />
                     </div>
                     <div className="flex justify-end gap-3 mt-6">
-                        <Button type="button" variant="ghost" onClick={onClose} className="text-gray-300 hover:text-white hover:bg-gray-700">
+                        <Button type="button" variant="ghost" onClick={onClose} className="text-gray-300 hover:text-white hover:bg-gray-700 focus-visible:text-white focus-visible:bg-gray-700 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none">
                             Cancel
                         </Button>
-                        <Button type="submit" disabled={resetMutation.isPending} className="bg-red-600 hover:bg-red-700 text-white">
+                        <Button type="submit" disabled={resetMutation.isPending} className="bg-red-600 hover:bg-red-700 focus-visible:bg-red-700 focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:outline-none text-white">
                             {resetMutation.isPending ? 'Resetting...' : 'Reset Password'}
                         </Button>
                     </div>

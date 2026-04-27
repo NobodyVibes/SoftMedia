@@ -158,22 +158,26 @@ export default memo(function MediaCard({ item, libraryType, groupReady, onImageL
                         {/* Play Button wrapped in pointer-events-auto to capture clicks */}
                         <div className="relative group/play pointer-events-auto">
                             <div className={`absolute inset-0 bg-gradient-to-br ${glowGradient} blur-lg opacity-50 rounded-full scale-75 group-hover/play:scale-110 transition-transform duration-500`} />
-                            <div
-                                className="relative bg-white/10 backdrop-blur-md p-4 rounded-full border border-white/20 shadow-2xl hover:bg-white/20 hover:scale-110 active:scale-95 transition-all duration-300 cursor-pointer text-white flex items-center justify-center"
+                            <button
+                                type="button"
+                                aria-label={`Play ${item.title ?? ''}`.trim()}
+                                className="relative bg-white/10 backdrop-blur-md min-w-[44px] min-h-[44px] p-4 rounded-full border border-white/20 shadow-2xl hover:bg-white/20 hover:scale-110 focus-visible:bg-white/20 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none active:scale-95 transition-all duration-300 text-white flex items-center justify-center"
                                 onClick={handlePlay}
                             >
                                 <Play className="w-8 h-8 fill-white ml-1" />
-                            </div>
+                            </button>
 
                             {/* Add to Queue Button (Audio Only) attached near play button */}
                             {isAudio && (
-                                <div
-                                    className="absolute -right-12 top-1/2 -translate-y-1/2 bg-black/60 backdrop-blur-md p-2 rounded-full border border-white/10 shadow-xl hover:bg-white/20 cursor-pointer text-gray-200 hover:text-white transition-all duration-200"
+                                <button
+                                    type="button"
+                                    aria-label={`Add ${item.title ?? 'track'} to queue`}
+                                    className="absolute -right-12 top-1/2 -translate-y-1/2 bg-black/60 backdrop-blur-md min-w-[44px] min-h-[44px] p-2 rounded-full border border-white/10 shadow-xl hover:bg-white/20 focus-visible:bg-white/20 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none text-gray-200 hover:text-white transition-all duration-200 flex items-center justify-center"
                                     onClick={handleAddToQueue}
                                     title="Add to Queue"
                                 >
                                     <ListMusic className="w-4 h-4" />
-                                </div>
+                                </button>
                             )}
                         </div>
                     </div>
@@ -313,12 +317,25 @@ export default memo(function MediaCard({ item, libraryType, groupReady, onImageL
         );
     }
 
-    // Tracks: click anywhere on card to play (play button also works)
+    // Tracks: click anywhere on card to play (play button also works).
+    // Using role="button" + tabIndex + keyboard handler rather than a real
+    // <button> because the inner play-overlay IS a <button> and HTML forbids
+    // nested interactive elements.
     if (isAudio) {
+        const activate = () => playTrack(item);
         return (
             <div
-                className="block group/card cursor-pointer relative hover:z-50 h-full"
-                onClick={() => playTrack(item)}
+                role="button"
+                tabIndex={0}
+                aria-label={`Play ${item.title ?? 'track'}`}
+                className="block group/card cursor-pointer relative hover:z-50 h-full focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none rounded-lg"
+                onClick={activate}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        activate();
+                    }
+                }}
             >
                 {CardContent}
             </div>

@@ -75,6 +75,41 @@ namespace SoftMedia.Server.Migrations
                     b.ToTable("AudioTracks");
                 });
 
+            modelBuilder.Entity("SoftMedia.Server.Models.Bookmark", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Cfi")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Label")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("MediaItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("Position")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaItemId");
+
+                    b.HasIndex("UserId", "MediaItemId");
+
+                    b.ToTable("Bookmarks");
+                });
+
             modelBuilder.Entity("SoftMedia.Server.Models.Chapter", b =>
                 {
                     b.Property<Guid>("Id")
@@ -133,6 +168,52 @@ namespace SoftMedia.Server.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("HeroCaches");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.Highlight", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Colour")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LocationJson")
+                        .IsRequired()
+                        .HasMaxLength(4096)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("MediaItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(8192)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("QuotedText")
+                        .IsRequired()
+                        .HasMaxLength(8192)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaItemId");
+
+                    b.HasIndex("UserId", "MediaItemId");
+
+                    b.ToTable("Highlights");
                 });
 
             modelBuilder.Entity("SoftMedia.Server.Models.Invite", b =>
@@ -522,6 +603,86 @@ namespace SoftMedia.Server.Migrations
                     b.ToTable("ProviderMetadataCaches");
                 });
 
+            modelBuilder.Entity("SoftMedia.Server.Models.ReadingSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("MediaItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("PagesRead")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaItemId");
+
+                    b.HasIndex("UserId", "MediaItemId");
+
+                    b.ToTable("ReadingSessions");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.RefreshToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedByIp")
+                        .HasMaxLength(45)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReasonRevoked")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("ReplacedByTokenId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RevokedByIp")
+                        .HasMaxLength(45)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReplacedByTokenId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "RevokedAt");
+
+                    b.ToTable("RefreshTokens");
+                });
+
             modelBuilder.Entity("SoftMedia.Server.Models.SubtitleTrack", b =>
                 {
                     b.Property<Guid>("Id")
@@ -726,6 +887,32 @@ namespace SoftMedia.Server.Migrations
                     b.ToTable("UserPreferences");
                 });
 
+            modelBuilder.Entity("SoftMedia.Server.Models.UserReaderPreferences", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("MediaItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PreferencesJson")
+                        .IsRequired()
+                        .HasMaxLength(8192)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("UserId", "MediaItemId");
+
+                    b.HasIndex("MediaItemId");
+
+                    b.ToTable("UserReaderPreferences");
+                });
+
             modelBuilder.Entity("SoftMedia.Server.Models.UserSeriesPreference", b =>
                 {
                     b.Property<Guid>("UserId")
@@ -760,6 +947,25 @@ namespace SoftMedia.Server.Migrations
                     b.Navigation("MediaItem");
                 });
 
+            modelBuilder.Entity("SoftMedia.Server.Models.Bookmark", b =>
+                {
+                    b.HasOne("SoftMedia.Server.Models.MediaItem", "MediaItem")
+                        .WithMany()
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SoftMedia.Server.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaItem");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("SoftMedia.Server.Models.Chapter", b =>
                 {
                     b.HasOne("SoftMedia.Server.Models.MediaItem", "MediaItem")
@@ -769,6 +975,25 @@ namespace SoftMedia.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("MediaItem");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.Highlight", b =>
+                {
+                    b.HasOne("SoftMedia.Server.Models.MediaItem", "MediaItem")
+                        .WithMany()
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SoftMedia.Server.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaItem");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("SoftMedia.Server.Models.Invite", b =>
@@ -897,6 +1122,43 @@ namespace SoftMedia.Server.Migrations
                     b.Navigation("MediaItem");
                 });
 
+            modelBuilder.Entity("SoftMedia.Server.Models.ReadingSession", b =>
+                {
+                    b.HasOne("SoftMedia.Server.Models.MediaItem", "MediaItem")
+                        .WithMany()
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SoftMedia.Server.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaItem");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.RefreshToken", b =>
+                {
+                    b.HasOne("SoftMedia.Server.Models.RefreshToken", "ReplacedByToken")
+                        .WithMany()
+                        .HasForeignKey("ReplacedByTokenId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("SoftMedia.Server.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ReplacedByToken");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("SoftMedia.Server.Models.SubtitleTrack", b =>
                 {
                     b.HasOne("SoftMedia.Server.Models.MediaItem", "MediaItem")
@@ -934,6 +1196,25 @@ namespace SoftMedia.Server.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.UserReaderPreferences", b =>
+                {
+                    b.HasOne("SoftMedia.Server.Models.MediaItem", "MediaItem")
+                        .WithMany()
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SoftMedia.Server.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaItem");
 
                     b.Navigation("User");
                 });

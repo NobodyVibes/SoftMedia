@@ -1409,16 +1409,18 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
                 {/* Center play button (when paused) */}
                 {!isPlaying && !isLoading && !isBuffering && (
-                    <div
-                        className="absolute inset-0 flex items-center justify-center cursor-pointer"
+                    <button
+                        type="button"
+                        aria-label="Play"
+                        className="absolute inset-0 flex items-center justify-center cursor-pointer bg-transparent border-0 p-0 focus-visible:outline-none"
                         onClick={togglePlay}
                     >
-                        <div className="w-20 h-20 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center hover:bg-white/30 transition-colors">
+                        <div className="w-20 h-20 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center hover:bg-white/30 focus-visible:bg-white/30 focus-visible:ring-2 focus-visible:ring-white transition-colors">
                             <svg className="w-10 h-10 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
                                 <path d="M8 5v14l11-7z" />
                             </svg>
                         </div>
-                    </div>
+                    </button>
                 )}
 
                 {/* Custom Controls Bar */}

@@ -220,8 +220,25 @@ export default function HorizontalScrollList({
                 <div className="px-6 w-full mt-12 relative z-[100]">
                     <div
                         ref={sliderRef}
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Jump to scroll position"
                         onClick={handleSliderClick}
-                        className="h-2 bg-white/10 rounded-full cursor-pointer hover:bg-white/20 transition-all opacity-0 group-hover/scroll:opacity-100"
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                // Re-use the click handler's hit-test logic by
+                                // synthesizing a centered click — consumers who want
+                                // fine-grained keyboard control should use the
+                                // ArrowLeft/ArrowRight handlers on the parent scroll list.
+                                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                handleSliderClick({
+                                    clientX: rect.left + rect.width / 2,
+                                    currentTarget: e.currentTarget,
+                                } as unknown as React.MouseEvent<HTMLDivElement>);
+                            }
+                        }}
+                        className="h-2 bg-white/10 rounded-full cursor-pointer hover:bg-white/20 focus-visible:bg-white/20 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-all opacity-0 group-hover/scroll:opacity-100"
                     >
                         <div
                             ref={thumbRef}

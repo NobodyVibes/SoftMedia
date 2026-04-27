@@ -63,6 +63,7 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                         <img
                             src={effectiveBackdrop}
                             alt=""
+                            referrerPolicy="no-referrer"
                             className="w-full h-full object-cover object-top opacity-30 blur-xl scale-110"
                         />
                         <div className="absolute inset-0 bg-background/60" />
@@ -101,6 +102,7 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                 <img
                                     src={heroPoster}
                                     alt={item.title}
+                                    referrerPolicy="no-referrer"
                                     className="w-full h-full object-cover"
                                 />
                             ) : (

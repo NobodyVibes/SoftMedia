@@ -61,3 +61,74 @@ img {
 .animate-toast-progress {
   animation: toast-progress 8s linear forwards;
 }
+
+/* ER-011: reader-scoped CSS variables. Scoped to [data-reader-root] (and not
+ * :root) so palette flips never leak into the rest of SoftMedia's dark chrome.
+ * ER-021 extends this with [data-reading-theme="sepia"] and ="high-contrast"
+ * selectors that re-declare the same variables.
+ */
+[data-reader-root] {
+  --reader-bg: #111827;            /* bg-gray-900 */
+  --reader-fg: #e5e7eb;            /* text-gray-200 */
+  --reader-heading: #ffffff;
+  --reader-link: #60a5fa;          /* text-blue-400 */
+  --reader-link-hover: #93c5fd;    /* text-blue-300 */
+  --reader-selection: rgba(96, 165, 250, 0.45);
+  --reader-focus-ring: #60a5fa;
+
+  /* Typography knobs — ER-020 mutates these at runtime via inline style on the
+   * reader root. Declared here so epub.js theme registration can reference the
+   * computed values via getComputedStyle without guessing defaults. */
+  --reader-font-family: 'Inter', system-ui, sans-serif;
+  --reader-font-size: 100%;
+  --reader-line-height: 1.7;
+  --reader-padding-inline: 2rem;
+  --reader-padding-block: 1.5rem;
+}
+
+/* ER-021: alternate reading palettes. Scope [data-reader-root][data-reading-theme="X"]
+ * so these variables only resolve inside the reader viewport — SoftMedia's app
+ * chrome (sidebar, topbar, everything outside the reader overlay) stays dark.
+ * The default dark theme lives under the unqualified [data-reader-root] above;
+ * these selectors extend it by re-declaring only the palette tokens. */
+[data-reader-root][data-reading-theme="sepia"] {
+  --reader-bg: #f4ecd8;
+  --reader-fg: #3a2f1f;
+  --reader-heading: #2a1d0a;
+  --reader-link: #8b4513;
+  --reader-link-hover: #a0591e;
+  --reader-selection: rgba(139, 69, 19, 0.25);
+  --reader-focus-ring: #8b4513;
+}
+
+[data-reader-root][data-reading-theme="high-contrast"] {
+  --reader-bg: #000000;
+  --reader-fg: #ffffff;
+  --reader-heading: #ffffff;
+  --reader-link: #66ff66;
+  --reader-link-hover: #99ff99;
+  --reader-selection: rgba(102, 255, 102, 0.35);
+  --reader-focus-ring: #66ff66;
+}
+
+/* ER-003 / ER-011: pdf.js text + annotation layer overrides.
+ * react-pdf renders transparent <span> elements over the rasterised canvas so
+ * the user can select text. Selection colour and link treatment now read from
+ * the reader's CSS vars so ER-021 can switch palettes without touching JS. */
+[data-reader-root] .react-pdf__Page__textContent ::selection {
+  background: var(--reader-selection);
+  color: transparent;
+}
+[data-reader-root] .react-pdf__Page__annotations a {
+  color: var(--reader-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+[data-reader-root] .react-pdf__Page__annotations a:hover {
+  color: var(--reader-link-hover);
+}
+[data-reader-root] .react-pdf__Page__annotations a:focus-visible {
+  outline: 2px solid var(--reader-focus-ring);
+  outline-offset: 2px;
+  border-radius: 2px;
+}

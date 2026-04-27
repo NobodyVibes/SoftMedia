@@ -83,8 +83,182 @@ public class InteractionController : ControllerBase
         {
             Position = interaction?.PlaybackPosition ?? 0,
             BookLocation = interaction?.BookLocation,
-            LastPlayed = interaction?.LastPlayed
+            LastPlayed = interaction?.LastPlayed,
+            IsWatched = interaction?.IsWatched ?? false
         });
+    }
+
+    // ── ER-012: per-book reader preference overrides ──────────────────────────
+
+    /// <summary>
+    /// Returns this user's saved reader-pref overrides for a specific book, if
+    /// any. Missing row → null Preferences with SchemaVersion 0, signalling
+    /// "use global defaults only."
+    /// </summary>
+    [HttpGet("{mediaId}/reader-preferences")]
+    public async Task<ActionResult<ReaderPreferencesResponse>> GetReaderPreferences(Guid mediaId)
+    {
+        var userId = GetUserId();
+        var row = await _context.UserReaderPreferences
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.UserId == userId && p.MediaItemId == mediaId);
+
+        return Ok(new ReaderPreferencesResponse
+        {
+            SchemaVersion = row?.SchemaVersion ?? 0,
+            PreferencesJson = row?.PreferencesJson,
+            UpdatedAt = row?.UpdatedAt
+        });
+    }
+
+    /// <summary>
+    /// Upserts this user's per-book reader-pref overrides. A null / empty
+    /// payload clears the row so the book returns to global defaults.
+    /// Payload is treated as opaque by the server — the client owns the schema.
+    /// </summary>
+    // ── ER-052: Reading sessions ──────────────────────────────────────────
+
+    /// <summary>
+    /// Start a reading session. The client calls this on reader mount and
+    /// holds onto the returned id for the lifetime of the session. Concurrent
+    /// sessions for the same (user, book) are permitted — closing one doesn't
+    /// affect the other; the summary endpoint sums them all.
+    /// </summary>
+    [HttpPost("{mediaId}/sessions/start")]
+    public async Task<ActionResult<StartSessionResponse>> StartSession(Guid mediaId)
+    {
+        var userId = GetUserId();
+        var exists = await _context.MediaItems.AnyAsync(m => m.Id == mediaId);
+        if (!exists) return NotFound();
+
+        var session = new ReadingSession
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            MediaItemId = mediaId,
+            StartedAt = DateTime.UtcNow,
+        };
+        _context.ReadingSessions.Add(session);
+        await _context.SaveChangesAsync();
+        return Ok(new StartSessionResponse { SessionId = session.Id });
+    }
+
+    /// <summary>
+    /// End a reading session. When PagesRead is zero, the session is deleted
+    /// rather than persisted — idle-timeout closures mustn't pollute stats.
+    /// </summary>
+    [HttpPost("{mediaId}/sessions/{sessionId}/end")]
+    public async Task<IActionResult> EndSession(Guid mediaId, Guid sessionId, [FromBody] EndSessionRequest request)
+    {
+        var userId = GetUserId();
+        var session = await _context.ReadingSessions
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId && s.MediaItemId == mediaId);
+        if (session == null) return NotFound();
+
+        if (request.PagesRead <= 0)
+        {
+            _context.ReadingSessions.Remove(session);
+            await _context.SaveChangesAsync();
+            return NoContent();
+        }
+
+        session.EndedAt = DateTime.UtcNow;
+        session.PagesRead = Math.Min(request.PagesRead, 10_000);
+        await _context.SaveChangesAsync();
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Per-book reading summary for the current user. Totals are the sum of
+    /// completed sessions only (EndedAt is non-null). pages/min averages
+    /// across all completed sessions, weighted by duration.
+    /// </summary>
+    [HttpGet("{mediaId}/sessions/summary")]
+    public async Task<ActionResult<ReadingSessionSummary>> GetSessionSummary(Guid mediaId)
+    {
+        var userId = GetUserId();
+        var rows = await _context.ReadingSessions
+            .AsNoTracking()
+            .Where(s => s.UserId == userId && s.MediaItemId == mediaId && s.EndedAt != null)
+            .Select(s => new { s.StartedAt, s.EndedAt, s.PagesRead })
+            .ToListAsync();
+
+        if (rows.Count == 0)
+        {
+            return Ok(new ReadingSessionSummary());
+        }
+
+        double totalSeconds = 0;
+        int totalPages = 0;
+        foreach (var r in rows)
+        {
+            var end = r.EndedAt!.Value;
+            totalSeconds += Math.Max(0, (end - r.StartedAt).TotalSeconds);
+            totalPages += r.PagesRead;
+        }
+
+        var minutes = totalSeconds / 60.0;
+        return Ok(new ReadingSessionSummary
+        {
+            SessionCount = rows.Count,
+            TotalMinutes = Math.Round(minutes, 1),
+            TotalPages = totalPages,
+            PagesPerMinute = minutes > 0 ? Math.Round(totalPages / minutes, 2) : 0,
+        });
+    }
+
+    [HttpPut("{mediaId}/reader-preferences")]
+    public async Task<IActionResult> PutReaderPreferences(Guid mediaId, [FromBody] ReaderPreferencesRequest request)
+    {
+        var userId = GetUserId();
+
+        // Confirm the media item exists before writing — prevents dangling
+        // preference rows if a typo'd id sneaks through the client.
+        var exists = await _context.MediaItems.AnyAsync(m => m.Id == mediaId);
+        if (!exists) return NotFound();
+
+        var row = await _context.UserReaderPreferences
+            .FirstOrDefaultAsync(p => p.UserId == userId && p.MediaItemId == mediaId);
+
+        // Empty or null payload → clear the row. Keeping the pref blob
+        // semantically means "no overrides" so deleting is the right behaviour.
+        var clearing = string.IsNullOrWhiteSpace(request.PreferencesJson)
+                       || request.PreferencesJson.Trim() == "{}";
+
+        if (clearing)
+        {
+            if (row != null)
+            {
+                _context.UserReaderPreferences.Remove(row);
+                await _context.SaveChangesAsync();
+            }
+            return NoContent();
+        }
+
+        // Cap payload size defensively. The [MaxLength(8192)] attribute on the
+        // column provides the ultimate bound; checking here gives the client a
+        // clean 400 instead of a provider exception.
+        if (request.PreferencesJson!.Length > 8192)
+        {
+            return BadRequest("PreferencesJson exceeds the 8 KB limit.");
+        }
+
+        if (row == null)
+        {
+            row = new UserReaderPreferences
+            {
+                UserId = userId,
+                MediaItemId = mediaId,
+            };
+            _context.UserReaderPreferences.Add(row);
+        }
+
+        row.SchemaVersion = request.SchemaVersion <= 0 ? 1 : request.SchemaVersion;
+        row.PreferencesJson = request.PreferencesJson!;
+        row.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+        return NoContent();
     }
 
     /// <summary>
@@ -282,6 +456,7 @@ public class ProgressResponse
     public double Position { get; set; }
     public string? BookLocation { get; set; }
     public DateTime? LastPlayed { get; set; }
+    public bool IsWatched { get; set; }
 }
 
 
@@ -304,4 +479,41 @@ public class AudioPreferenceRequest
 public class AudioPreferenceResponse
 {
     public string? Language { get; set; }
+}
+
+// ── ER-012 DTOs ──────────────────────────────────────────────────────────────
+
+public class ReaderPreferencesRequest
+{
+    public int SchemaVersion { get; set; } = 1;
+    /// <summary>Opaque JSON payload owned by the client.</summary>
+    public string? PreferencesJson { get; set; }
+}
+
+public class ReaderPreferencesResponse
+{
+    /// <summary>0 when no row exists; otherwise the stored schema version.</summary>
+    public int SchemaVersion { get; set; }
+    public string? PreferencesJson { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+}
+
+// ── ER-052 DTOs ──────────────────────────────────────────────────────────────
+
+public class StartSessionResponse
+{
+    public Guid SessionId { get; set; }
+}
+
+public class EndSessionRequest
+{
+    public int PagesRead { get; set; }
+}
+
+public class ReadingSessionSummary
+{
+    public int SessionCount { get; set; }
+    public double TotalMinutes { get; set; }
+    public int TotalPages { get; set; }
+    public double PagesPerMinute { get; set; }
 }

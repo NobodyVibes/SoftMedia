@@ -157,8 +157,12 @@ public static class FileNameParser
 
         // 3. Strip a leading series-ordinal prefix like "1 - ", "2.5 - ", "Book 3 - ".
         //    The ordinal signals position-in-series, not author, and throws off the
-        //    naive split below.
-        var ordinalMatch = Regex.Match(cleanName, @"^(?:Book\s+)?\d+(?:\.\d+)?\s*-\s*", RegexOptions.IgnoreCase);
+        //    naive split below. Constraints to avoid false positives:
+        //      - At most 3 digits — rejects 4-digit year prefixes ("1922 - ...").
+        //      - Requires a space on BOTH sides of the dash — rejects date-style
+        //        prefixes with hyphens ("11-22-63 - A Novel"), where the leading
+        //        number is part of the title.
+        var ordinalMatch = Regex.Match(cleanName, @"^(?:Book\s+)?\d{1,3}(?:\.\d+)?\s+-\s+", RegexOptions.IgnoreCase);
         if (ordinalMatch.Success)
         {
             cleanName = cleanName.Substring(ordinalMatch.Length).TrimStart();
@@ -210,21 +214,69 @@ public static class FileNameParser
             bool firstIsName = LooksLikePersonalName(parts[0]);
             bool lastIsName = LooksLikePersonalName(parts[^1]);
 
-            // 6b. Both ends look like names — typically happens when the title is
-            //     a single capitalized word (e.g. "Dune - Frank Herbert"). Prefer
-            //     the segment with more words as the author, since full person
-            //     names are usually 2+ tokens while titles-of-one-word are common.
+            // 6b. Both ends look like names — e.g. "Dune - Frank Herbert" (single-
+            //     word title), "Different Seasons - Stephen King" (title that
+            //     reads as a name), "Dolores Claiborne_ A Novel - Stephen King"
+            //     (padded subtitle). Resolution priority:
+            //       1. Strong path hint — one segment's tokens appear ≥2 times
+            //          in the parent directory and the other's 0 times. Almost
+            //          always indicates "this folder is the author's collection"
+            //          and trumps any word-count reading.
+            //       2. Word count — fuller name is more likely the author.
+            //       3. Weak path hint — any non-zero overlap difference.
+            //       4. Default to first-wins (classic Author-Title).
             if (firstIsName && lastIsName)
             {
                 int firstWords = parts[0].Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
                 int lastWords = parts[^1].Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+
+                var parentTokens = ExtractParentDirTokens(fileName);
+                int firstOverlap = parentTokens.Count > 0 ? CountTokenOverlap(parts[0], parentTokens) : 0;
+                int lastOverlap = parentTokens.Count > 0 ? CountTokenOverlap(parts[^1], parentTokens) : 0;
+
+                // Strong path hint — one side's full name is in the parent dir.
+                if (lastOverlap >= 2 && firstOverlap == 0)
+                {
+                    return (NormalizeAuthor(parts[^1]),
+                            CleanName(string.Join(" - ", parts.Take(parts.Count - 1))),
+                            year);
+                }
+                if (firstOverlap >= 2 && lastOverlap == 0)
+                {
+                    return (NormalizeAuthor(parts[0]),
+                            CleanName(string.Join(" - ", parts.Skip(1))),
+                            year);
+                }
+
+                // Word-count preference — fuller name wins as author.
                 if (lastWords > firstWords)
                 {
-                    var author = NormalizeAuthor(parts[^1]);
-                    var title = CleanName(string.Join(" - ", parts.Take(parts.Count - 1)));
-                    return (author, title, year);
+                    return (NormalizeAuthor(parts[^1]),
+                            CleanName(string.Join(" - ", parts.Take(parts.Count - 1))),
+                            year);
                 }
-                // Tie or first has more words → classic Author-Title.
+                if (firstWords > lastWords)
+                {
+                    return (NormalizeAuthor(parts[0]),
+                            CleanName(string.Join(" - ", parts.Skip(1))),
+                            year);
+                }
+
+                // Weak path hint — any non-zero delta.
+                if (lastOverlap > firstOverlap)
+                {
+                    return (NormalizeAuthor(parts[^1]),
+                            CleanName(string.Join(" - ", parts.Take(parts.Count - 1))),
+                            year);
+                }
+                if (firstOverlap > lastOverlap)
+                {
+                    return (NormalizeAuthor(parts[0]),
+                            CleanName(string.Join(" - ", parts.Skip(1))),
+                            year);
+                }
+
+                // Fully ambiguous — default to classic Author-Title.
                 return (NormalizeAuthor(parts[0]),
                         CleanName(string.Join(" - ", parts.Skip(1))),
                         year);
@@ -262,6 +314,10 @@ public static class FileNameParser
     /// to decide which end of a " - " split is the author vs the title. The rule
     /// is deliberately strict — a false positive hands the user a book with the
     /// title as author, which is more confusing than leaving author blank.
+    /// Also recognises co-author patterns ("Joe Hill and Stephen King", "X &amp; Y")
+    /// by validating each piece is itself a 2+ capitalised-word name — a stricter
+    /// test than blindly allowing "and" as a connector (that caused "Pride and
+    /// Prejudice" to read as a name).
     /// </summary>
     private static bool LooksLikePersonalName(string s)
     {
@@ -272,26 +328,89 @@ public static class FileNameParser
         if (Regex.IsMatch(s, @"\d")) return false;
         if (s.Contains('(') || s.Contains(')') || s.Contains(':')) return false;
 
+        // Co-author pattern detection: if the string contains " and " / " & ",
+        // split and require EVERY piece to be a 2+ capitalised-word name. The
+        // 2+ word requirement is critical — "Pride and Prejudice" splits into
+        // ["Pride", "Prejudice"], both single-word, and must be rejected as a
+        // name. "Joe Hill and Stephen King" has two 2-word pieces and passes.
+        if (Regex.IsMatch(s, @"\s+(?:and|&)\s+", RegexOptions.IgnoreCase))
+        {
+            var pieces = Regex.Split(s, @"\s+(?:and|&)\s+", RegexOptions.IgnoreCase);
+            foreach (var piece in pieces)
+            {
+                var pieceTrimmed = piece.Trim();
+                var pieceWordCount = pieceTrimmed
+                    .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Length;
+                if (pieceWordCount < 2) return false;
+                if (!IsFullName(pieceTrimmed)) return false;
+            }
+            return true;
+        }
+
+        return IsFullName(s);
+    }
+
+    /// <summary>
+    /// A single-author-string check — used both directly and as the per-piece
+    /// predicate of the co-author split above. Requires 2+ capitalised words,
+    /// no lowercase connectors, no leading article.
+    /// </summary>
+    private static bool IsFullName(string s)
+    {
         var words = s.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
         if (words.Length < 1 || words.Length > 5) return false;
 
-        // Titles frequently start with an article ("The Sandworms", "A Tale", etc.);
-        // names never do. This one test eliminates most false positives.
+        // Titles frequently start with an article ("The Sandworms", "A Tale");
+        // names never do.
         if (words[0].Equals("The", StringComparison.OrdinalIgnoreCase)
          || words[0].Equals("A", StringComparison.OrdinalIgnoreCase)
          || words[0].Equals("An", StringComparison.OrdinalIgnoreCase))
             return false;
 
-        // Every word must start uppercase. A single lowercase word like "of" or
-        // "and" inside the segment reads as a title ("Pride and Prejudice",
-        // "Paul of Dune") — real author strings don't have those. Middle
-        // initials like "J." are accepted because they start uppercase.
+        // Every word must start uppercase. A lowercase connector like "of" or
+        // "and" reads as a title ("Pride and Prejudice", "Paul of Dune").
         foreach (var w in words)
         {
             if (w.Length == 0) continue;
             if (!char.IsUpper(w[0])) return false;
         }
         return true;
+    }
+
+    /// <summary>
+    /// Tokenize the parent directory name (not the full path) into lowercase
+    /// significant words. Used only as a tie-break hint when both ends of the
+    /// filename could plausibly be an author name — rippers commonly organise
+    /// by author ("Stephen King 121 Books Epub Collection"), so any segment
+    /// that shares tokens with the parent folder is the more likely author.
+    /// </summary>
+    private static HashSet<string> ExtractParentDirTokens(string filePath)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(filePath);
+            if (string.IsNullOrEmpty(dir)) return new HashSet<string>();
+            var parentName = Path.GetFileName(dir);
+            if (string.IsNullOrEmpty(parentName)) return new HashSet<string>();
+            var normalized = Regex.Replace(parentName.ToLowerInvariant(), @"[^\p{L}\p{N}\s]", " ");
+            return new HashSet<string>(
+                normalized.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                          .Where(w => w.Length > 1),
+                StringComparer.Ordinal);
+        }
+        catch
+        {
+            // Path may be malformed — a hint's absence is not a parser failure.
+            return new HashSet<string>();
+        }
+    }
+
+    private static int CountTokenOverlap(string segment, HashSet<string> parentTokens)
+    {
+        var normalized = Regex.Replace(segment.ToLowerInvariant(), @"[^\p{L}\p{N}\s]", " ");
+        return normalized.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                         .Where(w => w.Length > 1)
+                         .Count(parentTokens.Contains);
     }
 
     /// <summary>

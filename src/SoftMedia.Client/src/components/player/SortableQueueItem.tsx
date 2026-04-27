@@ -5,6 +5,7 @@ import { cn } from '../../lib/utils';
 import { API_URL } from '../../services/api';
 import type { MediaItem } from '../../types';
 import { ScrollingText } from '../ui/ScrollingText';
+import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 
 interface Props {
     track: MediaItem;
@@ -32,7 +33,7 @@ export const SortableQueueItem = ({ track, originalIndex, id, onPlay }: Props) =
 
     const getImageUrl = (path: string | undefined) => {
         if (!path) return '/placeholder-music.png';
-        if (path.startsWith('/api/')) return path;
+        if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
         if (path.startsWith('http')) return path;
         return `${API_URL}${path}`;
     };
@@ -56,8 +57,17 @@ export const SortableQueueItem = ({ track, originalIndex, id, onPlay }: Props) =
             </div>
 
             <div
+                role="button"
+                tabIndex={0}
+                aria-label={`Play ${track.title ?? 'track'}`}
                 onClick={onPlay}
-                className="flex-1 flex items-center gap-3 cursor-pointer min-w-0"
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onPlay();
+                    }
+                }}
+                className="flex-1 flex items-center gap-3 cursor-pointer min-w-0 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none rounded"
             >
                 <span className="text-gray-600 text-xs w-5 text-center shrink-0">
                     {originalIndex + 1}
@@ -65,6 +75,7 @@ export const SortableQueueItem = ({ track, originalIndex, id, onPlay }: Props) =
 
                 <img
                     src={getImageUrl(track.posterPath)}
+                    referrerPolicy="no-referrer"
                     alt={track.title}
                     className="w-10 h-10 rounded object-cover bg-gray-800 pointer-events-none"
                 />

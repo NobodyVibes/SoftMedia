@@ -1,5 +1,6 @@
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Helpers;
+using SoftMedia.Server.Services.Abstractions;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.RateLimiting;
@@ -11,6 +12,7 @@ public class OpenLibraryProvider : IMetadataProvider
     private readonly HttpClient _httpClient;
     private readonly ILogger<OpenLibraryProvider> _logger;
     private readonly RateLimiter _rateLimiter;
+    private readonly IBookMetadataExtractor? _bookMetadataExtractor;
 
     /// <summary>
     /// Maximum score (lower is better) we'll accept as a confident match. An exact
@@ -24,11 +26,16 @@ public class OpenLibraryProvider : IMetadataProvider
     public LibraryType SupportedType => LibraryType.Book;
     public string ProviderName => "Open Library";
 
-    public OpenLibraryProvider(HttpClient httpClient, ILogger<OpenLibraryProvider> logger, RateLimiterFactory rateLimiterFactory)
+    public OpenLibraryProvider(
+        HttpClient httpClient,
+        ILogger<OpenLibraryProvider> logger,
+        RateLimiterFactory rateLimiterFactory,
+        IBookMetadataExtractor? bookMetadataExtractor = null)
     {
         _httpClient = httpClient;
         _logger = logger;
         _rateLimiter = rateLimiterFactory.GetLimiter("OpenLibrary");
+        _bookMetadataExtractor = bookMetadataExtractor;
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
     }
 
@@ -57,11 +64,36 @@ public class OpenLibraryProvider : IMetadataProvider
                 return null;
             }
 
+            // ISBN-first lookup — the authoritative match path. If the file is
+            // an EPUB/PDF with a publisher-stamped ISBN, OpenLibrary's ISBN
+            // field resolves to the exact edition; no title heuristics or
+            // scoring needed. Falls through on extractor failure, missing ISBN,
+            // or empty OL response.
+            var isbnResult = await TryIsbnLookupAsync(item);
+            if (isbnResult != null) return isbnResult;
+
             // Build search URL using structured params when author context is available.
             // OpenLibrary's search API supports title= and author= for more accurate results.
             // Use the promoted Director column for author context.
             // BookScanner stores parsed author in Director as the generic "primary creator" field.
             string? author = item.Director;
+
+            // Normalise the outbound query title:
+            //   (1) Strip leading articles ("A ", "An ", "The ") — OpenLibrary's
+            //       Solr title index indexes "A Face in the Crowd" as "Face in
+            //       the Crowd"; the article turns matches into zero-doc returns.
+            //   (2) Replace non-alphanumeric characters (colons, slashes,
+            //       underscores, em-dashes) with spaces. EPUB publisher titles
+            //       commonly include "11/22/63: A Novel" or "Dolores Claiborne_
+            //       A Novel"; passing those verbatim as `title=` burns the
+            //       query on Solr punctuation handling.
+            //   (3) Collapse whitespace.
+            // item.Title on disk is left untouched; this is only for the URL.
+            var queryTitle = Regex.Replace(
+                title, @"^(?:A|An|The)\s+", "", RegexOptions.IgnoreCase);
+            queryTitle = Regex.Replace(queryTitle, @"[^\p{L}\p{N}\s]", " ");
+            queryTitle = Regex.Replace(queryTitle, @"\s+", " ").Trim();
+            if (string.IsNullOrWhiteSpace(queryTitle)) queryTitle = title;
 
             // Explicit field projection — OpenLibrary's default response payload is enormous
             // (all work/edition fields for every hit), which is a frequent cause of 500s and
@@ -74,11 +106,11 @@ public class OpenLibraryProvider : IMetadataProvider
             {
                 // `sort=editions` asks OpenLibrary to return the most-published works first,
                 // pushing canonical entries ahead of orphan reprints before we even score.
-                url = $"https://openlibrary.org/search.json?title={Uri.EscapeDataString(title)}&author={Uri.EscapeDataString(author)}&limit=10&sort=editions&{fields}";
+                url = $"https://openlibrary.org/search.json?title={Uri.EscapeDataString(queryTitle)}&author={Uri.EscapeDataString(author)}&limit=10&sort=editions&{fields}";
             }
             else
             {
-                url = $"https://openlibrary.org/search.json?q={Uri.EscapeDataString(title)}&limit=10&sort=editions&{fields}";
+                url = $"https://openlibrary.org/search.json?q={Uri.EscapeDataString(queryTitle)}&limit=10&sort=editions&{fields}";
             }
 
             var response = await _httpClient.GetStringAsync(url);
@@ -126,49 +158,7 @@ public class OpenLibraryProvider : IMetadataProvider
                     return null;
                 }
 
-                var book = bestBook.Value;
-                var result = new MetadataResult();
-                
-                if (book.TryGetProperty("title", out var titleProp)) result.Title = titleProp.GetString();
-                if (book.TryGetProperty("first_publish_year", out var yearProp) && yearProp.ValueKind != JsonValueKind.Null) result.Year = yearProp.GetInt32();
-                
-                if (book.TryGetProperty("author_name", out var authors))
-                {
-                    result.Cast = authors.EnumerateArray()
-                        .Select(a => new CastMember { Name = a.GetString() ?? "Unknown", Character = "Author" })
-                        .ToList();
-                }
-                
-                if (book.TryGetProperty("publisher", out var publishers) && publishers.GetArrayLength() > 0)
-                {
-                    var publisher = publishers[0].GetString();
-                    if (!string.IsNullOrEmpty(publisher))
-                    {
-                        result.Studio = publisher;
-                        result.Publisher = publisher;
-                    }
-                }
-                
-                if (book.TryGetProperty("subject", out var subjects))
-                {
-                    result.Genres = subjects.EnumerateArray().Take(5).Select(s => s.GetString()!).ToList();
-                }
-                
-                if (book.TryGetProperty("number_of_pages_median", out var pages) && pages.ValueKind != JsonValueKind.Null) 
-                    result.PageCount = pages.GetInt32();
-                
-                if (book.TryGetProperty("isbn", out var isbns) && isbns.GetArrayLength() > 0)
-                {
-                    result.Isbn = isbns[0].GetString();
-                }
-                
-                // Cover ID to URL
-                if (book.TryGetProperty("cover_i", out var coverId) && coverId.ValueKind != JsonValueKind.Null)
-                {
-                    result.PosterUrl = $"https://covers.openlibrary.org/b/id/{coverId.GetInt32()}-L.jpg";
-                }
-
-                return result;
+                return MapDocToMetadata(bestBook.Value);
             }
             
             return null;
@@ -181,6 +171,113 @@ public class OpenLibraryProvider : IMetadataProvider
     }
 
     /// <summary>
+    /// Authoritative ISBN-based lookup. Extracts the embedded ISBN from the
+    /// book file (EPUB OPF <c>dc:identifier</c> / PDF Info dict), queries
+    /// OpenLibrary's <c>search.json?isbn=</c> field, and maps the first hit
+    /// directly to a <see cref="MetadataResult"/>. Returns <c>null</c> and
+    /// lets the caller fall back to title/author search when anything goes
+    /// wrong — the extractor being unavailable, the file having no ISBN, the
+    /// ISBN not being in OL, or a transport error.
+    /// </summary>
+    private async Task<MetadataResult?> TryIsbnLookupAsync(MediaItem item)
+    {
+        if (_bookMetadataExtractor == null) return null;
+        if (string.IsNullOrWhiteSpace(item.Path)) return null;
+
+        BookFileMetadata? extracted;
+        try
+        {
+            extracted = await _bookMetadataExtractor.ExtractAsync(item.Path);
+        }
+        catch
+        {
+            return null;
+        }
+        var isbn = extracted?.Isbn;
+        if (string.IsNullOrWhiteSpace(isbn)) return null;
+
+        try
+        {
+            const string fields = "fields=key,title,author_name,first_publish_year,publisher,cover_i,isbn,subject,number_of_pages_median,edition_count";
+            var url = $"https://openlibrary.org/search.json?isbn={Uri.EscapeDataString(isbn)}&limit=1&{fields}";
+            var response = await _httpClient.GetStringAsync(url);
+            using var doc = JsonDocument.Parse(response);
+            if (!doc.RootElement.TryGetProperty("docs", out var docs)
+                || docs.ValueKind != JsonValueKind.Array
+                || docs.GetArrayLength() == 0)
+            {
+                return null;
+            }
+
+            _logger.LogInformation(
+                "OpenLibrary ISBN lookup matched {Isbn} for '{Title}' — skipping heuristic search",
+                isbn, item.Title);
+            return MapDocToMetadata(docs[0]);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex,
+                "OpenLibrary ISBN lookup for {Isbn} failed; falling back to title/author search", isbn);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Turns an OpenLibrary search doc element into our <see cref="MetadataResult"/>.
+    /// Shared between the ISBN-first and title/author paths since both paths
+    /// receive the same doc shape.
+    /// </summary>
+    private static MetadataResult MapDocToMetadata(JsonElement book)
+    {
+        var result = new MetadataResult();
+
+        if (book.TryGetProperty("title", out var titleProp)) result.Title = titleProp.GetString();
+        if (book.TryGetProperty("first_publish_year", out var yearProp) && yearProp.ValueKind == JsonValueKind.Number)
+            result.Year = yearProp.GetInt32();
+
+        if (book.TryGetProperty("author_name", out var authors) && authors.ValueKind == JsonValueKind.Array)
+        {
+            result.Cast = authors.EnumerateArray()
+                .Select(a => new CastMember { Name = a.GetString() ?? "Unknown", Character = "Author" })
+                .ToList();
+        }
+
+        if (book.TryGetProperty("publisher", out var publishers)
+            && publishers.ValueKind == JsonValueKind.Array
+            && publishers.GetArrayLength() > 0)
+        {
+            var publisher = publishers[0].GetString();
+            if (!string.IsNullOrEmpty(publisher))
+            {
+                result.Studio = publisher;
+                result.Publisher = publisher;
+            }
+        }
+
+        if (book.TryGetProperty("subject", out var subjects) && subjects.ValueKind == JsonValueKind.Array)
+        {
+            result.Genres = subjects.EnumerateArray().Take(5).Select(s => s.GetString()!).ToList();
+        }
+
+        if (book.TryGetProperty("number_of_pages_median", out var pages) && pages.ValueKind == JsonValueKind.Number)
+            result.PageCount = pages.GetInt32();
+
+        if (book.TryGetProperty("isbn", out var isbns)
+            && isbns.ValueKind == JsonValueKind.Array
+            && isbns.GetArrayLength() > 0)
+        {
+            result.Isbn = isbns[0].GetString();
+        }
+
+        if (book.TryGetProperty("cover_i", out var coverId) && coverId.ValueKind == JsonValueKind.Number)
+        {
+            result.PosterUrl = $"https://covers.openlibrary.org/b/id/{coverId.GetInt32()}-L.jpg";
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Drop orphan results (no cover, no author) when the result set has richer
     /// siblings to compare against. Also hard-filters by surname when we have
     /// a known author. If the filter would eliminate every candidate we fall
@@ -188,16 +285,18 @@ public class OpenLibraryProvider : IMetadataProvider
     /// </summary>
     private static List<JsonElement> ApplySiblingFilters(List<JsonElement> candidates, string? knownAuthor)
     {
-        // Step 1: author surname filter. "Brian Herbert" → surname "Herbert";
-        // we keep only results where any `author_name` entry contains that token.
-        // Surname-only match handles initial-vs-full-name differences
-        // (e.g. "Frank Herbert" vs "Frank Herbert, Jr.").
+        // Step 1: author surname filter. "Brian Herbert and Kevin J. Anderson" →
+        // surnames {"Herbert", "Anderson"}; we keep any entry whose author_name
+        // contains at least one of those surnames. The multi-surname approach
+        // fixes cases where OL has the book attributed to a subset of the
+        // co-authors — previously only matching the LAST surname meant entries
+        // attributed solely to "Brian Herbert" were silently excluded.
         if (!string.IsNullOrWhiteSpace(knownAuthor))
         {
-            var surname = ExtractSurname(knownAuthor);
-            if (!string.IsNullOrEmpty(surname))
+            var surnames = ExtractSurnames(knownAuthor);
+            if (surnames.Count > 0)
             {
-                var authorMatched = candidates.Where(c => AuthorListContains(c, surname)).ToList();
+                var authorMatched = candidates.Where(c => AuthorListContainsAny(c, surnames)).ToList();
                 if (authorMatched.Count > 0) candidates = authorMatched;
             }
         }
@@ -252,13 +351,14 @@ public class OpenLibraryProvider : IMetadataProvider
 
         // 3. Author alignment. This is the big change vs the old scorer: when we
         //    know the author, a wrong author is a ~200-point penalty — enough to
-        //    dominate ties even when both the title and year match exactly.
+        //    dominate ties even when both the title and year match exactly. For
+        //    multi-author strings any one surname match counts.
         if (!string.IsNullOrWhiteSpace(queryAuthor))
         {
-            var surname = ExtractSurname(queryAuthor);
+            var surnames = ExtractSurnames(queryAuthor);
             if (!HasAuthor(entry))
                 score += 500;                               // authorless entry, we know one exists
-            else if (!string.IsNullOrEmpty(surname) && !AuthorListContains(entry, surname))
+            else if (surnames.Count > 0 && !AuthorListContainsAny(entry, surnames))
                 score += 200;                               // wrong author
         }
 
@@ -287,8 +387,14 @@ public class OpenLibraryProvider : IMetadataProvider
         && ap.ValueKind == JsonValueKind.Array
         && ap.GetArrayLength() > 0;
 
-    private static bool AuthorListContains(JsonElement entry, string surname)
+    /// <summary>
+    /// True when any name in the entry's <c>author_name</c> array contains at
+    /// least one of the supplied surnames. Substring match (case-insensitive)
+    /// so "Herbert" matches "Brian Herbert" and "Herbert, Brian" alike.
+    /// </summary>
+    private static bool AuthorListContainsAny(JsonElement entry, HashSet<string> surnames)
     {
+        if (surnames.Count == 0) return false;
         if (!entry.TryGetProperty("author_name", out var authors)
             || authors.ValueKind != JsonValueKind.Array)
             return false;
@@ -296,21 +402,44 @@ public class OpenLibraryProvider : IMetadataProvider
         foreach (var a in authors.EnumerateArray())
         {
             var name = a.GetString();
-            if (!string.IsNullOrEmpty(name)
-                && name.IndexOf(surname, StringComparison.OrdinalIgnoreCase) >= 0)
-                return true;
+            if (string.IsNullOrEmpty(name)) continue;
+            foreach (var surname in surnames)
+            {
+                if (name.IndexOf(surname, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
         }
         return false;
     }
 
-    private static string ExtractSurname(string fullName)
+    /// <summary>
+    /// Extract every surname from a (potentially multi-author) author string.
+    /// Embedded EPUB metadata commonly presents co-authors as
+    /// <c>"Brian Herbert and Kevin J. Anderson"</c> or <c>"King, Stephen &amp; O'Nan, Stewart"</c>.
+    /// Splitting on the common separators and taking the last token of each
+    /// piece yields <c>{"Herbert", "Anderson"}</c> — the filter then keeps OL
+    /// entries whose <c>author_name</c> contains any of those surnames, rather
+    /// than only the last one, which was silently excluding most of the
+    /// canonical entries for multi-author works.
+    /// </summary>
+    private static HashSet<string> ExtractSurnames(string fullName)
     {
-        // Take the last whitespace-separated token as a surname. Handles "Frank
-        // Herbert" → "Herbert", "J. R. R. Tolkien" → "Tolkien". Imperfect for
-        // non-Western naming conventions but good enough as a filter tightener.
-        var trimmed = fullName.Trim();
-        var lastSpace = trimmed.LastIndexOf(' ');
-        return lastSpace >= 0 ? trimmed.Substring(lastSpace + 1) : trimmed;
+        var surnames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(fullName)) return surnames;
+
+        // Split into individual author pieces. The separators are greedy — we
+        // don't try to distinguish "and" inside a legitimate single-author name
+        // (rare in practice) from the conjunction.
+        var pieces = Regex.Split(fullName, @"\s+(?:and|&)\s+|,\s*", RegexOptions.IgnoreCase);
+        foreach (var piece in pieces)
+        {
+            var trimmed = piece.Trim();
+            if (string.IsNullOrEmpty(trimmed)) continue;
+            var lastSpace = trimmed.LastIndexOf(' ');
+            var surname = lastSpace >= 0 ? trimmed.Substring(lastSpace + 1) : trimmed;
+            if (surname.Length > 1) surnames.Add(surname);
+        }
+        return surnames;
     }
 
     /// <summary>

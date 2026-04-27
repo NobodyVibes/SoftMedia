@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using System.Threading.RateLimiting;
 using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Media;
@@ -21,6 +23,7 @@ public static class ServiceCollectionExtensions
     {
         services.AddScoped<IPasswordHasher, PasswordHasher>();
         services.AddScoped<ITokenService, TokenService>();
+        services.AddScoped<IRefreshTokenService, RefreshTokenService>();
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
@@ -45,6 +48,8 @@ public static class ServiceCollectionExtensions
                             path.StartsWithSegments("/api/v1/stream") ||
                             path.StartsWithSegments("/api/v1/audio") ||
                             path.StartsWithSegments("/api/v1/books") ||
+                            path.StartsWithSegments("/api/v1/image") ||
+                            path.StartsWithSegments("/api/v1/music") ||
                             path.StartsWithSegments("/api/media") ||
                             path.StartsWithSegments("/hubs/media"))
                         {
@@ -138,6 +143,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMediaRetrievalService, MediaRetrievalService>();
         services.AddScoped<IUserMediaInteractionService, UserMediaInteractionService>();
         services.AddSingleton<IComicArchiveService, ComicArchiveService>();
+        services.AddSingleton<IComicPageThumbnailService, ComicPageThumbnailService>();
+        services.AddSingleton<IDictionaryService, DictionaryService>();
         
         // System / Infrastructure
         services.AddScoped<ISettingsService, SettingsService>();
@@ -178,6 +185,81 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    public const string AuthRateLimitPolicy = "auth";
+    public const string ImageProxyRateLimitPolicy = "image-proxy";
+
+    // Policy "auth": per-IP sliding window on /auth/login and /auth/signup to defeat
+    // credential stuffing. 15 attempts per minute is comfortable headroom for users
+    // who fat-finger their password a few times while still capping automated attacks.
+    // Sliding window (vs fixed) prevents the "5 fails at 12:00:59 then 5 more at
+    // 12:01:00" burst that fixed-window allows.
+    //
+    // /auth/change-password is intentionally NOT covered by this policy: it requires
+    // a valid Bearer token and is one explicit user action — credential stuffing is
+    // not the threat model.
+    //
+    // Policy "image-proxy": per-user fixed window on the image proxy endpoint — limits
+    // cache-pollution and outbound-fetch DoS from an authenticated attacker. 120 requests
+    // per minute per user is comfortable headroom for page loads (~20 images + retries)
+    // while capping pathological abuse. Falls back to IP when the user claim is missing.
+    //
+    // No global limiter by design — would produce false positives on legitimate
+    // range-request streaming traffic.
+    public static IServiceCollection AddRateLimitingPolicies(this IServiceCollection services)
+    {
+        services.AddRateLimiter(options =>
+        {
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+            // Diagnostic: log every rejection with the partition key and remaining
+            // window so we can see WHY a 429 fires. Counts toward catching the
+            // "first request 429" bug that surfaced during dev.
+            options.OnRejected = (context, _) =>
+            {
+                var loggerFactory = context.HttpContext.RequestServices
+                    .GetRequiredService<ILoggerFactory>();
+                var logger = loggerFactory.CreateLogger("RateLimit");
+                var ip = context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown-ip";
+                var path = context.HttpContext.Request.Path;
+                var method = context.HttpContext.Request.Method;
+                logger.LogWarning(
+                    "Rate limit rejected {Method} {Path} from {Ip}. Lease={Lease}",
+                    method, path, ip, context.Lease.MetadataNames);
+                return ValueTask.CompletedTask;
+            };
+
+            options.AddPolicy(AuthRateLimitPolicy, httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown-ip",
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 30,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0,
+                        AutoReplenishment = true
+                    }));
+
+            options.AddPolicy(ImageProxyRateLimitPolicy, httpContext =>
+            {
+                var userKey = httpContext.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                             ?? httpContext.Connection.RemoteIpAddress?.ToString()
+                             ?? "unknown";
+                return RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: userKey,
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 120,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0,
+                        AutoReplenishment = true
+                    });
+            });
+        });
+        return services;
+    }
+
     public static IServiceCollection AddBackgroundServices(this IServiceCollection services)
     {
         // Library Scan Queue
@@ -191,6 +273,7 @@ public static class ServiceCollectionExtensions
 
         // Other Background Services
         services.AddHostedService<ThrottleMonitorService>();
+        services.AddHostedService<RefreshTokenCleanupService>();
         services.AddSingleton<MetadataRefreshService>();
         services.AddHostedService(sp => sp.GetRequiredService<MetadataRefreshService>());
         services.AddHostedService<HeroCacheWorker>();

@@ -115,6 +115,7 @@ export function ProgressBar({
                             <img
                                 src={framePreviewUrl}
                                 alt="Frame preview"
+                                referrerPolicy="no-referrer"
                                 className="w-40 h-auto"
                                 onLoad={() => setFrameLoaded(true)}
                             />

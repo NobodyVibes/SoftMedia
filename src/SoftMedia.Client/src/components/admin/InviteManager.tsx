@@ -229,7 +229,7 @@ export const InviteManager: React.FC = () => {
                 <div className="relative">
                     <button
                         onClick={() => setShowExpirationMenu(!showExpirationMenu)}
-                        className="px-4 py-2 bg-gradient-to-r from-blue-500 to-violet-600 hover:from-blue-600 hover:to-violet-700 text-white rounded transition-colors"
+                        className="px-4 py-2 bg-gradient-to-r from-blue-500 to-violet-600 hover:from-blue-600 hover:to-violet-700 focus-visible:from-blue-600 focus-visible:to-violet-700 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none text-white rounded transition-colors"
                     >
                         Generate Invite
                     </button>
@@ -237,25 +237,25 @@ export const InviteManager: React.FC = () => {
                         <div className="absolute right-0 mt-2 w-48 bg-gray-800 rounded-lg shadow-xl z-10 border border-gray-700">
                             <button
                                 onClick={() => handleCreateInvite(24)}
-                                className="block w-full text-left px-4 py-2 text-white hover:bg-gray-700 rounded-t-lg"
+                                className="block w-full text-left px-4 py-2 text-white hover:bg-gray-700 focus-visible:bg-gray-700 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset focus-visible:outline-none rounded-t-lg"
                             >
                                 Expires in 24 hours
                             </button>
                             <button
                                 onClick={() => handleCreateInvite(24 * 7)}
-                                className="block w-full text-left px-4 py-2 text-white hover:bg-gray-700"
+                                className="block w-full text-left px-4 py-2 text-white hover:bg-gray-700 focus-visible:bg-gray-700 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset focus-visible:outline-none"
                             >
                                 Expires in 7 days
                             </button>
                             <button
                                 onClick={() => handleCreateInvite(24 * 30)}
-                                className="block w-full text-left px-4 py-2 text-white hover:bg-gray-700"
+                                className="block w-full text-left px-4 py-2 text-white hover:bg-gray-700 focus-visible:bg-gray-700 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset focus-visible:outline-none"
                             >
                                 Expires in 30 days
                             </button>
                             <button
                                 onClick={() => handleCreateInvite(null)}
-                                className="block w-full text-left px-4 py-2 text-white hover:bg-gray-700 rounded-b-lg"
+                                className="block w-full text-left px-4 py-2 text-white hover:bg-gray-700 focus-visible:bg-gray-700 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset focus-visible:outline-none rounded-b-lg"
                             >
                                 Never expires
                             </button>
@@ -279,18 +279,34 @@ export const InviteManager: React.FC = () => {
                                     { key: 'status', label: 'Status' },
                                     { key: 'usedByUsername', label: 'Used By' },
                                     { key: null, label: 'Actions' },
-                                ].map((col, idx) => (
-                                    <th
-                                        key={idx}
-                                        className={`px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider ${col.key ? 'cursor-pointer hover:bg-gray-800 select-none' : ''}`}
-                                        onClick={() => col.key && handleSort(col.key as SortConfig['key'])}
-                                    >
-                                        <div className="flex items-center">
-                                            {col.label}
-                                            {col.key && renderSortIcon(col.key as SortConfig['key'])}
-                                        </div>
-                                    </th>
-                                ))}
+                                ].map((col, idx) => {
+                                    const sortKey = col.key as SortConfig['key'] | null;
+                                    const ariaSort: React.AriaAttributes['aria-sort'] | undefined = sortKey
+                                        ? sortConfig.key === sortKey
+                                            ? sortConfig.direction === 'asc' ? 'ascending' : 'descending'
+                                            : 'none'
+                                        : undefined;
+                                    return (
+                                        <th
+                                            key={idx}
+                                            aria-sort={ariaSort}
+                                            className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider"
+                                        >
+                                            {sortKey ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSort(sortKey)}
+                                                    className="flex items-center w-full text-left bg-transparent border-0 p-0 uppercase tracking-wider text-xs font-medium text-gray-400 hover:text-white focus-visible:text-white focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none rounded select-none cursor-pointer"
+                                                >
+                                                    {col.label}
+                                                    {renderSortIcon(sortKey)}
+                                                </button>
+                                            ) : (
+                                                <div className="flex items-center">{col.label}</div>
+                                            )}
+                                        </th>
+                                    );
+                                })}
                             </tr>
                             {/* Filter Row */}
                             <tr className="bg-gray-850 border-b border-gray-700">
@@ -341,7 +357,7 @@ export const InviteManager: React.FC = () => {
                                                     <InviteCodeDisplay code={invite.code} isVisible={visibleCodes.has(invite.code)} />
                                                     <button
                                                         onClick={() => handleCopyCode(invite.code)}
-                                                        className="text-blue-400 hover:text-blue-300"
+                                                        className="text-blue-400 hover:text-blue-300 focus-visible:text-blue-300 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none rounded"
                                                         title="Copy to clipboard"
                                                     >
                                                         <svg
@@ -360,7 +376,7 @@ export const InviteManager: React.FC = () => {
                                                     </button>
                                                     <button
                                                         onClick={() => toggleCodeVisibility(invite.code)}
-                                                        className="text-gray-400 hover:text-white focus:outline-none"
+                                                        className="text-gray-400 hover:text-white focus-visible:text-white focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none rounded"
                                                         title={visibleCodes.has(invite.code) ? "Hide code" : "Show code"}
                                                     >
                                                         {visibleCodes.has(invite.code) ? (
@@ -391,7 +407,7 @@ export const InviteManager: React.FC = () => {
                                                 {!invite.usedAt && (
                                                     <button
                                                         onClick={() => handleRevoke(invite.code)}
-                                                        className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded transition-colors text-sm"
+                                                        className="px-3 py-1 bg-red-600 hover:bg-red-700 focus-visible:bg-red-700 focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:outline-none text-white rounded transition-colors text-sm"
                                                     >
                                                         Revoke
                                                     </button>

@@ -1,12 +1,17 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Cryptography;
 using System.Text;
 using System.Collections.Concurrent;
+using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Services.Media;
 
 namespace SoftMedia.Server.Controllers;
 
 [ApiController]
+[Authorize]
+[EnableRateLimiting(ServiceCollectionExtensions.ImageProxyRateLimitPolicy)]
 [Route("api/v1/[controller]")]
 public class ImageController : ControllerBase
 {

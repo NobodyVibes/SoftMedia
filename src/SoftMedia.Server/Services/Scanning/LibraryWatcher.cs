@@ -136,19 +136,28 @@ public class LibraryWatcher : BackgroundService, IDisposable
         await InitializeWatchersAsync();
 
         // Main loop - periodically check pending files and trigger scans
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                await ProcessPendingFilesAsync();
-                await TriggerPendingScansAsync();
+                try
+                {
+                    await ProcessPendingFilesAsync();
+                    await TriggerPendingScansAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error in file watcher processing loop");
+                }
+
+                await Task.Delay(StabilityCheckIntervalMs, stoppingToken);
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in file watcher processing loop");
-            }
-            
-            await Task.Delay(StabilityCheckIntervalMs, stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cooperative shutdown — host cancelled. Exit cleanly so the
+            // exception does not propagate out of StartAsync/ExecuteAsync
+            // and abort the entire host.
         }
     }
 

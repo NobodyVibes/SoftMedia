@@ -106,14 +106,14 @@ export const CreateUserModal: React.FC<CreateUserModalProps> = ({ isOpen, onClos
                         <button
                             type="button"
                             onClick={onClose}
-                            className="px-4 py-2 rounded text-gray-300 hover:bg-gray-700 transition-colors"
+                            className="px-4 py-2 rounded text-gray-300 hover:bg-gray-700 focus-visible:bg-gray-700 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors"
                         >
                             Cancel
                         </button>
                         <button
                             type="submit"
                             disabled={createMutation.isPending}
-                            className="px-4 py-2 rounded bg-primary hover:bg-primary/90 text-white transition-colors disabled:opacity-50"
+                            className="px-4 py-2 rounded bg-primary hover:bg-primary/90 focus-visible:bg-primary/90 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none text-white transition-colors disabled:opacity-50"
                         >
                             {createMutation.isPending ? 'Creating...' : 'Create User'}
                         </button>

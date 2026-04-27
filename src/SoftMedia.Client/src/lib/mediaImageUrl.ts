@@ -1,14 +1,36 @@
+import { useAuthStore } from '../store/authStore';
+
+/**
+ * Append `?access_token=<jwt>` to an API image URL so that `<img src="…">`
+ * loads pass authentication. Browsers cannot attach the `Authorization:
+ * Bearer` header to `<img>` requests, so the server's JwtBearer
+ * `OnMessageReceived` handler lifts the query-string token into
+ * `context.Token` for a specific set of paths (see
+ * Extensions/ServiceCollectionExtensions.cs in the backend).
+ *
+ * Only SoftMedia API URLs are modified — static `/cache/*` assets and
+ * external URLs are returned unchanged.
+ */
+export function attachAuthToApiUrl(url: string): string {
+    if (!url.startsWith('/api/v1/')) return url;
+    const token = useAuthStore.getState().token;
+    if (!token) return url;
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}access_token=${encodeURIComponent(token)}`;
+}
+
 /**
  * Append a width query parameter to a URL that supports it, for server-side
  * thumbnail generation. Supports both the music endpoint and the image proxy;
- * returns other URLs (e.g. /cache/* static files) unchanged.
+ * returns other URLs (e.g. /cache/* static files) unchanged. Also attaches
+ * the query-string access token for API URLs.
  */
 function withWidth(url: string, width: number): string {
     if (url.includes('/api/v1/music/') || url.includes('/api/v1/image/proxy')) {
         const separator = url.includes('?') ? '&' : '?';
-        return `${url}${separator}width=${width}`;
+        return attachAuthToApiUrl(`${url}${separator}width=${width}`);
     }
-    return url;
+    return attachAuthToApiUrl(url);
 }
 
 /**

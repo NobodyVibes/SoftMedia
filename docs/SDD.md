@@ -210,7 +210,7 @@ graph TD
             *   `Genre` (P136)
             *   `GameMode` (P404 - Single/Multiplayer)
 
-        *   **Photos (Source: Local EXIF):**
+        *   **Photos (Source: Local EXIF) — *Phase 2 (post-1.0)*:**
             *   `CameraModel`, `FNumber`, `ISO`, `ExposureTime`
             *   `DateTimeOriginal`
             *   `GPSLatitude`, `GPSLongitude`
@@ -219,7 +219,9 @@ graph TD
 *   **Hashing:** Use **Argon2id** for password hashing (via `Konscious.Security.Cryptography` or similar).
 *   **Flow:**
     1.  User POSTs credentials.
-    2.  Server validates and issues a short-lived **Access Token** (JWT) and a long-lived **Refresh Token** (HttpOnly, SameSite=Strict Cookie).
+    2.  Server validates and issues a short-lived **Access Token** (JWT, default ≤15 min) and a long-lived **Refresh Token** (HttpOnly, SameSite=Lax, Path-scoped to `/api/v1/auth/`).
+    3.  Refresh tokens rotate on every `/auth/refresh-token` call; replay of a previously-rotated token is treated as chain compromise and revokes every active token for the user.
+    *   *Note:* `SameSite=Lax` (rather than `Strict`) is sufficient against CSRF for this design because mutating requests carry the JWT in the `Authorization` header (browsers do not auto-attach `Authorization` cross-origin), and the refresh cookie's `Path=/api/v1/auth/` scope means it is not delivered on cross-site sub-resource POSTs to other API routes.
 *   **Parental Control:**
     *   Middleware checks `User.Role` and `User.MaxRating` before serving media metadata or streams.
     *   Child accounts cannot see content above their rating.
@@ -279,6 +281,8 @@ To ensure a premium experience, the backend must implement specific serving stra
     *   **EPUB:** Unzip into memory or temporary cache and serve individual resource files (HTML/CSS/Images) to the reader.
     *   **CBZ/CBR:** Treat as a ZIP/RAR. API must provide an endpoint to extract and serve a specific image page on demand: `GET /api/v1/books/{id}/page/{pageNumber}`.
 
+4.  **Auth on media stream endpoints:** Stream, transcode, audio, image, book, and SignalR endpoints accept the JWT either via the standard `Authorization` header or as a `?token=`/`?access_token=` query parameter (lifted by `JwtBearerEvents.OnMessageReceived`). Query-string tokens are required for `<video src>`/`<audio src>`/`<img src>` elements but their operational risk (proxy logs, browser history) is documented in §6.2. Endpoints MUST carry `[Authorize]` so the standard bearer middleware fully validates the signature, lifetime, issuer, and audience — bespoke `JwtSecurityTokenHandler.ReadJwtToken` checks are forbidden because they only decode and do not verify.
+
 ---
 
 ## 5. Prerequisites & Installation
@@ -327,12 +331,14 @@ Since we do not use a central cloud relay, we recommend two methods:
 *   **Native Apps:** Future native apps will still require one of the above methods (Tailscale, DuckDNS, or Static IP) to locate the server, as SoftMedia does not provide a central "Cloud Relay" service.
 
 ### 6.2 Application Security
-*   **CSRF Protection:** Double-Submit Cookie pattern for API requests.
-*   **Rate Limiting:** Login endpoints limited to prevent brute-force attacks.
-*   **Sanitization:** All metadata inputs sanitized to prevent XSS.
-*   **File Access:** The File Watcher is strictly jailed to the directories added by the Admin. It cannot read outside those paths.
-*   **Image Proxy:** Strict path validation (canonicalization) to prevent Local File Inclusion (LFI) when serving cover art.
+*   **CSRF Protection:** All mutating requests carry the JWT access token in the `Authorization` header. Browsers do not auto-attach `Authorization` to cross-origin requests, which closes the classic CSRF surface. The refresh-token cookie is `SameSite=Lax` and `Path=/api/v1/auth/`-scoped, so it is not delivered on cross-site sub-resource POSTs. A double-submit cookie would add no enforcement here and is intentionally not implemented.
+*   **Rate Limiting:** Login and signup endpoints are per-IP rate limited to defeat credential stuffing.
+*   **Sanitization:** All third-party metadata inputs are sanitized before rendering to prevent XSS.
+*   **File Access:** The File Watcher and stream layer are strictly jailed to the directories added by the Admin. Path canonicalisation MUST resolve symlinks (e.g., via `FileInfo.ResolveLinkTarget(returnFinalTarget: true)`) in addition to collapsing `..` segments — `Path.GetFullPath` alone is insufficient on Linux, where a symlink inside an admin-declared library root would otherwise re-introduce LFI.
+*   **Image Proxy:** Outbound fetches are restricted to a host allow-list, validate `Content-Type` against an image-only set, enforce a streaming size cap, and use a negative-cache sentinel for upstream 404s. All outbound HTTP requests carry a descriptive `User-Agent` per §4.3.
+*   **Tokens-in-query operational note:** `?access_token=…` URLs used for `<video>`, `<audio>`, `<img>` and image elements appear in reverse-proxy access logs. Operators running SoftMedia behind nginx/Caddy SHOULD configure log scrubbing of the `access_token`/`token` query parameters. The default access-token TTL is set short (15 min) to bound exposure.
 *   **Signup Protection:** Rate limiting and optional CAPTCHA on the signup endpoint to prevent bot account creation.
+*   **Parental Controls (enforcement layer):** The middleware/repository filter MUST strip media items above the caller's `User.MaxRating` / `User.ContentRatings` ceiling from list responses *and* return 404 (not 403) for direct stream-by-ID requests targeting blocked items. Items with a null `ContentRating` are treated as restricted (fail-safe) when any ceiling is set; admins bypass the filter entirely.
 
 ## 7. Configuration & Settings (Browser Interface)
 

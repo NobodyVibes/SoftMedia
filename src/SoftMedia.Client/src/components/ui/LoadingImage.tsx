@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
+import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 
 interface LoadingImageProps {
     src: string | null | undefined;
@@ -57,11 +58,16 @@ export default function LoadingImage({
             {!isVisible && (
                 <div className="absolute inset-0 bg-gradient-to-br from-gray-800 via-gray-700 to-gray-800 animate-pulse z-10" />
             )}
-            {/* Actual image - only rendered when in viewport */}
+            {/* Actual image - only rendered when in viewport.
+                Routes `src` through `attachAuthToApiUrl` so `/api/v1/*` paths
+                carry a query-string access token (browsers can't attach
+                Bearer headers to <img> loads), and sets referrerPolicy to
+                prevent the access token leaking cross-origin via Referer. */}
             {inView && (
                 <img
-                    src={src}
+                    src={attachAuthToApiUrl(src)}
                     alt={alt}
+                    referrerPolicy="no-referrer"
                     className={`${className} transition-opacity duration-200 ${isVisible ? 'opacity-100' : 'opacity-0'}`}
                     onLoad={() => {
                         setStatus('loaded');

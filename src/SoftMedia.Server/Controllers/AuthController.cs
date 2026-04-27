@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Media;
@@ -14,28 +16,44 @@ namespace SoftMedia.Server.Controllers;
 
 [Route("api/v1/[controller]")]
 [ApiController]
+[AllowAnonymous] // Mixed auth: Login/Signup/Refresh/Logout are public; ChangePassword carries its own [Authorize].
 public class AuthController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IPasswordHasher _passwordHasher;
     private readonly ITokenService _tokenService;
+    private readonly IRefreshTokenService _refreshTokens;
     private readonly ISettingsService _settingsService;
     private readonly IUserPreferencesService _userPreferencesService;
+    private readonly IWebHostEnvironment _env;
+    private readonly ILogger<AuthController> _logger;
 
-    public AuthController(AppDbContext context, IPasswordHasher passwordHasher, ITokenService tokenService, ISettingsService settingsService, IUserPreferencesService userPreferencesService)
+    public AuthController(
+        AppDbContext context,
+        IPasswordHasher passwordHasher,
+        ITokenService tokenService,
+        IRefreshTokenService refreshTokens,
+        ISettingsService settingsService,
+        IUserPreferencesService userPreferencesService,
+        IWebHostEnvironment env,
+        ILogger<AuthController> logger)
     {
         _context = context;
         _passwordHasher = passwordHasher;
         _tokenService = tokenService;
+        _refreshTokens = refreshTokens;
         _settingsService = settingsService;
         _userPreferencesService = userPreferencesService;
+        _env = env;
+        _logger = logger;
     }
 
+    [EnableRateLimiting(Extensions.ServiceCollectionExtensions.AuthRateLimitPolicy)]
     [HttpPost("signup")]
     public async Task<ActionResult<AuthResponse>> Signup(SignupRequest request)
     {
         var signupSetting = await _settingsService.GetSettingAsync("AllowUserSignup", "Disabled");
-        
+
         // First user setup is always allowed
         if (!await _context.Users.AnyAsync())
         {
@@ -43,7 +61,10 @@ public class AuthController : ControllerBase
         }
         else if (signupSetting == "Disabled")
         {
-            return Forbid("Public signup is disabled.");
+            // NOTE: `Forbid(string)` treats the string as an auth scheme name,
+            // not a response body, and throws if the scheme isn't registered.
+            // Return a real 403 with a human-readable message instead.
+            return StatusCode(StatusCodes.Status403Forbidden, "Public signup is disabled.");
         }
         else if (signupSetting == "InviteOnly" && string.IsNullOrEmpty(request.InviteCode))
         {
@@ -55,66 +76,42 @@ public class AuthController : ControllerBase
             return BadRequest("Username already exists.");
         }
 
-        // Validate invite code if provided
         if (!string.IsNullOrEmpty(request.InviteCode))
         {
             var invite = await _context.Invites
                 .Include(i => i.UsedBy)
                 .FirstOrDefaultAsync(i => i.Code == request.InviteCode);
 
-            if (invite == null)
-            {
-                return BadRequest("Invalid invite code.");
-            }
-
-            if (invite.IsRevoked)
-            {
-                return BadRequest("This invite has been revoked.");
-            }
-
-            if (invite.UsedAt != null)
-            {
-                return BadRequest("This invite has already been used.");
-            }
-
+            if (invite == null) return BadRequest("Invalid invite code.");
+            if (invite.IsRevoked) return BadRequest("This invite has been revoked.");
+            if (invite.UsedAt != null) return BadRequest("This invite has already been used.");
             if (invite.ExpiresAt != null && invite.ExpiresAt < DateTime.UtcNow)
-            {
                 return BadRequest("This invite has expired.");
-            }
-        }
-        // If there are existing users and no invite code provided, check if invites are required
-        else if (await _context.Users.AnyAsync())
-        {
-            // For now, we'll allow signup without invite. This can be controlled by a setting later.
-            // TODO: Add RequireInviteForSignup setting
         }
 
         var user = new User
         {
             Username = request.Username,
             PasswordHash = _passwordHasher.HashPassword(request.Password),
-            Role = UserRole.User, // Default role
+            Role = UserRole.User,
             CreatedAt = DateTime.UtcNow,
             FirstName = request.FirstName,
             LastName = request.LastName
         };
 
-        // First user becomes Admin and is Approved
         if (!await _context.Users.AnyAsync())
         {
             user.Role = UserRole.Admin;
             user.IsApproved = true;
         }
 
-        // Auto-approve if invite code was used
         if (!string.IsNullOrEmpty(request.InviteCode))
         {
-             user.IsApproved = true;
+            user.IsApproved = true;
         }
 
         _context.Users.Add(user);
 
-        // Mark invite as used if one was provided
         if (!string.IsNullOrEmpty(request.InviteCode))
         {
             var invite = await _context.Invites.FirstOrDefaultAsync(i => i.Code == request.InviteCode);
@@ -127,18 +124,16 @@ public class AuthController : ControllerBase
         }
 
         await _context.SaveChangesAsync();
-
-        // Initialize default preferences for the new user
         await _userPreferencesService.InitializeDefaultsAsync(user.Id);
 
         var accessToken = _tokenService.GenerateAccessToken(user);
-        var refreshToken = _tokenService.GenerateRefreshToken();
+        var (refreshRaw, _) = await _refreshTokens.IssueAsync(user, ClientIp());
+        SetRefreshTokenCookie(refreshRaw);
 
-        SetRefreshToken(refreshToken);
-
-        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned, user.IsApproved, user.IsRejected, new Dictionary<string, string>(), user.FirstName, user.LastName, user.CreatedByAdmin, request.InviteCode, false)));
+        return Ok(new AuthResponse(accessToken, BuildUserDto(user, request.InviteCode, mustChangePassword: false)));
     }
 
+    [EnableRateLimiting(Extensions.ServiceCollectionExtensions.AuthRateLimitPolicy)]
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponse>> Login(LoginRequest request)
     {
@@ -147,40 +142,26 @@ public class AuthController : ControllerBase
         {
             return Unauthorized("Invalid username or password.");
         }
-
-        // Check if user is banned
-        if (user.IsBanned)
-        {
-            return Unauthorized("This account has been banned.");
-        }
-
-        // Check if user is deleted
-        if (user.IsDeleted)
-        {
-            return Unauthorized("Invalid username or password.");
-        }
-
-        // Check if user is approved
-        if (!user.IsApproved)
-        {
-            return Unauthorized("Account pending approval.");
-        }
+        if (user.IsBanned) return Unauthorized("This account has been banned.");
+        if (user.IsDeleted) return Unauthorized("Invalid username or password.");
+        if (!user.IsApproved) return Unauthorized("Account pending approval.");
 
         var accessToken = _tokenService.GenerateAccessToken(user);
-        var refreshToken = _tokenService.GenerateRefreshToken();
+        var (refreshRaw, _) = await _refreshTokens.IssueAsync(user, ClientIp());
+        SetRefreshTokenCookie(refreshRaw);
 
-        SetRefreshToken(refreshToken);
+        var usedInviteCode = await _context.Invites
+            .Where(i => i.UsedById == user.Id)
+            .Select(i => i.Code)
+            .FirstOrDefaultAsync();
 
-        var usedInviteCode = await _context.Invites.Where(i => i.UsedById == user.Id).Select(i => i.Code).FirstOrDefaultAsync();
-
-        return Ok(new AuthResponse(accessToken, new UserDto(user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt, user.IsBanned, user.IsApproved, user.IsRejected, string.IsNullOrEmpty(user.ContentRatings) ? new Dictionary<string, string>() : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(user.ContentRatings, (System.Text.Json.JsonSerializerOptions?)null) ?? new Dictionary<string, string>(), user.FirstName, user.LastName, user.CreatedByAdmin, usedInviteCode, user.MustChangePassword)));
+        return Ok(new AuthResponse(accessToken, BuildUserDto(user, usedInviteCode, user.MustChangePassword)));
     }
 
     [Authorize]
     [HttpPost("change-password")]
     public async Task<IActionResult> ChangePassword(ChangePasswordRequest request)
     {
-        // Get current user ID from claims
         var userIdString = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (userIdString == null || !Guid.TryParse(userIdString, out var userId))
         {
@@ -188,10 +169,7 @@ public class AuthController : ControllerBase
         }
 
         var user = await _context.Users.FindAsync(userId);
-        if (user == null)
-        {
-            return NotFound("User not found.");
-        }
+        if (user == null) return NotFound("User not found.");
 
         if (!_passwordHasher.VerifyPassword(request.OldPassword, user.PasswordHash))
         {
@@ -199,45 +177,164 @@ public class AuthController : ControllerBase
         }
 
         user.PasswordHash = _passwordHasher.HashPassword(request.NewPassword);
-        user.MustChangePassword = false; // Reset the flag
+        user.MustChangePassword = false;
 
         await _context.SaveChangesAsync();
+
+        // Revoke every refresh token owned by this user. Any open session using
+        // the old credentials now has to re-authenticate; its refresh cookie
+        // still matches a DB row but that row is marked revoked.
+        await _refreshTokens.RevokeAllForUserAsync(user.Id, RefreshTokenRevocationReason.PasswordChange);
 
         return Ok("Password changed successfully.");
     }
 
     [HttpPost("refresh-token")]
-    public Task<ActionResult<AuthResponse>> Refresh()
+    public async Task<ActionResult<AuthResponse>> Refresh()
     {
-        var refreshToken = Request.Cookies["refreshToken"];
-        if (string.IsNullOrEmpty(refreshToken))
+        var raw = Request.Cookies["refreshToken"];
+        if (string.IsNullOrEmpty(raw))
         {
-            return Task.FromResult<ActionResult<AuthResponse>>(Unauthorized("No refresh token provided."));
+            // Diagnostic: cookies that DID arrive (names only — values are
+            // sensitive). Helps tell "browser dropped cookie" vs "wrong path".
+            _logger.LogInformation(
+                "Refresh failed: no refreshToken cookie. Cookies present: [{Cookies}]. " +
+                "Path={Path}, IsHttps={IsHttps}, Origin={Origin}",
+                string.Join(",", Request.Cookies.Keys),
+                Request.Path,
+                Request.IsHttps,
+                Request.Headers.Origin.ToString());
+            return Unauthorized("No refresh token provided.");
         }
 
-        // TODO: Implement proper Refresh Token persistence and rotation.
-        // For now, we rely on the longer access token expiry (24h) and this endpoint exists 
-        // to prevent 404 errors on the frontend, signalling re-login is required if access token DOES expire.
-        
-        return Task.FromResult<ActionResult<AuthResponse>>(Unauthorized("Refresh token expired or invalid. Please login again."));
+        var validation = await _refreshTokens.ValidateAsync(raw);
+
+        if (validation.IsReuse && validation.Token != null)
+        {
+            // Treat replayed-after-rotation as chain compromise. Revoke every
+            // active token for this user and force a fresh login.
+            _logger.LogWarning(
+                "Refresh-token reuse detected for user {UserId} from IP {Ip}. Revoking chain.",
+                validation.Token.UserId, ClientIp());
+            await _refreshTokens.RevokeAllForUserAsync(
+                validation.Token.UserId, RefreshTokenRevocationReason.ReuseDetected);
+            ClearRefreshTokenCookie();
+            return Unauthorized("Refresh token chain invalidated. Please login again.");
+        }
+
+        if (!validation.IsValid || validation.Token is null)
+        {
+            // Diagnostic: which validation branch failed?
+            var reason = validation.Token is null
+                ? "hash-not-in-db"
+                : validation.Token.RevokedAt != null
+                    ? $"revoked@{validation.Token.RevokedAt:O}/reason={validation.Token.ReasonRevoked}"
+                    : $"expired@{validation.Token.ExpiresAt:O}";
+            _logger.LogInformation(
+                "Refresh failed: validation rejected ({Reason}). UserId={UserId}",
+                reason, validation.Token?.UserId);
+
+            ClearRefreshTokenCookie();
+            return Unauthorized("Refresh token expired or invalid. Please login again.");
+        }
+
+        var user = await _context.Users.FindAsync(validation.Token.UserId);
+        if (user is null || user.IsBanned || user.IsDeleted || !user.IsApproved)
+        {
+            _logger.LogInformation(
+                "Refresh failed: account state. UserId={UserId} IsNull={IsNull} Banned={Banned} Deleted={Deleted} Approved={Approved}",
+                validation.Token.UserId, user is null,
+                user?.IsBanned, user?.IsDeleted, user?.IsApproved);
+            await _refreshTokens.RevokeAsync(
+                validation.Token,
+                RefreshTokenRevocationReason.AccountSuspended,
+                ClientIp());
+            ClearRefreshTokenCookie();
+            return Unauthorized("Account not eligible. Please login again.");
+        }
+
+        var (newRaw, _) = await _refreshTokens.RotateAsync(validation.Token, ClientIp());
+        SetRefreshTokenCookie(newRaw);
+
+        var accessToken = _tokenService.GenerateAccessToken(user);
+        var usedInviteCode = await _context.Invites
+            .Where(i => i.UsedById == user.Id)
+            .Select(i => i.Code)
+            .FirstOrDefaultAsync();
+
+        return Ok(new AuthResponse(accessToken, BuildUserDto(user, usedInviteCode, user.MustChangePassword)));
     }
 
     [HttpPost("logout")]
-    public IActionResult Logout()
+    public async Task<IActionResult> Logout()
     {
-        Response.Cookies.Delete("refreshToken");
+        var raw = Request.Cookies["refreshToken"];
+        if (!string.IsNullOrEmpty(raw))
+        {
+            var validation = await _refreshTokens.ValidateAsync(raw);
+            if (validation.Token != null && validation.Token.RevokedAt == null)
+            {
+                await _refreshTokens.RevokeAsync(
+                    validation.Token,
+                    RefreshTokenRevocationReason.Logout,
+                    ClientIp());
+            }
+        }
+        ClearRefreshTokenCookie();
         return Ok("Logged out.");
     }
 
-    private void SetRefreshToken(string refreshToken)
+    private UserDto BuildUserDto(User user, string? usedInviteCode, bool mustChangePassword)
     {
+        var ratings = string.IsNullOrEmpty(user.ContentRatings)
+            ? new Dictionary<string, string>()
+            : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(
+                  user.ContentRatings, (System.Text.Json.JsonSerializerOptions?)null)
+              ?? new Dictionary<string, string>();
+
+        return new UserDto(
+            user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt,
+            user.IsBanned, user.IsApproved, user.IsRejected,
+            ratings,
+            user.FirstName, user.LastName, user.CreatedByAdmin,
+            usedInviteCode, mustChangePassword);
+    }
+
+    private string? ClientIp() => HttpContext.Connection.RemoteIpAddress?.ToString();
+
+    private void SetRefreshTokenCookie(string rawToken)
+    {
+        // Secure gates on the actual request scheme: HTTPS requests set
+        // Secure=true, HTTP requests don't. Setting Secure over HTTP causes
+        // browsers and HttpClient's CookieContainer to silently drop the
+        // cookie.
+        //
+        // SameSite=Lax: refresh cookie still rides on first-party fetches
+        // and top-level navigations, but is blocked on third-party sub-
+        // resource requests. Strict was tried first but interacted poorly
+        // with Vite's dev proxy in some browser/version combinations,
+        // dropping the cookie on POST to /auth/refresh-token even though
+        // the call was technically same-origin. Lax is the standard refresh-
+        // token-cookie posture per OAuth 2.1 / OWASP guidance: HttpOnly
+        // protects against XSS exfiltration, Path scoping limits exposure
+        // to /api/v1/auth/*, and Lax is sufficient against CSRF for POSTs
+        // because browsers do not include Lax cookies on cross-site POSTs.
         var cookieOptions = new CookieOptions
         {
             HttpOnly = true,
             Expires = DateTime.UtcNow.AddDays(7),
-            SameSite = SameSiteMode.Strict,
-            Secure = true
+            SameSite = SameSiteMode.Lax,
+            Secure = Request.IsHttps,
+            Path = "/api/v1/auth/"
         };
-        Response.Cookies.Append("refreshToken", refreshToken, cookieOptions);
+        Response.Cookies.Append("refreshToken", rawToken, cookieOptions);
+    }
+
+    private void ClearRefreshTokenCookie()
+    {
+        Response.Cookies.Delete("refreshToken", new CookieOptions
+        {
+            Path = "/api/v1/auth/"
+        });
     }
 }

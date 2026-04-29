@@ -8,6 +8,9 @@ interface ProgressBarProps {
     bufferedPercent: number;
     chapters?: Chapter[];
     creditsStart?: number;
+    creditsEnd?: number;
+    introStart?: number;
+    introEnd?: number;
     onSeek: (time: number) => void;
     onSeekStart: () => void;
     onSeekEnd: () => void;
@@ -20,6 +23,9 @@ export function ProgressBar({
     bufferedPercent,
     chapters,
     creditsStart,
+    creditsEnd,
+    introStart,
+    introEnd,
     onSeek,
     onSeekStart,
     onSeekEnd,
@@ -257,6 +263,33 @@ export function ProgressBar({
                         className="absolute top-0 h-full w-0.5 bg-yellow-400/80 z-10"
                         style={{ left: `${(creditsStart / duration) * 100}%` }}
                         title="Credits Start"
+                    />
+                )}
+
+                {/* Intro segment band — auto-detected (or chapter-derived) intro range,
+                    rendered as a subtle blue tint over the bar so users see at a glance
+                    where the skippable opening lives. */}
+                {introStart != null && introEnd != null && duration > 0 && (
+                    <div
+                        className="absolute top-0 h-full bg-blue-400/30 z-[5] pointer-events-none"
+                        style={{
+                            left: `${(introStart / duration) * 100}%`,
+                            width: `${((introEnd - introStart) / duration) * 100}%`
+                        }}
+                        title="Intro"
+                    />
+                )}
+
+                {/* Credits segment band — same visual treatment as intro but yellow,
+                    matching the chapter-marker color convention used for credits chapters. */}
+                {creditsStart != null && creditsEnd != null && duration > 0 && (
+                    <div
+                        className="absolute top-0 h-full bg-yellow-400/30 z-[5] pointer-events-none"
+                        style={{
+                            left: `${(creditsStart / duration) * 100}%`,
+                            width: `${((creditsEnd - creditsStart) / duration) * 100}%`
+                        }}
+                        title="Credits"
                     />
                 )}
 

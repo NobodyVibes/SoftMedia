@@ -88,6 +88,58 @@ export default function ClientSettings({ subsection = 'general' }: ClientSetting
                                 )} />
                             </button>
                         </div>
+
+                        {/* Auto-skip intros (per-device preference) */}
+                        <div className="flex items-center justify-between bg-white/5 rounded-lg px-4 py-3 md:col-span-2">
+                            <div>
+                                <span className="text-white text-sm">Auto-Skip Intros</span>
+                                <p className="text-xs text-gray-500">Automatically skip detected intros instead of showing the Skip button.</p>
+                            </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={localPrefs.autoSkipIntros === 'true'}
+                                aria-label="Auto-skip intros"
+                                onClick={() => updateLocalPref('autoSkipIntros',
+                                    localPrefs.autoSkipIntros === 'true' ? 'false' : 'true'
+                                )}
+                                className={cn(
+                                    "w-12 h-6 rounded-full transition-colors relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                                    localPrefs.autoSkipIntros === 'true' ? "bg-purple-500" : "bg-white/20"
+                                )}
+                            >
+                                <div className={cn(
+                                    "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
+                                    localPrefs.autoSkipIntros === 'true' ? "left-7" : "left-1"
+                                )} />
+                            </button>
+                        </div>
+
+                        {/* Auto-skip credits (per-device preference) */}
+                        <div className="flex items-center justify-between bg-white/5 rounded-lg px-4 py-3 md:col-span-2">
+                            <div>
+                                <span className="text-white text-sm">Auto-Skip Credits</span>
+                                <p className="text-xs text-gray-500">Automatically skip end credits when detected.</p>
+                            </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={localPrefs.autoSkipCredits === 'true'}
+                                aria-label="Auto-skip credits"
+                                onClick={() => updateLocalPref('autoSkipCredits',
+                                    localPrefs.autoSkipCredits === 'true' ? 'false' : 'true'
+                                )}
+                                className={cn(
+                                    "w-12 h-6 rounded-full transition-colors relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                                    localPrefs.autoSkipCredits === 'true' ? "bg-purple-500" : "bg-white/20"
+                                )}
+                            >
+                                <div className={cn(
+                                    "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
+                                    localPrefs.autoSkipCredits === 'true' ? "left-7" : "left-1"
+                                )} />
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

@@ -7,6 +7,7 @@ import { useAuthStore } from '../../store/authStore';
 import { NextEpisodeOverlay, type NextEpisodeInfo } from './NextEpisodeOverlay';
 import { PlayerDebugPanel } from './PlayerDebugPanel';
 import { ProgressBar } from './ProgressBar';
+import { SkipSegmentPill } from './SkipSegmentPill';
 import { useMediaCapabilities, createCapabilitiesWithOverrides } from '../../hooks/useMediaCapabilities';
 import { useLocalPreferences } from '../../hooks/useLocalPreferences';
 
@@ -1320,6 +1321,78 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const displayedBuffered = isTranscoding ? bufferedTime + seekOffset : bufferedTime;
     const bufferedPercent = displayDuration > 0 ? (displayedBuffered / displayDuration) * 100 : 0;
 
+    // Skip-segment pill: derive "playhead is inside intro/credits" from displayed
+    // time and the timecodes on the item. The NextEpisode overlay takes priority
+    // over the credits pill — both can fire on the same threshold and we'd rather
+    // show the structured overlay than a redundant skip button.
+    const inIntro = item.introStart != null
+        && item.introEnd != null
+        && displayedTime >= item.introStart
+        && displayedTime < item.introEnd;
+    const inCredits = !showNextEpisodeOverlay
+        && item.creditsStart != null
+        && item.creditsEnd != null
+        && displayedTime >= item.creditsStart
+        && displayedTime < item.creditsEnd;
+
+    const handleSkipIntro = useCallback(() => {
+        if (item.introEnd == null) return;
+        // Diagnostic: record exactly what the skip handler intends and what the
+        // video actually lands on. Compare these numbers if "skip lands past the
+        // detected intro" — the seek target should equal item.introEnd.
+        console.log('[SkipIntro] introStart=', item.introStart, 'introEnd=', item.introEnd,
+            'currentTime=', currentTime, 'seekOffset=', seekOffset,
+            'displayedTime=', currentTime + seekOffset);
+        handleSeekToTime(item.introEnd);
+        // Wait one frame for the seek to apply, then read back where we landed.
+        requestAnimationFrame(() => {
+            const v = videoRef.current;
+            console.log('[SkipIntro] after seek: video.currentTime=', v?.currentTime,
+                'displayedTime=', (v?.currentTime ?? 0) + seekOffset,
+                'expected=', item.introEnd);
+        });
+    }, [item.introEnd, item.introStart, currentTime, seekOffset]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const handleSkipCredits = useCallback(() => {
+        if (item.creditsEnd == null) return;
+        console.log('[SkipCredits] creditsStart=', item.creditsStart, 'creditsEnd=', item.creditsEnd,
+            'currentTime=', currentTime, 'seekOffset=', seekOffset,
+            'displayedTime=', currentTime + seekOffset);
+        handleSeekToTime(item.creditsEnd);
+        requestAnimationFrame(() => {
+            const v = videoRef.current;
+            console.log('[SkipCredits] after seek: video.currentTime=', v?.currentTime,
+                'displayedTime=', (v?.currentTime ?? 0) + seekOffset,
+                'expected=', item.creditsEnd);
+        });
+    }, [item.creditsEnd, item.creditsStart, currentTime, seekOffset]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Auto-skip on segment entry — fires once per entry so the user can disable
+    // the preference and seek back into the segment without it firing again.
+    const introAutoSkipFiredRef = useRef(false);
+    useEffect(() => {
+        if (!inIntro) {
+            introAutoSkipFiredRef.current = false;
+            return;
+        }
+        if (localPrefs.autoSkipIntros !== 'true') return;
+        if (introAutoSkipFiredRef.current) return;
+        introAutoSkipFiredRef.current = true;
+        handleSkipIntro();
+    }, [inIntro, localPrefs.autoSkipIntros, handleSkipIntro]);
+
+    const creditsAutoSkipFiredRef = useRef(false);
+    useEffect(() => {
+        if (!inCredits) {
+            creditsAutoSkipFiredRef.current = false;
+            return;
+        }
+        if (localPrefs.autoSkipCredits !== 'true') return;
+        if (creditsAutoSkipFiredRef.current) return;
+        creditsAutoSkipFiredRef.current = true;
+        handleSkipCredits();
+    }, [inCredits, localPrefs.autoSkipCredits, handleSkipCredits]);
+
     if (!token || !src) {
         return (
             <div className="w-full max-w-5xl mx-auto aspect-video bg-black rounded-xl flex items-center justify-center">
@@ -1376,6 +1449,20 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         onDismiss={handleDismissToast}
                     />
                 )}
+
+                {/* Skip-segment pills. Auto-skip honors useLocalPreferences;
+                    when off, the pill is a manual button. The pill auto-fades
+                    after 8 seconds so it doesn't loiter on long intros. */}
+                <SkipSegmentPill
+                    label="Skip Intro"
+                    visible={inIntro}
+                    onSkip={handleSkipIntro}
+                />
+                <SkipSegmentPill
+                    label="Skip Credits"
+                    visible={inCredits}
+                    onSkip={handleSkipCredits}
+                />
 
                 {/* Next Episode Overlay (for TV Episodes only) */}
                 {showNextEpisodeOverlay && nextEpisodeInfo && (
@@ -1435,6 +1522,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         bufferedPercent={bufferedPercent}
                         chapters={item.chapters}
                         creditsStart={item.creditsStart}
+                        creditsEnd={item.creditsEnd}
+                        introStart={item.introStart}
+                        introEnd={item.introEnd}
                         framePreviewUrl={framePreviewUrl}
                         onSeek={(time) => {
                             seekTargetRef.current = time;

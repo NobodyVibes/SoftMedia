@@ -166,6 +166,13 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IStreamResultService, StreamResultService>();
         services.AddSingleton<IBinaryLocationService, BinaryLocationService>();
         services.AddSingleton<IMediaProbeService, MediaProbeService>();
+
+        // Intro / credits cross-episode detection.
+        // Extractor and matcher are stateless and reusable as singletons.
+        // The orchestrating service is scoped because it consumes AppDbContext.
+        services.AddSingleton<Services.Media.Detection.IFingerprintExtractor, Services.Media.Detection.ChromaprintFingerprintExtractor>();
+        services.AddSingleton<Services.Media.Detection.ISegmentMatcher, Services.Media.Detection.LongestCommonSegmentMatcher>();
+        services.AddScoped<Services.Media.Detection.IIntroCreditsDetectionService, Services.Media.Detection.IntroCreditsDetectionService>();
         services.AddSingleton<IFileSystem, FileSystem>();
         services.AddSingleton<IProcessRunner, ProcessRunner>();
         

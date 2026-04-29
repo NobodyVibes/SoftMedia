@@ -12,6 +12,9 @@ export interface LocalPreferences {
     subtitleLanguage: string;
     autoSelectSubtitle: string; // 'true' | 'false'
     burnSubtitles: string; // 'auto' | 'always'
+    // Skip-segment behavior (Plex-style per-device preference)
+    autoSkipIntros: string;  // 'true' | 'false'
+    autoSkipCredits: string; // 'true' | 'false'
 }
 
 const BASE_PREFERENCES_KEY = 'softmedia_preferences';
@@ -25,6 +28,8 @@ const defaultPreferences: LocalPreferences = {
     subtitleLanguage: 'off',
     autoSelectSubtitle: 'true',
     burnSubtitles: 'auto',
+    autoSkipIntros: 'false',
+    autoSkipCredits: 'false',
 };
 
 /**

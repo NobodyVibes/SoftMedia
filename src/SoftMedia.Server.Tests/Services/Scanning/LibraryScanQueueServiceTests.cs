@@ -1,11 +1,15 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
+using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Infrastructure;
+using SoftMedia.Server.Services.Media.Detection;
 using SoftMedia.Server.Services.Scanning; // For LibraryScanQueueService and IScannerOrchestrator
 using Xunit;
 
@@ -150,7 +154,70 @@ public class LibraryScanQueueServiceTests
         }
         
         cts.Cancel();
-        
+
         Assert.True(lib2Called, "Second library scan was not processed after first completed.");
+    }
+
+    [Fact]
+    public void EnqueueIntroCreditsDetection_DedupesByTargetSeriesId()
+    {
+        var service = CreateService();
+        var seriesId = Guid.NewGuid();
+
+        var first = service.EnqueueIntroCreditsDetection(seriesId, "Some Show");
+        var second = service.EnqueueIntroCreditsDetection(seriesId, "Some Show");
+
+        Assert.Equal(first.Id, second.Id);
+        Assert.Equal(LibraryScanJobType.IntroCreditsDetection, first.Type);
+        Assert.Equal(seriesId, first.TargetSeriesId);
+    }
+
+    [Fact]
+    public async Task EnqueueIntroCreditsDetection_RunsDetectorViaScopedService()
+    {
+        var service = CreateService();
+        var seriesId = Guid.NewGuid();
+
+        var detector = new Mock<IIntroCreditsDetectionService>();
+        detector
+            .Setup(d => d.DetectAsync(seriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IntroCreditsDetectionResult(EpisodesProcessed: 3, IntrosFound: 2, CreditsFound: 2, FailureReason: null));
+        _mockServiceProvider
+            .Setup(x => x.GetService(typeof(IIntroCreditsDetectionService)))
+            .Returns(detector.Object);
+
+        using var cts = new CancellationTokenSource();
+        var task = service.StartAsync(cts.Token);
+
+        service.EnqueueIntroCreditsDetection(seriesId, "Some Show");
+
+        var called = await WaitForCalledAsync(() =>
+            detector.Verify(d => d.DetectAsync(seriesId, It.IsAny<CancellationToken>()), Times.Once));
+
+        cts.Cancel();
+        Assert.True(called, "Detection service was not called.");
+    }
+
+    [Fact]
+    public void EnqueueIntroCreditsDetection_CarriesTargetSeriesId_OnReturnedJob()
+    {
+        var service = CreateService();
+        var seriesId = Guid.NewGuid();
+
+        var job = service.EnqueueIntroCreditsDetection(seriesId, "Daring Do");
+
+        Assert.Equal(seriesId, job.TargetSeriesId);
+        Assert.Equal(LibraryScanJobType.IntroCreditsDetection, job.Type);
+        Assert.Contains("Daring Do", job.LibraryName);
+    }
+
+    private static async Task<bool> WaitForCalledAsync(Action verify, int retries = 20, int delayMs = 50)
+    {
+        for (int i = 0; i < retries; i++)
+        {
+            try { verify(); return true; }
+            catch (MockException) { await Task.Delay(delayMs); }
+        }
+        return false;
     }
 }

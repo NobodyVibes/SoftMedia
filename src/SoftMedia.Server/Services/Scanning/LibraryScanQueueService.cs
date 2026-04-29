@@ -3,6 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Infrastructure;
+using SoftMedia.Server.Services.Media.Detection;
 
 namespace SoftMedia.Server.Services.Scanning;
 
@@ -20,6 +22,12 @@ public interface ILibraryScanQueueService
     /// Enqueue a global metadata refresh job.
     /// </summary>
     LibraryScanJob EnqueueMetadataRefresh();
+
+    /// <summary>
+    /// Enqueue an intro / credits detection job for a single series. Returns the
+    /// existing job if one is already queued or running for the same series.
+    /// </summary>
+    LibraryScanJob EnqueueIntroCreditsDetection(Guid seriesId, string seriesName);
     
     /// <summary>
     /// Get the status of a specific scan job.
@@ -109,7 +117,7 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
     public LibraryScanJob EnqueueMetadataRefresh()
     {
         // Check if Metadata Refresh is already running/queued
-        var existingJob = _jobs.Values.FirstOrDefault(j => 
+        var existingJob = _jobs.Values.FirstOrDefault(j =>
             j.Type == LibraryScanJobType.MetadataRefresh &&
             (j.Status == LibraryScanStatus.Queued || j.Status == LibraryScanStatus.Running));
 
@@ -124,6 +132,33 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
             Type = LibraryScanJobType.MetadataRefresh,
             LibraryId = Guid.Empty, // Global job
             LibraryName = "Metadata Refresh",
+            Status = LibraryScanStatus.Queued,
+            Stage = LibraryScanStage.Pending,
+            StartedAt = DateTime.UtcNow
+        };
+
+        return EnqueueJob(job);
+    }
+
+    public LibraryScanJob EnqueueIntroCreditsDetection(Guid seriesId, string seriesName)
+    {
+        // Dedup: at most one detection job per series queued or running at a time.
+        var existingJob = _jobs.Values.FirstOrDefault(j =>
+            j.Type == LibraryScanJobType.IntroCreditsDetection &&
+            j.TargetSeriesId == seriesId &&
+            (j.Status == LibraryScanStatus.Queued || j.Status == LibraryScanStatus.Running));
+
+        if (existingJob != null)
+        {
+            return existingJob;
+        }
+
+        var job = new LibraryScanJob
+        {
+            Type = LibraryScanJobType.IntroCreditsDetection,
+            LibraryId = Guid.Empty,
+            LibraryName = $"Intro/Credits: {seriesName}",
+            TargetSeriesId = seriesId,
             Status = LibraryScanStatus.Queued,
             Stage = LibraryScanStage.Pending,
             StartedAt = DateTime.UtcNow
@@ -307,9 +342,9 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
                 });
                 
                 await orchestrator.ExecuteScanAsync(job.LibraryId, progress, stoppingToken);
-                
+
                 // Mark as complete using the LAST captured progress (guaranteed synchronous)
-                
+
                 // Mark as complete using the LAST captured progress (guaranteed synchronous)
                 CompleteJob(job.Id, lastProgress.NewCount, lastProgress.UpdatedCount, lastProgress.SkippedCount, job.ErrorCount);
 
@@ -323,12 +358,37 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
                 {
                     _logger.LogError(ex, "Failed to update recently added cache for library {LibraryId}", job.LibraryId);
                 }
+
+                // Auto-enqueue intro/credits detection for every series in the scanned
+                // library that has ≥2 episodes. The detection service short-circuits on
+                // series whose fingerprints are already populated, so this is cheap on
+                // a stable library and only does real work when episodes were added.
+                try
+                {
+                    await EnqueueDetectionForLibraryAsync(scope.ServiceProvider, job.LibraryId, stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to enqueue intro/credits detection for library {LibraryId}", job.LibraryId);
+                }
             }
             else if (job.Type == LibraryScanJobType.MetadataRefresh)
             {
                 var refreshService = scope.ServiceProvider.GetRequiredService<MetadataRefreshService>();
                 // We'll need to expose a method in MetadataRefreshService that takes the Job
                 await refreshService.RunRefreshJobAsync(job, stoppingToken);
+            }
+            else if (job.Type == LibraryScanJobType.IntroCreditsDetection)
+            {
+                if (job.TargetSeriesId == null)
+                {
+                    FailJob(job.Id, "IntroCreditsDetection job has no TargetSeriesId.");
+                    return;
+                }
+
+                var detector = scope.ServiceProvider.GetRequiredService<IIntroCreditsDetectionService>();
+                var result = await detector.DetectAsync(job.TargetSeriesId.Value, stoppingToken);
+                CompleteJob(job.Id, newItems: 0, updatedItems: result.IntrosFound + result.CreditsFound, skippedItems: 0, errorCount: 0);
             }
         }
         catch (Exception ex)
@@ -346,6 +406,32 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
         private readonly Action<T> _handler;
         public SyncProgress(Action<T> handler) => _handler = handler;
         public void Report(T value) => _handler(value);
+    }
+
+    /// <summary>
+    /// Enqueue an intro/credits detection job for every series in the given library
+    /// that has ≥2 episodes. Skipped entirely when both AutoDetectIntros and
+    /// AutoDetectCredits are disabled.
+    /// </summary>
+    private async Task EnqueueDetectionForLibraryAsync(IServiceProvider scopeServices, Guid libraryId, CancellationToken ct)
+    {
+        var settings = scopeServices.GetRequiredService<ISettingsService>();
+        var detectIntros = await settings.GetSettingAsync("AutoDetectIntros", true);
+        var detectCredits = await settings.GetSettingAsync("AutoDetectCredits", true);
+        if (!detectIntros && !detectCredits) return;
+
+        var db = scopeServices.GetRequiredService<AppDbContext>();
+        var seriesIds = await db.MediaItems
+            .Where(m => m.LibraryId == libraryId
+                && m.Type == MediaType.Series
+                && db.MediaItems.Count(e => e.SeriesId == m.Id && e.Type == MediaType.Episode) >= 2)
+            .Select(m => new { m.Id, m.Title })
+            .ToListAsync(ct);
+
+        foreach (var series in seriesIds)
+        {
+            EnqueueIntroCreditsDetection(series.Id, series.Title);
+        }
     }
 
     private void CleanupOldJobs()

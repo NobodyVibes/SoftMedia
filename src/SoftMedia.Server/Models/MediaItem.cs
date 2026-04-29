@@ -67,6 +67,44 @@ public class MediaItem
     public double? CreditsStart { get; set; }
 
     /// <summary>
+    /// End time (in seconds) of the credits segment. Populated by either chapter
+    /// extraction or cross-episode fingerprint detection. Used by the player's
+    /// "Skip Credits" pill to seek past the outro theme without skipping post-credit
+    /// content.
+    /// </summary>
+    public double? CreditsEnd { get; set; }
+
+    /// <summary>
+    /// Source of the <see cref="CreditsStart"/> / <see cref="CreditsEnd"/> values.
+    /// Auto-detection MUST NOT overwrite a value whose source is <see cref="DetectionSource.Chapter"/>.
+    /// </summary>
+    public DetectionSource? CreditsSource { get; set; }
+
+    /// <summary>
+    /// Start time (in seconds) of the intro / opening theme. Populated by either
+    /// chapter extraction or cross-episode fingerprint detection.
+    /// </summary>
+    public double? IntroStart { get; set; }
+
+    /// <summary>
+    /// End time (in seconds) of the intro / opening theme.
+    /// </summary>
+    public double? IntroEnd { get; set; }
+
+    /// <summary>
+    /// Source of the <see cref="IntroStart"/> / <see cref="IntroEnd"/> values.
+    /// Auto-detection MUST NOT overwrite a value whose source is <see cref="DetectionSource.Chapter"/>.
+    /// </summary>
+    public DetectionSource? IntroSource { get; set; }
+
+    /// <summary>
+    /// Last time the intro/credits detection pipeline attempted to populate timecodes
+    /// for this item. Set on both success and failure so a hard-failing series doesn't
+    /// re-run the expensive fingerprint pass on every scan.
+    /// </summary>
+    public DateTime? LastIntroDetectionUtc { get; set; }
+
+    /// <summary>
     /// Original remote poster URL from the metadata provider.
     /// Promoted from MetadataJson to avoid JSON parsing on every DTO serialization.
     /// The local cached copy is resolved via ImageCacheService at serving time.

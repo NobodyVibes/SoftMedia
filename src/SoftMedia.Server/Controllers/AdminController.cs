@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Infrastructure;
@@ -118,6 +120,35 @@ public class AdminController : ControllerBase
     {
         await _recommendationService.UpdateHeroCacheAsync();
         return Ok(new { success = true, message = "Hero cache refresh completed" });
+    }
+
+    /// <summary>
+    /// Manually enqueue intro/credits detection for a single series. Returns the
+    /// queued (or already-running) job so the admin UI can poll its status.
+    /// </summary>
+    [HttpPost("series/{seriesId:guid}/detect-intros")]
+    public async Task<IActionResult> EnqueueIntroCreditsDetection(
+        Guid seriesId,
+        [FromServices] AppDbContext db,
+        [FromServices] ILibraryScanQueueService queue)
+    {
+        var series = await db.MediaItems
+            .Where(m => m.Id == seriesId && m.Type == MediaType.Series)
+            .Select(m => new { m.Id, m.Title })
+            .FirstOrDefaultAsync();
+
+        if (series == null) return NotFound("Series not found");
+
+        var episodeCount = await db.MediaItems.CountAsync(m => m.SeriesId == seriesId && m.Type == MediaType.Episode);
+        if (episodeCount < 2)
+        {
+            return BadRequest(new { error = "Series needs at least 2 episodes for cross-episode detection." });
+        }
+
+        var job = queue.EnqueueIntroCreditsDetection(series.Id, series.Title);
+        _logger.LogInformation("Admin enqueued intro/credits detection for series {SeriesId} ({Title})", series.Id, series.Title);
+
+        return Ok(new { jobId = job.Id, status = job.Status.ToString() });
     }
 }
 

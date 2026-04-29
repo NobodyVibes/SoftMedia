@@ -131,6 +131,12 @@ public class SettingsService : ISettingsService
             
             // Users
             new() { Key = "AllowUserSignup", Value = "Disabled", Group = "Users", Description = "Control public registration (Disabled, InviteOnly, Enabled)." },
+
+            // Playback — server-wide CPU policy for intro / credits detection.
+            // Per-user "auto-skip" preferences are stored on the client (localStorage)
+            // because skip behavior is a personal device preference, not a server config.
+            new() { Key = "AutoDetectIntros", Value = "true", Group = "Playback", Description = "Run cross-episode fingerprint detection to find episode intros. Disabling skips the head-window CPU cost on scan." },
+            new() { Key = "AutoDetectCredits", Value = "true", Group = "Playback", Description = "Run cross-episode fingerprint detection to find end credits. Disabling skips the tail-window CPU cost on scan." },
         };
 
         foreach (var def in defaults)

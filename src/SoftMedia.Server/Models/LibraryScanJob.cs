@@ -18,7 +18,12 @@ public enum LibraryScanStatus
 public enum LibraryScanJobType
 {
     LibraryScan,
-    MetadataRefresh
+    MetadataRefresh,
+    /// <summary>
+    /// Cross-episode intro / end-credits fingerprint detection for a single series.
+    /// Series id is carried on <see cref="LibraryScanJob.TargetSeriesId"/>.
+    /// </summary>
+    IntroCreditsDetection
 }
 
 public enum LibraryScanStage
@@ -41,6 +46,12 @@ public class LibraryScanJob
     // Nullable for global jobs like Metadata Refresh
     public Guid LibraryId { get; set; }
     public string LibraryName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Series id for series-scoped jobs (currently only <see cref="LibraryScanJobType.IntroCreditsDetection"/>).
+    /// Null for library- or global-scoped jobs.
+    /// </summary>
+    public Guid? TargetSeriesId { get; set; }
     public LibraryScanStatus Status { get; set; } = LibraryScanStatus.Queued;
     public LibraryScanStage Stage { get; set; } = LibraryScanStage.Pending;
     

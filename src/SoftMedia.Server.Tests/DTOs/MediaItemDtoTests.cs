@@ -188,4 +188,40 @@ public class MediaItemDtoTests
         Assert.Equal(9876, dto.Cast![0].ExternalId);
         Assert.Equal(5, dto.Cast[0].Id);
     }
+
+    [Fact]
+    public void FromMediaItem_PropagatesIntroCreditsTimecodesAndSources()
+    {
+        var item = NewItem();
+        item.IntroStart = 12.5;
+        item.IntroEnd = 42.0;
+        item.IntroSource = DetectionSource.Detected;
+        item.CreditsStart = 1320.0;
+        item.CreditsEnd = 1380.0;
+        item.CreditsSource = DetectionSource.Chapter;
+
+        var dto = MediaItemDto.FromMediaItem(item);
+
+        Assert.Equal(12.5, dto.IntroStart);
+        Assert.Equal(42.0, dto.IntroEnd);
+        Assert.Equal(DetectionSource.Detected, dto.IntroSource);
+        Assert.Equal(1320.0, dto.CreditsStart);
+        Assert.Equal(1380.0, dto.CreditsEnd);
+        Assert.Equal(DetectionSource.Chapter, dto.CreditsSource);
+    }
+
+    [Fact]
+    public void FromMediaItem_LeavesIntroCreditsFieldsNull_WhenNotSet()
+    {
+        var item = NewItem();
+
+        var dto = MediaItemDto.FromMediaItem(item);
+
+        Assert.Null(dto.IntroStart);
+        Assert.Null(dto.IntroEnd);
+        Assert.Null(dto.IntroSource);
+        Assert.Null(dto.CreditsStart);
+        Assert.Null(dto.CreditsEnd);
+        Assert.Null(dto.CreditsSource);
+    }
 }

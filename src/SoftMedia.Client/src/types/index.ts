@@ -43,8 +43,15 @@ export interface MediaItem {
     discNumber?: number;
     durationSeconds?: number; // Raw duration in seconds (for audio player)
 
-    // Timecode markers
-    creditsStart?: number; // Seconds from start where credits begin
+    // Timecode markers used by skip pills and the progress bar.
+    // `*Source` distinguishes embedded chapters (always trusted) from
+    // cross-episode auto-detection (best-effort, surfaced in debug panel).
+    creditsStart?: number;
+    creditsEnd?: number;
+    creditsSource?: DetectionSource;
+    introStart?: number;
+    introEnd?: number;
+    introSource?: DetectionSource;
     chapters?: Chapter[]; // All chapter markers
 
     // Phase 2: Extended Quality Metadata
@@ -73,6 +80,12 @@ export interface Chapter {
     startTime: number;
     title: string;
 }
+
+/**
+ * Source of an intro/credits timecode pair on a MediaItem. Mirrors the
+ * server-side DetectionSource enum.
+ */
+export type DetectionSource = 'Chapter' | 'Detected';
 
 // Phase 2: Extended track info types
 export interface AudioTrack {

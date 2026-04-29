@@ -1454,6 +1454,13 @@ export default function SettingsPage() {
                                     <h3 className="text-lg font-semibold text-white mb-4">Scanning Settings</h3>
                                     {renderSettingsGroup('Scanning')}
                                 </div>
+
+                                {/* Playback Detection (server-wide CPU policy for intro/credits fingerprinting) */}
+                                <div className="mt-8 pt-8 border-t border-white/5">
+                                    <h3 className="text-lg font-semibold text-white mb-4">Playback Detection</h3>
+                                    <p className="text-xs text-gray-500 mb-4">Cross-episode fingerprint detection for intros and end credits. Runs once per series after a library scan; cached after that. Per-user "auto-skip" behavior lives under Client Settings → Playback.</p>
+                                    {renderSettingsGroup('Playback')}
+                                </div>
                             </div>
                         )}
 

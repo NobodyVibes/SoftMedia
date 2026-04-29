@@ -71,8 +71,15 @@ public class MediaItemDto
     public string? Resolution { get; set; }
     public Dictionary<string, object>? Metadata { get; set; }
     
-    // Timecode markers for progress bar
+    // Timecode markers for progress bar / skip pills.
+    // Source fields tell the client whether each pair came from embedded chapters
+    // or auto-detection — useful for the player debug panel.
     public double? CreditsStart { get; set; }
+    public double? CreditsEnd { get; set; }
+    public DetectionSource? CreditsSource { get; set; }
+    public double? IntroStart { get; set; }
+    public double? IntroEnd { get; set; }
+    public DetectionSource? IntroSource { get; set; }
     public List<ChapterDto>? Chapters { get; set; }
 
     // User Interaction
@@ -198,6 +205,14 @@ public class MediaItemDto
             dto.Description = item.Overview;
             dto.CommunityRating = item.CommunityRating;
             dto.Rating = item.ContentRating;
+
+            // Skip-pill timecodes
+            dto.CreditsStart = item.CreditsStart;
+            dto.CreditsEnd = item.CreditsEnd;
+            dto.CreditsSource = item.CreditsSource;
+            dto.IntroStart = item.IntroStart;
+            dto.IntroEnd = item.IntroEnd;
+            dto.IntroSource = item.IntroSource;
 
             // Read genres exclusively from relational table
             if (item.MediaItemGenres != null && item.MediaItemGenres.Count > 0)

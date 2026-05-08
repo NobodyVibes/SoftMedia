@@ -33,6 +33,8 @@ export interface MediaItem {
     personalRating?: number;
     isFavorite?: boolean;
     watched?: boolean;
+    // Wave E3 — watchlist flag for the calling user.
+    isWatchlisted?: boolean;
     type?: MediaType;
     seriesId?: string;
     seasonNumber?: number;
@@ -65,6 +67,10 @@ export interface MediaItem {
     audioTracks?: AudioTrack[]; // All audio tracks
     subtitleTracks?: SubtitleTrack[]; // All subtitle tracks
     cast?: CastMember[];
+
+    // Wave E2 — link to the parent collection / franchise for movies. Null
+    // when the movie isn't part of any collection.
+    collectionId?: string;
 }
 
 export interface CastMember {

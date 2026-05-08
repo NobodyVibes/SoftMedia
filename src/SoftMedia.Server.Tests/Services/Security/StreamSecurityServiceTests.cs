@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Security;
+using SoftMedia.Server.Services.Security.LibraryAccess;
 using System.Runtime.InteropServices;
 using Xunit;
 
@@ -38,8 +39,19 @@ public class StreamSecurityServiceTests : IDisposable
         try { Directory.Delete(_tempRoot, recursive: true); } catch { /* best-effort */ }
     }
 
+    /// <summary>
+    /// Stub provider — these tests exercise the path-jail logic, not Wave C ACL.
+    /// Returning Unrestricted means the ACL gate always passes and the
+    /// FileNotFound / Unauthorized / Allowed outcomes still depend purely on
+    /// path validation, exactly as before.
+    /// </summary>
+    private sealed class UnrestrictedAccessProvider : IUserLibraryAccessProvider
+    {
+        public Task<LibraryAccess> GetCurrentAsync() => Task.FromResult(LibraryAccess.Unrestricted);
+    }
+
     private StreamSecurityService NewService() =>
-        new(NullLogger<StreamSecurityService>.Instance);
+        new(new UnrestrictedAccessProvider(), NullLogger<StreamSecurityService>.Instance);
 
     // --- IsPathAuthorized ---------------------------------------------------
 
@@ -125,20 +137,20 @@ public class StreamSecurityServiceTests : IDisposable
     // --- ValidateMediaAccess -----------------------------------------------
 
     [Fact]
-    public void ValidateMediaAccess_NullItem_ReturnsFileNotFound()
+    public async Task ValidateMediaAccess_NullItem_ReturnsFileNotFound()
     {
-        Assert.Equal(MediaAccessResult.FileNotFound, NewService().ValidateMediaAccess(null!));
+        Assert.Equal(MediaAccessResult.FileNotFound, await NewService().ValidateMediaAccessAsync(null!));
     }
 
     [Fact]
-    public void ValidateMediaAccess_ItemWithoutLibrary_ReturnsFileNotFound()
+    public async Task ValidateMediaAccess_ItemWithoutLibrary_ReturnsFileNotFound()
     {
         var item = new MediaItem { Id = Guid.NewGuid(), Path = _fileInside, Title = "x", SortTitle = "x" };
-        Assert.Equal(MediaAccessResult.FileNotFound, NewService().ValidateMediaAccess(item));
+        Assert.Equal(MediaAccessResult.FileNotFound, await NewService().ValidateMediaAccessAsync(item));
     }
 
     [Fact]
-    public void ValidateMediaAccess_FileMissingOnDisk_ReturnsFileNotFound()
+    public async Task ValidateMediaAccess_FileMissingOnDisk_ReturnsFileNotFound()
     {
         var library = new Library { Id = Guid.NewGuid(), Name = "X", Type = LibraryType.Movie, Paths = new List<string> { _libRoot } };
         var item = new MediaItem
@@ -146,11 +158,11 @@ public class StreamSecurityServiceTests : IDisposable
             Id = Guid.NewGuid(), Library = library, Title = "x", SortTitle = "x",
             Path = Path.Combine(_libRoot, "ghost.mkv")
         };
-        Assert.Equal(MediaAccessResult.FileNotFound, NewService().ValidateMediaAccess(item));
+        Assert.Equal(MediaAccessResult.FileNotFound, await NewService().ValidateMediaAccessAsync(item));
     }
 
     [Fact]
-    public void ValidateMediaAccess_FilePresentButOutsideLibrary_ReturnsUnauthorized()
+    public async Task ValidateMediaAccess_FilePresentButOutsideLibrary_ReturnsUnauthorized()
     {
         var library = new Library { Id = Guid.NewGuid(), Name = "X", Type = LibraryType.Movie, Paths = new List<string> { _libRoot } };
         var item = new MediaItem
@@ -158,11 +170,11 @@ public class StreamSecurityServiceTests : IDisposable
             Id = Guid.NewGuid(), Library = library, Title = "x", SortTitle = "x",
             Path = _fileInSibling
         };
-        Assert.Equal(MediaAccessResult.Unauthorized, NewService().ValidateMediaAccess(item));
+        Assert.Equal(MediaAccessResult.Unauthorized, await NewService().ValidateMediaAccessAsync(item));
     }
 
     [Fact]
-    public void ValidateMediaAccess_AllGood_ReturnsAllowed()
+    public async Task ValidateMediaAccess_AllGood_ReturnsAllowed()
     {
         var library = new Library { Id = Guid.NewGuid(), Name = "X", Type = LibraryType.Movie, Paths = new List<string> { _libRoot } };
         var item = new MediaItem
@@ -170,15 +182,15 @@ public class StreamSecurityServiceTests : IDisposable
             Id = Guid.NewGuid(), Library = library, Title = "x", SortTitle = "x",
             Path = _fileInside
         };
-        Assert.Equal(MediaAccessResult.Allowed, NewService().ValidateMediaAccess(item));
+        Assert.Equal(MediaAccessResult.Allowed, await NewService().ValidateMediaAccessAsync(item));
     }
 
     [Fact]
-    public void ValidateMediaAccess_EmptyPath_ReturnsFileNotFound()
+    public async Task ValidateMediaAccess_EmptyPath_ReturnsFileNotFound()
     {
         var library = new Library { Id = Guid.NewGuid(), Name = "X", Type = LibraryType.Movie, Paths = new List<string> { _libRoot } };
         var item = new MediaItem { Id = Guid.NewGuid(), Library = library, Title = "x", SortTitle = "x", Path = "" };
-        Assert.Equal(MediaAccessResult.FileNotFound, NewService().ValidateMediaAccess(item));
+        Assert.Equal(MediaAccessResult.FileNotFound, await NewService().ValidateMediaAccessAsync(item));
     }
 
     // --- Symlink resolution (SDD §6.2 LFI guard) ---------------------------

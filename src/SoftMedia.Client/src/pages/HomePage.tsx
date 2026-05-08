@@ -1,10 +1,36 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useLibraries, useLibraryRecent, useHeroItems } from '../hooks/useLibrary';
 import api from '../services/api';
 import HeroSection from '../components/ui/HeroSection';
 import MediaRow from '../components/ui/MediaRow';
+import { watchlistService } from '../services/watchlistService';
 import { type Library, type MediaItem, MediaType } from '../types';
+
+/**
+ * Wave E3 — the user's Watchlist row. Rendered between the hero and the
+ * Recently Added rows so it sits in the cluster of "user-state" rows
+ * (Watchlist, Continue Watching, …). The component self-suppresses when
+ * the watchlist is empty so users without anything saved don't see an
+ * empty row.
+ */
+function WatchlistRow() {
+    const { data: items, isLoading } = useQuery<MediaItem[]>({
+        queryKey: ['watchlist'],
+        queryFn: () => watchlistService.list(50),
+    });
+
+    if (isLoading) return null;
+    if (!items || items.length === 0) return null;
+
+    return (
+        <MediaRow
+            title="Your Watchlist"
+            items={items}
+        />
+    );
+}
 
 /**
  * Component to handle fetching and rendering a "Recently Added" row for a specific library.
@@ -79,8 +105,13 @@ export default function HomePage() {
                 onMoreInfo={handleMoreInfo}
             />
 
-            {/* Dynamic Recently Added Rows per Library */}
+            {/* User-state rows (Wave E3 watchlist) */}
             <div className="flex flex-col gap-8">
+                <WatchlistRow />
+            </div>
+
+            {/* Dynamic Recently Added Rows per Library */}
+            <div className="flex flex-col gap-8 mt-8">
                 {sortedLibraries?.map(library => (
                     <LibraryRecentRow
                         key={library.id}

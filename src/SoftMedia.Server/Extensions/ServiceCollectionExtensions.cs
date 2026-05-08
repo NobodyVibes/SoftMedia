@@ -14,6 +14,7 @@ using SoftMedia.Server.Services.Background;
 using SoftMedia.Server.Services.Media.Strategies;
 using SoftMedia.Server.Services.Security;
 using SoftMedia.Server.Services.Security.ContentRating;
+using SoftMedia.Server.Services.Security.LibraryAccess;
 using SoftMedia.Server.Hubs;
 using SoftMedia.Server.Helpers;
 
@@ -88,6 +89,11 @@ public static class ServiceCollectionExtensions
         // building the IQueryable.
         services.AddHttpContextAccessor();
         services.AddScoped<IUserContentRatingProvider, UserContentRatingProvider>();
+
+        // Per-library ACL (Wave C). Mirrors the rating-provider pattern —
+        // HttpContext-cached, admin-bypass, fail-open on malformed claim.
+        // Repositories inject this and call it before building the IQueryable.
+        services.AddScoped<IUserLibraryAccessProvider, UserLibraryAccessProvider>();
         return services;
     }
 
@@ -132,6 +138,12 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<GameMetadataProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
         services.AddHttpClient<ComicWikidataProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
 
+        // Wave E2 — OMDb→Wikidata collection bridge. Shares the SDD §4.3
+        // User-Agent handler and the existing Wikidata rate-limiter slot so
+        // it counts against the same budget as the rest of our Wikidata calls.
+        services.AddHttpClient<Services.Metadata.Collections.WikidataCollectionResolver>()
+                .AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+
         services.AddScoped<IMetadataProvider, WikidataProvider>();
         services.AddScoped<IMetadataProvider, TVMazeProvider>();
         services.AddScoped<IMetadataProvider, OMDbProvider>();
@@ -142,11 +154,19 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMetadataProvider, ExifMetadataProvider>();
         services.AddScoped<IMetadataProvider, ComicInfoXmlProvider>();
         services.AddScoped<IMetadataProvider, ComicWikidataProvider>();
+
+        // Wave D — Kodi/XBMC .nfo sidecar readers (network-free, fallback by default).
+        services.AddScoped<IMetadataProvider, Services.Metadata.Nfo.NfoMovieProvider>();
+        services.AddScoped<IMetadataProvider, Services.Metadata.Nfo.NfoTvProvider>();
         
         services.AddScoped<EmbeddedMusicProvider>(); 
         services.AddScoped<ITvMetadataEnricher, TvMetadataEnricher>();
         services.AddScoped<IMetadataAggregator, MetadataAggregator>();
         services.AddScoped<IMetadataRouter, MetadataRouter>();
+
+        // Wave E2 — collection enrichment (OMDb→Wikidata bridge).
+        services.AddScoped<Services.Metadata.Collections.ICollectionEnrichmentService,
+            Services.Metadata.Collections.CollectionEnrichmentService>();
 
         // Media Analysis Strategies (Strategy Pattern for type-specific analysis)
         services.AddScoped<IMediaAnalysisStrategy, VideoAnalysisStrategy>();

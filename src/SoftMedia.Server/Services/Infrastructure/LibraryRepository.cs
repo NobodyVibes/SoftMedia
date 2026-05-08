@@ -4,6 +4,7 @@ using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Security.ContentRating;
+using SoftMedia.Server.Services.Security.LibraryAccess;
 
 namespace SoftMedia.Server.Services.Infrastructure;
 
@@ -11,21 +12,36 @@ public class LibraryRepository : ILibraryRepository
 {
     private readonly AppDbContext _context;
     private readonly IUserContentRatingProvider _ratingProvider;
+    private readonly IUserLibraryAccessProvider _libraryAccessProvider;
 
-    public LibraryRepository(AppDbContext context, IUserContentRatingProvider ratingProvider)
+    public LibraryRepository(
+        AppDbContext context,
+        IUserContentRatingProvider ratingProvider,
+        IUserLibraryAccessProvider libraryAccessProvider)
     {
         _context = context;
         _ratingProvider = ratingProvider;
+        _libraryAccessProvider = libraryAccessProvider;
     }
 
     public async Task<Library?> GetByIdAsync(Guid id)
     {
-        return await _context.Libraries.FindAsync(id);
+        // Wave C — apply per-user ACL. Returning null for a blocked library
+        // (rather than 403 upstream) lines up with SDD §6.2's "404 over 403"
+        // anti-probe rule.
+        var access = await _libraryAccessProvider.GetCurrentAsync();
+        return await _context.Libraries
+            .ApplyLibraryAccessFilter(access)
+            .FirstOrDefaultAsync(l => l.Id == id);
     }
 
     public async Task<IEnumerable<Library>> GetAllAsync()
     {
-        return await _context.Libraries.OrderBy(l => l.Order).ToListAsync();
+        var access = await _libraryAccessProvider.GetCurrentAsync();
+        return await _context.Libraries
+            .ApplyLibraryAccessFilter(access)
+            .OrderBy(l => l.Order)
+            .ToListAsync();
     }
 
     public async Task AddAsync(Library library)
@@ -54,12 +70,24 @@ public class LibraryRepository : ILibraryRepository
 
     public async Task<bool> ExistsAsync(Guid id)
     {
-        return await _context.Libraries.AnyAsync(l => l.Id == id);
+        // Wave C — match GetByIdAsync semantics so existence checks respect ACL.
+        var access = await _libraryAccessProvider.GetCurrentAsync();
+        return await _context.Libraries
+            .ApplyLibraryAccessFilter(access)
+            .AnyAsync(l => l.Id == id);
     }
 
     public async Task<bool> IsPathUsedAsync(string path)
     {
-        // For SQLite with JSON conversion, fetching and checking in memory is reliable and efficient for small sets
+        // Wave C — DELIBERATELY does NOT apply the ACL filter. This is an
+        // admin-only uniqueness check called from CreateLibraryAsync /
+        // UpdateLibraryAsync; the calling endpoints already require
+        // [Authorize(Roles = "Admin")] and admins always have unrestricted
+        // access. Filtering here would be redundant and could mask a real
+        // path collision if a non-admin code path ever called it.
+        //
+        // For SQLite with JSON conversion, fetching and checking in memory
+        // is reliable and efficient for small sets.
         var libraries = await _context.Libraries.AsNoTracking().ToListAsync();
         return libraries.Any(l => l.Paths.Contains(path));
     }
@@ -69,10 +97,24 @@ public class LibraryRepository : ILibraryRepository
         var library = await _context.Libraries.FindAsync(libraryId);
         if (library == null)
         {
-            return new PagedResult<(MediaItem Media, UserMediaInteraction? Interaction)> 
-            { 
-                Items = new List<(MediaItem Media, UserMediaInteraction? Interaction)>(), 
-                TotalCount = 0 
+            return new PagedResult<(MediaItem Media, UserMediaInteraction? Interaction)>
+            {
+                Items = new List<(MediaItem Media, UserMediaInteraction? Interaction)>(),
+                TotalCount = 0
+            };
+        }
+
+        // Wave C — per-user ACL gate. If the library is not in the user's
+        // allow-list, return an empty page so the count number doesn't leak
+        // existence (mirrors the 404-over-403 anti-probe rule). Done before
+        // any other narrowing, so pagination math stays correct.
+        var libraryAccess = await _libraryAccessProvider.GetCurrentAsync();
+        if (!libraryAccess.IsUnrestricted && !libraryAccess.AllowedLibraryIds.Contains(libraryId))
+        {
+            return new PagedResult<(MediaItem Media, UserMediaInteraction? Interaction)>
+            {
+                Items = new List<(MediaItem Media, UserMediaInteraction? Interaction)>(),
+                TotalCount = 0
             };
         }
 
@@ -206,6 +248,15 @@ public class LibraryRepository : ILibraryRepository
 
     public async Task<IEnumerable<string>> GetLibraryGenresAsync(Guid libraryId)
     {
+        // Wave C — refuse to enumerate genres for a library the user can't see.
+        // Returning an empty list (rather than 404 here — controllers translate)
+        // matches the empty-page behaviour of GetLibraryItemsAsync.
+        var libraryAccess = await _libraryAccessProvider.GetCurrentAsync();
+        if (!libraryAccess.IsUnrestricted && !libraryAccess.AllowedLibraryIds.Contains(libraryId))
+        {
+            return Enumerable.Empty<string>();
+        }
+
         var genres = await _context.MediaItemGenres
             .AsNoTracking()
             .Where(mg => mg.MediaItem != null && mg.MediaItem.LibraryId == libraryId && mg.Genre != null)

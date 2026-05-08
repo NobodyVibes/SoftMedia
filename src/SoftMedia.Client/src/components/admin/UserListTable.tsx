@@ -6,6 +6,7 @@ import { useAuthStore } from '../../store/authStore';
 import { toast } from 'sonner';
 import { CreateUserModal } from './CreateUserModal';
 import { RatingsModal } from '../modals/RatingsModal';
+import { LibraryAccessModal } from '../modals/LibraryAccessModal';
 import { ResetPasswordModal } from './ResetPasswordModal';
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
@@ -41,6 +42,7 @@ export const UserListTable: React.FC = () => {
 
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [ratingsModalUser, setRatingsModalUser] = useState<UserDto | null>(null);
+    const [accessModalUser, setAccessModalUser] = useState<UserDto | null>(null);
     const [resetPasswordUser, setResetPasswordUser] = useState<UserDto | null>(null);
 
     // Sorting and Filtering State
@@ -454,12 +456,20 @@ export const UserListTable: React.FC = () => {
                                             )}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
-                                            <button
-                                                onClick={() => setRatingsModalUser(user)}
-                                                className="text-primary hover:text-primary/80 focus-visible:text-primary/80 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none underline rounded"
-                                            >
-                                                Edit Ratings
-                                            </button>
+                                            <div className="flex flex-col gap-1">
+                                                <button
+                                                    onClick={() => setRatingsModalUser(user)}
+                                                    className="text-primary hover:text-primary/80 focus-visible:text-primary/80 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none underline rounded text-left"
+                                                >
+                                                    Edit Ratings
+                                                </button>
+                                                <button
+                                                    onClick={() => setAccessModalUser(user)}
+                                                    className="text-primary hover:text-primary/80 focus-visible:text-primary/80 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none underline rounded text-left"
+                                                >
+                                                    Edit Library Access
+                                                </button>
+                                            </div>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                             {formatDate(user.createdAt)}
@@ -568,6 +578,12 @@ export const UserListTable: React.FC = () => {
                 isOpen={!!ratingsModalUser}
                 onClose={() => setRatingsModalUser(null)}
                 user={ratingsModalUser}
+            />
+
+            <LibraryAccessModal
+                isOpen={!!accessModalUser}
+                onClose={() => setAccessModalUser(null)}
+                user={accessModalUser}
             />
 
             <ResetPasswordModal

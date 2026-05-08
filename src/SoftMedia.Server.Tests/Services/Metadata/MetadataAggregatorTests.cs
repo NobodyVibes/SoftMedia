@@ -52,12 +52,18 @@ public class MetadataAggregatorTests : IDisposable
 
     private MetadataAggregator CreateAggregator()
     {
+        // Wave E2 — collection enrichment is a no-op in these tests.
+        var collectionEnrichment = new Mock<SoftMedia.Server.Services.Metadata.Collections.ICollectionEnrichmentService>();
+        collectionEnrichment.Setup(s => s.EnrichMovieCollectionAsync(It.IsAny<MediaItem>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
         return new MetadataAggregator(
             new[] { _mockProvider.Object },
             _mockRouter.Object,
             _mockSettings.Object,
             _mockImageExtractor.Object,
             _mockTvEnricher.Object,
+            collectionEnrichment.Object,
             _dbContext,
             _mockLogger.Object);
     }

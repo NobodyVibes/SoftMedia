@@ -1,6 +1,6 @@
-import { useMemo, memo } from 'react';
+import { useMemo, memo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Play, ListMusic, Heart, Check, Clock, Star } from 'lucide-react';
+import { Play, ListMusic, ListPlus, Heart, Check, Clock, Star } from 'lucide-react';
 import { type MediaItem, MediaType } from '../../types';
 import QualityBadge from '../ui/QualityBadge';
 import { useAudioStore } from '../../store/audioStore';
@@ -8,6 +8,7 @@ import api from '../../services/api';
 import { getGenreGradient, getGenreColors } from '../../lib/genreColors';
 import LoadingImage from '../ui/LoadingImage';
 import { resolveCardPosterUrl } from '../../lib/mediaImageUrl';
+import { AddToPlaylistMenu } from '../playlists/AddToPlaylistMenu';
 
 interface MediaCardProps {
     item: MediaItem;
@@ -22,6 +23,11 @@ interface MediaCardProps {
 export default memo(function MediaCard({ item, libraryType, groupReady, onImageLoad, onImageError }: MediaCardProps) {
     const navigate = useNavigate();
     const { playTrack, addToQueue } = useAudioStore();
+    // Track-card-only: anchors the AddToPlaylistMenu popover. We render it as
+    // a sibling of the card poster so the menu survives losing :hover on the
+    // card (the play overlay fades out, but the open menu must stay visible).
+    const [showPlaylistMenu, setShowPlaylistMenu] = useState(false);
+    const isTrackCard = item.type === MediaType.Audio || item.type === MediaType.Track;
 
     // Memoize constant property calculations
     const primaryGenre = useMemo(() => item.genres?.[0] || 'Drama', [item.genres]);
@@ -182,6 +188,28 @@ export default memo(function MediaCard({ item, libraryType, groupReady, onImageL
                                     <ListMusic className="w-4 h-4" />
                                 </button>
                             )}
+
+                            {/* Add to Playlist (track cards only). Mirrors the queue
+                                button on the opposite side. The popover lives on
+                                the outer card wrapper (below) so it isn't hidden
+                                when the play overlay fades on mouse-out. */}
+                            {isTrackCard && (
+                                <button
+                                    type="button"
+                                    aria-label={`Add ${item.title ?? 'track'} to playlist`}
+                                    aria-haspopup="menu"
+                                    aria-expanded={showPlaylistMenu}
+                                    className="absolute -left-12 top-1/2 -translate-y-1/2 bg-black/60 backdrop-blur-md min-w-[44px] min-h-[44px] p-2 rounded-full border border-white/10 shadow-xl hover:bg-white/20 focus-visible:bg-white/20 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none text-gray-200 hover:text-white transition-all duration-200 flex items-center justify-center"
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setShowPlaylistMenu(v => !v);
+                                    }}
+                                    title="Add to Playlist"
+                                >
+                                    <ListPlus className="w-4 h-4" />
+                                </button>
+                            )}
                         </div>
                     </div>
 
@@ -308,6 +336,18 @@ export default memo(function MediaCard({ item, libraryType, groupReady, onImageL
                     )}
                 </div>
             </div>
+
+            {/* Track-card playlist popover. Sits OUTSIDE Main Container's
+                overflow-hidden so the dropdown can extend past card bounds.
+                The menu component itself stops click propagation, so selecting
+                a playlist row doesn't bubble to the card-as-button playback
+                handler. */}
+            {isTrackCard && showPlaylistMenu && (
+                <AddToPlaylistMenu
+                    mediaItemIds={[item.id]}
+                    onClose={() => setShowPlaylistMenu(false)}
+                />
+            )}
         </div>
     );
 
@@ -325,18 +365,28 @@ export default memo(function MediaCard({ item, libraryType, groupReady, onImageL
     // <button> because the inner play-overlay IS a <button> and HTML forbids
     // nested interactive elements.
     if (isAudio) {
-        const activate = () => playTrack(item);
+        // Ignore clicks that originate inside an open popover menu (e.g.
+        // the AddToPlaylistMenu hosted on this card). Without this, picking
+        // a playlist would also start playback because the click bubbles up.
+        const activateFromClick = (e: React.MouseEvent<HTMLDivElement>) => {
+            if ((e.target as HTMLElement).closest('[role="menu"]')) return;
+            playTrack(item);
+        };
+        // Force the card to its hover z-index while the playlist popover is
+        // open so the dropdown stacks above neighbouring grid cells, even
+        // after the cursor has left the card.
+        const zClass = showPlaylistMenu ? 'z-50' : 'hover:z-50';
         return (
             <div
                 role="button"
                 tabIndex={0}
                 aria-label={`Play ${item.title ?? 'track'}`}
-                className="block group/card cursor-pointer relative hover:z-50 h-full focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none rounded-lg"
-                onClick={activate}
+                className={`block group/card cursor-pointer relative ${zClass} h-full focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none rounded-lg`}
+                onClick={activateFromClick}
                 onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        activate();
+                        playTrack(item);
                     }
                 }}
             >

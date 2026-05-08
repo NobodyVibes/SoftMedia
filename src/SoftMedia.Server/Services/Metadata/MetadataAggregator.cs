@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Media;
+using SoftMedia.Server.Services.Metadata.Collections;
 
 namespace SoftMedia.Server.Services.Metadata;
 
@@ -21,15 +22,17 @@ public class MetadataAggregator : IMetadataAggregator
     private readonly ISettingsService _settingsService;
     private readonly IImageUrlExtractorService _imageUrlExtractor;
     private readonly ITvMetadataEnricher _tvMetadataEnricher;
+    private readonly ICollectionEnrichmentService _collectionEnrichment;
     private readonly AppDbContext _dbContext;
     private readonly ILogger<MetadataAggregator> _logger;
 
     public MetadataAggregator(
         IEnumerable<IMetadataProvider> providers,
         IMetadataRouter metadataRouter,
-        ISettingsService settingsService, 
+        ISettingsService settingsService,
         IImageUrlExtractorService imageUrlExtractor,
         ITvMetadataEnricher tvMetadataEnricher,
+        ICollectionEnrichmentService collectionEnrichment,
         AppDbContext dbContext,
         ILogger<MetadataAggregator> logger)
     {
@@ -38,6 +41,7 @@ public class MetadataAggregator : IMetadataAggregator
         _settingsService = settingsService;
         _imageUrlExtractor = imageUrlExtractor;
         _tvMetadataEnricher = tvMetadataEnricher;
+        _collectionEnrichment = collectionEnrichment;
         _dbContext = dbContext;
         _logger = logger;
     }
@@ -69,6 +73,21 @@ public class MetadataAggregator : IMetadataAggregator
             }
 
             await ProcessMetadataResultAsync(item, result, deferImageCaching, refreshImages);
+
+            // Wave E2 — collection auto-population for movies. Runs only when:
+            //   - item.Type == Movie (service guards internally),
+            //   - EnableWikidataCollectionLookup setting is true,
+            //   - item has an IMDb ID and lookup hasn't been attempted yet.
+            // The service is failure-tolerant and never throws — collection
+            // grouping is non-essential and shouldn't fail enrichment.
+            try
+            {
+                await _collectionEnrichment.EnrichMovieCollectionAsync(item);
+            }
+            catch (Exception cex)
+            {
+                _logger.LogWarning(cex, "Collection enrichment failed for {Title}; continuing", item.Title);
+            }
         }
         catch (Exception ex)
         {

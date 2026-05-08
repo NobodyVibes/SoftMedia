@@ -125,13 +125,18 @@ export function FilterBar({
                             {[
                                 { id: 'albums', label: 'Albums' },
                                 { id: 'artists', label: 'Artists' },
-                                { id: 'songs', label: 'Tracks' }
+                                { id: 'songs', label: 'Tracks' },
+                                // Playlists live inside the Music library as a
+                                // view-mode tab, not a global sidebar entry
+                                // (they're music-only in v1).
+                                { id: 'playlists', label: 'Playlists' }
                             ].map((option) => (
                                 <button
                                     key={option.id}
+                                    type="button"
                                     onClick={() => onViewModeChange(option.id)}
                                     className={cn(
-                                        "px-3 py-1 text-sm font-medium rounded-md transition-all",
+                                        "px-3 py-1 text-sm font-medium rounded-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
                                         (viewMode || 'artists') === option.id
                                             ? "bg-primary text-white shadow-sm"
                                             : "text-gray-400 hover:text-white hover:bg-white/5"

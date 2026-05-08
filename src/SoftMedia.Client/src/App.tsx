@@ -12,6 +12,8 @@ import ReaderPage from './pages/ReaderPage';
 import SettingsPage from './pages/SettingsPage';
 import MyAccountPage from './pages/MyAccountPage';
 import MediaDetailPage from './pages/MediaDetailPage';
+import PlaylistDetailPage from './pages/PlaylistDetailPage';
+import CollectionDetailPage from './pages/CollectionDetailPage';
 import { PersistentPlayer } from './components/player/PersistentPlayer';
 
 function App() {
@@ -35,6 +37,10 @@ function App() {
             <Route path="/settings/:section/:subsection" element={<SettingsPage />} />
             <Route path="/account" element={<MyAccountPage />} />
             <Route path="/media/:id" element={<MediaDetailPage />} />
+            {/* Playlists index lives inside the Music library as a view-mode
+                tab; we keep only the detail route for direct linking. */}
+            <Route path="/playlists/:id" element={<PlaylistDetailPage />} />
+            <Route path="/collections/:id" element={<CollectionDetailPage />} />
           </Route>
           {/* PlayerPage and ReaderPage are full screen - outside MainLayout */}
           <Route path="/play/:id" element={<PlayerPage />} />

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { useAuthStore } from '../../store/authStore';
 
 interface LoadingImageProps {
     src: string | null | undefined;
@@ -27,6 +28,22 @@ export default function LoadingImage({
     const { ref, inView } = useInView({ triggerOnce: true, rootMargin: '200px' });
     const [status, setStatus] = useState<'idle' | 'loaded' | 'error'>('idle');
     const offViewportSignaledRef = useRef(false);
+
+    // Subscribe to the auth token. Without this, a silent token refresh
+    // (driven by the axios refresh-token interceptor) does NOT trigger a
+    // re-render here, so any <img> rendered before the refresh keeps its
+    // stale token and 401s indefinitely. By selecting the token via Zustand
+    // we re-render when it rotates and `attachAuthToApiUrl` below picks up
+    // the fresh value.
+    const token = useAuthStore((s) => s.token);
+
+    // Reset the failure state when src or token changes — otherwise an image
+    // that 401'd with a stale token stays in `status === 'error'` forever
+    // and never retries with the refreshed token.
+    useEffect(() => {
+        setStatus('idle');
+        offViewportSignaledRef.current = false;
+    }, [src, token]);
 
     // Off-viewport auto-signal: if this slot never enters the viewport within
     // a brief window, tell the cascade coordinator to advance past it. The

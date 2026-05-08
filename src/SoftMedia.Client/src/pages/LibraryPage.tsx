@@ -5,6 +5,7 @@ import { useInView } from 'react-intersection-observer';
 import api from '../services/api';
 import HoverableMediaCardWrapper from '../components/items/HoverableMediaCardWrapper';
 import { FilterBar } from '../components/library/FilterBar';
+import PlaylistsView from '../components/playlists/PlaylistsView';
 import { type MediaItem, type PagedResult, type Library } from '../types';
 import { useMediaHub } from '../hooks/useMediaHub';
 import useSequentialReveal from '../hooks/useSequentialReveal';
@@ -37,6 +38,11 @@ export default function LibraryPage() {
     const [isFavorite, setIsFavorite] = useState<boolean | null>(null);
     const [watched, setWatched] = useState<boolean | null>(null);
     const [viewMode, setViewMode] = useState('artists'); // Default to artists for Music
+
+    // Playlists are user-owned (not part of the library item set), so the
+    // library-items query is skipped when the Playlists tab is active. The
+    // PlaylistsView component renders its own data via React Query.
+    const isPlaylistsView = viewMode === 'playlists' && library?.type === 'Music';
 
     const {
         data,
@@ -72,7 +78,7 @@ export default function LibraryPage() {
             return lastPage.page + 1;
         },
         initialPageParam: 1,
-        enabled: !!id
+        enabled: !!id && !isPlaylistsView,
     });
 
     useEffect(() => {
@@ -96,6 +102,13 @@ export default function LibraryPage() {
 
     // Render content area based on state
     const renderContent = () => {
+        // Music library "Playlists" view-mode tab — playlists are user-owned
+        // data unrelated to the library's media items, so we render a
+        // dedicated grid here instead of the standard card layout.
+        if (isPlaylistsView) {
+            return <PlaylistsView />;
+        }
+
         if (isLoading) {
             return (
                 <div className="flex-1 flex items-center justify-center">

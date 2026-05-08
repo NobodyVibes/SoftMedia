@@ -266,6 +266,71 @@ public class UsersController : ControllerBase
 
         return Ok();
     }
+    /// <summary>
+    /// Wave C — returns the user's per-library allow-list. Empty array means
+    /// "unrestricted" (the default). Admin-only.
+    /// </summary>
+    [HttpGet("{id}/library-access")]
+    public async Task<ActionResult<List<Guid>>> GetUserLibraryAccess(Guid id)
+    {
+        var userExists = await _context.Users.AnyAsync(u => u.Id == id);
+        if (!userExists) return NotFound("User not found.");
+
+        var ids = await _context.UserLibraryAccess
+            .AsNoTracking()
+            .Where(a => a.UserId == id)
+            .Select(a => a.LibraryId)
+            .ToListAsync();
+        return Ok(ids);
+    }
+
+    /// <summary>
+    /// Wave C — replaces the user's per-library allow-list. An empty array
+    /// clears all rows (= unrestricted). Admin-only. Targeting an admin user
+    /// is rejected because admins always bypass ACL.
+    /// </summary>
+    [HttpPut("{id}/library-access")]
+    public async Task<IActionResult> SetUserLibraryAccess(Guid id, SetLibraryAccessRequest request)
+    {
+        var user = await _context.Users.FindAsync(id);
+        if (user == null) return NotFound("User not found.");
+        if (user.Role == UserRole.Admin)
+            return BadRequest("Admins always have access to all libraries.");
+
+        request.LibraryIds ??= new List<Guid>();
+
+        // Validate all library IDs exist BEFORE we mutate anything so the
+        // request is atomic — partial application would leave a confusing
+        // half-applied ACL.
+        if (request.LibraryIds.Count > 0)
+        {
+            var validIds = await _context.Libraries
+                .Where(l => request.LibraryIds.Contains(l.Id))
+                .Select(l => l.Id)
+                .ToListAsync();
+            var unknown = request.LibraryIds.Except(validIds).ToList();
+            if (unknown.Count > 0)
+                return BadRequest($"Unknown library IDs: {string.Join(", ", unknown)}");
+        }
+
+        var existing = await _context.UserLibraryAccess
+            .Where(a => a.UserId == id)
+            .ToListAsync();
+        _context.UserLibraryAccess.RemoveRange(existing);
+
+        foreach (var libraryId in request.LibraryIds.Distinct())
+        {
+            _context.UserLibraryAccess.Add(new UserLibraryAccess
+            {
+                UserId = id,
+                LibraryId = libraryId
+            });
+        }
+
+        await _context.SaveChangesAsync();
+        return Ok();
+    }
+
     [HttpPut("{id}/password")]
     public async Task<IActionResult> ResetUserPassword(Guid id, ResetUserPasswordRequest request)
     {

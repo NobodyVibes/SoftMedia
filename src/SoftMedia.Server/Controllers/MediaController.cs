@@ -7,6 +7,7 @@ using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Security.LibraryAccess;
 
 namespace SoftMedia.Server.Controllers;
 
@@ -18,15 +19,18 @@ public class MediaController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IMediaRetrievalService _mediaRetrievalService;
     private readonly IRecommendationService _recommendationService;
+    private readonly IUserLibraryAccessProvider _libraryAccessProvider;
 
     public MediaController(
-        AppDbContext context, 
+        AppDbContext context,
         IMediaRetrievalService mediaRetrievalService,
-        IRecommendationService recommendationService)
+        IRecommendationService recommendationService,
+        IUserLibraryAccessProvider libraryAccessProvider)
     {
         _context = context;
         _mediaRetrievalService = mediaRetrievalService;
         _recommendationService = recommendationService;
+        _libraryAccessProvider = libraryAccessProvider;
     }
 
 
@@ -146,11 +150,16 @@ public class MediaController : ControllerBase
 
         var searchPattern = $"%{query}%";
         var excludedTypes = new[] { MediaType.Episode, MediaType.Audio };
-        var globalLimit = limit * 5; // Bounded global search to prevent explosive memory allocation 
+        var globalLimit = limit * 5; // Bounded global search to prevent explosive memory allocation
+
+        // Wave C — apply per-user library ACL before any other narrowing so
+        // pagination/limit math operates on the user's visible set only.
+        var access = await _libraryAccessProvider.GetCurrentAsync();
 
         // Consolidated table scan — a single query across all libraries is exponentially faster than looping
         var matchingItems = await _context.MediaItems
             .AsNoTracking()
+            .ApplyLibraryAccessFilter(access)
             .Include(m => m.Library)
             .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
             .Where(m => !excludedTypes.Contains(m.Type))

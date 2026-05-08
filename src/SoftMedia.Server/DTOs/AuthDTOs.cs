@@ -25,6 +25,12 @@ public record UpdateUserRatingsRequest(Dictionary<string, string> ContentRatings
 
 public record ResetUserPasswordRequest(string NewPassword);
 
+// Wave C — per-user library ACL. An empty list means "unrestricted" (default).
+public class SetLibraryAccessRequest
+{
+    public List<Guid>? LibraryIds { get; set; }
+}
+
 // Invite DTOs
 public record InviteDto(
     string Code,

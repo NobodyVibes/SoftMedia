@@ -121,6 +121,14 @@ public class SettingsService : ISettingsService
             new() { Key = "OMDbDailyCount", Value = "0", Group = "Internal", Description = "Internal: Daily OMDb request counter." },
             new() { Key = "OMDbCountDate", Value = "", Group = "Internal", Description = "Internal: Date of last OMDb counter reset (UTC)." },
             new() { Key = "TVProvider", Value = "TVMaze", Group = "Metadata", Description = "Primary API for TV metadata." },
+            // Wave D — fallback providers for movies/TV when the primary returns nothing usable.
+            // "Nfo" reads local Kodi-style sidecar files; "None" disables fallback.
+            new() { Key = "MovieFallbackProvider", Value = "Nfo", Group = "Metadata", Description = "Fallback provider for movies when the primary returns no usable metadata. Possible values: Nfo, None." },
+            new() { Key = "TVFallbackProvider", Value = "Nfo", Group = "Metadata", Description = "Fallback provider for TV when the primary returns no usable metadata. Possible values: Nfo, None." },
+            // Wave E2 — collection auto-population. When enabled, OMDb-sourced movies
+            // are bridged to Wikidata's series graph via IMDb ID for franchise grouping.
+            // Disable to keep enrichment fully OMDb-only at the cost of losing auto collections.
+            new() { Key = "EnableWikidataCollectionLookup", Value = "true", Group = "Metadata", Description = "Use Wikidata to auto-detect movie franchises (Lord of the Rings, John Wick, etc.) by IMDb ID. Manual collections still work when disabled." },
             new() { Key = "MusicProviderPrimary", Value = "Embedded", Group = "Metadata", Description = "Primary API for Music metadata." },
             new() { Key = "MusicProviderFallback", Value = "MusicBrainz", Group = "Metadata", Description = "Fallback API for Music metadata." },
             new() { Key = "BookProvider", Value = "Open Library", Group = "Metadata", Description = "Primary API for Book metadata." },

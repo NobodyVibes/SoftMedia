@@ -173,6 +173,24 @@ public class MediaItem
 
     public int? TrackNumber { get; set; }
     public int? DiscNumber { get; set; }
+
+    // Wave E2 — optional movie franchise / collection link.
+    // Null for items not in any collection. SetNull on collection delete so
+    // the row stays in the library if the collection is removed.
+    public Guid? CollectionId { get; set; }
+    public Collection? Collection { get; set; }
+
+    /// <summary>
+    /// Wave E2 — sentinel marker tracking whether the OMDb→Wikidata collection
+    /// resolver has been attempted for this item. Mirrors the comic-provider
+    /// "EMPTY" sentinel pattern at MetadataAggregator.cs lines 58-67. Avoids
+    /// re-querying Wikidata on every metadata refresh for movies that have
+    /// no series. Three values:
+    ///   - null  => never attempted; resolver should run.
+    ///   - true  => attempt found a collection; CollectionId is set.
+    ///   - false => attempt found no series; do not retry.
+    /// </summary>
+    public bool? CollectionLookupAttempted { get; set; }
 }
 
 public enum MediaType

@@ -2,6 +2,7 @@ import { type MediaItem } from '../../types';
 import { Trophy, DollarSign, Film, Pen } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
 import CastStripItem from './CastStripItem';
+import CollectionStripSection from './CollectionStripSection';
 
 interface MovieDetailViewProps {
     item: MediaItem;
@@ -54,6 +55,12 @@ export default function MovieDetailView({ item }: MovieDetailViewProps) {
                         </div>
                     </div>
                 )}
+
+                {/* Wave E2 — "More from this collection" strip. The component
+                    self-suppresses (renders nothing) when the API returns 204,
+                    so the section only appears when there are ≥2 visible
+                    siblings in the same franchise. */}
+                <CollectionStripSection movieId={item.id} />
 
                 {/* Crew & Details Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

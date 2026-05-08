@@ -62,7 +62,7 @@ public class BookControllerThumbnailTests : IDisposable
     {
         var item = Item(".cbz");
         _repo.Setup(r => r.GetByIdWithLibraryAsync(item.Id)).ReturnsAsync(item);
-        _security.Setup(s => s.ValidateMediaAccess(item)).Returns(MediaAccessResult.Allowed);
+        _security.Setup(s => s.ValidateMediaAccessAsync(item)).ReturnsAsync(MediaAccessResult.Allowed);
         _comic.Setup(c => c.IsSupportedArchive(item.Path)).Returns(true);
         _thumbs.Setup(t => t.GetAsync(item.Path, 3, 160, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new byte[] { 1, 2, 3 });
@@ -79,7 +79,7 @@ public class BookControllerThumbnailTests : IDisposable
     {
         var item = Item(".cbz");
         _repo.Setup(r => r.GetByIdWithLibraryAsync(item.Id)).ReturnsAsync(item);
-        _security.Setup(s => s.ValidateMediaAccess(item)).Returns(MediaAccessResult.Allowed);
+        _security.Setup(s => s.ValidateMediaAccessAsync(item)).ReturnsAsync(MediaAccessResult.Allowed);
         _comic.Setup(c => c.IsSupportedArchive(item.Path)).Returns(true);
         _thumbs.Setup(t => t.GetAsync(item.Path, 1, It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new byte[] { 0 });
@@ -100,7 +100,7 @@ public class BookControllerThumbnailTests : IDisposable
     {
         var item = Item(".pdf");
         _repo.Setup(r => r.GetByIdWithLibraryAsync(item.Id)).ReturnsAsync(item);
-        _security.Setup(s => s.ValidateMediaAccess(item)).Returns(MediaAccessResult.Allowed);
+        _security.Setup(s => s.ValidateMediaAccessAsync(item)).ReturnsAsync(MediaAccessResult.Allowed);
         _comic.Setup(c => c.IsSupportedArchive(item.Path)).Returns(false);
 
         var result = await NewController().GetThumbnail(item.Id, 1, null, CancellationToken.None);
@@ -119,7 +119,7 @@ public class BookControllerThumbnailTests : IDisposable
     {
         var item = Item(".cbz");
         _repo.Setup(r => r.GetByIdWithLibraryAsync(item.Id)).ReturnsAsync(item);
-        _security.Setup(s => s.ValidateMediaAccess(item)).Returns(MediaAccessResult.Allowed);
+        _security.Setup(s => s.ValidateMediaAccessAsync(item)).ReturnsAsync(MediaAccessResult.Allowed);
         _comic.Setup(c => c.IsSupportedArchive(item.Path)).Returns(true);
         _thumbs.Setup(t => t.GetAsync(item.Path, 99, It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((byte[]?)null);
@@ -129,13 +129,14 @@ public class BookControllerThumbnailTests : IDisposable
     }
 
     [Fact]
-    public async Task GetThumbnail_ForbidsUnauthorisedAccess()
+    public async Task GetThumbnail_ReturnsNotFoundForUnauthorisedAccess()
     {
+        // Wave C — Unauthorized maps to 404 (anti-probe per SDD §6.2).
         var item = Item(".cbz");
         _repo.Setup(r => r.GetByIdWithLibraryAsync(item.Id)).ReturnsAsync(item);
-        _security.Setup(s => s.ValidateMediaAccess(item)).Returns(MediaAccessResult.Unauthorized);
+        _security.Setup(s => s.ValidateMediaAccessAsync(item)).ReturnsAsync(MediaAccessResult.Unauthorized);
 
         var result = await NewController().GetThumbnail(item.Id, 1, null, CancellationToken.None);
-        Assert.IsType<ForbidResult>(result);
+        Assert.IsType<NotFoundResult>(result);
     }
 }

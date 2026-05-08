@@ -71,8 +71,9 @@ public class AudioController : ControllerBase
         }
 
         // 2. Fallback: extract embedded cover art from the audio file via TagLib.
-        // The audio file path must pass the library-jail check before we open it.
-        var access = _streamSecurity.ValidateMediaAccess(item);
+        // The audio file path must pass the library-jail check (and Wave C
+        // per-user ACL) before we open it.
+        var access = await _streamSecurity.ValidateMediaAccessAsync(item);
         if (access != MediaAccessResult.Allowed)
         {
             return NotFound();

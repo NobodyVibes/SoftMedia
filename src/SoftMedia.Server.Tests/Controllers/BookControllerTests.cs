@@ -50,7 +50,7 @@ public class BookControllerTests
     {
         var item = Item(".cbz");
         _repo.Setup(r => r.GetByIdWithLibraryAsync(item.Id)).ReturnsAsync(item);
-        _security.Setup(s => s.ValidateMediaAccess(item)).Returns(MediaAccessResult.Allowed);
+        _security.Setup(s => s.ValidateMediaAccessAsync(item)).ReturnsAsync(MediaAccessResult.Allowed);
         _comic.Setup(c => c.IsSupportedArchive(item.Path)).Returns(true);
         _comic.Setup(c => c.GetPageCountAsync(item.Path, It.IsAny<CancellationToken>())).ReturnsAsync(42);
 
@@ -67,7 +67,7 @@ public class BookControllerTests
     {
         var item = Item(".pdf");
         _repo.Setup(r => r.GetByIdWithLibraryAsync(item.Id)).ReturnsAsync(item);
-        _security.Setup(s => s.ValidateMediaAccess(item)).Returns(MediaAccessResult.Allowed);
+        _security.Setup(s => s.ValidateMediaAccessAsync(item)).ReturnsAsync(MediaAccessResult.Allowed);
         _comic.Setup(c => c.IsSupportedArchive(item.Path)).Returns(false);
 
         var result = await NewController().GetInfo(item.Id, CancellationToken.None);
@@ -83,7 +83,7 @@ public class BookControllerTests
     {
         var id = Guid.NewGuid();
         _repo.Setup(r => r.GetByIdWithLibraryAsync(id)).ReturnsAsync((MediaItem?)null);
-        _security.Setup(s => s.ValidateMediaAccess(It.IsAny<MediaItem>())).Returns(MediaAccessResult.FileNotFound);
+        _security.Setup(s => s.ValidateMediaAccessAsync(It.IsAny<MediaItem>())).ReturnsAsync(MediaAccessResult.FileNotFound);
 
         var result = await NewController().GetInfo(id, CancellationToken.None);
 
@@ -91,15 +91,17 @@ public class BookControllerTests
     }
 
     [Fact]
-    public async Task GetInfo_ForbidsUnauthorizedAccess()
+    public async Task GetInfo_ReturnsNotFoundForUnauthorizedAccess()
     {
+        // Wave C — Unauthorized maps to 404 (anti-probe per SDD §6.2). This
+        // covers both the LFI rejection branch and per-user library ACL.
         var item = Item(".cbz");
         _repo.Setup(r => r.GetByIdWithLibraryAsync(item.Id)).ReturnsAsync(item);
-        _security.Setup(s => s.ValidateMediaAccess(item)).Returns(MediaAccessResult.Unauthorized);
+        _security.Setup(s => s.ValidateMediaAccessAsync(item)).ReturnsAsync(MediaAccessResult.Unauthorized);
 
         var result = await NewController().GetInfo(item.Id, CancellationToken.None);
 
-        Assert.IsType<ForbidResult>(result.Result);
+        Assert.IsType<NotFoundResult>(result.Result);
     }
 
     [Fact]
@@ -107,7 +109,7 @@ public class BookControllerTests
     {
         var item = Item(".cbz");
         _repo.Setup(r => r.GetByIdWithLibraryAsync(item.Id)).ReturnsAsync(item);
-        _security.Setup(s => s.ValidateMediaAccess(item)).Returns(MediaAccessResult.Allowed);
+        _security.Setup(s => s.ValidateMediaAccessAsync(item)).ReturnsAsync(MediaAccessResult.Allowed);
         _comic.Setup(c => c.IsSupportedArchive(item.Path)).Returns(true);
         _comic.Setup(c => c.GetPageAsync(item.Path, 3, It.IsAny<CancellationToken>()))
               .ReturnsAsync(new ComicPage(new byte[] { 9, 9, 9 }, "image/png"));
@@ -124,7 +126,7 @@ public class BookControllerTests
     {
         var item = Item(".cbz");
         _repo.Setup(r => r.GetByIdWithLibraryAsync(item.Id)).ReturnsAsync(item);
-        _security.Setup(s => s.ValidateMediaAccess(item)).Returns(MediaAccessResult.Allowed);
+        _security.Setup(s => s.ValidateMediaAccessAsync(item)).ReturnsAsync(MediaAccessResult.Allowed);
         _comic.Setup(c => c.IsSupportedArchive(item.Path)).Returns(true);
         _comic.Setup(c => c.GetPageAsync(item.Path, 999, It.IsAny<CancellationToken>()))
               .ReturnsAsync((ComicPage?)null);
@@ -139,7 +141,7 @@ public class BookControllerTests
     {
         var item = Item(".pdf");
         _repo.Setup(r => r.GetByIdWithLibraryAsync(item.Id)).ReturnsAsync(item);
-        _security.Setup(s => s.ValidateMediaAccess(item)).Returns(MediaAccessResult.Allowed);
+        _security.Setup(s => s.ValidateMediaAccessAsync(item)).ReturnsAsync(MediaAccessResult.Allowed);
         _comic.Setup(c => c.IsSupportedArchive(item.Path)).Returns(false);
 
         var result = await NewController().GetPage(item.Id, 1, CancellationToken.None);
@@ -155,14 +157,15 @@ public class BookControllerTests
     }
 
     [Fact]
-    public async Task GetPage_ForbidsUnauthorizedAccess()
+    public async Task GetPage_ReturnsNotFoundForUnauthorizedAccess()
     {
+        // Wave C — Unauthorized maps to 404 (anti-probe per SDD §6.2).
         var item = Item(".cbz");
         _repo.Setup(r => r.GetByIdWithLibraryAsync(item.Id)).ReturnsAsync(item);
-        _security.Setup(s => s.ValidateMediaAccess(item)).Returns(MediaAccessResult.Unauthorized);
+        _security.Setup(s => s.ValidateMediaAccessAsync(item)).ReturnsAsync(MediaAccessResult.Unauthorized);
 
         var result = await NewController().GetPage(item.Id, 1, CancellationToken.None);
 
-        Assert.IsType<ForbidResult>(result);
+        Assert.IsType<NotFoundResult>(result);
     }
 }

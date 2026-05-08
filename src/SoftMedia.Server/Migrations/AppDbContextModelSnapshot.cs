@@ -133,6 +133,42 @@ namespace SoftMedia.Server.Migrations
                     b.ToTable("Chapters");
                 });
 
+            modelBuilder.Entity("SoftMedia.Server.Models.Collection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Overview")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PosterUrl")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("WikidataId")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WikidataId")
+                        .IsUnique();
+
+                    b.ToTable("Collections");
+                });
+
             modelBuilder.Entity("SoftMedia.Server.Models.Genre", b =>
                 {
                     b.Property<int>("Id")
@@ -362,6 +398,12 @@ namespace SoftMedia.Server.Migrations
                     b.Property<long?>("Bitrate")
                         .HasColumnType("INTEGER");
 
+                    b.Property<Guid?>("CollectionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool?>("CollectionLookupAttempted")
+                        .HasColumnType("INTEGER");
+
                     b.Property<double?>("CommunityRating")
                         .HasColumnType("REAL");
 
@@ -518,6 +560,8 @@ namespace SoftMedia.Server.Migrations
 
                     b.HasIndex("ArtistId");
 
+                    b.HasIndex("CollectionId");
+
                     b.HasIndex("LibraryId");
 
                     b.HasIndex("SeasonId");
@@ -623,6 +667,67 @@ namespace SoftMedia.Server.Migrations
                     b.HasIndex("Name");
 
                     b.ToTable("Persons");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.Playlist", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsPublic")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.ToTable("Playlists");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.PlaylistItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("AddedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("MediaItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Order")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("PlaylistId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaItemId");
+
+                    b.HasIndex("PlaylistId", "Order");
+
+                    b.ToTable("PlaylistItems");
                 });
 
             modelBuilder.Entity("SoftMedia.Server.Models.ProviderMetadataCache", b =>
@@ -877,6 +982,21 @@ namespace SoftMedia.Server.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("SoftMedia.Server.Models.UserLibraryAccess", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("LibraryId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("UserId", "LibraryId");
+
+                    b.HasIndex("LibraryId");
+
+                    b.ToTable("UserLibraryAccess");
+                });
+
             modelBuilder.Entity("SoftMedia.Server.Models.UserMediaInteraction", b =>
                 {
                     b.Property<Guid>("UserId")
@@ -894,6 +1014,9 @@ namespace SoftMedia.Server.Migrations
                     b.Property<bool>("IsWatched")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("IsWatchlisted")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime?>("LastPlayed")
                         .HasColumnType("TEXT");
 
@@ -902,6 +1025,9 @@ namespace SoftMedia.Server.Migrations
 
                     b.Property<int?>("Rating")
                         .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("WatchlistedAt")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("UserId", "MediaItemId");
 
@@ -1097,6 +1223,11 @@ namespace SoftMedia.Server.Migrations
                         .HasForeignKey("ArtistId")
                         .OnDelete(DeleteBehavior.Cascade);
 
+                    b.HasOne("SoftMedia.Server.Models.Collection", "Collection")
+                        .WithMany("Items")
+                        .HasForeignKey("CollectionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("SoftMedia.Server.Models.Library", "Library")
                         .WithMany()
                         .HasForeignKey("LibraryId")
@@ -1115,6 +1246,8 @@ namespace SoftMedia.Server.Migrations
                     b.Navigation("Album");
 
                     b.Navigation("Artist");
+
+                    b.Navigation("Collection");
 
                     b.Navigation("Library");
 
@@ -1170,6 +1303,36 @@ namespace SoftMedia.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("MediaItem");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.Playlist", b =>
+                {
+                    b.HasOne("SoftMedia.Server.Models.User", "Owner")
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Owner");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.PlaylistItem", b =>
+                {
+                    b.HasOne("SoftMedia.Server.Models.MediaItem", "MediaItem")
+                        .WithMany()
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SoftMedia.Server.Models.Playlist", "Playlist")
+                        .WithMany("Items")
+                        .HasForeignKey("PlaylistId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaItem");
+
+                    b.Navigation("Playlist");
                 });
 
             modelBuilder.Entity("SoftMedia.Server.Models.ProviderMetadataCache", b =>
@@ -1229,6 +1392,25 @@ namespace SoftMedia.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("MediaItem");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.UserLibraryAccess", b =>
+                {
+                    b.HasOne("SoftMedia.Server.Models.Library", "Library")
+                        .WithMany()
+                        .HasForeignKey("LibraryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SoftMedia.Server.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Library");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("SoftMedia.Server.Models.UserMediaInteraction", b =>
@@ -1299,6 +1481,11 @@ namespace SoftMedia.Server.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("SoftMedia.Server.Models.Collection", b =>
+                {
+                    b.Navigation("Items");
+                });
+
             modelBuilder.Entity("SoftMedia.Server.Models.MediaItem", b =>
                 {
                     b.Navigation("AudioTracks");
@@ -1310,6 +1497,11 @@ namespace SoftMedia.Server.Migrations
                     b.Navigation("MediaItemGenres");
 
                     b.Navigation("SubtitleTracks");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.Playlist", b =>
+                {
+                    b.Navigation("Items");
                 });
 #pragma warning restore 612, 618
         }

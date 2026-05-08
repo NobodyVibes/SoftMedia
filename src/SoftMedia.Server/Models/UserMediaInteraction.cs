@@ -31,4 +31,11 @@ public class UserMediaInteraction
     /// Currently used for EPUB CFI (Canonical Fragment Identifier).
     /// </summary>
     public string? BookLocation { get; set; }
+
+    // Wave E3 — Watchlist. Single boolean flag works across every MediaType
+    // (movies, series, books, comics, albums) so the user has one place to
+    // collect "I want to get to this later". Sort by WatchlistedAt desc on
+    // the home-page row.
+    public bool IsWatchlisted { get; set; }
+    public DateTime? WatchlistedAt { get; set; }
 }

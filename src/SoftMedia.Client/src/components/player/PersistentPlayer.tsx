@@ -6,8 +6,9 @@ import {
     Play, Pause, SkipForward, SkipBack,
     Volume2, VolumeX, Shuffle, Repeat, Repeat1,
     List, X, RotateCcw, RotateCw, ChevronUp, ChevronDown,
-    Maximize2, Minimize2
+    Maximize2, Minimize2, ListPlus
 } from 'lucide-react';
+import { AddToPlaylistMenu } from '../playlists/AddToPlaylistMenu';
 import { API_URL } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
@@ -62,6 +63,15 @@ export const PersistentPlayer: React.FC = () => {
     const [showQueue, setShowQueue] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
     const [isFullScreen, setIsFullScreen] = useState(false); // Explicit Full Screen Mode
+    // "Add to playlist" popover, anchored to the trigger in either view.
+    // Single piece of state because only one player is visible at a time.
+    const [showPlaylistMenu, setShowPlaylistMenu] = useState(false);
+    // Close the menu when the playing track changes so the user can't
+    // accidentally add the next track to a playlist after the queue advances.
+    const currentTrackId = currentTrack?.id;
+    useEffect(() => {
+        setShowPlaylistMenu(false);
+    }, [currentTrackId]);
 
     // Visualizer state
     const { isEnabled: visualizerEnabled, toggle: toggleVisualizer } = useVisualizerStore();
@@ -585,6 +595,32 @@ export const PersistentPlayer: React.FC = () => {
                                         {isFullScreen ? <Minimize2 size={24} /> : <Maximize2 size={24} />}
                                     </button>
 
+                                    {/* Add current track to a playlist. Anchored on the
+                                        header bar of the expanded view, opens downward. */}
+                                    <div className="relative">
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPlaylistMenu(v => !v)}
+                                            aria-label="Add current track to a playlist"
+                                            aria-haspopup="menu"
+                                            aria-expanded={showPlaylistMenu}
+                                            className={cn(
+                                                "p-2 transition min-w-[44px] min-h-[44px] flex items-center justify-center rounded",
+                                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                                                showPlaylistMenu ? "text-primary" : "text-gray-400 hover:text-white focus-visible:text-white"
+                                            )}
+                                            title="Add to playlist"
+                                        >
+                                            <ListPlus size={24} />
+                                        </button>
+                                        {showPlaylistMenu && (
+                                            <AddToPlaylistMenu
+                                                mediaItemIds={[currentTrack.id]}
+                                                onClose={() => setShowPlaylistMenu(false)}
+                                            />
+                                        )}
+                                    </div>
+
                                     <button
                                         type="button"
                                         onClick={() => setShowQueue(!showQueue)}
@@ -996,6 +1032,34 @@ export const PersistentPlayer: React.FC = () => {
                             >
                                 <Maximize2 size={20} />
                             </button>
+
+                            {/* Add current track to a playlist. Collapsed bar sits at
+                                the bottom of the viewport, so the popover opens
+                                upward to stay on-screen. */}
+                            <div className="relative">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPlaylistMenu(v => !v)}
+                                    aria-label="Add current track to a playlist"
+                                    aria-haspopup="menu"
+                                    aria-expanded={showPlaylistMenu}
+                                    className={cn(
+                                        "p-2 transition rounded-full min-w-[44px] min-h-[44px] flex items-center justify-center",
+                                        "hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                                        showPlaylistMenu ? "text-primary" : "text-gray-400 hover:text-white focus-visible:text-white"
+                                    )}
+                                    title="Add to playlist"
+                                >
+                                    <ListPlus size={20} />
+                                </button>
+                                {showPlaylistMenu && (
+                                    <AddToPlaylistMenu
+                                        mediaItemIds={[currentTrack.id]}
+                                        onClose={() => setShowPlaylistMenu(false)}
+                                        placement="up"
+                                    />
+                                )}
+                            </div>
 
                             <button
                                 type="button"

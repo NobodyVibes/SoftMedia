@@ -61,5 +61,15 @@ export const userService = {
 
     async resetUserPassword(userId: string, newPassword: string): Promise<void> {
         await api.put(`/users/${userId}/password`, { newPassword });
+    },
+
+    // Wave C — per-user library ACL. Empty array means "unrestricted" (default).
+    async getUserLibraryAccess(userId: string): Promise<string[]> {
+        const response = await api.get<string[]>(`/users/${userId}/library-access`);
+        return response.data;
+    },
+
+    async setUserLibraryAccess(userId: string, libraryIds: string[]): Promise<void> {
+        await api.put(`/users/${userId}/library-access`, { libraryIds });
     }
 };

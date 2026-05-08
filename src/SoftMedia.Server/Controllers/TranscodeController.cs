@@ -78,10 +78,10 @@ public class TranscodeController : ControllerBase
 
             if (mediaItem?.Library == null) return NotFound("Media item not found");
 
-            // Centralized Security Check
-            var accessResult = _streamSecurityService.ValidateMediaAccess(mediaItem);
+            // Centralized Security Check (Wave C — also covers per-user library ACL)
+            var accessResult = await _streamSecurityService.ValidateMediaAccessAsync(mediaItem);
             if (accessResult == MediaAccessResult.FileNotFound) return NotFound("File not found on disk.");
-            if (accessResult == MediaAccessResult.Unauthorized) return Forbid();
+            if (accessResult == MediaAccessResult.Unauthorized) return NotFound();
 
             var token = Request.GetToken();
             var plan = await _streamPlanService.ComputeStreamPlanAsync(id, mediaItem, capabilities, token ?? string.Empty);
@@ -110,9 +110,9 @@ public class TranscodeController : ControllerBase
             
             if (mediaItem?.Library == null) return NotFound("Media item not found");
 
-            var accessResult = _streamSecurityService.ValidateMediaAccess(mediaItem);
+            var accessResult = await _streamSecurityService.ValidateMediaAccessAsync(mediaItem);
             if (accessResult == MediaAccessResult.FileNotFound) return NotFound("File not found on disk.");
-            if (accessResult == MediaAccessResult.Unauthorized) return Forbid();
+            if (accessResult == MediaAccessResult.Unauthorized) return NotFound();
 
             _logger.LogInformation("Starting transcode for media {Id} (user={UserId})", id, userId);
             

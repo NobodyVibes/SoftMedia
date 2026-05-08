@@ -59,9 +59,11 @@ public class BookController : ControllerBase
     public async Task<ActionResult<BookInfoDto>> GetInfo(Guid id, CancellationToken cancellationToken)
     {
         var item = await _mediaRepository.GetByIdWithLibraryAsync(id);
-        var access = _securityService.ValidateMediaAccess(item);
+        var access = await _securityService.ValidateMediaAccessAsync(item);
         if (access == MediaAccessResult.FileNotFound || item is null) return NotFound();
-        if (access == MediaAccessResult.Unauthorized) return Forbid();
+        // Wave C — Unauthorized => 404 (anti-probe per SDD §6.2). Covers both
+        // LFI rejection and per-user library ACL rejection.
+        if (access == MediaAccessResult.Unauthorized) return NotFound();
 
         var ext = Path.GetExtension(item.Path).TrimStart('.').ToLowerInvariant();
         int? pageCount = null;
@@ -95,9 +97,11 @@ public class BookController : ControllerBase
         if (pageNumber < 1) return BadRequest("pageNumber must be >= 1");
 
         var item = await _mediaRepository.GetByIdWithLibraryAsync(id);
-        var access = _securityService.ValidateMediaAccess(item);
+        var access = await _securityService.ValidateMediaAccessAsync(item);
         if (access == MediaAccessResult.FileNotFound || item is null) return NotFound();
-        if (access == MediaAccessResult.Unauthorized) return Forbid();
+        // Wave C — Unauthorized => 404 (anti-probe per SDD §6.2). Covers both
+        // LFI rejection and per-user library ACL rejection.
+        if (access == MediaAccessResult.Unauthorized) return NotFound();
 
         if (!_comicArchiveService.IsSupportedArchive(item.Path))
         {
@@ -133,9 +137,11 @@ public class BookController : ControllerBase
         if (pageNumber < 1) return BadRequest("pageNumber must be >= 1");
 
         var item = await _mediaRepository.GetByIdWithLibraryAsync(id);
-        var access = _securityService.ValidateMediaAccess(item);
+        var access = await _securityService.ValidateMediaAccessAsync(item);
         if (access == MediaAccessResult.FileNotFound || item is null) return NotFound();
-        if (access == MediaAccessResult.Unauthorized) return Forbid();
+        // Wave C — Unauthorized => 404 (anti-probe per SDD §6.2). Covers both
+        // LFI rejection and per-user library ACL rejection.
+        if (access == MediaAccessResult.Unauthorized) return NotFound();
 
         if (!_comicArchiveService.IsSupportedArchive(item.Path))
         {

@@ -1,11 +1,12 @@
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { Play, Shuffle, Clock, Heart, Share2, Disc3 } from 'lucide-react';
+import { Play, Shuffle, Clock, Heart, Share2, Disc3, ListPlus } from 'lucide-react';
 import api from '../../services/api';
 import { type MediaItem } from '../../types';
 import { useAudioStore } from '../../store/audioStore';
 import { formatDuration, cn } from '../../lib/utils';
+import { AddToPlaylistMenu } from '../playlists/AddToPlaylistMenu';
 
 interface AlbumDetailViewProps {
     item: MediaItem;
@@ -16,6 +17,9 @@ export default function AlbumDetailView({ item }: AlbumDetailViewProps) {
     const [searchParams] = useSearchParams();
     const queryClient = useQueryClient();
     const highlightTrackId = searchParams.get('highlight');
+
+    // Track-row overflow menu — only one open at a time, keyed by track id.
+    const [openMenuTrackId, setOpenMenuTrackId] = useState<string | null>(null);
 
     const favoriteMutation = useMutation({
         mutationFn: (isFavorite: boolean) => api.post(`/interaction/${item.id}/favorite`, { isFavorite }),
@@ -91,6 +95,28 @@ export default function AlbumDetailView({ item }: AlbumDetailViewProps) {
                         </div>
                     </button>
 
+                    {/* "Add album to playlist" — saves all tracks at once. */}
+                    <div className="relative">
+                        <button
+                            type="button"
+                            onClick={() => setOpenMenuTrackId(openMenuTrackId === '__album__' ? null : '__album__')}
+                            className="group"
+                            title="Add album to playlist"
+                            aria-haspopup="menu"
+                            aria-expanded={openMenuTrackId === '__album__'}
+                        >
+                            <div className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-white transition-all group-hover:scale-110 active:scale-95 min-w-[44px] min-h-[44px] flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
+                                <ListPlus className="w-5 h-5" />
+                            </div>
+                        </button>
+                        {openMenuTrackId === '__album__' && tracks && tracks.length > 0 && (
+                            <AddToPlaylistMenu
+                                mediaItemIds={tracks.map(t => t.id)}
+                                onClose={() => setOpenMenuTrackId(null)}
+                            />
+                        )}
+                    </div>
+
                     <button className="group" title="Share">
                         <div className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-white transition-all group-hover:scale-110 active:scale-95">
                             <Share2 className="w-5 h-5" />
@@ -107,6 +133,7 @@ export default function AlbumDetailView({ item }: AlbumDetailViewProps) {
                             <th className="px-6 py-3 font-medium w-12">#</th>
                             <th className="px-6 py-3 font-medium">Title</th>
                             <th className="px-6 py-3 font-medium text-right w-24"><Clock className="w-4 h-4 ml-auto" /></th>
+                            <th className="px-2 py-3 font-medium w-12" aria-label="Actions" />
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
@@ -127,7 +154,7 @@ export default function AlbumDetailView({ item }: AlbumDetailViewProps) {
                                         {showHeader && (
                                             <tr className="bg-white/[0.07] border-t border-white/10">
                                                 <td
-                                                    colSpan={3}
+                                                    colSpan={4}
                                                     className="px-6 py-3 text-xs font-semibold uppercase tracking-wider"
                                                 >
                                                     <span className="inline-flex items-center gap-2 bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
@@ -156,6 +183,36 @@ export default function AlbumDetailView({ item }: AlbumDetailViewProps) {
                                                 isHighlighted ? "text-primary" : "text-white"
                                             )}>{track.title}</td>
                                             <td className="px-6 py-4 text-right">{formatDuration(track.durationSeconds || 0)}</td>
+                                            {/* `onClick` on the cell stops propagation so clicks inside
+                                                the overflow button or the absolute-positioned popover
+                                                don't bubble up to <tr> and trigger handlePlayTrack. */}
+                                            <td
+                                                className="px-2 py-2 text-right relative"
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        setOpenMenuTrackId(openMenuTrackId === track.id ? null : track.id)
+                                                    }
+                                                    aria-label={`Add ${track.title} to a playlist`}
+                                                    aria-haspopup="menu"
+                                                    aria-expanded={openMenuTrackId === track.id}
+                                                    title="Add to playlist"
+                                                    // Visible at low opacity by default so the affordance is
+                                                    // discoverable without hovering. Brightens on row hover /
+                                                    // keyboard focus per the universal-client a11y rule.
+                                                    className="p-2 rounded-md text-gray-400 hover:text-white hover:bg-white/10 focus-visible:text-white focus-visible:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 transition-colors min-w-[44px] min-h-[44px] inline-flex items-center justify-center opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
+                                                >
+                                                    <ListPlus className="w-4 h-4" />
+                                                </button>
+                                                {openMenuTrackId === track.id && (
+                                                    <AddToPlaylistMenu
+                                                        mediaItemIds={[track.id]}
+                                                        onClose={() => setOpenMenuTrackId(null)}
+                                                    />
+                                                )}
+                                            </td>
                                         </tr>
                                     </Fragment>
                                 );

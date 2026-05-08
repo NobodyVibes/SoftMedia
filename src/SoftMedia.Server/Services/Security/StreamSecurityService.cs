@@ -1,14 +1,19 @@
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Security.LibraryAccess;
 using SoftMedia.Server.Models;
 
 namespace SoftMedia.Server.Services.Security;
 
 public class StreamSecurityService : IStreamSecurityService
 {
+    private readonly IUserLibraryAccessProvider _libraryAccessProvider;
     private readonly ILogger<StreamSecurityService> _logger;
 
-    public StreamSecurityService(ILogger<StreamSecurityService> logger)
+    public StreamSecurityService(
+        IUserLibraryAccessProvider libraryAccessProvider,
+        ILogger<StreamSecurityService> logger)
     {
+        _libraryAccessProvider = libraryAccessProvider;
         _logger = logger;
     }
 
@@ -77,9 +82,9 @@ public class StreamSecurityService : IStreamSecurityService
         }
     }
 
-    public MediaAccessResult ValidateMediaAccess(MediaItem? item)
+    public async Task<MediaAccessResult> ValidateMediaAccessAsync(MediaItem? item)
     {
-        if (item == null) 
+        if (item == null)
         {
             return MediaAccessResult.FileNotFound; // Logic: Item not found implies file interaction impossible
         }
@@ -89,7 +94,7 @@ public class StreamSecurityService : IStreamSecurityService
              _logger.LogWarning("Validation failed: Media item {Id} has no associated library.", item.Id);
              return MediaAccessResult.FileNotFound; // Treat broken library link as not found
         }
-        
+
         if (string.IsNullOrEmpty(item.Path))
         {
              return MediaAccessResult.FileNotFound;
@@ -104,6 +109,18 @@ public class StreamSecurityService : IStreamSecurityService
         if (!IsPathAuthorized(item.Path, item.Library.Paths))
         {
             _logger.LogWarning("Validation failed: LFI attempt blocked for {Path}", item.Path);
+            return MediaAccessResult.Unauthorized;
+        }
+
+        // Wave C — per-user library ACL gate. Controllers map Unauthorized to
+        // 404 (not 403) per SDD §6.2's anti-probe rule. Admins always have
+        // LibraryAccess.Unrestricted, so they short-circuit out.
+        var access = await _libraryAccessProvider.GetCurrentAsync();
+        if (!access.IsUnrestricted && !access.AllowedLibraryIds.Contains(item.LibraryId))
+        {
+            _logger.LogInformation(
+                "Validation failed: library ACL blocks user from media {Id} in library {LibraryId}",
+                item.Id, item.LibraryId);
             return MediaAccessResult.Unauthorized;
         }
 

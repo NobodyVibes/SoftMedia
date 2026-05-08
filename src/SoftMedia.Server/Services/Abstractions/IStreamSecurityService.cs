@@ -18,9 +18,13 @@ public interface IStreamSecurityService
     bool IsPathAuthorized(string filePath, IEnumerable<string> libraryPaths);
 
     /// <summary>
-    /// Validates that the media item's file exists and is within authorized library paths.
-    /// Accepts a nullable item — a null item is treated as <see cref="MediaAccessResult.FileNotFound"/>
-    /// so callers can pass the result of a repository lookup directly without a pre-check.
+    /// Validates that the media item's file exists, is within authorized library paths,
+    /// AND the calling user has per-library ACL access (Wave C). Accepts a nullable
+    /// item — a null item is treated as <see cref="MediaAccessResult.FileNotFound"/>
+    /// so callers can pass the result of a repository lookup directly without a
+    /// pre-check.
+    ///
+    /// Async because the per-library ACL check awaits an HttpContext-cached lookup.
     /// </summary>
-    MediaAccessResult ValidateMediaAccess(MediaItem? item);
+    Task<MediaAccessResult> ValidateMediaAccessAsync(MediaItem? item);
 }

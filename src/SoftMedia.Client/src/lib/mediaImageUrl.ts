@@ -10,13 +10,25 @@ import { useAuthStore } from '../store/authStore';
  *
  * Only SoftMedia API URLs are modified — static `/cache/*` assets and
  * external URLs are returned unchanged.
+ *
+ * **Idempotent** — if the URL already carries an `access_token`, it is
+ * replaced with the current store value rather than duplicated. Previously
+ * the function unconditionally appended, which produced
+ * `?access_token=OLD&access_token=NEW` after a token refresh; ASP.NET Core
+ * collapses that to "OLD,NEW" and the JWT validator rejects it as
+ * malformed → 401. Callers (MediaCard / LoadingImage) double-invoke this
+ * function via the URL transformation chain, so idempotency is mandatory.
  */
 export function attachAuthToApiUrl(url: string): string {
     if (!url.startsWith('/api/v1/')) return url;
     const token = useAuthStore.getState().token;
     if (!token) return url;
-    const separator = url.includes('?') ? '&' : '?';
-    return `${url}${separator}access_token=${encodeURIComponent(token)}`;
+
+    // Use URL with a synthetic base so URLSearchParams handles the parsing
+    // and `set` replaces any existing access_token rather than appending.
+    const parsed = new URL(url, 'http://_softmedia');
+    parsed.searchParams.set('access_token', token);
+    return parsed.pathname + parsed.search;
 }
 
 /**

@@ -11,6 +11,7 @@ import { StarRating } from '../ui/StarRating';
 import { cn } from '../../lib/utils';
 import { getGenreColors } from '../../lib/genreColors';
 import { resolveHeroPosterUrl, resolveBackdropUrl } from '../../lib/mediaImageUrl';
+import { WatchlistButton } from '../details/WatchlistButton';
 
 interface MediaDetailLayoutProps {
     item: MediaItem;
@@ -272,8 +273,22 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                             {/* Extended Quality Info */}
                             <MediaQualityInfo item={qualityItem || item} className="mb-8" />
 
-                            {/* Actions */}
-
+                            {/* Actions — watchlist is for "I'll come back to this later"
+                                content (movies, series, books, comics, games). Music uses
+                                playlists for the same purpose, so the button is hidden for
+                                Artist/Album/Audio/Track to match the backend rejection. */}
+                            {item.type !== MediaType.Artist
+                                && item.type !== MediaType.Album
+                                && item.type !== MediaType.Audio
+                                && item.type !== MediaType.Track && (
+                                <div className="flex flex-wrap items-center gap-2 mb-6">
+                                    <WatchlistButton
+                                        mediaId={item.id}
+                                        isWatchlisted={!!item.isWatchlisted}
+                                        title={item.title}
+                                    />
+                                </div>
+                            )}
 
                             {/* Description */}
                             {item.description && (

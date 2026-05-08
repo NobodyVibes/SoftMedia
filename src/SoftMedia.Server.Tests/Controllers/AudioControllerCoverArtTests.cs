@@ -8,6 +8,7 @@ using SoftMedia.Server.Controllers;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Security;
+using SoftMedia.Server.Services.Security.LibraryAccess;
 using Xunit;
 
 namespace SoftMedia.Server.Tests.Controllers;
@@ -110,7 +111,16 @@ public class AudioControllerCoverArtTests : IDisposable
         var env = new Mock<IWebHostEnvironment>();
         env.SetupGet(e => e.WebRootPath).Returns(_wwwroot);
 
-        var streamSecurity = new StreamSecurityService(NullLogger<StreamSecurityService>.Instance);
+        // Wave C — these tests don't exercise per-user ACL; an Unrestricted
+        // provider keeps the focus on path-jail behaviour the suite was written for.
+        var unrestrictedAccess = new Mock<IUserLibraryAccessProvider>();
+        unrestrictedAccess
+            .Setup(p => p.GetCurrentAsync())
+            .ReturnsAsync(LibraryAccess.Unrestricted);
+
+        var streamSecurity = new StreamSecurityService(
+            unrestrictedAccess.Object,
+            NullLogger<StreamSecurityService>.Instance);
 
         var controller = new AudioController(
             _db,

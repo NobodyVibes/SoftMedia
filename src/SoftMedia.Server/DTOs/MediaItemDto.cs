@@ -89,6 +89,10 @@ public class MediaItemDto
     public bool Watched { get; set; }
     public double? PlaybackPosition { get; set; } // Resume position in seconds
     public double? Progress { get; set; } // Progress percentage 0-100
+    // Wave E3 — watchlist flag for the calling user. Hydrated from the user's
+    // interaction row alongside IsFavorite / Watched. Null on responses that
+    // don't carry interaction data (e.g. global search summaries).
+    public bool IsWatchlisted { get; set; }
 
     // Phase 2: Extended Quality Metadata
     public int? BitDepth { get; set; }  // 8, 10, 12 bit
@@ -112,6 +116,11 @@ public class MediaItemDto
     public int? TrackNumber { get; set; }
     public int? DiscNumber { get; set; }
     public double? DurationSeconds { get; set; }  // Raw duration for audio player
+
+    // Wave E2 — exposes the collection link so the movie detail view can
+    // render the "More from this collection" strip and the library grid can
+    // show a small franchise badge. Null for items not in any collection.
+    public Guid? CollectionId { get; set; }
 
     public static MediaItemDto FromMediaItem(MediaItem item, string? imageProxyBaseUrl = null, UserMediaInteraction? interaction = null)
     {
@@ -138,6 +147,9 @@ public class MediaItemDto
             TrackNumber = item.TrackNumber,
             DiscNumber = item.DiscNumber,
             DurationSeconds = item.Duration > 0 ? item.Duration : null,
+
+            // Wave E2 — collection link.
+            CollectionId = item.CollectionId,
 
             // Phase 2: Extended Quality Metadata
             BitDepth = item.BitDepth,
@@ -195,6 +207,7 @@ public class MediaItemDto
             dto.PersonalRating = interaction.Rating;
             dto.IsFavorite = interaction.IsFavorite;
             dto.Watched = interaction.IsWatched;
+            dto.IsWatchlisted = interaction.IsWatchlisted;
         }
 
         // Map pre-calculated internal average to UserRating

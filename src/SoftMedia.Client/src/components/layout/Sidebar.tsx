@@ -97,6 +97,11 @@ export default function Sidebar() {
             icon: libraryTypeIcons[lib.type] || Film,
             isStatic: false,
         })),
+        // Playlists live inside each Music library as a view-mode tab
+        // (Albums / Artists / Tracks / Playlists). They were previously a
+        // top-level sidebar entry but that misrepresented their scope —
+        // playlists are music-only in v1, so a global nav item is the
+        // wrong affordance. Direct links to /playlists/<id> still work.
     ];
 
     return (

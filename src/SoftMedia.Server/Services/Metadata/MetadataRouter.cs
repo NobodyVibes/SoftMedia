@@ -40,16 +40,21 @@ public class MetadataRouter : IMetadataRouter
             return await FetchComicMetadataAsync(item);
         }
 
+        // Wave D — Movie and TV now go through a primary+fallback chain identical
+        // in shape to the comic chain. The fallback default is "Nfo" (local
+        // Kodi sidecar reader). Users with neither MovieFallbackProvider nor
+        // TVFallbackProvider configured land on the legacy single-provider path
+        // because both fallbacks default to "Nfo" but the provider chain is
+        // null-tolerant — see RunMovieTvChainAsync.
+        if (type == LibraryType.Movie || type == LibraryType.TV)
+        {
+            return await FetchMovieOrTvMetadataAsync(item, type);
+        }
+
         // 1. Determine which provider to use based on settings
         string? preferredProvider = null;
         switch (type)
         {
-            case LibraryType.Movie:
-                preferredProvider = await _settingsService.GetSettingAsync("MovieProvider", "Wikidata");
-                break;
-            case LibraryType.TV:
-                preferredProvider = await _settingsService.GetSettingAsync("TVProvider", "TVMaze");
-                break;
             case LibraryType.Book:
                 preferredProvider = await _settingsService.GetSettingAsync("BookProvider", "Open Library");
                 break;
@@ -61,7 +66,7 @@ public class MetadataRouter : IMetadataRouter
                 break;
         }
 
-        _logger.LogInformation("Using metadata provider '{Provider}' for {Type}: {Title}", 
+        _logger.LogInformation("Using metadata provider '{Provider}' for {Type}: {Title}",
             preferredProvider, type, item.Title);
 
         // 2. Find the matching provider
@@ -78,6 +83,111 @@ public class MetadataRouter : IMetadataRouter
         }
 
         return await provider.FetchMetadataAsync(item);
+    }
+
+    /// <summary>
+    /// Wave D — Movie / TV chain with configurable primary + fallback. Mirrors
+    /// FetchComicMetadataAsync structurally, including the "primary wins, fallback
+    /// fills gaps" merge behaviour. Honours <see cref="IKeyedMetadataProvider"/>
+    /// for OMDb so daily-limit accounting still applies.
+    /// </summary>
+    private async Task<MetadataResult?> FetchMovieOrTvMetadataAsync(MediaItem item, LibraryType type)
+    {
+        var (primaryKey, fallbackKey, defaultPrimary, defaultFallback) = type == LibraryType.Movie
+            ? ("MovieProvider", "MovieFallbackProvider", "Wikidata", "Nfo")
+            : ("TVProvider", "TVFallbackProvider", "TVMaze", "Nfo");
+
+        var primaryName = await _settingsService.GetSettingAsync(primaryKey, defaultPrimary);
+        var fallbackName = await _settingsService.GetSettingAsync(fallbackKey, defaultFallback);
+
+        var providers = _providers.Where(p => p.SupportedType == type).ToList();
+        var primary = providers.FirstOrDefault(p => p.ProviderName == primaryName)
+                      ?? providers.FirstOrDefault(); // Match the legacy "any provider for type" behaviour
+
+        var fallback = string.Equals(fallbackName, "None", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : providers.FirstOrDefault(p => p.ProviderName == fallbackName);
+
+        // Don't double-call when primary == fallback (mirrors comic-chain guard).
+        if (fallback != null && ReferenceEquals(fallback, primary))
+            fallback = null;
+
+        _logger.LogInformation(
+            "{Type} routing: Primary={Primary}, Fallback={Fallback} for '{Title}'",
+            type, primary?.ProviderName ?? "none", fallback?.ProviderName ?? "none", item.Title);
+
+        var primaryData = await InvokeProviderAsync(primary, item);
+
+        // Sufficiency: a movie/TV result is useful if it has a Title AND any of
+        // (description, poster, year). Same shape as the comic check.
+        bool sufficient = primaryData is not null
+            && !string.IsNullOrEmpty(primaryData.Title)
+            && (!string.IsNullOrEmpty(primaryData.Description)
+                || !string.IsNullOrEmpty(primaryData.PosterUrl)
+                || primaryData.Year.HasValue);
+
+        if (sufficient || fallback is null)
+        {
+            return primaryData;
+        }
+
+        var fallbackData = await InvokeProviderAsync(fallback, item);
+
+        // Merge: primary wins, fallback fills gaps.
+        var merged = primaryData ?? new MetadataResult();
+        if (fallbackData is not null)
+        {
+            if (primaryData is null)
+            {
+                merged = fallbackData;
+            }
+            else
+            {
+                if (string.IsNullOrEmpty(merged.Title)) merged.Title = fallbackData.Title;
+                if (string.IsNullOrEmpty(merged.Description)) merged.Description = fallbackData.Description;
+                if (string.IsNullOrEmpty(merged.PosterUrl)) merged.PosterUrl = fallbackData.PosterUrl;
+                if (string.IsNullOrEmpty(merged.Director)) merged.Director = fallbackData.Director;
+                if (string.IsNullOrEmpty(merged.Studio)) merged.Studio = fallbackData.Studio;
+                if (string.IsNullOrEmpty(merged.ContentRating)) merged.ContentRating = fallbackData.ContentRating;
+                if (string.IsNullOrEmpty(merged.ImdbId)) merged.ImdbId = fallbackData.ImdbId;
+                if (!merged.Year.HasValue) merged.Year = fallbackData.Year;
+                if (!merged.ReleaseDate.HasValue) merged.ReleaseDate = fallbackData.ReleaseDate;
+                if (!merged.Rating.HasValue) merged.Rating = fallbackData.Rating;
+                if (merged.Genres == null || merged.Genres.Count == 0) merged.Genres = fallbackData.Genres;
+                if (merged.Cast == null || merged.Cast.Count == 0) merged.Cast = fallbackData.Cast;
+            }
+        }
+
+        if (!string.IsNullOrEmpty(merged.Title)
+            || !string.IsNullOrEmpty(merged.Description)
+            || !string.IsNullOrEmpty(merged.PosterUrl)
+            || merged.Year.HasValue)
+        {
+            return merged;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Invokes a provider, routing through <see cref="IKeyedMetadataProvider"/>
+    /// for keyed sources (OMDb) so daily-limit accounting is honoured. Logs and
+    /// swallows exceptions so a flaky provider doesn't break the chain.
+    /// </summary>
+    private async Task<MetadataResult?> InvokeProviderAsync(IMetadataProvider? provider, MediaItem item)
+    {
+        if (provider is null) return null;
+        try
+        {
+            return provider is IKeyedMetadataProvider keyed
+                ? await FetchKeyedMetadataAsync(keyed, item)
+                : await provider.FetchMetadataAsync(item);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching from {Provider}", provider.ProviderName);
+            return null;
+        }
     }
 
     /// <summary>

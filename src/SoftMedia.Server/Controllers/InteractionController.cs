@@ -57,6 +57,37 @@ public class InteractionController : ControllerBase
         return Ok();
     }
 
+    /// <summary>
+    /// Wave E3 — adds or removes the media item from the calling user's watchlist.
+    /// Idempotent: re-adding refreshes the WatchlistedAt timestamp.
+    ///
+    /// Music items (Artist / Album / Audio) are rejected: the playlist feature
+    /// covers "I want to come back to this" for music. Mixing the two creates
+    /// a confusing UX where albums could be both watchlisted AND on a playlist.
+    /// </summary>
+    [HttpPost("{mediaId}/watchlist")]
+    public async Task<IActionResult> ToggleWatchlist(Guid mediaId, [FromBody] WatchlistRequest request)
+    {
+        var userId = GetUserId();
+        // Validate the media exists and capture its type for the music-type guard.
+        var media = await _context.MediaItems
+            .AsNoTracking()
+            .Where(m => m.Id == mediaId)
+            .Select(m => new { m.Type })
+            .FirstOrDefaultAsync();
+        if (media == null) return NotFound();
+
+        if (media.Type == MediaType.Audio
+            || media.Type == MediaType.Album
+            || media.Type == MediaType.Artist)
+        {
+            return BadRequest("Watchlist is not available for music. Use playlists instead.");
+        }
+
+        await _interactionService.ToggleWatchlistAsync(userId, mediaId, request.IsWatchlisted);
+        return Ok();
+    }
+
     [HttpPost("{mediaId}/watched")]
     public async Task<IActionResult> MarkWatched(Guid mediaId, [FromBody] WatchedRequest request)
     {
@@ -442,6 +473,11 @@ public class FavoriteRequest
 public class WatchedRequest
 {
     public bool Watched { get; set; }
+}
+
+public class WatchlistRequest
+{
+    public bool IsWatchlisted { get; set; }
 }
 
 public class ProgressRequest

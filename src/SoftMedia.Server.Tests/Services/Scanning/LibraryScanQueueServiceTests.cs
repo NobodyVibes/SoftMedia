@@ -47,7 +47,11 @@ public class LibraryScanQueueServiceTests
 
     private LibraryScanQueueService CreateService()
     {
-        return new LibraryScanQueueService(_mockScopeFactory.Object, _mockLogger.Object);
+        // Real in-memory dispatcher; tests don't assert webhook delivery here.
+        return new LibraryScanQueueService(
+            _mockScopeFactory.Object,
+            _mockLogger.Object,
+            new SoftMedia.Server.Services.Infrastructure.WebhookDispatcher());
     }
 
     [Fact]

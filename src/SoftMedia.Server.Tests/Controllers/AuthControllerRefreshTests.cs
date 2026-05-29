@@ -108,13 +108,14 @@ public class AuthControllerRefreshTests
         var tokenService = new Mock<ITokenService>().Object;
         var settingsService = new Mock<ISettingsService>().Object;
         var userPrefsService = new Mock<IUserPreferencesService>().Object;
+        var totpService = new Mock<ITotpService>().Object;
         var env = new Mock<IWebHostEnvironment>();
         env.SetupGet(e => e.EnvironmentName).Returns("Development");
         var logger = new Mock<ILogger<AuthController>>().Object;
 
         var controller = new AuthController(
             db, passwordHasher, tokenService, refreshTokens,
-            settingsService, userPrefsService, env.Object, logger);
+            settingsService, userPrefsService, totpService, env.Object, logger);
 
         controller.ControllerContext = new ControllerContext
         {

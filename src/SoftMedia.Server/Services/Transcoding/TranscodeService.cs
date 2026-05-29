@@ -8,6 +8,15 @@ using SoftMedia.Server.Services.Transcoding.Models;
 namespace SoftMedia.Server.Services.Transcoding;
 
 /// <summary>
+/// Thrown when a transcode cannot start because a concurrency cap (global or
+/// per-user) is reached. The controller maps this to HTTP 429 + Retry-After.
+/// </summary>
+public class TranscodeCapacityException : Exception
+{
+    public TranscodeCapacityException(string message) : base(message) { }
+}
+
+/// <summary>
 /// Manages video transcoding sessions with throttling support.
 /// Registered as Singleton to maintain process tracking across all HTTP requests.
 /// </summary>
@@ -189,21 +198,34 @@ public class TranscodeService : ITranscodeService
             subtitleTrackIndex = null;
         }
 
-        // Check concurrent transcode limit from settings
+        // Check concurrent transcode limits from settings (global + per-user). An
+        // over-cap request throws TranscodeCapacityException, which the controller maps
+        // to 429 + Retry-After. Only count sessions that are NOT this exact session key
+        // (a re-request for an already-running stream must not be rejected as "new").
         using (var scope = _scopeFactory.CreateScope())
         {
             var settingsService = scope.ServiceProvider.GetRequiredService<ISettingsService>();
             var maxConcurrent = await settingsService.GetSettingAsync("MaxSimultaneousTranscodes", 0);
-            
-            if (maxConcurrent > 0)
+            var maxPerUser = await settingsService.GetSettingAsync("MaxSimultaneousTranscodesPerUser", 0);
+
+            var requestKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex, sid);
+            bool IsActiveOther(TranscodeSession s) =>
+                s.State != TranscodeState.Dormant && s.State != TranscodeState.Completed && !s.Key.Equals(requestKey);
+
+            var active = _sessionManager.GetAllSessions().Where(IsActiveOther).ToList();
+
+            if (maxConcurrent > 0 && active.Count >= maxConcurrent)
             {
-                var activeCount = _sessionManager.GetAllSessions().Count(s => s.State != TranscodeState.Dormant && s.State != TranscodeState.Completed);
-                if (activeCount >= maxConcurrent)
-                {
-                    _logger.LogWarning("Max concurrent transcodes ({Max}) reached, rejecting new session for {MediaId}", 
-                        maxConcurrent, mediaId);
-                    return null; // Caller should handle HTTP 503
-                }
+                _logger.LogWarning("Global max concurrent transcodes ({Max}) reached, rejecting {MediaId}", maxConcurrent, mediaId);
+                throw new TranscodeCapacityException(
+                    $"Server transcode limit ({maxConcurrent}) reached. Try again shortly.");
+            }
+
+            if (maxPerUser > 0 && active.Count(s => s.UserId == userId) >= maxPerUser)
+            {
+                _logger.LogWarning("Per-user max concurrent transcodes ({Max}) reached for user {UserId}", maxPerUser, userId);
+                throw new TranscodeCapacityException(
+                    $"Your transcode limit ({maxPerUser}) is reached. Stop another stream and try again.");
             }
         }
         

@@ -41,6 +41,21 @@ export default function LoginPage() {
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
+    // 2FA challenge step (P2-WI-005)
+    const [twoFactorChallengeId, setTwoFactorChallengeId] = useState<string | null>(null);
+    const [twoFactorCode, setTwoFactorCode] = useState('');
+
+    const completeLogin = (user: any, token: string) => {
+        if (user.mustChangePassword) {
+            setTempToken(token);
+            setShowChangePasswordModal(true);
+            setIsLoading(false);
+            return;
+        }
+        login(user, token);
+        navigate('/');
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
@@ -48,20 +63,37 @@ export default function LoginPage() {
 
         try {
             const response = await api.post('/auth/login', { username, password });
-            const { accessToken: token, user } = response.data;
 
-            if (user.mustChangePassword) {
-                setTempToken(token);
-                setShowChangePasswordModal(true);
+            // TOTP-enabled accounts return a challenge instead of tokens.
+            if (response.data?.status === '2fa_required') {
+                setTwoFactorChallengeId(response.data.challengeId);
                 setIsLoading(false);
                 return;
             }
 
-            login(user, token);
-            navigate('/');
+            const { accessToken: token, user } = response.data;
+            completeLogin(user, token);
         } catch (err: unknown) {
             console.error(err);
             setError(authErrorMessage(err, 'Invalid username or password'));
+            setIsLoading(false);
+        }
+    };
+
+    const handleTwoFactorSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError('');
+        setIsLoading(true);
+        try {
+            const response = await api.post(
+                `/auth/2fa?challengeId=${encodeURIComponent(twoFactorChallengeId!)}`,
+                { challengeId: twoFactorChallengeId, code: twoFactorCode.trim() }
+            );
+            const { accessToken: token, user } = response.data;
+            completeLogin(user, token);
+        } catch (err: unknown) {
+            console.error(err);
+            setError(authErrorMessage(err, 'Invalid authentication code'));
             setIsLoading(false);
         }
     };
@@ -122,7 +154,41 @@ export default function LoginPage() {
                     </p>
                 </div>
 
-                {!showChangePasswordModal ? (
+                {twoFactorChallengeId ? (
+                    <form className="space-y-6" onSubmit={handleTwoFactorSubmit}>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium text-gray-300 ml-1">Authentication code</label>
+                            <Input
+                                id="twoFactorCode"
+                                type="text"
+                                inputMode="numeric"
+                                autoFocus
+                                placeholder="6-digit code or recovery code"
+                                value={twoFactorCode}
+                                onChange={(e) => setTwoFactorCode(e.target.value)}
+                                required
+                                autoComplete="one-time-code"
+                                className="bg-black/20 border-white/10 focus:border-primary/50 text-white placeholder:text-gray-500"
+                            />
+                            <p className="text-xs text-gray-500 ml-1">
+                                Enter the code from your authenticator app, or one of your recovery codes.
+                            </p>
+                        </div>
+                        {error && (
+                            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">{error}</div>
+                        )}
+                        <Button type="submit" disabled={isLoading} className="w-full">
+                            {isLoading ? 'Verifying...' : 'Verify'}
+                        </Button>
+                        <button
+                            type="button"
+                            onClick={() => { setTwoFactorChallengeId(null); setTwoFactorCode(''); setError(''); }}
+                            className="w-full text-sm text-gray-400 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded"
+                        >
+                            Back to login
+                        </button>
+                    </form>
+                ) : !showChangePasswordModal ? (
                     <form className="space-y-6" onSubmit={handleSubmit}>
                         <div className="space-y-4">
                             <div className="space-y-2">

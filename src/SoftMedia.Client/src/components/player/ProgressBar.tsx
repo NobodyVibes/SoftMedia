@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { formatDuration } from '../../lib/utils';
 import { type Chapter } from '../../types';
+import { type SpriteFrame } from '../../hooks/useTrickplay';
 
 interface ProgressBarProps {
     currentTime: number;
@@ -15,6 +16,8 @@ interface ProgressBarProps {
     onSeekStart: () => void;
     onSeekEnd: () => void;
     framePreviewUrl?: string | null;
+    /** Pre-baked trickplay tile for the hovered time (P2-WI-001). Preferred over framePreviewUrl. */
+    spriteFrame?: SpriteFrame | null;
 }
 
 export function ProgressBar({
@@ -29,7 +32,8 @@ export function ProgressBar({
     onSeek,
     onSeekStart,
     onSeekEnd,
-    framePreviewUrl
+    framePreviewUrl,
+    spriteFrame
 }: ProgressBarProps) {
     const progressRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
@@ -163,8 +167,22 @@ export function ProgressBar({
                     className="absolute bottom-full mb-2 transform -translate-x-1/2 pointer-events-none z-10 flex flex-col items-center"
                     style={{ left: Math.max(80, Math.min(hoverPosition, progressRef.current.getBoundingClientRect().width - 80)) }}
                 >
-                    {/* Frame preview thumbnail */}
-                    {isDragging && framePreviewUrl && (
+                    {/* Pre-baked trickplay sprite tile (preferred — instant, no FFmpeg). */}
+                    {isDragging && spriteFrame && (
+                        <div
+                            className="mb-2 rounded overflow-hidden shadow-lg border border-white/20 bg-black/80"
+                            style={{
+                                width: spriteFrame.tileWidth,
+                                height: spriteFrame.tileHeight,
+                                backgroundImage: `url(${spriteFrame.sheetUrl})`,
+                                backgroundPosition: `-${spriteFrame.x}px -${spriteFrame.y}px`,
+                                backgroundSize: `${spriteFrame.sheetWidth}px ${spriteFrame.sheetHeight}px`,
+                                backgroundRepeat: 'no-repeat',
+                            }}
+                        />
+                    )}
+                    {/* Fallback: on-demand frame thumbnail (no trickplay for this item). */}
+                    {isDragging && !spriteFrame && framePreviewUrl && (
                         <div className="mb-2 rounded overflow-hidden shadow-lg border border-white/20 bg-black/80 min-w-40 min-h-24 flex items-center justify-center">
                             <img
                                 src={framePreviewUrl}
@@ -175,8 +193,8 @@ export function ProgressBar({
                             />
                         </div>
                     )}
-                    {/* Loading placeholder */}
-                    {isDragging && !framePreviewUrl && !frameLoaded && (
+                    {/* Loading placeholder (only when neither sprite nor frame is ready) */}
+                    {isDragging && !spriteFrame && !framePreviewUrl && !frameLoaded && (
                         <div className="mb-2 w-40 h-24 bg-black/80 rounded flex items-center justify-center border border-white/20">
                             <div className="text-white/50 text-xs">Loading...</div>
                         </div>

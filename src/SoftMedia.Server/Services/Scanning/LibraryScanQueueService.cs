@@ -76,12 +76,16 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
     // Keep completed jobs for 5 minutes so the frontend can retrieve final status
     private readonly TimeSpan _completedJobRetention = TimeSpan.FromMinutes(5);
 
+    private readonly IWebhookDispatcher _webhooks;
+
     public LibraryScanQueueService(
         IServiceScopeFactory scopeFactory,
-        ILogger<LibraryScanQueueService> logger)
+        ILogger<LibraryScanQueueService> logger,
+        IWebhookDispatcher webhooks)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _webhooks = webhooks;
     }
 
     public LibraryScanJob EnqueueScan(Guid libraryId, string libraryName)
@@ -234,6 +238,19 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
             _logger.LogInformation(
                 "Scan completed for {LibraryName}: {New} new, {Updated} updated, {Skipped} skipped, {Errors} errors",
                 job.LibraryName, newItems, updatedItems, skippedItems, errorCount);
+
+            // P2-WI-004: fan out a webhook. newItems stands in for "media.added" (which
+            // has no clean per-item hook — see phase-2 rescope), so subscribers learn
+            // how much arrived without us wiring a per-item event.
+            _webhooks.Enqueue(new WebhookEvent(Models.WebhookEvents.LibraryScanCompleted, new
+            {
+                libraryId = job.LibraryId,
+                libraryName = job.LibraryName,
+                newItems,
+                updatedItems,
+                skippedItems,
+                errorCount,
+            }));
         }
     }
 
@@ -248,6 +265,13 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
             job.CurrentFile = null;
             
             _logger.LogError("Scan failed for {LibraryName}: {Error}", job.LibraryName, errorMessage);
+
+            _webhooks.Enqueue(new WebhookEvent(Models.WebhookEvents.LibraryScanFailed, new
+            {
+                libraryId = job.LibraryId,
+                libraryName = job.LibraryName,
+                error = errorMessage,
+            }));
         }
     }
 

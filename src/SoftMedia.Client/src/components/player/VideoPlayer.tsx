@@ -6,10 +6,12 @@ import { useTrackSelection } from '../../hooks/useTrackSelection';
 import { useAuthStore } from '../../store/authStore';
 import { NextEpisodeOverlay, type NextEpisodeInfo } from './NextEpisodeOverlay';
 import { PlayerDebugPanel } from './PlayerDebugPanel';
+import { TranscodeExplanationModal } from './TranscodeExplanationModal';
 import { ProgressBar } from './ProgressBar';
 import { SkipSegmentPill } from './SkipSegmentPill';
 import { useMediaCapabilities, createCapabilitiesWithOverrides } from '../../hooks/useMediaCapabilities';
 import { useLocalPreferences } from '../../hooks/useLocalPreferences';
+import { useTrickplay, type SpriteFrame } from '../../hooks/useTrickplay';
 
 
 
@@ -19,6 +21,11 @@ interface VideoPlayerProps {
 }
 
 
+
+interface StreamReasonCode {
+    code: string;
+    params: Record<string, string>;
+}
 
 interface StreamPlan {
     method: 'DirectPlay' | 'Remux' | 'Transcode';
@@ -32,6 +39,7 @@ interface StreamPlan {
     resolution: string;
     audioChannels: number;
     reason: string;
+    reasonCodes?: StreamReasonCode[];
 }
 
 
@@ -91,6 +99,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     // Frame preview for scrubber
     const [framePreviewUrl, setFramePreviewUrl] = useState<string | null>(null);
+    const [spriteFrame, setSpriteFrame] = useState<SpriteFrame | null>(null);
     const wasPlayingBeforeDragRef = useRef(false);
     const frameDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -107,6 +116,10 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     // Debug panel state
     const [showDebugPanel, setShowDebugPanel] = useState(false);
+
+    // "Why is this playing this way?" explainer (P2-WI-002)
+    const [currentPlan, setCurrentPlan] = useState<StreamPlan | null>(null);
+    const [showExplanation, setShowExplanation] = useState(false);
 
     // HDR state tracking for toasts
     const [playerToast, setPlayerToast] = useState<{ message: string; type: 'info' | 'success' } | null>(null);
@@ -131,6 +144,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     // Get user's local preferences (including default streaming quality)
     const { preferences: localPrefs } = useLocalPreferences();
+
+    // Pre-baked scrubber sprite sheets (P2-WI-001); falls back to on-demand frames.
+    const { frameAt: trickplayFrameAt } = useTrickplay(item.id, token);
 
     // Track selection state (managed by hook)
     const {
@@ -506,6 +522,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
                 const plan: StreamPlan = await response.json();
                 console.log('[StreamPlan] Received plan:', plan);
+                setCurrentPlan(plan);
 
                 // --- HDR TOAST LOGIC ---
                 const isSourceHdr = plan.sourceIsHdr;
@@ -1526,9 +1543,20 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         introStart={item.introStart}
                         introEnd={item.introEnd}
                         framePreviewUrl={framePreviewUrl}
+                        spriteFrame={spriteFrame}
                         onSeek={(time) => {
                             seekTargetRef.current = time;
-                            // Fetch frame preview while dragging
+
+                            // Prefer the pre-baked trickplay tile — instant, no FFmpeg.
+                            const sprite = trickplayFrameAt(time);
+                            if (sprite) {
+                                setSpriteFrame(sprite);
+                                setFramePreviewUrl(null);
+                                return;
+                            }
+
+                            // Fallback: debounced on-demand frame extraction.
+                            setSpriteFrame(null);
                             if (frameDebounceRef.current) clearTimeout(frameDebounceRef.current);
                             frameDebounceRef.current = setTimeout(() => {
                                 if (!token) return;
@@ -1542,6 +1570,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         }}
                         onSeekEnd={() => {
                             setFramePreviewUrl(null);
+                            setSpriteFrame(null);
                             if (seekTargetRef.current !== null) {
                                 handleSeekToTime(seekTargetRef.current);
                                 seekTargetRef.current = null;
@@ -1833,6 +1862,22 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                 )}
                             </div>
 
+                            {/* "Why is this playing this way?" explainer trigger (P2-WI-002) */}
+                            {currentPlan && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowExplanation(true)}
+                                    aria-label="Why is this playing this way?"
+                                    className="text-white/70 hover:text-white transition-colors p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                                    title="Why is this playing this way?"
+                                >
+                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                        <circle cx="12" cy="12" r="10" />
+                                        <path strokeLinecap="round" d="M12 16v-4M12 8h.01" />
+                                    </svg>
+                                </button>
+                            )}
+
                             {/* Quality Selector */}
                             <div className="relative">
                                 <button
@@ -1931,6 +1976,11 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     clientCapabilities={mediaCapabilities}
                     onClose={() => setShowDebugPanel(false)}
                 />
+            )}
+
+            {/* "Why is this playing this way?" explainer (P2-WI-002) */}
+            {showExplanation && currentPlan && (
+                <TranscodeExplanationModal plan={currentPlan} onClose={() => setShowExplanation(false)} />
             )}
         </div>
     );

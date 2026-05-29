@@ -39,6 +39,12 @@ public class SettingsController : ControllerBase
     /// <summary>
     /// Manually trigger metadata refresh for ongoing (Running) TV series.
     /// </summary>
+    /// <remarks>
+    /// Retained for backwards compatibility. Prefer the generic task-trigger endpoint
+    /// POST /api/v1/admin/tasks/{name}/trigger (P1-WI-005), which routes to the same
+    /// MetadataRefreshService.TriggerRefreshNow().
+    /// </remarks>
+    [Obsolete("Use POST /api/v1/admin/tasks/{name}/trigger instead.")]
     [HttpPost("refresh-metadata")]
     public IActionResult TriggerMetadataRefresh()
     {

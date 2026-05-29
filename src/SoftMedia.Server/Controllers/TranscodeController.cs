@@ -30,13 +30,14 @@ public class TranscodeController : ControllerBase
     private readonly ITranscodeDebugService _debugService;
     private readonly IVideoPreviewService _videoPreviewService;
     private readonly IStreamSecurityService _streamSecurityService;
-    
+    private readonly AppDbContext _dbContext;
+
     // New Services
     private readonly ITranscodeSessionService _sessionService;
     private readonly IStreamResultService _streamResultService;
 
     public TranscodeController(
-        ITranscodeService transcodeService, 
+        ITranscodeService transcodeService,
         IStreamPlanService streamPlanService,
         IMediaRepository mediaRepository,
         ITranscodeDebugService debugService,
@@ -44,6 +45,7 @@ public class TranscodeController : ControllerBase
         IStreamSecurityService streamSecurityService,
         ITranscodeSessionService sessionService,
         IStreamResultService streamResultService,
+        AppDbContext dbContext,
         ILogger<TranscodeController> logger)
     {
         _transcodeService = transcodeService;
@@ -54,8 +56,16 @@ public class TranscodeController : ControllerBase
         _streamSecurityService = streamSecurityService;
         _sessionService = sessionService;
         _streamResultService = streamResultService;
+        _dbContext = dbContext;
         _logger = logger;
     }
+
+    /// Resolves the per-user streaming bitrate override (P1-WI-003), if any.
+    private async Task<int?> GetUserMaxBitrateAsync(Guid userId)
+        => await _dbContext.Users
+            .Where(u => u.Id == userId)
+            .Select(u => u.MaxStreamBitrateKbps)
+            .FirstOrDefaultAsync();
 
     private Guid GetUserId()
     {
@@ -84,7 +94,10 @@ public class TranscodeController : ControllerBase
             if (accessResult == MediaAccessResult.Unauthorized) return NotFound();
 
             var token = Request.GetToken();
-            var plan = await _streamPlanService.ComputeStreamPlanAsync(id, mediaItem, capabilities, token ?? string.Empty);
+            var userMaxBitrate = await GetUserMaxBitrateAsync(userId);
+            var plan = await _streamPlanService.ComputeStreamPlanAsync(
+                id, mediaItem, capabilities, token ?? string.Empty,
+                HttpContext.Connection.RemoteIpAddress, userMaxBitrate);
 
             _logger.LogInformation("Stream plan for {Id}: Method={Method}, Profile={Profile}, Reason={Reason}",
                 id, plan.Method, plan.DisplayProfile, plan.Reason);
@@ -115,11 +128,17 @@ public class TranscodeController : ControllerBase
             if (accessResult == MediaAccessResult.Unauthorized) return NotFound();
 
             _logger.LogInformation("Starting transcode for media {Id} (user={UserId})", id, userId);
-            
+
             await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr, audioTrack: audio, maxBitrate: bitrate, burnSubtitles: burnSubtitles, sid: sid);
 
             var token = Request.GetToken();
             return await _streamResultService.GenerateMasterPlaylistResultAsync(id, userId, sub, token, sid);
+        }
+        catch (TranscodeCapacityException ex)
+        {
+            // Concurrency cap reached — tell the client to back off and retry.
+            Response.Headers.RetryAfter = "30";
+            return StatusCode(StatusCodes.Status429TooManyRequests, ex.Message);
         }
         catch (Exception ex)
         {

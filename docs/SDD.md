@@ -258,7 +258,7 @@ To ensure ethical usage and prevent incorrect API calls, the system **MUST** enf
     *   **Library:** Grid view of posters. Infinite scroll.
     *   **Details:** Large backdrop image, poster, cast list, "Play" button with gradient background.
 *   **Player:**
-    *   **Video Player:** Custom HTML5 Video Player wrapper (e.g., `vidstack`) to support subtitles, quality selection, and chapter seeking.
+    *   **Video Player:** Custom HTML5 video player built directly on the native `<video>` element with `hls.js` for HLS-segment playback. Implementation lives at `src/SoftMedia.Client/src/components/player/VideoPlayer.tsx` and supports subtitles, quality selection, chapter seeking, scrubber frame previews, intro / credits skip pills, next-episode overlay, debug pipeline overlay, and HDR toasts. Custom UI was chosen over wrapper libraries (e.g. `vidstack`) so the project keeps full control over these features without fighting wrapper-imposed abstractions.
     *   **Audio Player:** Persistent bottom-bar player (global state) allowing playback while browsing. Supports playlists, shuffle, and gapless playback.
     *   **eReader:** Dedicated viewer for PDF (via `react-pdf`) and EPUB/CBZ (via `react-reader` or canvas). Supports "Remember Page" and "Double Page" view.
 
@@ -314,6 +314,7 @@ Since we do not use a central cloud relay, we recommend two methods:
 *   **What:** A zero-config VPN based on WireGuard.
 *   **How:** User installs Tailscale on the Server and their Phone/Laptop.
 *   **Result:** Access via `http://softmedia-server:8080` from anywhere safely. No open ports.
+*   **Configuration:** Direct Tailscale connections need no extra configuration. If using Tailscale Funnel (proxied HTTPS), configure `ForwardedHeaders:TrustedProxyNetworks` to include the Tailscale CGNAT range (`100.64.0.0/10`) so the per-IP rate limiter sees real client IPs. See `docs/user-docs/reverse-proxy.md`.
 
 **Method B: Reverse Proxy + DuckDNS (Free & Standard)**
 *   **Problem:** Most home ISPs change your IP address (Dynamic IP), and buying a domain costs money.
@@ -324,6 +325,7 @@ Since we do not use a central cloud relay, we recommend two methods:
     3.  **Caddy** automatically gets a Let's Encrypt SSL cert for that subdomain.
 *   **Result:** Secure access via `https://my-media.duckdns.org`.
 *   **Requirement:** Port forwarding (80/443) on the router.
+*   **Configuration:** When the reverse proxy runs on the same host as SoftMedia, no extra configuration is required — loopback is trusted by default. When the proxy runs on a different host or inside a container, add the proxy's IP to `ForwardedHeaders:TrustedProxies` in `appsettings.json` so the per-IP rate limiter sees real client IPs. See `docs/user-docs/reverse-proxy.md`.
 
 **Method C: Direct Connection (Legacy/Advanced)**
 *   **What:** Opening a port (e.g., 8080) directly to the internet.

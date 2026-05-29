@@ -13,6 +13,8 @@ import { useAuthStore } from '../store/authStore';
 import ClientSettings from './settings/ClientSettings';
 import { UserListTable } from '../components/admin/UserListTable';
 import { InviteManager } from '../components/admin/InviteManager';
+import { BackupCard } from '../components/admin/BackupCard';
+import { ScheduledTasksCard } from '../components/admin/ScheduledTasksCard';
 import { LibraryListTable } from '../components/library/LibraryListTable';
 import { LibraryForm } from '../components/library/LibraryForm';
 import { ConfirmationModal } from '../components/modals/ConfirmationModal';
@@ -78,6 +80,12 @@ function AdminDashboard() {
 
     return (
         <div className="space-y-8">
+            {/* Database Backups */}
+            <BackupCard />
+
+            {/* Background Tasks */}
+            <ScheduledTasksCard />
+
             {/* API Usage Warnings */}
             {omdbUsage && omdbUsage.used > 0 && (
                 <div className="bg-white/5 rounded-xl p-6 border border-white/10">
@@ -1106,6 +1114,21 @@ export default function SettingsPage() {
                                                                 placeholder="Select API key mode..."
                                                                 className="w-full"
                                                             />
+
+                                                            {/* Shared-key mode: explain the maintainer-funded default and
+                                                                offer the always-available fallback to a personal key. The
+                                                                shared key's usage is not per-instance tracked, so we surface
+                                                                this as a standing helper rather than a quota-driven banner. */}
+                                                            {apiKeyMode === 'softmedia' && (
+                                                                <div className="mt-2 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                                                                    <p className="text-xs text-blue-200">
+                                                                        Movie metadata uses a shared OMDb key funded by the SoftMedia project — no setup needed.
+                                                                        If it ever hits its daily limit, or the project stops providing it, switch to
+                                                                        <span className="text-white font-medium"> “Use My Own Key” </span>
+                                                                        above. A free key from <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">omdbapi.com</a> fully replaces it — nothing else changes.
+                                                                    </p>
+                                                                </div>
+                                                            )}
 
                                                             {/* Custom Key Input */}
                                                             {apiKeyMode === 'custom' && customKeySetting && (

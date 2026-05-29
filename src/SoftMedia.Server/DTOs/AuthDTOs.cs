@@ -10,6 +10,22 @@ public record AuthResponse(string AccessToken, UserDto User);
 
 public record ChangePasswordRequest(string OldPassword, string NewPassword);
 
+// P2-WI-005 — when a user has TOTP enabled, login returns this instead of tokens.
+// The client then POSTs the code + challengeId to /auth/2fa to complete login.
+public record TwoFactorRequiredResponse(string Status, string ChallengeId)
+{
+    public TwoFactorRequiredResponse(string challengeId) : this("2fa_required", challengeId) { }
+}
+
+public record TwoFactorRequest(string ChallengeId, string Code);
+
+// TOTP enrollment DTOs (P2-WI-005).
+public record TotpEnrollResponse(string Secret, string OtpAuthUri);
+public record TotpConfirmRequest(string Code);
+public record TotpConfirmResponse(List<string> RecoveryCodes);
+public record TotpStatusResponse(bool Enabled);
+public record TotpDisableRequest(string Password, string Code);
+
 public record UserDto(Guid Id, string Username, UserRole Role, string MaxRating, DateTime CreatedAt, bool IsBanned, bool IsApproved, bool IsRejected, Dictionary<string, string> ContentRatings, string FirstName, string LastName, bool CreatedByAdmin, string? UsedInviteCode, bool MustChangePassword);
 
 // User Management DTOs

@@ -44,4 +44,11 @@ public class User
     public DateTime? DeletedAt { get; set; }
 
     public bool MustChangePassword { get; set; } = false;
+
+    /// <summary>
+    /// Per-user streaming bitrate ceiling in kbps. When non-null, overrides the
+    /// network-based (LAN/WAN) cap for this user. Null = inherit the server policy.
+    /// Admin-set. (P1-WI-003)
+    /// </summary>
+    public int? MaxStreamBitrateKbps { get; set; }
 }

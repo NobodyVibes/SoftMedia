@@ -25,6 +25,7 @@ public class AuthController : ControllerBase
     private readonly IRefreshTokenService _refreshTokens;
     private readonly ISettingsService _settingsService;
     private readonly IUserPreferencesService _userPreferencesService;
+    private readonly ITotpService _totpService;
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<AuthController> _logger;
 
@@ -35,6 +36,7 @@ public class AuthController : ControllerBase
         IRefreshTokenService refreshTokens,
         ISettingsService settingsService,
         IUserPreferencesService userPreferencesService,
+        ITotpService totpService,
         IWebHostEnvironment env,
         ILogger<AuthController> logger)
     {
@@ -44,6 +46,7 @@ public class AuthController : ControllerBase
         _refreshTokens = refreshTokens;
         _settingsService = settingsService;
         _userPreferencesService = userPreferencesService;
+        _totpService = totpService;
         _env = env;
         _logger = logger;
     }
@@ -146,6 +149,51 @@ public class AuthController : ControllerBase
         if (user.IsDeleted) return Unauthorized("Invalid username or password.");
         if (!user.IsApproved) return Unauthorized("Account pending approval.");
 
+        // P2-WI-005: if the user has TOTP enabled, do NOT issue tokens yet. Return a
+        // short-lived challenge; the client completes login via POST /auth/2fa.
+        var totp = await _context.UserTotps.FirstOrDefaultAsync(t => t.UserId == user.Id);
+        if (totp?.EnabledAt != null)
+        {
+            var challengeId = _totpService.CreateChallenge(user.Id);
+            return Ok(new TwoFactorRequiredResponse(challengeId));
+        }
+
+        return Ok(await IssueLoginResponseAsync(user));
+    }
+
+    /// <summary>
+    /// Completes a login that requires a TOTP second factor. The code may be a 6-digit
+    /// TOTP code or a single-use recovery code.
+    /// </summary>
+    [EnableRateLimiting(Extensions.ServiceCollectionExtensions.TwoFactorRateLimitPolicy)]
+    [HttpPost("2fa")]
+    public async Task<ActionResult<AuthResponse>> CompleteTwoFactor([FromQuery] string challengeId, [FromBody] TwoFactorRequest request)
+    {
+        // challengeId travels in the query so the rate-limit policy can partition on it.
+        var id = !string.IsNullOrEmpty(challengeId) ? challengeId : request.ChallengeId;
+        if (!_totpService.TryConsumeChallenge(id, out var userId))
+            return Unauthorized("2FA challenge expired or invalid. Please log in again.");
+
+        var totp = await _context.UserTotps.FirstOrDefaultAsync(t => t.UserId == userId);
+        var user = await _context.Users.FindAsync(userId);
+        if (totp?.EnabledAt == null || user == null)
+            return Unauthorized("2FA is not enabled for this account.");
+        if (user.IsBanned || user.IsDeleted || !user.IsApproved)
+            return Unauthorized("Account not eligible.");
+
+        var verified = _totpService.VerifyCode(totp.EncryptedSecret, request.Code);
+        if (!verified && !TryConsumeRecoveryCode(totp, request.Code))
+            return Unauthorized("Invalid authentication code.");
+
+        await _context.SaveChangesAsync(); // persist a consumed recovery code, if any
+        _totpService.Complete(id);
+        return Ok(await IssueLoginResponseAsync(user));
+    }
+
+    /// Issues the access token + rotating refresh cookie and builds the AuthResponse.
+    /// Shared by password-only login and TOTP-completed login.
+    private async Task<AuthResponse> IssueLoginResponseAsync(SoftMedia.Server.Models.User user)
+    {
         var accessToken = _tokenService.GenerateAccessToken(user);
         var (refreshRaw, _) = await _refreshTokens.IssueAsync(user, ClientIp());
         SetRefreshTokenCookie(refreshRaw);
@@ -155,7 +203,22 @@ public class AuthController : ControllerBase
             .Select(i => i.Code)
             .FirstOrDefaultAsync();
 
-        return Ok(new AuthResponse(accessToken, BuildUserDto(user, usedInviteCode, user.MustChangePassword)));
+        return new AuthResponse(accessToken, BuildUserDto(user, usedInviteCode, user.MustChangePassword));
+    }
+
+    /// Consumes a single-use recovery code (moves its hash to UsedRecoveryCodes).
+    /// Returns true if the code matched an unused recovery code.
+    private bool TryConsumeRecoveryCode(SoftMedia.Server.Models.UserTotp totp, string code)
+    {
+        var hash = _totpService.HashRecoveryCode(code);
+        var remaining = System.Text.Json.JsonSerializer.Deserialize<List<string>>(totp.RecoveryCodes) ?? new();
+        if (!remaining.Remove(hash)) return false;
+
+        var used = System.Text.Json.JsonSerializer.Deserialize<List<string>>(totp.UsedRecoveryCodes) ?? new();
+        used.Add(hash);
+        totp.RecoveryCodes = System.Text.Json.JsonSerializer.Serialize(remaining);
+        totp.UsedRecoveryCodes = System.Text.Json.JsonSerializer.Serialize(used);
+        return true;
     }
 
     [Authorize]

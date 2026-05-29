@@ -71,7 +71,7 @@ Size key: **S** = < 1 day, **M** = 1–3 days, **L** = 3–5 days, **XL** = mult
 
 The audit surfaced several things that are real but not on this list:
 
-- **CSRF double-submit cookie** promised in SDD §6.2 — unneeded given Bearer-token auth and SameSite=Strict refresh cookie. Amend the SDD rather than implementing.
+- **CSRF double-submit cookie** promised in SDD §6.2 — resolved 2026-04-26 by amending the SDD. The official model is Bearer-token auth in the `Authorization` header plus a `SameSite=Lax`, path-scoped refresh cookie; browsers do not auto-attach the bearer cross-origin, and the cookie path scope keeps the refresh cookie off cross-site sub-resource POSTs. No double-submit cookie is required.
 - **WebOS / spatial navigation** promised in SDD §8 — defer. Either amend SDD to "desktop-first, TV later" or open a separate epic.
 - **`src/features/` directory** promised in SDD §3.2 — cosmetic. Rename in a single mechanical PR when nothing else is in flight, or drop the requirement.
 - **Docs tidying** — move `docs/ereader-plan-*.md` under `docs/plans/`. 15-minute chore, not worth a todo.

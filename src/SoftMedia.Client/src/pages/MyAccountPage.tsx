@@ -5,6 +5,9 @@ import { User, Key, Trash2, Loader2, CheckCircle, AlertCircle } from 'lucide-rea
 import { accountService } from '../services/accountService';
 import { useAuthStore } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
+import { ApiTokensCard } from '../components/account/ApiTokensCard';
+import { TotpCard } from '../components/account/TotpCard';
+import { WebhooksCard } from '../components/account/WebhooksCard';
 
 export default function MyAccountPage() {
     const navigate = useNavigate();
@@ -157,6 +160,15 @@ export default function MyAccountPage() {
                             </button>
                         </form>
                     </div>
+
+                    {/* Two-Factor Authentication */}
+                    <TotpCard />
+
+                    {/* API Tokens */}
+                    <ApiTokensCard />
+
+                    {/* Webhooks */}
+                    <WebhooksCard />
 
                     {/* Delete Account */}
                     <div className="bg-red-500/10 rounded-xl p-6 border border-red-500/20">

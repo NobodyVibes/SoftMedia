@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Metadata;
 
 namespace SoftMedia.Server.Services.Scanning;
@@ -32,7 +33,10 @@ public class MetadataRefreshService : BackgroundService
         var queueService = scope.ServiceProvider.GetRequiredService<ILibraryScanQueueService>();
         queueService.EnqueueMetadataRefresh();
         _logger.LogInformation("Manual metadata refresh enqueued");
-        
+
+        scope.ServiceProvider.GetRequiredService<IScheduledTaskRegistry>()
+            .Report(ScheduledTaskNames.MetadataRefresh, "Success");
+
         // Signal the loop in case it's waiting on a long interval
         _manualTrigger?.TrySetResult(true);
     }

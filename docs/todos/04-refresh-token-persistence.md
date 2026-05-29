@@ -1,5 +1,9 @@
 # 04 · Implement refresh-token persistence + rotation
 
+> **Historical note (added 2026-05-13).** This work item was completed in the 2026-04-24 refresh-token persistence wave (shipped commit `a16d50d` and its precursors). The implementation deviated from this spec on one detail: the refresh cookie uses `SameSite=Lax` rather than `SameSite=Strict` (see `src/SoftMedia.Server/Controllers/AuthController.cs:316-329` for the inline rationale citing Vite-dev-proxy interaction and OAuth 2.1 / OWASP guidance; SDD §4.2 and §6.2 carry the design-level statement). The body of this document is preserved as the *original* specification for historical reference; do not treat any section of it as current guidance.
+
+---
+
 **Severity:** P0 · **Layer:** Backend · **Est. size:** L (3–5 days)
 **Depends on:** [02](02-jwt-signing-secret.md) — shortening access-token lifetime to 15 minutes is only meaningful once the signing secret is rotated off the committed placeholder. Ship 02 first or in the same PR.
 

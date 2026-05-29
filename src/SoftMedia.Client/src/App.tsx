@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
+import OfflinePage from './pages/OfflinePage';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import ProtectedRoute from './components/auth/ProtectedRoute';
@@ -18,6 +20,24 @@ import { PersistentPlayer } from './components/player/PersistentPlayer';
 
 function App() {
   const user = useAuthStore((state: any) => state.user);
+
+  // Offline shell (P2-WI-003): when the browser reports no connectivity, show the
+  // branded offline screen instead of letting fetches fail silently. The PWA service
+  // worker keeps the app shell available so this still renders with no server.
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  useEffect(() => {
+    const on = () => setIsOnline(true);
+    const off = () => setIsOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
+  }, []);
+
+  if (!isOnline) return <OfflinePage />;
+
   return (
     <>
       <Routes>

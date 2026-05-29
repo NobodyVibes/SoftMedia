@@ -4,12 +4,16 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.DTOs;
 using System.Security.Claims;
 
 namespace SoftMedia.Server.Controllers;
 
-[Authorize]
+// All interaction endpoints mutate user playback state, so the controller requires
+// the write:state scope. JWT/cookie sessions satisfy this automatically (scopes only
+// constrain API tokens — see ScopeAuthorizationHandler); a read-only API token is 403.
+[Authorize(Policy = ScopePolicies.WriteState)]
 [ApiController]
 [Route("api/v1/interaction")]
 public class InteractionController : ControllerBase

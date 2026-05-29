@@ -9,6 +9,7 @@ using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Scanning;
 using SoftMedia.Server.Services.Transcoding;
 using SoftMedia.Server.Services.Metadata;
+using SoftMedia.Server.Services.Abstractions;
 
 namespace SoftMedia.Server.Controllers;
 
@@ -24,17 +25,26 @@ public class AdminController : ControllerBase
     private readonly ILogger<AdminController> _logger;
     private readonly IEnumerable<IMetadataProvider> _providers;
     private readonly IRecommendationService _recommendationService;
+    private readonly IBackupService _backupService;
+    private readonly IScheduledTaskRegistry _taskRegistry;
+    private readonly MetadataRefreshService _metadataRefreshService;
 
     public AdminController(
-        LibraryWatcher libraryWatcher, 
+        LibraryWatcher libraryWatcher,
         ILogger<AdminController> logger,
         IEnumerable<IMetadataProvider> providers,
-        IRecommendationService recommendationService)
+        IRecommendationService recommendationService,
+        IBackupService backupService,
+        IScheduledTaskRegistry taskRegistry,
+        MetadataRefreshService metadataRefreshService)
     {
         _libraryWatcher = libraryWatcher;
         _logger = logger;
         _providers = providers;
         _recommendationService = recommendationService;
+        _backupService = backupService;
+        _taskRegistry = taskRegistry;
+        _metadataRefreshService = metadataRefreshService;
     }
 
     /// <summary>
@@ -149,6 +159,97 @@ public class AdminController : ControllerBase
         _logger.LogInformation("Admin enqueued intro/credits detection for series {SeriesId} ({Title})", series.Id, series.Title);
 
         return Ok(new { jobId = job.Id, status = job.Status.ToString() });
+    }
+
+    // --- Backup / Restore (P1-WI-001) ---
+
+    /// <summary>Creates a backup on the server and returns its metadata.</summary>
+    [HttpPost("backup")]
+    public async Task<IActionResult> CreateBackup(CancellationToken ct)
+    {
+        var info = await _backupService.CreateBackupAsync(ct);
+        _logger.LogInformation("Admin {User} created backup {Id}", User.Identity?.Name, info.Id);
+        return Ok(info);
+    }
+
+    /// <summary>Lists backups on disk, newest first.</summary>
+    [HttpGet("backup")]
+    public async Task<IActionResult> ListBackups(CancellationToken ct)
+        => Ok(await _backupService.ListBackupsAsync(ct));
+
+    /// <summary>Downloads a backup archive by id.</summary>
+    [HttpGet("backup/{id}/download")]
+    public async Task<IActionResult> DownloadBackup(string id, CancellationToken ct)
+    {
+        var stream = await _backupService.OpenBackupAsync(id, ct);
+        if (stream == null) return NotFound("Backup not found.");
+        return File(stream, "application/zip", id + ".zip");
+    }
+
+    /// <summary>Pins a backup so rotation never deletes it.</summary>
+    [HttpPost("backup/{id}/pin")]
+    public async Task<IActionResult> PinBackup(string id, CancellationToken ct)
+        => await _backupService.SetPinnedAsync(id, true, ct) ? Ok() : NotFound("Backup not found.");
+
+    /// <summary>Unpins a backup, making it eligible for rotation again.</summary>
+    [HttpDelete("backup/{id}/pin")]
+    public async Task<IActionResult> UnpinBackup(string id, CancellationToken ct)
+        => await _backupService.SetPinnedAsync(id, false, ct) ? Ok() : NotFound("Backup not found.");
+
+    /// <summary>
+    /// Uploads a backup archive and stages its database for restore on next restart.
+    /// Non-destructive in-process: the swap happens before the DB opens on next boot.
+    /// </summary>
+    [HttpPost("restore")]
+    [RequestSizeLimit(2L * 1024 * 1024 * 1024)] // 2 GiB ceiling for the upload
+    public async Task<IActionResult> Restore(IFormFile file, CancellationToken ct)
+    {
+        if (file == null || file.Length == 0) return BadRequest("No backup file uploaded.");
+
+        await using var stream = file.OpenReadStream();
+        var result = await _backupService.StageRestoreAsync(stream, ct);
+        if (!result.Success) return BadRequest(result);
+
+        _logger.LogWarning("Admin {User} staged a database restore.", User.Identity?.Name);
+        return Accepted(result);
+    }
+
+    // --- Scheduled tasks (P1-WI-005) ---
+
+    /// <summary>Lists all background tasks with their last-run telemetry.</summary>
+    [HttpGet("tasks")]
+    public IActionResult GetTasks() => Ok(_taskRegistry.GetAll());
+
+    /// <summary>
+    /// Manually triggers a task that supports it. v1 supports the metadata refresh;
+    /// other tasks return 400. Result is reflected on the next GET /tasks.
+    /// </summary>
+    [HttpPost("tasks/{name}/trigger")]
+    public IActionResult TriggerTask(string name)
+    {
+        if (name == ScheduledTaskNames.MetadataRefresh)
+        {
+            _metadataRefreshService.TriggerRefreshNow();
+            _logger.LogInformation("Admin {User} manually triggered {Task}", User.Identity?.Name, name);
+            return Accepted(new { message = $"{name} triggered." });
+        }
+        return BadRequest($"Task '{name}' does not support manual triggering.");
+    }
+
+    /// <summary>
+    /// Admin recovery: disables 2FA for a user who is locked out (lost device + recovery
+    /// codes). The only out-of-band reset path — there is intentionally no self-service
+    /// bypass (P2-WI-005).
+    /// </summary>
+    [HttpPost("users/{userId:guid}/disable-2fa")]
+    public async Task<IActionResult> DisableUserTwoFactor(Guid userId, [FromServices] AppDbContext db)
+    {
+        var totp = await db.UserTotps.FirstOrDefaultAsync(t => t.UserId == userId);
+        if (totp == null) return NotFound("User has no 2FA enrollment.");
+        db.UserTotps.Remove(totp);
+        await db.SaveChangesAsync();
+        _logger.LogWarning("Admin {Admin} disabled 2FA for user {UserId}", User.Identity?.Name, userId);
+        return Ok();
     }
 }
 

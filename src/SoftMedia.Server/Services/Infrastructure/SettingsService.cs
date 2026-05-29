@@ -92,7 +92,8 @@ public class SettingsService : ISettingsService
             new() { Key = "TranscodeThreadCount", Value = "0", Group = "Transcoding", Description = "CPU threads for FFmpeg (0 = auto-detect)." },
             new() { Key = "OutputVideoCodec", Value = "auto", Group = "Transcoding", Description = "Preferred output codec: auto, h264, hevc, av1. AV1 requires hardware." },
             new() { Key = "EnableAV1Encoding", Value = "false", Group = "Transcoding", Description = "Enable AV1 encoding (requires RTX 40+, RX 7000+, or Intel Arc GPU)." },
-            new() { Key = "MaxSimultaneousTranscodes", Value = "0", Group = "Transcoding", Description = "Maximum concurrent transcode sessions. 0 = unlimited." },
+            new() { Key = "MaxSimultaneousTranscodes", Value = "0", Group = "Transcoding", Description = "Maximum concurrent transcode sessions across all users. 0 = unlimited." },
+            new() { Key = "MaxSimultaneousTranscodesPerUser", Value = "0", Group = "Transcoding", Description = "Maximum concurrent transcode sessions per user. 0 = unlimited." },
             new() { Key = "EnableTranscoding", Value = "true", Group = "Transcoding", Description = "Enable video transcoding. If disabled, files will be served directly." },
             new() { Key = "ForceDirectPlayWhenPossible", Value = "true", Group = "Transcoding", Description = "Prefer direct play over transcoding when client supports the format." },
             
@@ -101,7 +102,8 @@ public class SettingsService : ISettingsService
             new() { Key = "TranscodeCRF", Value = "23", Group = "Streaming", Description = "Quality level 0-51 (lower = better, 23 = good default)." },
             new() { Key = "PreserveHDR", Value = "true", Group = "Streaming", Description = "Pass through HDR to compatible clients (skips tone mapping)." },
             new() { Key = "ToneMappingAlgorithm", Value = "hable", Group = "Streaming", Description = "HDR to SDR conversion: hable, reinhard, mobius." },
-            new() { Key = "MaxStreamingBitrate", Value = "20000", Group = "Streaming", Description = "Maximum bitrate (kbps) for remote streaming. 0 = unlimited." },
+            new() { Key = "MaxStreamingBitrate", Value = "20000", Group = "Streaming", Description = "Maximum bitrate (kbps) for remote (WAN) streaming. 0 = unlimited." },
+            new() { Key = "MaxStreamingBitrateLan", Value = "0", Group = "Streaming", Description = "Maximum bitrate (kbps) for local (LAN) streaming. 0 = unlimited." },
             new() { Key = "DefaultStreamingQuality", Value = "auto", Group = "Streaming", Description = "Default quality for new streams (auto, 720p, 1080p, 4k, original)." },
             new() { Key = "DefaultAudioChannels", Value = "auto", Group = "Streaming", Description = "Default audio channel preference (auto, stereo, 5.1, 7.1)." },
             new() { Key = "MaxAudioStreamingBitrate", Value = "0", Group = "Streaming", Description = "Maximum audio transcode bitrate (kbps). 0 = unlimited. Common: 128, 192, 256, 320." },
@@ -145,6 +147,24 @@ public class SettingsService : ISettingsService
             // because skip behavior is a personal device preference, not a server config.
             new() { Key = "AutoDetectIntros", Value = "true", Group = "Playback", Description = "Run cross-episode fingerprint detection to find episode intros. Disabling skips the head-window CPU cost on scan." },
             new() { Key = "AutoDetectCredits", Value = "true", Group = "Playback", Description = "Run cross-episode fingerprint detection to find end credits. Disabling skips the tail-window CPU cost on scan." },
+
+            // Trickplay — pre-generated scrubber preview sprite sheets (P2-WI-001).
+            new() { Key = "TrickplayEnabled", Value = "true", Group = "Playback", Description = "Generate scrubber-preview sprite sheets for videos. Disabling skips background generation; the player falls back to on-demand frames." },
+            new() { Key = "TrickplayIntervalSeconds", Value = "10", Group = "Playback", Description = "Seconds between trickplay preview frames. Lower = finer scrubbing but larger sprites." },
+            new() { Key = "TrickplayThumbnailWidth", Value = "320", Group = "Playback", Description = "Width (px) of each trickplay preview tile. Height is derived at 16:9." },
+
+            // Webhooks — outbound event notifications (P2-WI-004).
+            new() { Key = "Webhooks.Enabled", Value = "true", Group = "Webhooks", Description = "Master switch for outbound webhook delivery." },
+            new() { Key = "Webhooks.RequestTimeoutSeconds", Value = "10", Group = "Webhooks", Description = "Per-delivery HTTP timeout in seconds." },
+            new() { Key = "Webhooks.AllowHttp", Value = "false", Group = "Webhooks", Description = "Allow plain-HTTP webhook URLs to public hosts (HTTPS otherwise required; private/LAN targets always allowed)." },
+            new() { Key = "Webhooks.AllowLoopback", Value = "false", Group = "Webhooks", Description = "Allow webhook URLs that resolve to loopback (127.0.0.1/::1)." },
+
+            // Maintenance — automatic database backups (P1-WI-001).
+            new() { Key = "Maintenance.BackupEnabled", Value = "true", Group = "Maintenance", Description = "Run scheduled database backups." },
+            new() { Key = "Maintenance.BackupSchedule", Value = "04:00", Group = "Maintenance", Description = "Local time (HH:mm) for the daily backup." },
+            new() { Key = "Maintenance.BackupDirectory", Value = "./data/backups", Group = "Maintenance", Description = "Directory where backup archives are written. Relative paths resolve against the server working directory." },
+            new() { Key = "Maintenance.BackupRetentionDaily", Value = "7", Group = "Maintenance", Description = "Number of most-recent daily backups to keep." },
+            new() { Key = "Maintenance.BackupRetentionWeekly", Value = "4", Group = "Maintenance", Description = "Number of weekly backups to keep (one per ISO week). Pinned backups are kept indefinitely." },
         };
 
         foreach (var def in defaults)

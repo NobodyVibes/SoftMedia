@@ -22,13 +22,36 @@ namespace SoftMedia.Server.Extensions;
 
 public static class ServiceCollectionExtensions
 {
+    /// Name of the policy scheme that routes each request to either JwtBearer or
+    /// the ApiToken scheme based on the Authorization header.
+    public const string SmartAuthScheme = "SmartAuth";
+
     public static IServiceCollection AddIdentityServices(this IServiceCollection services, IConfiguration config)
     {
         services.AddScoped<IPasswordHasher, PasswordHasher>();
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+        services.AddScoped<IApiTokenService, ApiTokenService>();
+        services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ScopeAuthorizationHandler>();
+        // Singleton: holds the in-memory pending-2FA-challenge store (P2-WI-005).
+        services.AddSingleton<ITotpService, TotpService>();
 
-        services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        services.AddAuthentication(SmartAuthScheme)
+            // Policy scheme: opaque "sm_*" bearer tokens go to the ApiToken handler;
+            // everything else (JWTs, query-string tokens) goes to JwtBearer. This keeps
+            // an opaque API token away from the JWT validator, which would reject it.
+            .AddPolicyScheme(SmartAuthScheme, SmartAuthScheme, options =>
+            {
+                options.ForwardDefaultSelector = ctx =>
+                {
+                    var auth = ctx.Request.Headers.Authorization.ToString();
+                    if (auth.StartsWith("Bearer " + IApiTokenService.Prefix, StringComparison.Ordinal))
+                        return ApiTokenAuthenticationHandler.SchemeName;
+                    return JwtBearerDefaults.AuthenticationScheme;
+                };
+            })
+            .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, ApiTokenAuthenticationHandler>(
+                ApiTokenAuthenticationHandler.SchemeName, _ => { })
             .AddJwtBearer(options =>
             {
                 options.TokenValidationParameters = new TokenValidationParameters
@@ -53,6 +76,7 @@ public static class ServiceCollectionExtensions
                             path.StartsWithSegments("/api/v1/books") ||
                             path.StartsWithSegments("/api/v1/image") ||
                             path.StartsWithSegments("/api/v1/music") ||
+                            path.StartsWithSegments("/api/v1/trickplay") ||
                             path.StartsWithSegments("/api/media") ||
                             path.StartsWithSegments("/hubs/media"))
                         {
@@ -71,6 +95,18 @@ public static class ServiceCollectionExtensions
                     }
                 };
             });
+
+        // Authorization: the default policy must accept BOTH schemes (JwtBearer and
+        // ApiToken) so existing [Authorize] endpoints work for API tokens too. Scope
+        // policies layer on top for endpoints that gate on a specific token scope.
+        services.AddAuthorization(options =>
+        {
+            options.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder(
+                    JwtBearerDefaults.AuthenticationScheme, ApiTokenAuthenticationHandler.SchemeName)
+                .RequireAuthenticatedUser()
+                .Build();
+            options.AddScopePolicies();
+        });
 
         return services;
     }
@@ -127,6 +163,18 @@ public static class ServiceCollectionExtensions
         // User-Agent. See SDD §6.2 — image-proxy compliance.
         services.AddHttpClient("ImageProxy", c => c.Timeout = TimeSpan.FromSeconds(15))
                 .AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+
+        // Outbound webhook deliveries (P2-WI-004). No SoftMediaUserAgentHandler — the
+        // worker sets its own "SoftMedia-Webhooks/1.0" UA per delivery.
+        //
+        // SECURITY: AllowAutoRedirect=false is load-bearing for the SSRF guard. The
+        // worker validates the target's resolved IPs BEFORE sending; if HttpClient
+        // transparently followed a 3xx, a benign public URL could redirect to an
+        // internal address (169.254.169.254 metadata, 127.0.0.1, RFC1918) and bypass
+        // that check. With redirects disabled the worker sees the 3xx and treats it as
+        // a blocked delivery rather than chasing the Location.
+        services.AddHttpClient("Webhooks", c => c.Timeout = TimeSpan.FromSeconds(15))
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 
         // Metadata Providers
         services.AddHttpClient<WikidataProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
@@ -201,6 +249,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IHlsManifestService, HlsManifestService>();
         services.AddScoped<IRecommendationService, RecommendationService>();
         services.AddScoped<IMusicImageService, MusicImageService>();
+
+        // Database backup / restore (P1-WI-001).
+        services.AddScoped<IBackupService, BackupService>();
+
+        // Trickplay sprite sheets (P2-WI-001).
+        services.AddScoped<ITrickplayService, TrickplayService>();
         services.AddSingleton<IThumbnailService, ThumbnailService>();
         services.AddScoped<IMediaRetrievalService, MediaRetrievalService>();
         services.AddScoped<IUserMediaInteractionService, UserMediaInteractionService>();
@@ -249,6 +303,7 @@ public static class ServiceCollectionExtensions
 
     public const string AuthRateLimitPolicy = "auth";
     public const string ImageProxyRateLimitPolicy = "image-proxy";
+    public const string TwoFactorRateLimitPolicy = "2fa";
 
     // Policy "auth": per-IP sliding window on /auth/login and /auth/signup to defeat
     // credential stuffing. 15 attempts per minute is comfortable headroom for users
@@ -321,12 +376,37 @@ public static class ServiceCollectionExtensions
                         AutoReplenishment = true
                     });
             });
+
+            // Policy "2fa" (P2-WI-005): tight cap on TOTP-challenge code submissions to
+            // defeat brute-forcing a 6-digit code. Partitioned per challenge id (from the
+            // ?challengeId= query) so one user's lockout doesn't affect others; falls back
+            // to client IP when absent. 6 attempts / 5 min ≈ negligible odds against 10^6.
+            options.AddPolicy(TwoFactorRateLimitPolicy, httpContext =>
+            {
+                var key = httpContext.Request.Query["challengeId"].ToString();
+                if (string.IsNullOrEmpty(key))
+                    key = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                return RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: "2fa:" + key,
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 6,
+                        Window = TimeSpan.FromMinutes(5),
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0,
+                        AutoReplenishment = true
+                    });
+            });
         });
         return services;
     }
 
     public static IServiceCollection AddBackgroundServices(this IServiceCollection services)
     {
+        // Scheduled-task telemetry registry (P1-WI-005). Singleton so it survives
+        // across requests; services report their last-run status into it.
+        services.AddSingleton<IScheduledTaskRegistry, ScheduledTaskRegistry>();
+
         // Library Scan Queue
         services.AddSingleton<LibraryScanQueueService>();
         services.AddSingleton<ILibraryScanQueueService>(sp => sp.GetRequiredService<LibraryScanQueueService>());
@@ -358,6 +438,17 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ImageDownloadQueueService>();
         services.AddSingleton<IImageDownloadQueue>(sp => sp.GetRequiredService<ImageDownloadQueueService>());
         services.AddHostedService(sp => sp.GetRequiredService<ImageDownloadQueueService>());
+
+        // Daily database backup + rotation (P1-WI-001). Resolves a scope per cycle
+        // because IBackupService / AppDbContext / ISettingsService are scoped.
+        services.AddHostedService<BackupRotationService>();
+
+        // Trickplay sprite-sheet backfill sweep (P2-WI-001).
+        services.AddHostedService<TrickplayWorker>();
+
+        // Outbound webhooks (P2-WI-004): singleton in-memory queue + drain worker.
+        services.AddSingleton<IWebhookDispatcher, WebhookDispatcher>();
+        services.AddHostedService<WebhookDispatchWorker>();
 
         return services;
     }

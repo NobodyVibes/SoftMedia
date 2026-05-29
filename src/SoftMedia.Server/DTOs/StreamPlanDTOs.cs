@@ -146,6 +146,44 @@ public class StreamPlan
 
     /// <summary>
     /// Reason for choosing this playback method (for debugging/logging).
+    /// Free-form English; kept for back-compat and server logs.
     /// </summary>
     public string Reason { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Structured, machine-readable reasons (P2-WI-002). The client translates each
+    /// <see cref="StreamReasonCode.Code"/> to a localized human sentence for the
+    /// "Why is this playing this way?" panel. Parallel to <see cref="Reason"/> so
+    /// no English parsing is needed client-side.
+    /// </summary>
+    public List<StreamReasonCode> ReasonCodes { get; set; } = new();
+}
+
+/// <summary>
+/// A single machine-readable playback-decision reason. <see cref="Code"/> is a
+/// stable dotted key (e.g. "video.codec.unsupported"); <see cref="Params"/> carries
+/// the interpolation values (codec names, resolutions, bitrates) so the client can
+/// localize without parsing English.
+/// </summary>
+public class StreamReasonCode
+{
+    public string Code { get; set; } = string.Empty;
+    public Dictionary<string, string> Params { get; set; } = new();
+
+    public StreamReasonCode() { }
+    public StreamReasonCode(string code) { Code = code; }
+    public StreamReasonCode(string code, Dictionary<string, string> @params) { Code = code; Params = @params; }
+}
+
+/// <summary>Canonical reason codes emitted by the stream planner.</summary>
+public static class StreamReasonCodes
+{
+    public const string DirectPlaySupported = "directplay.supported";
+    public const string RemuxContainer = "remux.container";
+    public const string VideoCodecUnsupported = "video.codec.unsupported";
+    public const string AudioCodecUnsupported = "audio.codec.unsupported";
+    public const string HdrTonemap = "hdr.tonemap";
+    public const string ResolutionExceedsMax = "resolution.exceeds-max";
+    public const string TranscodeRequired = "transcode.required";
+    public const string BitrateClamped = "bitrate.clamped";
 }

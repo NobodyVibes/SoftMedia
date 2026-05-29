@@ -21,7 +21,7 @@ Adapt your posture to whatever is asked: implement features end-to-end when aske
 - **Backend:** C# / .NET 8, ASP.NET Core Web API, EF Core + SQLite (WAL mode), xUnit + Moq/NSubstitute for tests.
 - **Frontend:** React 18 + TypeScript (strict), Vite, Tailwind CSS, TanStack Query (server state), Zustand (UI state), Framer Motion, Vitest + React Testing Library.
 - **Media:** FFmpeg (shelled out) for thumbnails, probing, subtitle extraction, HLS transcoding.
-- **Auth:** JWT access token + HttpOnly/SameSite=Strict refresh cookie; Argon2id password hashing.
+- **Auth:** JWT access token + HttpOnly/SameSite=Lax refresh cookie (path-scoped to `/api/v1/auth/`); Argon2id password hashing.
 
 **Architectural rules (always on):**
 - **Back-to-front development.** Backend endpoint + DTO + tests exist and pass before the React component that consumes them.

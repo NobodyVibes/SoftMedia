@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Transcoding.Models;
+using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Models;
 
@@ -31,6 +32,7 @@ public class TranscodeController : ControllerBase
     private readonly IVideoPreviewService _videoPreviewService;
     private readonly IStreamSecurityService _streamSecurityService;
     private readonly AppDbContext _dbContext;
+    private readonly ITokenService _tokenService;
 
     // New Services
     private readonly ITranscodeSessionService _sessionService;
@@ -46,6 +48,7 @@ public class TranscodeController : ControllerBase
         ITranscodeSessionService sessionService,
         IStreamResultService streamResultService,
         AppDbContext dbContext,
+        ITokenService tokenService,
         ILogger<TranscodeController> logger)
     {
         _transcodeService = transcodeService;
@@ -57,6 +60,7 @@ public class TranscodeController : ControllerBase
         _sessionService = sessionService;
         _streamResultService = streamResultService;
         _dbContext = dbContext;
+        _tokenService = tokenService;
         _logger = logger;
     }
 
@@ -78,11 +82,17 @@ public class TranscodeController : ControllerBase
     }
 
     [HttpPost("{id}/plan")]
-    public async Task<ActionResult<StreamPlan>> GetStreamPlan(Guid id, [FromBody] ClientCapabilities capabilities)
+    public async Task<ActionResult<StreamPlan>> GetStreamPlan(Guid id, [FromBody] ClientCapabilities capabilities, [FromQuery] bool cast = false)
     {
         try
         {
             var userId = GetUserId();
+
+            // Only a full session may mint a cast token. A cast token is itself in-scope for
+            // this endpoint (/api/transcode/{id}/...), so without this early guard it could call
+            // ?cast=true to self-renew indefinitely. Reject before doing any work.
+            if (cast && User.FindFirst(CastTokenClaims.TokenUse)?.Value == CastTokenClaims.CastUse)
+                return StatusCode(StatusCodes.Status403Forbidden, "A cast token cannot mint another cast token.");
 
             var mediaItem = await _mediaRepository.GetByIdWithLibraryAsync(id);
 
@@ -94,13 +104,23 @@ public class TranscodeController : ControllerBase
             if (accessResult == MediaAccessResult.Unauthorized) return NotFound();
 
             var token = Request.GetToken();
+            if (cast)
+            {
+                // Casting: the Chromecast fetches the stream itself and can't refresh the
+                // short-lived session JWT, so embed a long-lived token in the plan URL. It is
+                // scoped to THIS media's stream routes only (CC-WI-003) — see CastTokenClaims.
+                var user = await _dbContext.Users.FindAsync(userId);
+                if (user == null) return Unauthorized();
+                token = _tokenService.GenerateCastToken(user, id);
+            }
+
             var userMaxBitrate = await GetUserMaxBitrateAsync(userId);
             var plan = await _streamPlanService.ComputeStreamPlanAsync(
                 id, mediaItem, capabilities, token ?? string.Empty,
                 HttpContext.Connection.RemoteIpAddress, userMaxBitrate);
 
-            _logger.LogInformation("Stream plan for {Id}: Method={Method}, Profile={Profile}, Reason={Reason}",
-                id, plan.Method, plan.DisplayProfile, plan.Reason);
+            _logger.LogInformation("Stream plan for {Id}: Method={Method}, Profile={Profile}, Reason={Reason}{Cast}",
+                id, plan.Method, plan.DisplayProfile, plan.Reason, cast ? " [cast]" : "");
 
             return Ok(plan);
         }
@@ -220,21 +240,21 @@ public class TranscodeController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    public IActionResult StopTranscode(Guid id, [FromQuery] int? sub = null, [FromQuery] bool all = false, [FromQuery] string? sid = null)
+    public async Task<IActionResult> StopTranscode(Guid id, [FromQuery] int? sub = null, [FromQuery] bool all = false, [FromQuery] string? sid = null)
     {
         if (sub.HasValue && sub.Value < 0) sub = null;
         try
         {
             var userId = GetUserId();
-            if (all) _sessionService.StopAllSessions(id, userId);
-            else _sessionService.StopSession(id, userId, sub, sid);
+            if (all) await _sessionService.StopAllSessions(id, userId);
+            else await _sessionService.StopSession(id, userId, sub, sid);
             return Ok();
         }
         catch (UnauthorizedAccessException) { return Unauthorized(); }
     }
 
     [HttpPost("{id}/stop")]
-    public IActionResult StopTranscodePost(Guid id, [FromQuery] int? sub = null, [FromQuery] bool all = false, [FromQuery] string? sid = null)
+    public Task<IActionResult> StopTranscodePost(Guid id, [FromQuery] int? sub = null, [FromQuery] bool all = false, [FromQuery] string? sid = null)
     {
         return StopTranscode(id, sub, all, sid);
     }

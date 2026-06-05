@@ -1,5 +1,13 @@
 import api from './api';
 
+export interface TrustedDeviceDto {
+    id: string;
+    label: string | null;
+    createdAtUtc: string;
+    lastSeenAtUtc: string;
+    lastVerifiedAtUtc: string;
+}
+
 export interface ApiTokenDto {
     id: string;
     label: string;
@@ -86,6 +94,21 @@ export const accountService = {
 
     disableTotp: async (password: string, code: string): Promise<void> => {
         await api.post('/account/totp/disable', { password, code });
+    },
+
+    // --- Trusted devices (2FA expiration window) ---
+
+    getTrustedDevices: async (): Promise<TrustedDeviceDto[]> => {
+        const response = await api.get<TrustedDeviceDto[]>('/account/trusted-devices');
+        return response.data;
+    },
+
+    revokeTrustedDevice: async (id: string): Promise<void> => {
+        await api.delete(`/account/trusted-devices/${encodeURIComponent(id)}`);
+    },
+
+    revokeAllTrustedDevices: async (): Promise<void> => {
+        await api.delete('/account/trusted-devices');
     },
 
     // --- Webhooks (P2-WI-004) ---

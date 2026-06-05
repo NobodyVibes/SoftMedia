@@ -51,6 +51,7 @@ const userRow: UserDto = {
     lastName: 'L',
     createdByAdmin: false,
     usedInviteCode: null,
+    twoFactorEnabled: false,
 };
 
 const adminRow: UserDto = { ...userRow, id: 'admin-1', username: 'admin', role: 'Admin' };

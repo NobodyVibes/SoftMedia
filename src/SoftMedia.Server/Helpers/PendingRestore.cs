@@ -13,6 +13,16 @@ public static class PendingRestore
     public const string PendingSuffix = ".restore-pending";
 
     /// <summary>
+    /// Marker written next to the database after a restore is applied on boot. A
+    /// background service consumes it to trigger a one-shot artwork-repair sweep
+    /// (backups exclude the image cache, so restored rows point at missing files).
+    /// </summary>
+    public const string RestoreAppliedSuffix = ".restore-applied";
+
+    /// <summary>Path of the restore-applied marker for a given database path.</summary>
+    public static string AppliedMarkerPath(string dbPath) => dbPath + RestoreAppliedSuffix;
+
+    /// <summary>
     /// If a pending-restore file exists next to <paramref name="dbPath"/>, move
     /// the current database aside (preserved as <c>.pre-restore-*</c>), discard
     /// any stale WAL/SHM sidecars, and swap the pending file into place. No-op if
@@ -41,6 +51,21 @@ public static class PendingRestore
 
             File.Move(pending, dbPath, overwrite: true);
             logger.LogWarning("Pending restore applied: {Pending} -> {Db}", pending, dbPath);
+
+            // Signal the post-restore artwork-repair sweep. Backups exclude the image
+            // cache, so the restored database references /cache/ files that don't exist
+            // here; the marker lets a background service re-fetch that art once on boot.
+            try { File.WriteAllText(AppliedMarkerPath(dbPath), DateTime.UtcNow.ToString("O")); }
+            catch (Exception markerEx)
+            {
+                // The marker is what triggers automatic artwork repair on this boot. If we
+                // can't write it, the auto-repair won't run — surface that loudly so an
+                // operator knows to click "Repair Artwork" manually.
+                logger.LogError(markerEx,
+                    "Restore applied but could not write the artwork-repair marker at {Path}. " +
+                    "Automatic artwork repair will NOT run — trigger it manually from the admin dashboard.",
+                    AppliedMarkerPath(dbPath));
+            }
         }
         catch (Exception ex)
         {

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
+using SoftMedia.Server.Services.Infrastructure;
 
 namespace SoftMedia.Server.Services.Background;
 
@@ -14,13 +15,16 @@ public class RefreshTokenCleanupService : BackgroundService
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<RefreshTokenCleanupService> _logger;
+    private readonly IScheduledTaskRegistry _registry;
 
     public RefreshTokenCleanupService(
         IServiceScopeFactory scopeFactory,
-        ILogger<RefreshTokenCleanupService> logger)
+        ILogger<RefreshTokenCleanupService> logger,
+        IScheduledTaskRegistry registry)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _registry = registry;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -40,13 +44,18 @@ public class RefreshTokenCleanupService : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 await PruneOnceAsync(stoppingToken);
+                _registry.Report(ScheduledTaskNames.RefreshTokenCleanup, "Success", sw.ElapsedMilliseconds,
+                    nextRunUtc: DateTime.UtcNow.Add(Period));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "RefreshTokenCleanupService iteration failed.");
+                _registry.Report(ScheduledTaskNames.RefreshTokenCleanup, "Failed", sw.ElapsedMilliseconds, ex.Message,
+                    nextRunUtc: DateTime.UtcNow.Add(Period));
             }
 
             try

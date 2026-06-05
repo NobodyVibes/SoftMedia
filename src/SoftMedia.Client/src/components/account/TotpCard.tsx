@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { QRCodeSVG } from 'qrcode.react';
-import { ShieldCheck, ShieldOff, Loader2, Copy, Check } from 'lucide-react';
+import { ShieldCheck, ShieldOff, Loader2, Copy, Check, Trash2, Laptop } from 'lucide-react';
 import { accountService } from '../../services/accountService';
 
 type Step = 'idle' | 'enrolling' | 'recovery';
@@ -99,8 +99,9 @@ export function TotpCard() {
                                 value={disableCode} onChange={(e) => setDisableCode(e.target.value)} className={inputCls} />
                             {error && <p className="text-sm text-red-400">{error}</p>}
                             <div className="flex gap-2">
-                                <button type="button" onClick={() => disableMutation.mutate()} disabled={disableMutation.isPending}
-                                    className="px-4 py-2 text-sm bg-red-500 hover:bg-red-600 text-white rounded-lg disabled:opacity-50">
+                                <button type="button" onClick={() => disableMutation.mutate()}
+                                    disabled={disableMutation.isPending || !disablePassword || !disableCode.trim()}
+                                    className="px-4 py-2 text-sm bg-red-500 hover:bg-red-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">
                                     Confirm Disable
                                 </button>
                                 <button type="button" onClick={() => { setShowDisable(false); setError(''); }}
@@ -108,6 +109,7 @@ export function TotpCard() {
                             </div>
                         </div>
                     )}
+                    <TrustedDevices />
                 </>
             ) : step === 'idle' ? (
                 <>
@@ -159,6 +161,59 @@ export function TotpCard() {
                         <button type="button" onClick={() => setStep('idle')} className={btnPrimary}>Done</button>
                     </div>
                 </div>
+            )}
+        </div>
+    );
+}
+
+/// Lists devices that have been remembered for the 2FA expiration window, with the
+/// ability to forget one or all (forcing 2FA there on the next login).
+function TrustedDevices() {
+    const queryClient = useQueryClient();
+    const { data: devices = [], isLoading } = useQuery({
+        queryKey: ['trustedDevices'],
+        queryFn: accountService.getTrustedDevices,
+    });
+    const invalidate = () => queryClient.invalidateQueries({ queryKey: ['trustedDevices'] });
+
+    const revoke = useMutation({ mutationFn: accountService.revokeTrustedDevice, onSuccess: invalidate });
+    const revokeAll = useMutation({ mutationFn: accountService.revokeAllTrustedDevices, onSuccess: invalidate });
+
+    if (isLoading) return null;
+
+    return (
+        <div className="mt-6 pt-4 border-t border-white/10">
+            <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium text-white">Remembered devices</h3>
+                {devices.length > 0 && (
+                    <button type="button" onClick={() => revokeAll.mutate()} disabled={revokeAll.isPending}
+                        className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50">
+                        Forget all devices
+                    </button>
+                )}
+            </div>
+            {devices.length === 0 ? (
+                <p className="text-xs text-gray-500">
+                    No remembered devices. When a "2FA expiration" window is set by an admin, devices you sign in
+                    from are remembered here so you aren't asked for a code on every login.
+                </p>
+            ) : (
+                <ul className="space-y-2">
+                    {devices.map((d) => (
+                        <li key={d.id} className="flex items-center justify-between gap-3 text-sm">
+                            <span className="flex items-center gap-2 text-gray-300 min-w-0">
+                                <Laptop size={14} className="shrink-0 text-gray-400" />
+                                <span className="truncate">{d.label ?? 'Unknown device'}</span>
+                                <span className="text-xs text-gray-500 shrink-0">· last used {new Date(d.lastSeenAtUtc).toLocaleDateString()}</span>
+                            </span>
+                            <button type="button" onClick={() => revoke.mutate(d.id)} disabled={revoke.isPending}
+                                className="p-1.5 rounded hover:bg-red-500/20 text-gray-400 hover:text-red-400 disabled:opacity-50"
+                                title="Forget this device">
+                                <Trash2 size={14} />
+                            </button>
+                        </li>
+                    ))}
+                </ul>
             )}
         </div>
     );

@@ -26,8 +26,11 @@ public class AuthController : ControllerBase
     private readonly ISettingsService _settingsService;
     private readonly IUserPreferencesService _userPreferencesService;
     private readonly ITotpService _totpService;
+    private readonly ITrustedDeviceService _trustedDevices;
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<AuthController> _logger;
+
+    private const string DeviceCookieName = "tfaDevice";
 
     public AuthController(
         AppDbContext context,
@@ -37,6 +40,7 @@ public class AuthController : ControllerBase
         ISettingsService settingsService,
         IUserPreferencesService userPreferencesService,
         ITotpService totpService,
+        ITrustedDeviceService trustedDevices,
         IWebHostEnvironment env,
         ILogger<AuthController> logger)
     {
@@ -47,6 +51,7 @@ public class AuthController : ControllerBase
         _settingsService = settingsService;
         _userPreferencesService = userPreferencesService;
         _totpService = totpService;
+        _trustedDevices = trustedDevices;
         _env = env;
         _logger = logger;
     }
@@ -133,7 +138,7 @@ public class AuthController : ControllerBase
         var (refreshRaw, _) = await _refreshTokens.IssueAsync(user, ClientIp());
         SetRefreshTokenCookie(refreshRaw);
 
-        return Ok(new AuthResponse(accessToken, BuildUserDto(user, request.InviteCode, mustChangePassword: false)));
+        return Ok(new AuthResponse(accessToken, await BuildUserDtoAsync(user, request.InviteCode, mustChangePassword: false)));
     }
 
     [EnableRateLimiting(Extensions.ServiceCollectionExtensions.AuthRateLimitPolicy)]
@@ -154,6 +159,16 @@ public class AuthController : ControllerBase
         var totp = await _context.UserTotps.FirstOrDefaultAsync(t => t.UserId == user.Id);
         if (totp?.EnabledAt != null)
         {
+            // 2FA-expiry: if this device completed 2FA within the configured window,
+            // skip the challenge. 0 (or no remembered device) always challenges.
+            var expirationDays = await _settingsService.GetSettingAsync("TwoFactorExpirationDays", 0);
+            var trusted = await _trustedDevices.FindValidAsync(user.Id, Request.Cookies[DeviceCookieName], expirationDays);
+            if (trusted != null)
+            {
+                await _trustedDevices.TouchAsync(trusted);
+                return Ok(await IssueLoginResponseAsync(user));
+            }
+
             var challengeId = _totpService.CreateChallenge(user.Id);
             return Ok(new TwoFactorRequiredResponse(challengeId));
         }
@@ -187,6 +202,17 @@ public class AuthController : ControllerBase
 
         await _context.SaveChangesAsync(); // persist a consumed recovery code, if any
         _totpService.Complete(id);
+
+        // 2FA-expiry: remember this device so future logins can skip 2FA until the window
+        // elapses. Only when the admin has enabled a window (>0); otherwise we never skip.
+        var expirationDays = await _settingsService.GetSettingAsync("TwoFactorExpirationDays", 0);
+        if (expirationDays > 0)
+        {
+            var (_, rawToken) = await _trustedDevices.RememberAsync(
+                user.Id, Request.Cookies[DeviceCookieName], Request.Headers.UserAgent.ToString(), ClientIp());
+            SetDeviceCookie(rawToken, expirationDays);
+        }
+
         return Ok(await IssueLoginResponseAsync(user));
     }
 
@@ -203,7 +229,7 @@ public class AuthController : ControllerBase
             .Select(i => i.Code)
             .FirstOrDefaultAsync();
 
-        return new AuthResponse(accessToken, BuildUserDto(user, usedInviteCode, user.MustChangePassword));
+        return new AuthResponse(accessToken, await BuildUserDtoAsync(user, usedInviteCode, user.MustChangePassword));
     }
 
     /// Consumes a single-use recovery code (moves its hash to UsedRecoveryCodes).
@@ -248,6 +274,10 @@ public class AuthController : ControllerBase
         // the old credentials now has to re-authenticate; its refresh cookie
         // still matches a DB row but that row is marked revoked.
         await _refreshTokens.RevokeAllForUserAsync(user.Id, RefreshTokenRevocationReason.PasswordChange);
+
+        // A password change is a security event: forget remembered 2FA devices so the
+        // next login re-challenges 2FA on every device.
+        await _trustedDevices.RevokeAllAsync(user.Id);
 
         return Ok("Password changed successfully.");
     }
@@ -325,7 +355,7 @@ public class AuthController : ControllerBase
             .Select(i => i.Code)
             .FirstOrDefaultAsync();
 
-        return Ok(new AuthResponse(accessToken, BuildUserDto(user, usedInviteCode, user.MustChangePassword)));
+        return Ok(new AuthResponse(accessToken, await BuildUserDtoAsync(user, usedInviteCode, user.MustChangePassword)));
     }
 
     [HttpPost("logout")]
@@ -347,7 +377,7 @@ public class AuthController : ControllerBase
         return Ok("Logged out.");
     }
 
-    private UserDto BuildUserDto(User user, string? usedInviteCode, bool mustChangePassword)
+    private async Task<UserDto> BuildUserDtoAsync(User user, string? usedInviteCode, bool mustChangePassword)
     {
         var ratings = string.IsNullOrEmpty(user.ContentRatings)
             ? new Dictionary<string, string>()
@@ -355,12 +385,15 @@ public class AuthController : ControllerBase
                   user.ContentRatings, (System.Text.Json.JsonSerializerOptions?)null)
               ?? new Dictionary<string, string>();
 
+        var twoFactorEnabled = await _context.UserTotps
+            .AnyAsync(t => t.UserId == user.Id && t.EnabledAt != null);
+
         return new UserDto(
             user.Id, user.Username, user.Role, user.MaxRating, user.CreatedAt,
             user.IsBanned, user.IsApproved, user.IsRejected,
             ratings,
             user.FirstName, user.LastName, user.CreatedByAdmin,
-            usedInviteCode, mustChangePassword);
+            usedInviteCode, mustChangePassword, twoFactorEnabled);
     }
 
     private string? ClientIp() => HttpContext.Connection.RemoteIpAddress?.ToString();
@@ -397,6 +430,24 @@ public class AuthController : ControllerBase
     {
         Response.Cookies.Delete("refreshToken", new CookieOptions
         {
+            Path = "/api/v1/auth/"
+        });
+    }
+
+    /// <summary>
+    /// Sets the opaque "remembered device" token. Same posture as the refresh cookie
+    /// (HttpOnly, Lax, Secure-on-HTTPS, scoped to /auth). The server enforces the real
+    /// expiry from the DB row + the live setting; the cookie max-age is just a hint, so
+    /// it's given a generous lifetime.
+    /// </summary>
+    private void SetDeviceCookie(string rawToken, int expirationDays)
+    {
+        Response.Cookies.Append(DeviceCookieName, rawToken, new CookieOptions
+        {
+            HttpOnly = true,
+            Expires = DateTime.UtcNow.AddDays(Math.Max(expirationDays, 1) + 1),
+            SameSite = SameSiteMode.Lax,
+            Secure = Request.IsHttps,
             Path = "/api/v1/auth/"
         });
     }

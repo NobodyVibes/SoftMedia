@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Clock, Play, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -27,16 +28,22 @@ export function ScheduledTasksCard() {
     const { t } = useTranslation();
     const queryClient = useQueryClient();
 
+    // Triggered tasks run asynchronously, so after "Run now" we poll briefly to catch the
+    // result, then stop. Normally the card just fetches once on open (and on tab focus) —
+    // the tasks run on daily/hourly schedules, so there's nothing to watch the rest of the time.
+    const [pollUntil, setPollUntil] = useState(0);
+
     const { data: tasks = [], isLoading } = useQuery<ScheduledTaskStatus[]>({
         queryKey: ['scheduledTasks'],
         queryFn: adminService.listTasks,
-        refetchInterval: 15000,
+        refetchInterval: () => (Date.now() < pollUntil ? 5000 : false),
     });
 
     const triggerMutation = useMutation({
         mutationFn: adminService.triggerTask,
         onSuccess: () => {
             toast.success(t('Task triggered'));
+            setPollUntil(Date.now() + 60_000); // poll ~5s for up to a minute to catch completion
             queryClient.invalidateQueries({ queryKey: ['scheduledTasks'] });
         },
         onError: () => toast.error(t('Failed to trigger task')),

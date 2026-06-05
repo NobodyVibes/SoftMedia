@@ -37,6 +37,14 @@ public interface IScheduledTaskRegistry
     void Register(string name, string description, TaskSchedule schedule, bool supportsManualTrigger);
     void Report(string name, string result, long? durationMs = null, string? error = null, DateTime? nextRunUtc = null);
     void SetNextRun(string name, DateTime? nextRunUtc);
+
+    /// <summary>
+    /// Restores previously-persisted telemetry onto an already-registered task VERBATIM
+    /// (unlike <see cref="Report"/>, which stamps the run time as "now"). No-op if the
+    /// task name isn't registered. Used on startup to survive a backend reboot.
+    /// </summary>
+    void LoadPersisted(string name, DateTime? lastRunUtc, string? lastResult, long? lastRunDurationMs, string? lastError, DateTime? nextRunUtc);
+
     IReadOnlyList<ScheduledTaskStatus> GetAll();
 }
 
@@ -70,6 +78,17 @@ public class ScheduledTaskRegistry : IScheduledTaskRegistry
     public void SetNextRun(string name, DateTime? nextRunUtc)
     {
         if (_tasks.TryGetValue(name, out var status)) status.NextRunUtc = nextRunUtc;
+    }
+
+    public void LoadPersisted(string name, DateTime? lastRunUtc, string? lastResult, long? lastRunDurationMs, string? lastError, DateTime? nextRunUtc)
+    {
+        if (!_tasks.TryGetValue(name, out var status)) return;
+        status.LastRunUtc = lastRunUtc;
+        status.LastResult = lastResult;
+        status.LastRunDurationMs = lastRunDurationMs;
+        status.LastError = lastError;
+        // Only restore a next-run if a worker hasn't already computed one this boot.
+        if (status.NextRunUtc == null) status.NextRunUtc = nextRunUtc;
     }
 
     public IReadOnlyList<ScheduledTaskStatus> GetAll()

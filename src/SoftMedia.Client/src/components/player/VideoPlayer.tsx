@@ -9,9 +9,12 @@ import { PlayerDebugPanel } from './PlayerDebugPanel';
 import { TranscodeExplanationModal } from './TranscodeExplanationModal';
 import { ProgressBar } from './ProgressBar';
 import { SkipSegmentPill } from './SkipSegmentPill';
-import { useMediaCapabilities, createCapabilitiesWithOverrides } from '../../hooks/useMediaCapabilities';
+import { useMediaCapabilities, createCapabilitiesWithOverrides, type ClientCapabilities } from '../../hooks/useMediaCapabilities';
 import { useLocalPreferences } from '../../hooks/useLocalPreferences';
 import { useTrickplay, type SpriteFrame } from '../../hooks/useTrickplay';
+import { useCast } from '../../hooks/useCast';
+import { describeCastReadiness } from '../../hooks/castReadiness';
+import { CastDiagnostics } from './CastDiagnostics';
 
 
 
@@ -46,11 +49,34 @@ interface StreamPlan {
 const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
 /**
+ * Capabilities of the Chromecast Default Media Receiver, for building a cast stream plan.
+ * The receiver is far more limited than a desktop browser: across all Cast generations it
+ * reliably decodes only H.264 + AAC up to 1080p — NOT AV1/HEVC/VP9, MKV, or HDR. We must
+ * request a plan tuned to *these* caps rather than reuse the desktop plan, which may target
+ * AV1/HEVC at 4K+ that the receiver cannot play (it would connect but never start playback).
+ */
+const CHROMECAST_CAPABILITIES: ClientCapabilities = {
+    videoCodecs: ['h264'],
+    audioCodecs: ['aac'],
+    maxAudioChannels: 2,
+    supportsHdr: false,
+    displaySupportsHdr: false,
+    codecSupportsHdr: false,
+    maxBitrate: 0,
+    maxResolution: 1080,
+    supportedSubtitleFormats: ['vtt'],
+    supportedContainers: ['hls', 'mp4'],
+};
+
+/**
  * VideoPlayer component with custom controls, keyboard shortcuts, playback speed, and PiP support.
  * Uses native HTML5 video with hls.js for HLS support, but with custom UI controls.
  */
 export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps) {
     const videoRef = useRef<HTMLVideoElement>(null);
+    // Guards the cast button against rapid re-clicks: `isCasting` only flips after the async
+    // SESSION_STARTED event, so it can't protect the in-flight window on its own.
+    const castInFlightRef = useRef(false);
     const hlsRef = useRef<Hls | null>(null);
     const seekTargetRef = useRef<number | null>(null); // Track where user drags to
     const containerRef = useRef<HTMLDivElement>(null);
@@ -122,7 +148,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const [showExplanation, setShowExplanation] = useState(false);
 
     // HDR state tracking for toasts
-    const [playerToast, setPlayerToast] = useState<{ message: string; type: 'info' | 'success' } | null>(null);
+    const [playerToast, setPlayerToast] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null);
     const lastToastStatusRef = useRef<'hdr' | 'tonemapped' | null>(null);
 
     // Unique Stream ID to isolate transcode sessions per playback instance
@@ -147,6 +173,17 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     // Pre-baked scrubber sprite sheets (P2-WI-001); falls back to on-demand frames.
     const { frameAt: trickplayFrameAt } = useTrickplay(item.id, token);
+
+    // Chromecast sender (P3-WI-001). The Cast SDK loads from index.html and isn't
+    // available on browsers that block it (Firefox, Safari) — button only renders
+    // when isCastAvailable is true.
+    const { isCastAvailable, isCasting, receiverName, castState, isSecureContext, castUnavailableReason, castNow, stopCasting } = useCast();
+    const [castDiagOpen, setCastDiagOpen] = useState(false);
+    // Show the cast button when a cast can plausibly start; otherwise (insecure context, or no
+    // Cast device on the LAN) show a readiness affordance that explains exactly what's missing.
+    const showCastButton = isCastAvailable && castState !== 'no-devices';
+    const showCastHelp = (!isCastAvailable && castUnavailableReason === 'insecure-context')
+        || (isCastAvailable && castState === 'no-devices');
 
     // Track selection state (managed by hook)
     const {
@@ -1862,6 +1899,115 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                 )}
                             </div>
 
+                            {/* Cast to Chromecast (P3-WI-001 / CC-WI-005). The cast button shows
+                                when a cast can start; otherwise a readiness affordance explains why
+                                (no HTTPS, or no Cast device on the network). */}
+                            {currentPlan && (showCastButton || showCastHelp) && (
+                                <div className="relative flex items-center">
+                                {showCastButton && (
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        if (isCasting) {
+                                            stopCasting();
+                                            return;
+                                        }
+                                        if (castInFlightRef.current) return; // ignore re-clicks while a cast is starting
+                                        // The Chromecast fetches the stream URL itself, so a
+                                        // loopback origin (e.g. the Vite dev server on localhost)
+                                        // is unreachable from the TV. Require a LAN-routable host.
+                                        // location.hostname returns IPv6 literals without brackets.
+                                        const host = window.location.hostname;
+                                        if (host === 'localhost' || host === '0.0.0.0' || host.startsWith('127.') || host === '::1') {
+                                            setPlayerToast({
+                                                message: 'To cast, open SoftMedia using this computer’s network address (e.g. http://192.168.x.x:PORT), not localhost — the TV can’t reach localhost.',
+                                                type: 'error',
+                                            });
+                                            return;
+                                        }
+                                        castInFlightRef.current = true;
+                                        try {
+                                            // Request a plan tuned to the Chromecast (H.264/AAC/1080p, its
+                                            // own session id) rather than reusing the desktop plan, which
+                                            // may target AV1/HEVC/4K+ the receiver can't decode.
+                                            const castCaps = createCapabilitiesWithOverrides(CHROMECAST_CAPABILITIES, {
+                                                requestedQuality: '1080p',
+                                                streamId: `cast-${streamId}`,
+                                            });
+                                            // ?cast=true → the plan URL carries a long-lived,
+                                            // media-scoped cast token (the receiver can't refresh
+                                            // the short-lived session JWT mid-movie).
+                                            const resp = await fetch(`/api/transcode/${item.id}/plan?cast=true`, {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                                                body: JSON.stringify(castCaps),
+                                            });
+                                            if (!resp.ok) throw new Error(`stream plan request failed (${resp.status})`);
+                                            const castPlan: StreamPlan = await resp.json();
+
+                                            // plan.url is "/api/..."; the receiver fetches it directly, so make
+                                            // it absolute. It already carries ?token= for query-string auth.
+                                            const streamUrl = new URL(castPlan.url, window.location.origin).toString();
+                                            const contentType = castPlan.container === 'hls'
+                                                ? 'application/vnd.apple.mpegurl'
+                                                : 'video/mp4';
+                                            await castNow({
+                                                streamUrl,
+                                                contentType,
+                                                title: item.title,
+                                                subtitle: item.year ? String(item.year) : undefined,
+                                                posterUrl: item.posterPath
+                                                    ? new URL(item.posterPath, window.location.origin).toString()
+                                                    : undefined,
+                                            });
+                                            // Hand off: stop local playback so it isn't playing in two places.
+                                            videoRef.current?.pause();
+                                        } catch (e) {
+                                            console.error('[Cast]', e);
+                                            setPlayerToast({ message: 'Could not start casting. See the browser console for details.', type: 'error' });
+                                        } finally {
+                                            castInFlightRef.current = false;
+                                        }
+                                    }}
+                                    aria-label={isCasting ? `Stop casting to ${receiverName ?? 'receiver'}` : 'Cast to device'}
+                                    aria-pressed={isCasting}
+                                    className={`transition-colors p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${isCasting ? 'text-blue-400' : 'text-white/70 hover:text-white'}`}
+                                    title={isCasting ? `Casting to ${receiverName ?? 'receiver'}` : 'Cast'}
+                                >
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.93-11-11-11zm20-7H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.11-.9-2-2-2z" />
+                                    </svg>
+                                </button>
+                                )}
+                                {showCastHelp && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setCastDiagOpen((v) => !v)}
+                                        aria-label="Casting unavailable — show readiness"
+                                        aria-expanded={castDiagOpen}
+                                        title="Casting unavailable — why?"
+                                        className="transition-colors p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded text-white/40 hover:text-white/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                                    >
+                                        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.93-11-11-11zm20-7H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.11-.9-2-2-2z" />
+                                        </svg>
+                                    </button>
+                                )}
+                                {castDiagOpen && (
+                                    <CastDiagnostics
+                                        readiness={describeCastReadiness({
+                                            isSecureContext,
+                                            hostname: window.location.hostname,
+                                            isCastAvailable,
+                                            castState,
+                                            castUnavailableReason,
+                                        })}
+                                        onClose={() => setCastDiagOpen(false)}
+                                    />
+                                )}
+                                </div>
+                            )}
+
                             {/* "Why is this playing this way?" explainer trigger (P2-WI-002) */}
                             {currentPlan && (
                                 <button
@@ -1989,8 +2135,13 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 /**
  * Premium in-player toast notification with circular progress timer and exit animations.
  */
-function PlayerToast({ message, type, onDismiss }: { message: string, type: 'info' | 'success', onDismiss: () => void }) {
+function PlayerToast({ message, type, onDismiss }: { message: string, type: 'info' | 'success' | 'error', onDismiss: () => void }) {
     const [isExiting, setIsExiting] = useState(false);
+    const isError = type === 'error';
+    // Errors get red chrome + an alert role; info/success keep the existing blue.
+    const boxClass = isError ? 'bg-red-500/20 border-red-500/40 text-red-50' : 'bg-blue-500/20 border-blue-500/40 text-blue-50';
+    const swatchClass = isError ? 'bg-red-500/40' : 'bg-blue-500/40';
+    const iconClass = isError ? 'text-red-200' : 'text-blue-200';
 
     useEffect(() => {
         // Auto-dismiss after 8 seconds
@@ -2010,13 +2161,15 @@ function PlayerToast({ message, type, onDismiss }: { message: string, type: 'inf
     return (
         <div className={`absolute top-6 left-1/2 -translate-x-1/2 z-[100] transition-all duration-500 ease-in-out ${isExiting ? 'opacity-0 -translate-y-4 scale-95' : 'opacity-100 translate-y-0 scale-100'
             }`}>
-            <div className="px-4 py-2.5 rounded-xl shadow-2xl backdrop-blur-xl border bg-blue-500/20 border-blue-500/40 text-blue-50 flex items-center gap-4 font-medium text-sm sm:text-base whitespace-nowrap">
+            <div role={isError ? 'alert' : 'status'} className={`px-4 py-2.5 rounded-xl shadow-2xl backdrop-blur-xl border ${boxClass} flex items-center gap-4 font-medium text-sm sm:text-base whitespace-nowrap`}>
 
                 <div className="flex items-center gap-3">
-                    <div className="w-6 h-6 rounded-full bg-blue-500/40 flex items-center justify-center">
-                        <svg className="w-4 h-4 text-blue-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div className={`w-6 h-6 rounded-full ${swatchClass} flex items-center justify-center`}>
+                        <svg className={`w-4 h-4 ${iconClass}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             {type === 'success' ? (
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                            ) : type === 'error' ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
                             ) : (
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             )}

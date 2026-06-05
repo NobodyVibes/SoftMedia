@@ -26,7 +26,7 @@ public record TotpConfirmResponse(List<string> RecoveryCodes);
 public record TotpStatusResponse(bool Enabled);
 public record TotpDisableRequest(string Password, string Code);
 
-public record UserDto(Guid Id, string Username, UserRole Role, string MaxRating, DateTime CreatedAt, bool IsBanned, bool IsApproved, bool IsRejected, Dictionary<string, string> ContentRatings, string FirstName, string LastName, bool CreatedByAdmin, string? UsedInviteCode, bool MustChangePassword);
+public record UserDto(Guid Id, string Username, UserRole Role, string MaxRating, DateTime CreatedAt, bool IsBanned, bool IsApproved, bool IsRejected, Dictionary<string, string> ContentRatings, string FirstName, string LastName, bool CreatedByAdmin, string? UsedInviteCode, bool MustChangePassword, bool TwoFactorEnabled);
 
 // User Management DTOs
 public record UpdateUserRoleRequest(string Role);

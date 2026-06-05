@@ -22,6 +22,14 @@ public class ScopeAuthorizationHandler : AuthorizationHandler<ScopeRequirement>
     protected override Task HandleRequirementAsync(
         AuthorizationHandlerContext context, ScopeRequirement requirement)
     {
+        // FAIL CLOSED for anonymous: a scope policy must never authorize an
+        // unauthenticated principal. (An anonymous principal carries no scope claim,
+        // so without this guard the "no scope claim ⇒ full session ⇒ Succeed" branch
+        // below would let anonymous requests through — an auth bypass.) Returning
+        // without Succeed leaves the requirement unmet so the policy fails.
+        if (context.User.Identity is not { IsAuthenticated: true })
+            return Task.CompletedTask;
+
         // API-token principals are authenticated under the ApiToken scheme and carry
         // "scope" claims; full-session principals are authenticated under JwtBearer
         // and carry none. Identify an API-token principal by the presence of any
@@ -50,12 +58,14 @@ public static class ScopePolicies
     public const string ReadState = "scope:read:state";
     public const string WriteState = "scope:write:state";
 
-    /// Registers a policy per scope. The default policy still accepts both schemes
-    /// so existing [Authorize] endpoints keep working for API tokens.
+    /// Registers a policy per scope. Each REQUIRES an authenticated user (defense in
+    /// depth alongside the handler's anonymous guard — a named policy does NOT inherit
+    /// the default policy's RequireAuthenticatedUser, so it must be stated explicitly),
+    /// then layers the scope requirement that only constrains API tokens.
     public static void AddScopePolicies(this AuthorizationOptions options)
     {
-        options.AddPolicy(ReadLibrary, p => p.AddRequirements(new ScopeRequirement(Models.ApiTokenScopes.ReadLibrary)));
-        options.AddPolicy(ReadState, p => p.AddRequirements(new ScopeRequirement(Models.ApiTokenScopes.ReadState)));
-        options.AddPolicy(WriteState, p => p.AddRequirements(new ScopeRequirement(Models.ApiTokenScopes.WriteState)));
+        options.AddPolicy(ReadLibrary, p => p.RequireAuthenticatedUser().AddRequirements(new ScopeRequirement(Models.ApiTokenScopes.ReadLibrary)));
+        options.AddPolicy(ReadState, p => p.RequireAuthenticatedUser().AddRequirements(new ScopeRequirement(Models.ApiTokenScopes.ReadState)));
+        options.AddPolicy(WriteState, p => p.RequireAuthenticatedUser().AddRequirements(new ScopeRequirement(Models.ApiTokenScopes.WriteState)));
     }
 }

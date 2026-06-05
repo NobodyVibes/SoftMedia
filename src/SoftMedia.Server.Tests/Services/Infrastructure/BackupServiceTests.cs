@@ -224,6 +224,65 @@ public class BackupServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateBackup_WithName_SetsEditableDisplayName()
+    {
+        var (svc, _) = Build();
+
+        var named = await svc.CreateBackupAsync("Before the big upgrade", CancellationToken.None);
+        Assert.Equal("Before the big upgrade", named.Name);
+        Assert.NotEqual(named.Id, named.Name);
+        Assert.Equal("Before the big upgrade", (await svc.ListBackupsAsync(CancellationToken.None)).Single().Name);
+    }
+
+    [Fact]
+    public async Task CreateBackup_NoName_NameDefaultsToId()
+    {
+        var (svc, _) = Build();
+        var info = await svc.CreateBackupAsync(CancellationToken.None);
+        Assert.Equal(info.Id, info.Name);
+    }
+
+    [Fact]
+    public async Task SetBackupName_Renames_AndBlankRevertsToId()
+    {
+        var (svc, _) = Build();
+        var info = await svc.CreateBackupAsync(CancellationToken.None);
+
+        Assert.True(await svc.SetBackupNameAsync(info.Id, "Pre-restore", CancellationToken.None));
+        Assert.Equal("Pre-restore", (await svc.ListBackupsAsync(CancellationToken.None)).Single().Name);
+
+        // A blank name clears the label and reverts the display name to the id.
+        Assert.True(await svc.SetBackupNameAsync(info.Id, "   ", CancellationToken.None));
+        Assert.Equal(info.Id, (await svc.ListBackupsAsync(CancellationToken.None)).Single().Name);
+
+        Assert.False(await svc.SetBackupNameAsync("does-not-exist", "x", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task DeleteBackup_RemovesArchiveAndSidecars()
+    {
+        var (svc, _) = Build();
+        var info = await svc.CreateBackupAsync("named", CancellationToken.None);
+        await svc.SetPinnedAsync(info.Id, true, CancellationToken.None);
+
+        Assert.True(await svc.DeleteBackupAsync(info.Id, CancellationToken.None));
+        Assert.Empty(await svc.ListBackupsAsync(CancellationToken.None));
+        Assert.False(File.Exists(Path.Combine(_backupDir, info.Id + ".zip")));
+        Assert.False(File.Exists(Path.Combine(_backupDir, info.Id + ".zip.pinned")));
+        Assert.False(File.Exists(Path.Combine(_backupDir, info.Id + ".zip.label")));
+
+        Assert.False(await svc.DeleteBackupAsync("does-not-exist", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task DeleteBackup_RejectsPathTraversalIds()
+    {
+        var (svc, _) = Build();
+        await svc.CreateBackupAsync(CancellationToken.None);
+        Assert.False(await svc.DeleteBackupAsync("../../etc/passwd", CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Prune_DeletesUnpinnedBeyondRetention_KeepsPinned()
     {
         var (svc, _) = Build();

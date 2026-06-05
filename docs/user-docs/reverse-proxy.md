@@ -8,7 +8,7 @@ SoftMedia uses the originating client IP for several security-sensitive purposes
 
 - **Rate-limiting** `/api/v1/auth/login` and `/api/v1/auth/signup` to defeat credential stuffing (see SDD §6.2).
 - **Audit logging** of refresh-token issuance, rotation, and revocation events.
-- **LAN-vs-WAN classification** for bandwidth-cap policy (forthcoming).
+- **LAN-vs-WAN classification** for bandwidth-cap policy (`MaxStreamingBitrate` for WAN clients, `MaxStreamingBitrateLan` for LAN clients) — so a misconfigured proxy that collapses every client to a loopback address would also misclassify WAN clients as LAN and apply the wrong bitrate ceiling.
 
 When SoftMedia is reached directly, ASP.NET Core resolves the client IP from the underlying TCP connection — accurate by definition. When a reverse proxy is in front, the TCP connection comes from the proxy itself, so without configuration the apparent "client IP" collapses to the proxy's loopback address.
 
@@ -90,6 +90,61 @@ Tailscale Funnel terminates TLS on Tailscale's edge and forwards traffic to your
 ```
 
 `100.64.0.0/10` is the official Tailscale CGNAT range.
+
+## TLS termination for Chromecast casting
+
+Chromecast is the one feature that makes HTTPS **mandatory**, not optional. The browser only
+exposes the Cast button in a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts)
+(HTTPS, or `localhost`), and — critically — the Chromecast device fetches the video stream
+itself and will only accept a URL whose certificate chains to a **publicly-trusted CA**. A
+self-signed or `mkcert`/private-CA certificate satisfies your browser but the Chromecast
+rejects it, so casting fails. See [features/casting.md](features/casting.md) for the full
+"why." The practical consequence: **you need a real domain name and a Let's Encrypt (or other
+publicly-trusted) certificate** — both of which the operator supplies; SoftMedia hosts nothing.
+
+The [Caddy on the same host](#caddy-on-the-same-host-most-common) example above already
+provisions a Let's Encrypt certificate automatically *if* ports 80/443 are reachable from the
+internet (the HTTP-01 challenge). Most home servers are **not** publicly reachable, so use the
+**DNS-01 challenge** instead — it proves domain ownership via a DNS TXT record and needs no
+inbound ingress.
+
+### Caddy with Let's Encrypt DNS-01 (LAN-only servers)
+
+This issues a real, publicly-trusted cert for a server with no public ports open. Example with
+Cloudflare as the DNS provider (Caddy supports [dozens of providers](https://caddyserver.com/docs/modules/)):
+
+```caddy
+media.example.com {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Run Caddy with the `CLOUDFLARE_API_TOKEN` environment variable set to a token scoped to **Edit
+DNS** for that zone. (Use a Caddy build that includes the `caddy-dns/cloudflare` module — the
+official Docker image supports adding DNS modules via `xcaddy`.)
+
+### Split-horizon DNS (resolve the domain to your LAN IP)
+
+A public certificate requires a real domain, but you usually want the traffic to stay on the
+LAN. Point the domain at the server's **private** IP for clients on your network:
+
+- **Pi-hole / AdGuard / router DNS:** add a local DNS record `media.example.com → 192.168.1.50`.
+- **Single machine:** add `192.168.1.50  media.example.com` to the OS `hosts` file.
+
+Now `media.example.com` resolves to the LAN IP internally (traffic never leaves the network)
+while the certificate is still publicly trusted — exactly the combination the Chromecast needs.
+
+> **Alternative:** a public DNS name that resolves to your private IP also works in principle
+> (conceptually similar to Plex's `*.plex.direct` hashed-hostname scheme, which Plex provisions
+> centrally), but some resolvers and routers block "DNS rebinding" (public name → private IP) by
+> default, so split-horizon DNS is the more reliable choice.
+
+No SoftMedia configuration change is needed for any of this — the app emits only relative URLs
+and honours `X-Forwarded-Proto`, so once the proxy terminates HTTPS the cast stream URLs are
+correctly `https://media.example.com/...`, reachable and trusted by the device.
 
 ## Verifying the configuration
 

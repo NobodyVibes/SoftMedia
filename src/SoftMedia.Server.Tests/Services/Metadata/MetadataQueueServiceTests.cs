@@ -90,6 +90,30 @@ public class MetadataQueueServiceTests : IDisposable
         _mockNotificationService.Verify(x => x.NotifyItemUpdated(mediaId), Times.Once);
     }
     [Fact]
+    public async Task ProcessQueue_ReportsHeartbeat_ToScheduledTaskRegistry()
+    {
+        // The Background Tasks page only shows a task as having run if its service reports
+        // to the registry. Verify the metadata queue surfaces a "last active" heartbeat.
+        var registry = new ScheduledTaskRegistry();
+        registry.Register(ScheduledTaskNames.MetadataQueue, "Metadata Queue", TaskSchedule.EventDriven, supportsManualTrigger: false);
+
+        var service = new MetadataQueueService(
+            _mockScopeFactory.Object, _mockNotificationService.Object, _mockLogger.Object, registry);
+        var mediaId = Guid.NewGuid();
+        _dbContext.MediaItems.Add(new MediaItem { Id = mediaId, Title = "Test", Type = MediaType.Movie, LibraryId = Guid.NewGuid() });
+        await _dbContext.SaveChangesAsync();
+
+        await service.EnqueueMetadataRefreshAsync(mediaId, LibraryType.Movie);
+        await service.StartAsync(CancellationToken.None);
+        await Task.Delay(1000);
+        await service.StopAsync(CancellationToken.None);
+
+        var status = registry.GetAll().Single(t => t.Name == ScheduledTaskNames.MetadataQueue);
+        Assert.Equal("Success", status.LastResult);
+        Assert.NotNull(status.LastRunUtc);
+    }
+
+    [Fact]
     public async Task ProcessItem_RetriesInStrictMode_WhenUnchangedAndMissingDescription()
     {
         // Arrange

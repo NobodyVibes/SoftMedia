@@ -1,6 +1,8 @@
+using System.Threading;
 using System.Threading.Channels;
 using System.Threading.RateLimiting;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Data; 
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +16,13 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IMediaNotificationService _notificationService;
     private readonly ILogger<MetadataQueueService> _logger;
+    private readonly IScheduledTaskRegistry? _registry;
+
+    // Throttle for the Background Tasks heartbeat: this queue processes items in bursts
+    // (many per second during a scan), so we surface "last active" at most this often
+    // rather than reporting per item.
+    private static readonly long ReportThrottleTicks = TimeSpan.FromSeconds(15).Ticks;
+    private long _lastReportTicks;
 
     // Dynamic Channel Router
     // Key: Channel Name (Music, TV, Shared)
@@ -28,11 +37,13 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
     public MetadataQueueService(
         IServiceScopeFactory scopeFactory,
         IMediaNotificationService notificationService,
-        ILogger<MetadataQueueService> logger)
+        ILogger<MetadataQueueService> logger,
+        IScheduledTaskRegistry? registry = null)
     {
         _scopeFactory = scopeFactory;
         _notificationService = notificationService;
         _logger = logger;
+        _registry = registry;
 
         // Initialize Channels with appropriate capacities
         // Music: High capacity because scans are large, but processing is slow.
@@ -186,11 +197,24 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
         try 
         {
             var mediaItem = await context.MediaItems.FindAsync(new object[] { item.MediaId }, ct);
-            if (mediaItem == null) 
+            if (mediaItem == null)
             {
                 _logger.LogDebug("Metadata queue item {Id} not found in DB (likely deleted during rescan)", item.MediaId);
                 return;
             }
+
+            // P3-WI-003: this is the single chokepoint every refresh/enrichment path
+            // funnels through (MetadataRefreshService, MetadataRetryService, every
+            // scanner via _metadataQueue.EnqueueMetadataRefreshAsync). Honour the
+            // admin lock here so manual matches and field edits are never overwritten.
+            // ImageDownloadQueue doesn't need its own check — image enqueues happen
+            // downstream of EnrichMediaItemAsync, which never runs for locked items.
+            if (mediaItem.MetadataLocked)
+            {
+                _logger.LogDebug("Metadata queue item {Id} ({Title}) is locked; skipping enrichment", item.MediaId, mediaItem.Title);
+                return;
+            }
+
             // Snapshot MetadataHash before enrichment to detect if anything changed securely
             var metadataBefore = mediaItem.MetadataHash;
 
@@ -226,6 +250,8 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
 
             // Fire event to cache channel
             _cacheUpdateChannel.Writer.TryWrite(mediaItem.LibraryId);
+
+            ReportActivity();
         }
         catch (Exception ex)
         {
@@ -244,6 +270,20 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
             // concurrent enrichment of the same item during processing.
             _pendingIds.TryRemove(item.MediaId, out _);
         }
+    }
+
+    /// <summary>
+    /// Surfaces a throttled "last active" heartbeat for the Background Tasks page. Safe
+    /// under the channel's concurrency: a single winner reports per throttle window.
+    /// </summary>
+    private void ReportActivity()
+    {
+        if (_registry == null) return;
+        var now = DateTime.UtcNow.Ticks;
+        var last = Interlocked.Read(ref _lastReportTicks);
+        if (now - last < ReportThrottleTicks) return;
+        if (Interlocked.CompareExchange(ref _lastReportTicks, now, last) != last) return;
+        _registry.Report(ScheduledTaskNames.MetadataQueue, "Success");
     }
 
     private record MetadataQueueItem(Guid MediaId, LibraryType Type, bool RefreshImages, int RetryCount = 0);

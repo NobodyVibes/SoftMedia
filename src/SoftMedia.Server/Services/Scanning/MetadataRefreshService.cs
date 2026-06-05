@@ -117,6 +117,11 @@ public class MetadataRefreshService : BackgroundService
         // Job is "Complete" when items are queued. Processing happens in background.
         queueService.CompleteJob(job.Id, 0, enqueuedCount, 0, failCount);
         _logger.LogInformation("Metadata refresh job complete: {Enqueued} enqueued, {Failed} failed", enqueuedCount, failCount);
+
+        // Report actual completion (TriggerRefreshNow only reports the enqueue). The
+        // per-item enrichment then proceeds via the metadata queue.
+        scope.ServiceProvider.GetRequiredService<IScheduledTaskRegistry>()
+            .Report(ScheduledTaskNames.MetadataRefresh, failCount > 0 ? "Failed" : "Success");
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

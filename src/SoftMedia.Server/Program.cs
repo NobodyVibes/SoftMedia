@@ -237,6 +237,14 @@ app.MapHub<MediaHub>("/hubs/media");
 {
     var registry = app.Services.GetRequiredService<SoftMedia.Server.Services.Infrastructure.IScheduledTaskRegistry>();
     using var seed = SoftMedia.Server.Services.Infrastructure.ScheduledTaskRegistrySeeder.Seed(registry);
+
+    // Restore last-run telemetry from the previous run so the Background Tasks card
+    // doesn't show every task as "never run" after a reboot. Done before app.Run so the
+    // values are present before the first dashboard request. (TaskStatusPersistenceService
+    // writes the snapshot back periodically and on shutdown.)
+    var taskStatusLogger = app.Services.GetRequiredService<ILogger<Program>>();
+    SoftMedia.Server.Services.Infrastructure.TaskStatusStore.Load(
+        registry, SoftMedia.Server.Services.Infrastructure.TaskStatusStore.DefaultPath(), taskStatusLogger);
 }
 
 using (var scope = app.Services.CreateScope())

@@ -19,15 +19,12 @@ public class ThrottleMonitorService : BackgroundService
     // Timing intervals
     private const int StateCheckIntervalMs = 5000;       // 5 seconds
     private const int DiskCheckIntervalMs = 30000;       // 30 seconds
-    private const int StaleCheckIntervalMs = 3600000;    // 60 minutes
 
     // Throttling thresholds (from plan)
     private const int MinDiskSpaceThresholdMB = 500;
-    private const int MaxDormantAgeHours = 24;
     private const int ClientInactivityTimeoutSeconds = 90;  // Stop FFmpeg if no segment requests for 90s (accounts for HLS buffering)
 
     private DateTime _lastDiskCheck = DateTime.MinValue;
-    private DateTime _lastStaleCheck = DateTime.MinValue;
 
     public ThrottleMonitorService(TranscodeService transcodeService, ILogger<ThrottleMonitorService> logger)
     {
@@ -55,12 +52,9 @@ public class ThrottleMonitorService : BackgroundService
                         _lastDiskCheck = DateTime.UtcNow;
                     }
 
-                    // Low-frequency: Stale session cleanup (every 60min)
-                    if ((DateTime.UtcNow - _lastStaleCheck).TotalMilliseconds >= StaleCheckIntervalMs)
-                    {
-                        CleanupStaleSessions();
-                        _lastStaleCheck = DateTime.UtcNow;
-                    }
+                    // Age-based retention of dormant sessions and their on-disk segments
+                    // is owned by TranscodeSegmentCleanupService (hourly, honouring the
+                    // Transcoding.SegmentRetentionHours setting) — not here.
                 }
                 catch (Exception ex)
                 {
@@ -224,26 +218,4 @@ public class ThrottleMonitorService : BackgroundService
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// Clean up sessions dormant for more than 24 hours
-    /// </summary>
-    private void CleanupStaleSessions()
-    {
-        var threshold = DateTime.UtcNow.AddHours(-MaxDormantAgeHours);
-        var staleSessions = _transcodeService.GetAllSessions()
-            .Where(s => s.State == TranscodeState.Dormant && s.LastClientRequestTime < threshold)
-            .ToList();
-
-        foreach (var session in staleSessions)
-        {
-            _transcodeService.DeleteDormantSession(session.Key);
-            _logger.LogInformation("Deleted stale dormant session {MediaId} (last activity: {LastActivity})", 
-                session.Key.MediaId, session.LastClientRequestTime);
-        }
-
-        if (staleSessions.Any())
-        {
-            _logger.LogInformation("Cleaned up {Count} stale session(s)", staleSessions.Count);
-        }
-    }
 }

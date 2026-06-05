@@ -1,8 +1,10 @@
+using System.Threading;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Media;
 using System.Text.Json;
 using SoftMedia.Server.Helpers;
@@ -13,8 +15,13 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ImageDownloadQueueService> _logger;
+    private readonly IScheduledTaskRegistry? _registry;
     private readonly Channel<ImageDownloadRequest> _channel;
     private readonly KeyedLock _keyedLock = new(); // Striped Locking for Metadata Updates
+
+    // Throttle for the Background Tasks heartbeat (downloads come in bursts during scans).
+    private static readonly long ReportThrottleTicks = TimeSpan.FromSeconds(15).Ticks;
+    private long _lastReportTicks;
     
     // Concurrency control for downloads
     // Reduced to 2 to align with rate limits (approx 2 req/sec) and avoid queue timeouts
@@ -22,10 +29,12 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
 
     public ImageDownloadQueueService(
         IServiceScopeFactory scopeFactory,
-        ILogger<ImageDownloadQueueService> logger)
+        ILogger<ImageDownloadQueueService> logger,
+        IScheduledTaskRegistry? registry = null)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _registry = registry;
         _channel = Channel.CreateBounded<ImageDownloadRequest>(new BoundedChannelOptions(5000)
         {
             FullMode = BoundedChannelFullMode.Wait
@@ -61,6 +70,10 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Error processing image download for {MediaId}", request.MediaId);
+                    }
+                    finally
+                    {
+                        ReportActivity();
                     }
                 });
         }
@@ -183,14 +196,19 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
                 }
                 else if (request.ImageType == ImageType.CastImage && request.PersonId.HasValue)
                 {
-                    // Update the specific cast member's image in the Person table
-                    var person = await context.Persons.FindAsync(new object[] { request.PersonId.Value }, ct);
+                    // request.PersonId carries the provider's EXTERNAL id (CastMember.Id ->
+                    // Person.ExternalId), NOT the Person primary key. FindAsync looks up by
+                    // PK, so it matched nothing and the write-back was silently skipped —
+                    // every cast image stayed pointed at its remote URL and was proxied on
+                    // the fly even though the file had been cached. Look up by ExternalId.
+                    var person = await context.Persons
+                        .FirstOrDefaultAsync(p => p.ExternalId == request.PersonId.Value, ct);
 
                     if (person != null && person.ImagePath != localPath)
                     {
                         person.ImagePath = localPath;
                         updated = true;
-                        _logger.LogDebug("Updated cast image for person {PersonId}", request.PersonId);
+                        _logger.LogDebug("Updated cast image for person ExternalId={ExternalId}", request.PersonId);
                     }
                 }
                 else if (!request.SeasonNumber.HasValue) // Top level item
@@ -263,6 +281,17 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
         {
             _logger.LogWarning(ex, "Failed to invalidate caches after image download");
         }
+    }
+
+    /// <summary>Throttled "last active" heartbeat for the Background Tasks page.</summary>
+    private void ReportActivity()
+    {
+        if (_registry == null) return;
+        var now = DateTime.UtcNow.Ticks;
+        var last = Interlocked.Read(ref _lastReportTicks);
+        if (now - last < ReportThrottleTicks) return;
+        if (Interlocked.CompareExchange(ref _lastReportTicks, now, last) != last) return;
+        _registry.Report(ScheduledTaskNames.ImageDownloadQueue, "Success");
     }
 }
 

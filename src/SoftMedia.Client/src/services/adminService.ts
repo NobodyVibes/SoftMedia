@@ -6,6 +6,17 @@ export interface BackupInfo {
     createdAtUtc: string;
     sizeBytes: number;
     isPinned: boolean;
+    /** Editable display label; defaults to the id. */
+    name: string;
+}
+
+export interface ArtworkRepairResult {
+    itemsScanned: number;
+    missingImages: number;
+    itemsReEnqueued: number;
+    lockedSkipped: number;
+    needsRescan: number;
+    failedEnqueue: number;
 }
 
 export interface ScheduledTaskStatus {
@@ -18,6 +29,17 @@ export interface ScheduledTaskStatus {
     lastResult: string | null;
     lastError: string | null;
     nextRunUtc: string | null;
+}
+
+// --- Manual metadata fix (P3-WI-003) ---
+
+export interface MetadataSearchCandidate {
+    providerName: string;
+    providerItemId: string;
+    title: string;
+    year: number | null;
+    posterUrl: string | null;
+    subtitle: string | null;
 }
 
 export const adminService = {
@@ -60,10 +82,25 @@ export const adminService = {
 
     /**
      * Creates a new database backup on the server and returns its metadata.
+     * An optional display name can be supplied.
      */
-    async createBackup(): Promise<BackupInfo> {
-        const response = await api.post<BackupInfo>('/admin/backup');
+    async createBackup(name?: string): Promise<BackupInfo> {
+        const response = await api.post<BackupInfo>('/admin/backup', { name: name ?? null });
         return response.data;
+    },
+
+    /**
+     * Renames a backup's display label (the archive id is unchanged).
+     */
+    async renameBackup(id: string, name: string): Promise<void> {
+        await api.patch(`/admin/backup/${encodeURIComponent(id)}/name`, { name });
+    },
+
+    /**
+     * Permanently deletes a backup archive.
+     */
+    async deleteBackup(id: string): Promise<void> {
+        await api.delete(`/admin/backup/${encodeURIComponent(id)}`);
     },
 
     /**
@@ -92,7 +129,25 @@ export const adminService = {
     async restoreBackup(file: File): Promise<{ message: string }> {
         const form = new FormData();
         form.append('file', file);
-        const response = await api.post<{ message: string }>('/admin/restore', form);
+        // The shared axios instance defaults Content-Type to application/json. When a
+        // request carries that content type, axios serialises a FormData body to JSON
+        // (helpers/formDataToJSON) — which drops the File entirely, so no multipart
+        // body ever reaches the server and IFormFile binds to null. Overriding the
+        // content type here keeps the FormData intact; the browser then fills in the
+        // real `multipart/form-data; boundary=...` header.
+        const response = await api.post<{ message: string }>('/admin/restore', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        return response.data;
+    },
+
+    /**
+     * Re-fetches artwork that a database-only restore couldn't bring back (backups
+     * exclude the on-disk image cache). Re-queues affected items for metadata
+     * enrichment; posters fill in as the downloads complete.
+     */
+    async repairArtwork(): Promise<ArtworkRepairResult> {
+        const response = await api.post<ArtworkRepairResult>('/admin/repair-artwork');
         return response.data;
     },
 
@@ -109,5 +164,24 @@ export const adminService = {
      */
     async triggerTask(name: string): Promise<void> {
         await api.post(`/admin/tasks/${encodeURIComponent(name)}/trigger`);
+    },
+
+    // --- Manual metadata fix (P3-WI-003) ---
+
+    async searchMatch(itemId: string, query: string, year?: number | null): Promise<MetadataSearchCandidate[]> {
+        const response = await api.post<MetadataSearchCandidate[]>(`/admin/match/${itemId}/search`, { query, year });
+        return response.data;
+    },
+
+    async applyMatch(itemId: string, providerName: string, providerItemId: string): Promise<void> {
+        await api.post(`/admin/match/${itemId}/apply`, { providerName, providerItemId });
+    },
+
+    async manualEditMatch(itemId: string, edits: { title?: string; overview?: string; year?: number; posterUrl?: string; contentRating?: string }): Promise<void> {
+        await api.patch(`/admin/match/${itemId}`, edits);
+    },
+
+    async unlockMatch(itemId: string): Promise<void> {
+        await api.post(`/admin/match/${itemId}/unlock`);
     },
 };

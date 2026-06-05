@@ -70,6 +70,18 @@ public class ApiTokenIntegrationTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task Anonymous_Is401_OnScopeGatedWriteEndpoint()
+    {
+        // Regression: the write:state scope policy must FAIL CLOSED for anonymous
+        // requests (it previously fail-opened because the handler treated "no scope
+        // claim" as a full session — an auth bypass).
+        var anon = Factory.CreateClient();
+        var resp = await anon.PostAsJsonAsync(
+            $"/api/v1/interaction/{Guid.NewGuid()}/watchlist", new { isWatchlisted = true });
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+    }
+
+    [Fact]
     public async Task ReadOnlyToken_Is403_OnWriteEndpoint()
     {
         var user = await Factory.SeedUserAsync("tokuser3");

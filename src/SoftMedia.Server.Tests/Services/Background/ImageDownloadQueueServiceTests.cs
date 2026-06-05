@@ -128,4 +128,40 @@ public class ImageDownloadQueueServiceTests
         var updatedSeason = await _dbContext.MediaItems.FindAsync(seasonItem.Id);
         Assert.Equal(localPath, updatedSeason!.PosterUrl);
     }
+
+    [Fact]
+    public async Task ProcessDownload_CastImage_UpdatesPersonByExternalId_NotPrimaryKey()
+    {
+        // Regression: cast downloads are enqueued with PersonId = the provider's external
+        // id (CastMember.Id == Person.ExternalId), which differs from the Person PK. The
+        // write-back must resolve the person by ExternalId; using FindAsync (PK) left every
+        // cast image pointing at its remote URL (proxied on the fly) despite being cached.
+        var service = new ImageDownloadQueueService(_mockScopeFactory.Object, _mockLogger.Object);
+        var seriesId = Guid.NewGuid();
+        const int externalId = 99887; // provider person id
+        var remoteUrl = "https://static.tvmaze.com/person.jpg";
+        var localPath = "/cache/images/tv/cast/99887.jpg";
+
+        // ProcessDownloadAsync re-fetches the MediaItem by request.MediaId (the series),
+        // so the series row must exist.
+        _dbContext.MediaItems.Add(new MediaItem { Id = seriesId, Title = "Test Series", Type = MediaType.Series });
+
+        var person = new Person { Name = "Jane Doe", ExternalId = externalId, ImagePath = remoteUrl };
+        _dbContext.Persons.Add(person);
+        await _dbContext.SaveChangesAsync();
+        Assert.NotEqual(externalId, person.Id); // PK differs from the external id
+
+        _mockImageCache.Setup(x => x.CacheCastImageAsync(externalId, remoteUrl)).ReturnsAsync(localPath);
+
+        await service.EnqueueImageDownloadAsync(seriesId, remoteUrl, null, null, MediaType.Series, ImageType.CastImage, externalId);
+        await service.StartAsync(CancellationToken.None);
+        await Task.Delay(500);
+        await service.StopAsync(CancellationToken.None);
+
+        _mockImageCache.Verify(x => x.CacheCastImageAsync(externalId, remoteUrl), Times.Once);
+
+        _dbContext.ChangeTracker.Clear();
+        var updated = await _dbContext.Persons.FindAsync(person.Id);
+        Assert.Equal(localPath, updated!.ImagePath); // now the local cache path, not the remote URL
+    }
 }

@@ -7,7 +7,7 @@ using System.Threading.RateLimiting;
 
 namespace SoftMedia.Server.Services.Metadata;
 
-public class OpenLibraryProvider : IMetadataProvider
+public class OpenLibraryProvider : ISearchableMetadataProvider
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<OpenLibraryProvider> _logger;
@@ -474,5 +474,92 @@ public class OpenLibraryProvider : IMetadataProvider
         var tokens = normalized.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
                                .Where(w => w.Length > 1);
         return new HashSet<string>(tokens, StringComparer.Ordinal);
+    }
+
+    // --- ISearchableMetadataProvider (P3-WI-003 Fix Match) ---
+
+    public async Task<IReadOnlyList<MetadataSearchCandidate>> SearchAsync(string query, int? year, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return Array.Empty<MetadataSearchCandidate>();
+        const string fields = "fields=key,title,author_name,first_publish_year,cover_i";
+        var url = $"https://openlibrary.org/search.json?q={Uri.EscapeDataString(query.Trim())}&limit=10&sort=editions&{fields}";
+
+        string body;
+        try { body = await _httpClient.GetStringAsync(url, ct); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Open Library search failed for '{Query}'", query);
+            return Array.Empty<MetadataSearchCandidate>();
+        }
+
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        if (!doc.RootElement.TryGetProperty("docs", out var docs)) return Array.Empty<MetadataSearchCandidate>();
+
+        var candidates = new List<MetadataSearchCandidate>();
+        foreach (var d in docs.EnumerateArray())
+        {
+            var key = d.TryGetProperty("key", out var k) ? k.GetString() : null;
+            if (string.IsNullOrEmpty(key)) continue;
+
+            int? publishYear = null;
+            if (d.TryGetProperty("first_publish_year", out var py) && py.ValueKind == System.Text.Json.JsonValueKind.Number)
+                publishYear = py.GetInt32();
+            if (year.HasValue && publishYear.HasValue && Math.Abs(publishYear.Value - year.Value) > 3) continue;
+
+            string? cover = null;
+            if (d.TryGetProperty("cover_i", out var ci) && ci.ValueKind == System.Text.Json.JsonValueKind.Number)
+                cover = $"https://covers.openlibrary.org/b/id/{ci.GetInt32()}-M.jpg";
+
+            string? authorLine = null;
+            if (d.TryGetProperty("author_name", out var an) && an.ValueKind == System.Text.Json.JsonValueKind.Array && an.GetArrayLength() > 0)
+                authorLine = an[0].GetString();
+
+            candidates.Add(new MetadataSearchCandidate(
+                ProviderName,
+                key!,
+                d.TryGetProperty("title", out var t) ? (t.GetString() ?? "(untitled)") : "(untitled)",
+                publishYear,
+                cover,
+                authorLine));
+
+            if (candidates.Count >= 10) break;
+        }
+        return candidates;
+    }
+
+    /// <summary>
+    /// Fetches a specific work by its Open Library key (e.g. "/works/OL123W"). The
+    /// regular FetchMetadataAsync path drives off filename + ISBN; Fix-Match needs to
+    /// bypass that and resolve the chosen work directly.
+    /// </summary>
+    public async Task<MetadataResult?> FetchByCandidateAsync(string providerItemId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(providerItemId)) return null;
+        var key = providerItemId.StartsWith('/') ? providerItemId : "/" + providerItemId;
+        var url = $"https://openlibrary.org{key}.json";
+        try
+        {
+            var body = await _httpClient.GetStringAsync(url, ct);
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            var result = new MetadataResult { Title = root.TryGetProperty("title", out var t) ? t.GetString() : null };
+            if (root.TryGetProperty("description", out var desc))
+            {
+                result.Description = desc.ValueKind == System.Text.Json.JsonValueKind.Object && desc.TryGetProperty("value", out var dv)
+                    ? dv.GetString()
+                    : desc.GetString();
+            }
+            if (root.TryGetProperty("covers", out var covers) && covers.ValueKind == System.Text.Json.JsonValueKind.Array && covers.GetArrayLength() > 0)
+            {
+                var coverId = covers[0].GetInt32();
+                result.PosterUrl = $"https://covers.openlibrary.org/b/id/{coverId}-L.jpg";
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Open Library FetchByCandidate failed for {Key}", providerItemId);
+            return null;
+        }
     }
 }

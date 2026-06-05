@@ -10,8 +10,26 @@ public interface IBackupService
     /// </summary>
     Task<BackupInfo> CreateBackupAsync(CancellationToken cancellationToken);
 
+    /// <summary>
+    /// As <see cref="CreateBackupAsync(CancellationToken)"/>, but also sets an editable
+    /// display name. A null/blank name leaves the backup labelled by its id.
+    /// </summary>
+    Task<BackupInfo> CreateBackupAsync(string? name, CancellationToken cancellationToken);
+
     /// <summary>Lists backups (newest first) across the main and pinned directories.</summary>
     Task<IReadOnlyList<BackupInfo>> ListBackupsAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets (or, for a null/blank name, clears) a backup's editable display name. The
+    /// archive itself is untouched. Returns false if the id does not resolve to a backup.
+    /// </summary>
+    Task<bool> SetBackupNameAsync(string id, string? name, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Permanently deletes a backup archive and its sidecar markers (pin + name).
+    /// Returns false if the id does not resolve to a backup.
+    /// </summary>
+    Task<bool> DeleteBackupAsync(string id, CancellationToken cancellationToken);
 
     /// <summary>
     /// Opens a backup zip for download. Returns null if the id does not resolve to a

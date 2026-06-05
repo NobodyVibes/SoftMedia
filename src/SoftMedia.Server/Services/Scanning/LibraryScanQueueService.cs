@@ -77,15 +77,18 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
     private readonly TimeSpan _completedJobRetention = TimeSpan.FromMinutes(5);
 
     private readonly IWebhookDispatcher _webhooks;
+    private readonly IScheduledTaskRegistry? _registry;
 
     public LibraryScanQueueService(
         IServiceScopeFactory scopeFactory,
         ILogger<LibraryScanQueueService> logger,
-        IWebhookDispatcher webhooks)
+        IWebhookDispatcher webhooks,
+        IScheduledTaskRegistry? registry = null)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _webhooks = webhooks;
+        _registry = registry;
     }
 
     public LibraryScanJob EnqueueScan(Guid libraryId, string libraryName)
@@ -239,6 +242,9 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
                 "Scan completed for {LibraryName}: {New} new, {Updated} updated, {Skipped} skipped, {Errors} errors",
                 job.LibraryName, newItems, updatedItems, skippedItems, errorCount);
 
+            // Event-driven task telemetry: surface that the scan queue just finished a job.
+            _registry?.Report(ScheduledTaskNames.LibraryScanQueue, errorCount > 0 ? "Failed" : "Success");
+
             // P2-WI-004: fan out a webhook. newItems stands in for "media.added" (which
             // has no clean per-item hook — see phase-2 rescope), so subscribers learn
             // how much arrived without us wiring a per-item event.
@@ -265,6 +271,7 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
             job.CurrentFile = null;
             
             _logger.LogError("Scan failed for {LibraryName}: {Error}", job.LibraryName, errorMessage);
+            _registry?.Report(ScheduledTaskNames.LibraryScanQueue, "Failed", error: errorMessage);
 
             _webhooks.Enqueue(new WebhookEvent(Models.WebhookEvents.LibraryScanFailed, new
             {

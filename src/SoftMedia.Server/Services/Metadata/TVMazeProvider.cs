@@ -4,7 +4,7 @@ using System.Threading.RateLimiting;
 
 namespace SoftMedia.Server.Services.Metadata;
 
-public class TVMazeProvider : IMetadataProvider
+public class TVMazeProvider : ISearchableMetadataProvider
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<TVMazeProvider> _logger;
@@ -473,5 +473,88 @@ public class TVMazeProvider : IMetadataProvider
             }
 
             return result;
+    }
+
+    // --- ISearchableMetadataProvider (P3-WI-003 Fix Match) ---
+
+    /// <summary>
+    /// Free-text search for the "Fix Match" admin flow. Reuses the same /search/shows
+    /// endpoint that <see cref="FetchMetadataAsync"/> calls internally for year
+    /// disambiguation, but returns up to 10 ranked candidates (TVMaze's own relevancy
+    /// order) so the admin can pick the right show by poster/year rather than relying
+    /// on automatic disambiguation.
+    /// </summary>
+    public async Task<IReadOnlyList<MetadataSearchCandidate>> SearchAsync(string query, int? year, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return Array.Empty<MetadataSearchCandidate>();
+
+        var searchUrl = $"https://api.tvmaze.com/search/shows?q={Uri.EscapeDataString(query.Trim())}";
+        string body;
+        try { body = await _httpClient.GetStringAsync(searchUrl, ct); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "TVMaze search failed for '{Query}'", query);
+            return Array.Empty<MetadataSearchCandidate>();
+        }
+
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        var candidates = new List<MetadataSearchCandidate>();
+
+        foreach (var result in doc.RootElement.EnumerateArray())
+        {
+            if (!result.TryGetProperty("show", out var show)) continue;
+            var id = show.TryGetProperty("id", out var idEl) && idEl.ValueKind == System.Text.Json.JsonValueKind.Number
+                ? idEl.GetInt32().ToString()
+                : null;
+            if (string.IsNullOrEmpty(id)) continue;
+
+            int? premieredYear = null;
+            if (show.TryGetProperty("premiered", out var p) && p.ValueKind == System.Text.Json.JsonValueKind.String
+                && DateTime.TryParse(p.GetString(), out var d)) premieredYear = d.Year;
+
+            // Optional client-side year filter (caller passes year? from the parsed filename).
+            if (year.HasValue && premieredYear.HasValue && Math.Abs(premieredYear.Value - year.Value) > 1)
+                continue;
+
+            string? poster = null;
+            if (show.TryGetProperty("image", out var img) && img.ValueKind == System.Text.Json.JsonValueKind.Object
+                && img.TryGetProperty("medium", out var medium) && medium.ValueKind == System.Text.Json.JsonValueKind.String)
+                poster = medium.GetString();
+
+            string? network = null;
+            if (show.TryGetProperty("network", out var net) && net.ValueKind == System.Text.Json.JsonValueKind.Object
+                && net.TryGetProperty("name", out var netName) && netName.ValueKind == System.Text.Json.JsonValueKind.String)
+                network = netName.GetString();
+
+            candidates.Add(new MetadataSearchCandidate(
+                ProviderName,
+                id,
+                show.GetProperty("name").GetString() ?? "(untitled)",
+                premieredYear,
+                poster,
+                network));
+
+            if (candidates.Count >= 10) break;
+        }
+        return candidates;
+    }
+
+    /// <summary>
+    /// Fetches full metadata for a candidate the admin picked from <see cref="SearchAsync"/>.
+    /// Synthesises a transient MediaItem with the chosen TVMaze id so the existing
+    /// FetchMetadataAsync short-circuit (line 48: "promoted TvMazeId") handles the actual call.
+    /// </summary>
+    public Task<MetadataResult?> FetchByCandidateAsync(string providerItemId, CancellationToken ct)
+    {
+        if (!int.TryParse(providerItemId, out var tvMazeId) || tvMazeId <= 0)
+            return Task.FromResult<MetadataResult?>(null);
+
+        // Reuse FetchMetadataAsync; the TvMazeId short-circuit handles the rest.
+        return FetchMetadataAsync(new MediaItem
+        {
+            Title = "(fix-match)",
+            Type = Models.MediaType.Series,
+            TvMazeId = tvMazeId,
+        });
     }
 }

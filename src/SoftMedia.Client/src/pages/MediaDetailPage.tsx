@@ -14,6 +14,8 @@ import ComicSeriesDetailView from '../components/details/ComicSeriesDetailView';
 import GameDetailView from '../components/details/GameDetailView';
 import PhotoDetailView from '../components/details/PhotoDetailView';
 import { useAudioStore } from '../store/audioStore';
+import { useAuthStore } from '../store/authStore';
+import { FixMatchCard } from '../components/admin/FixMatchCard';
 import { MediaType } from '../types';
 import { useMediaHub } from '../hooks/useMediaHub';
 import { Clock, User, Disc } from 'lucide-react';
@@ -49,6 +51,7 @@ export default function MediaDetailPage() {
 function MediaDetailPageContent({ item }: { item: MediaItem }) {
     const navigate = useNavigate();
     const { playTrack } = useAudioStore();
+    const isAdmin = useAuthStore((s) => s.user?.role === 'Admin');
 
     // Fetch library to get type
     const { data: library } = useQuery({
@@ -277,6 +280,7 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
             backdropOverride={backdropOverride}
             customMetadata={customMetadata}
         >
+            {isAdmin && <FixMatchCard item={item} />}
             {renderContent()}
         </MediaDetailLayout>
     );

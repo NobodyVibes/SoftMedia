@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Transcoding.Models;
 
 namespace SoftMedia.Server.Services.Transcoding;
@@ -6,11 +7,16 @@ namespace SoftMedia.Server.Services.Transcoding;
 public class TranscodeSessionService : ITranscodeSessionService
 {
     private readonly ITranscodeService _transcodeService;
+    private readonly ISettingsService _settings;
     private readonly ILogger<TranscodeSessionService> _logger;
 
-    public TranscodeSessionService(ITranscodeService transcodeService, ILogger<TranscodeSessionService> logger)
+    public TranscodeSessionService(
+        ITranscodeService transcodeService,
+        ISettingsService settings,
+        ILogger<TranscodeSessionService> logger)
     {
         _transcodeService = transcodeService;
+        _settings = settings;
         _logger = logger;
     }
 
@@ -54,13 +60,38 @@ public class TranscodeSessionService : ITranscodeSessionService
         return TranscodeSessionResult.Success;
     }
 
-    public void StopSession(Guid mediaId, Guid userId, int? sub, string? sid = null)
+    public async Task StopSession(Guid mediaId, Guid userId, int? sub, string? sid = null)
     {
-        _transcodeService.StopTranscode(mediaId, userId, sub, sid: sid);
+        if (await ShouldRetainAsync())
+        {
+            // Keep segments on disk and the session resumable; the hourly cleanup prunes
+            // it once its newest segment ages past the retention window.
+            _transcodeService.EnterDormantState(new TranscodeSessionKey(mediaId, userId, sub, sid));
+        }
+        else
+        {
+            _transcodeService.StopTranscode(mediaId, userId, sub, sid: sid);
+        }
     }
 
-    public void StopAllSessions(Guid mediaId, Guid userId)
+    public async Task StopAllSessions(Guid mediaId, Guid userId)
     {
-        _transcodeService.StopAllTranscodesForUser(mediaId, userId);
+        if (await ShouldRetainAsync())
+        {
+            foreach (var session in _transcodeService.GetAllSessions()
+                         .Where(s => s.Key.MediaId == mediaId && s.Key.UserId == userId)
+                         .ToList())
+            {
+                _transcodeService.EnterDormantState(session.Key);
+            }
+        }
+        else
+        {
+            _transcodeService.StopAllTranscodesForUser(mediaId, userId);
+        }
     }
+
+    /// <summary>True when segments should be retained on close (retention &gt; 0).</summary>
+    private async Task<bool> ShouldRetainAsync()
+        => await _settings.GetSettingAsync("SegmentRetentionHours", 24) > 0;
 }

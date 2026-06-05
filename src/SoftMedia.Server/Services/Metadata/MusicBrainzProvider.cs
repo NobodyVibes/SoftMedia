@@ -10,7 +10,7 @@ using SoftMedia.Server.Data;
 
 namespace SoftMedia.Server.Services.Metadata;
 
-public class MusicBrainzProvider : IMetadataProvider
+public class MusicBrainzProvider : ISearchableMetadataProvider
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<MusicBrainzProvider> _logger;
@@ -495,6 +495,106 @@ public class MusicBrainzProvider : IMetadataProvider
             _logger.LogDebug(ex, "Failed to validate CoverArt Archive URL: {Url}", coverUrl);
             // Network error — don't block, assume URL might be valid
             return true;
+        }
+    }
+
+    // --- ISearchableMetadataProvider (P3-WI-003 Fix Match) ---
+
+    /// <summary>
+    /// Free-text release-group search. Uses MusicBrainz's Lucene query syntax via
+    /// /ws/2/release-group?query=... (same endpoint pattern used internally for album
+    /// disambiguation at line ~390). Returns up to 10 candidates ranked by MB's score.
+    /// </summary>
+    public async Task<IReadOnlyList<MetadataSearchCandidate>> SearchAsync(string query, int? year, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return Array.Empty<MetadataSearchCandidate>();
+        var luceneQuery = year.HasValue
+            ? $"{query.Trim()} AND firstreleasedate:{year}*"
+            : query.Trim();
+        var url = $"https://musicbrainz.org/ws/2/release-group?query={WebUtility.UrlEncode(luceneQuery)}&fmt=json&limit=10";
+
+        string body;
+        try { body = await _httpClient.GetStringAsync(url, ct); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MusicBrainz search failed for '{Query}'", query);
+            return Array.Empty<MetadataSearchCandidate>();
+        }
+
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        if (!doc.RootElement.TryGetProperty("release-groups", out var groups) ||
+            groups.ValueKind != System.Text.Json.JsonValueKind.Array)
+            return Array.Empty<MetadataSearchCandidate>();
+
+        var candidates = new List<MetadataSearchCandidate>();
+        foreach (var g in groups.EnumerateArray())
+        {
+            var id = g.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+            if (string.IsNullOrEmpty(id)) continue;
+
+            int? releaseYear = null;
+            if (g.TryGetProperty("first-release-date", out var d) && d.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var s = d.GetString() ?? "";
+                if (s.Length >= 4 && int.TryParse(s.Substring(0, 4), out var y)) releaseYear = y;
+            }
+
+            string? artistLine = null;
+            if (g.TryGetProperty("artist-credit", out var ac) && ac.ValueKind == System.Text.Json.JsonValueKind.Array && ac.GetArrayLength() > 0)
+            {
+                var first = ac[0];
+                if (first.TryGetProperty("name", out var n) && n.ValueKind == System.Text.Json.JsonValueKind.String)
+                    artistLine = n.GetString();
+            }
+
+            // Cover Art Archive URL is constructible from the MBID; the receiver may 404
+            // if no cover exists, but the UI can degrade gracefully (broken-image icon).
+            var cover = $"https://coverartarchive.org/release-group/{id}/front-250";
+
+            candidates.Add(new MetadataSearchCandidate(
+                ProviderName,
+                id!,
+                g.TryGetProperty("title", out var t) ? (t.GetString() ?? "(untitled)") : "(untitled)",
+                releaseYear,
+                cover,
+                artistLine));
+
+            if (candidates.Count >= 10) break;
+        }
+        return candidates;
+    }
+
+    /// <summary>
+    /// Fetches release-group metadata for a candidate MBID. The existing
+    /// FetchMetadataAsync path is filename-driven and not directly reusable for a
+    /// chosen-by-mbid lookup, so this is a dedicated lightweight fetch.
+    /// </summary>
+    public async Task<MetadataResult?> FetchByCandidateAsync(string providerItemId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(providerItemId)) return null;
+        var url = $"https://musicbrainz.org/ws/2/release-group/{providerItemId}?fmt=json&inc=artist-credits";
+        try
+        {
+            var body = await _httpClient.GetStringAsync(url, ct);
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            var result = new MetadataResult
+            {
+                Title = root.TryGetProperty("title", out var t) ? t.GetString() : null,
+                MusicBrainzId = providerItemId,
+                PosterUrl = $"https://coverartarchive.org/release-group/{providerItemId}/front",
+            };
+            if (root.TryGetProperty("first-release-date", out var d) && d.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var s = d.GetString() ?? "";
+                if (s.Length >= 4 && int.TryParse(s.Substring(0, 4), out var y)) result.Year = y;
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MusicBrainz FetchByCandidate failed for {Mbid}", providerItemId);
+            return null;
         }
     }
 }

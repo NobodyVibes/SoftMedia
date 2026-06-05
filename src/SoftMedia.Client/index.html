@@ -12,6 +12,22 @@
 
 <body>
   <div id="root"></div>
+  <!--
+    Google Cast Web Sender SDK (P3-WI-001). Must load BEFORE main.tsx so
+    `window.__onGCastApiAvailable` is registered by useCast() before the SDK
+    fires its readiness callback. `loadCastFramework=1` requests the higher-
+    level cast.framework wrapper (vs the lower-level chrome.cast API).
+    Cast requires HTTPS in production; localhost is exempt for dev.
+
+    NOTE: Subresource Integrity (integrity="sha384-...") is intentionally NOT
+    applied. Google ships this URL as a mutable, latest-tracking build that is
+    updated in place to stay in sync with receiver-protocol changes; pinning a
+    hash would break Cast the next time Google rolls the SDK. There is no
+    versioned alternative URL — every Cast-enabled site loads it this way.
+    Defense-in-depth belongs at the CSP layer (allow only gstatic.com as an
+    off-origin script-src), not at the script tag.
+  -->
+  <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
   <script type="module" src="/src/main.tsx"></script>
 </body>
 

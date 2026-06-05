@@ -122,6 +122,11 @@ public class MediaItemDto
     // show a small franchise badge. Null for items not in any collection.
     public Guid? CollectionId { get; set; }
 
+    // P3-WI-003 — admin metadata lock. When true, auto-refresh skips this item.
+    // The UI renders a small "locked" badge and the Fix Match modal offers an Unlock.
+    public bool MetadataLocked { get; set; }
+    public DateTime? MetadataLockedAt { get; set; }
+
     public static MediaItemDto FromMediaItem(MediaItem item, string? imageProxyBaseUrl = null, UserMediaInteraction? interaction = null)
     {
         var dto = new MediaItemDto
@@ -150,6 +155,10 @@ public class MediaItemDto
 
             // Wave E2 — collection link.
             CollectionId = item.CollectionId,
+
+            // P3-WI-003 — admin metadata lock.
+            MetadataLocked = item.MetadataLocked,
+            MetadataLockedAt = item.MetadataLockedAt,
 
             // Phase 2: Extended Quality Metadata
             BitDepth = item.BitDepth,

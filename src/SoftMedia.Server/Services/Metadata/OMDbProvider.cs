@@ -10,7 +10,7 @@ namespace SoftMedia.Server.Services.Metadata;
 /// Requires an API key - either the bundled SoftMedia key or a user-provided custom key.
 /// Implements daily usage tracking with tier-based limits.
 /// </summary>
-public class OMDbProvider : IKeyedMetadataProvider
+public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<OMDbProvider> _logger;
@@ -487,5 +487,86 @@ public class OMDbProvider : IKeyedMetadataProvider
         }
 
         return (used, limit, tier, used >= limit);
+    }
+
+    // --- ISearchableMetadataProvider (P3-WI-003 Fix Match) ---
+
+    public async Task<IReadOnlyList<MetadataSearchCandidate>> SearchAsync(string query, int? year, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return Array.Empty<MetadataSearchCandidate>();
+
+        var mode = await _settingsService.GetSettingAsync("OMDbApiKeyMode", "softmedia");
+        var customKey = await _settingsService.GetSettingAsync("OMDbApiKeyCustom", "");
+        var apiKey = GetActiveApiKey(mode, customKey);
+        if (string.IsNullOrEmpty(apiKey))
+        {
+            _logger.LogDebug("OMDb search aborted: no active API key.");
+            return Array.Empty<MetadataSearchCandidate>();
+        }
+
+        // Same endpoint shape as the private fallback search at line 284, just exposed
+        // publicly + returns multiple candidates rather than auto-picking the first.
+        var url = $"https://www.omdbapi.com/?apikey={apiKey}&s={Uri.EscapeDataString(query.Trim())}&type=movie";
+        if (year.HasValue) url += $"&y={year}";
+
+        string body;
+        try { body = await _httpClient.GetStringAsync(url, ct); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "OMDb search failed for '{Query}'", query);
+            return Array.Empty<MetadataSearchCandidate>();
+        }
+
+        using var doc = JsonDocument.Parse(body);
+        if (!doc.RootElement.TryGetProperty("Search", out var results) ||
+            results.ValueKind != JsonValueKind.Array)
+            return Array.Empty<MetadataSearchCandidate>();
+
+        var candidates = new List<MetadataSearchCandidate>();
+        foreach (var r in results.EnumerateArray())
+        {
+            var imdb = r.TryGetProperty("imdbID", out var idEl) ? idEl.GetString() : null;
+            if (string.IsNullOrEmpty(imdb)) continue;
+
+            int? parsedYear = null;
+            if (r.TryGetProperty("Year", out var yEl) && yEl.ValueKind == JsonValueKind.String)
+            {
+                var yStr = yEl.GetString() ?? "";
+                // OMDb returns "1995", "1995–1999", or "1995–"; take the first 4 chars.
+                if (yStr.Length >= 4 && int.TryParse(yStr.Substring(0, 4), out var y)) parsedYear = y;
+            }
+
+            string? poster = null;
+            if (r.TryGetProperty("Poster", out var posterEl) && posterEl.ValueKind == JsonValueKind.String)
+            {
+                var p = posterEl.GetString();
+                if (!string.IsNullOrEmpty(p) && p != "N/A") poster = p;
+            }
+
+            candidates.Add(new MetadataSearchCandidate(
+                ProviderName,
+                imdb!,
+                r.GetProperty("Title").GetString() ?? "(untitled)",
+                parsedYear,
+                poster,
+                r.TryGetProperty("Type", out var t) ? t.GetString() : null));
+
+            if (candidates.Count >= 10) break;
+        }
+        return candidates;
+    }
+
+    /// <summary>Fetch full metadata for an IMDb-id candidate. Reuses FetchMetadataAsync's promoted-IMDb-id short-circuit.</summary>
+    public Task<MetadataResult?> FetchByCandidateAsync(string providerItemId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(providerItemId) || !providerItemId.StartsWith("tt"))
+            return Task.FromResult<MetadataResult?>(null);
+
+        return FetchMetadataAsync(new MediaItem
+        {
+            Title = "(fix-match)",
+            Type = Models.MediaType.Movie,
+            ImdbId = providerItemId,
+        });
     }
 }

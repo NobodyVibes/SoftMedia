@@ -50,7 +50,8 @@ public class UsersController : ControllerBase
                 u.LastName,
                 u.CreatedByAdmin,
                 _context.Invites.Where(i => i.UsedById == u.Id).Select(i => i.Code).FirstOrDefault(),
-                u.MustChangePassword
+                u.MustChangePassword,
+                _context.UserTotps.Any(t => t.UserId == u.Id && t.EnabledAt != null)
             ))
             .ToListAsync();
 
@@ -102,7 +103,8 @@ public class UsersController : ControllerBase
             user.LastName,
             user.CreatedByAdmin,
             null,
-            user.MustChangePassword
+            user.MustChangePassword,
+            false // newly created account has no 2FA enrollment yet
         ));
     }
 

@@ -1,8 +1,12 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
+using System.Security.Claims;
 using System.Text;
 using System.Threading.RateLimiting;
+using SoftMedia.Server.Data;
 using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Media;
@@ -32,6 +36,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<IRefreshTokenService, RefreshTokenService>();
         services.AddScoped<IApiTokenService, ApiTokenService>();
+        services.AddScoped<ITrustedDeviceService, TrustedDeviceService>();
         services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ScopeAuthorizationHandler>();
         // Singleton: holds the in-memory pending-2FA-challenge store (P2-WI-005).
         services.AddSingleton<ITotpService, TotpService>();
@@ -92,6 +97,43 @@ public static class ServiceCollectionExtensions
                             }
                         }
                         return Task.CompletedTask;
+                    },
+                    OnTokenValidated = async context =>
+                    {
+                        // A cast token (token_use=cast) is a long-lived token the Chromecast
+                        // carries in the stream URL. It is hard-scoped to ONE media item's
+                        // stream routes: reject it on every other path so a leaked cast URL
+                        // can never act as the user elsewhere — even if the user is an admin.
+                        var principal = context.Principal;
+                        if (principal?.FindFirst(CastTokenClaims.TokenUse)?.Value != CastTokenClaims.CastUse)
+                            return; // normal access tokens are unaffected
+
+                        var mediaId = principal.FindFirst(CastTokenClaims.CastMedia)?.Value;
+                        var path = context.HttpContext.Request.Path;
+                        var inScope = !string.IsNullOrEmpty(mediaId) &&
+                            (path.StartsWithSegments($"/api/transcode/{mediaId}", StringComparison.OrdinalIgnoreCase) ||
+                             path.StartsWithSegments($"/api/v1/stream/{mediaId}", StringComparison.OrdinalIgnoreCase));
+                        if (!inScope)
+                        {
+                            context.Fail("Cast token is scoped to a single media item's stream routes.");
+                            return;
+                        }
+
+                        // Re-check user state every request so a ban / soft-delete / un-approve
+                        // (or admin revocation) takes effect within the token's lifetime — a
+                        // stateless JWT is otherwise unrevocable. Mirrors the ApiToken scheme.
+                        var sub = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                                  ?? principal.FindFirst("sub")?.Value;
+                        if (!Guid.TryParse(sub, out var userId))
+                        {
+                            context.Fail("Cast token has no valid subject.");
+                            return;
+                        }
+                        var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+                        var ok = await db.Users.AsNoTracking()
+                            .AnyAsync(u => u.Id == userId && !u.IsBanned && !u.IsDeleted && u.IsApproved);
+                        if (!ok)
+                            context.Fail("Cast token user is no longer eligible.");
                     }
                 };
             });
@@ -161,7 +203,12 @@ public static class ServiceCollectionExtensions
         // SoftMediaUserAgentHandler so requests to upstream CDNs (Wikidata,
         // MusicBrainz, Open Library, TVMaze etc.) carry the SDD §4.3-mandated
         // User-Agent. See SDD §6.2 — image-proxy compliance.
+        // SECURITY (SSRF): AllowAutoRedirect=false — ImageController allowlists the
+        // request host, but a 3xx from an allowlisted host could otherwise be chased to
+        // an internal address. The controller follows redirects manually, re-checking the
+        // allowlist on each hop. Same guard as the ImageCacheService client below.
         services.AddHttpClient("ImageProxy", c => c.Timeout = TimeSpan.FromSeconds(15))
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
                 .AddHttpMessageHandler<SoftMediaUserAgentHandler>();
 
         // Outbound webhook deliveries (P2-WI-004). No SoftMediaUserAgentHandler — the
@@ -275,6 +322,12 @@ public static class ServiceCollectionExtensions
         {
             client.Timeout = TimeSpan.FromSeconds(30);
         })
+        // SECURITY (SSRF): like the Webhooks client above, disable transparent redirect
+        // following. ImageCacheService allowlists the request host, but a 3xx from an
+        // allowlisted host could otherwise be chased to an internal address (cloud
+        // metadata, 127.0.0.1, RFC1918). The service follows redirects manually and
+        // re-runs the host allowlist on every hop.
+        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
         .AddHttpMessageHandler<SoftMediaUserAgentHandler>()
         .AddHttpMessageHandler(sp => 
         {
@@ -297,6 +350,11 @@ public static class ServiceCollectionExtensions
 
         // Image URL extraction (delegates to IImageDownloadQueue)
         services.AddScoped<IImageUrlExtractorService, ImageUrlExtractorService>();
+
+        // Post-restore artwork repair: re-fetches art whose cache files a DB-only
+        // backup didn't include. Scoped (uses AppDbContext); driven by the admin
+        // endpoint and the ArtworkRepairOnRestoreService background worker.
+        services.AddScoped<IArtworkRepairService, Services.Media.ArtworkRepairService>();
 
         return services;
     }
@@ -407,6 +465,10 @@ public static class ServiceCollectionExtensions
         // across requests; services report their last-run status into it.
         services.AddSingleton<IScheduledTaskRegistry, ScheduledTaskRegistry>();
 
+        // Persists that telemetry to disk so it survives a backend reboot (loaded back
+        // in Program.cs on startup).
+        services.AddHostedService<TaskStatusPersistenceService>();
+
         // Library Scan Queue
         services.AddSingleton<LibraryScanQueueService>();
         services.AddSingleton<ILibraryScanQueueService>(sp => sp.GetRequiredService<LibraryScanQueueService>());
@@ -445,6 +507,11 @@ public static class ServiceCollectionExtensions
 
         // Trickplay sprite-sheet backfill sweep (P2-WI-001).
         services.AddHostedService<TrickplayWorker>();
+
+        // One-shot artwork repair after a database restore. Consumes the marker
+        // PendingRestore drops on boot and re-fetches art that the (image-cache-excluding)
+        // backup couldn't restore.
+        services.AddHostedService<ArtworkRepairOnRestoreService>();
 
         // Outbound webhooks (P2-WI-004): singleton in-memory queue + drain worker.
         services.AddSingleton<IWebhookDispatcher, WebhookDispatcher>();

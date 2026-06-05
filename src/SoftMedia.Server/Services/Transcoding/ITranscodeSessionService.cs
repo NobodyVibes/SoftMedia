@@ -22,14 +22,17 @@ public interface ITranscodeSessionService
     TranscodeSessionResult ResumeSession(Guid mediaId, Guid userId, int? sub, string? sid = null);
 
     /// <summary>
-    /// Stops a specific transcode session.
+    /// Stops a specific transcode session. By default the segments are RETAINED (the
+    /// session goes dormant) so playback can resume quickly within the configured
+    /// retention window; they are deleted immediately only when retention is 0.
     /// </summary>
-    void StopSession(Guid mediaId, Guid userId, int? sub, string? sid = null);
+    Task StopSession(Guid mediaId, Guid userId, int? sub, string? sid = null);
 
     /// <summary>
-    /// Stops all transcode sessions for a user and media item.
+    /// Stops all transcode sessions for a user and media item (segments retained unless
+    /// retention is 0). See <see cref="StopSession"/>.
     /// </summary>
-    void StopAllSessions(Guid mediaId, Guid userId);
+    Task StopAllSessions(Guid mediaId, Guid userId);
 }
 
 public enum TranscodeSessionResult

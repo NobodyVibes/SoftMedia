@@ -31,6 +31,10 @@ public class BackupService : IBackupService
     private const string DbEntryName = "softmedia.db";
     private const string ManifestEntryName = "manifest.json";
     private const string PinMarkerSuffix = ".pinned";
+    // Sidecar holding the editable display name, next to the archive (like the pin marker).
+    // Keeps the archive id/filename immutable while the label can change freely.
+    private const string NameMarkerSuffix = ".label";
+    private const int MaxNameLength = 120;
 
     private readonly AppDbContext _db;
     private readonly ISettingsService _settings;
@@ -45,7 +49,9 @@ public class BackupService : IBackupService
 
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
-    public async Task<BackupInfo> CreateBackupAsync(CancellationToken ct)
+    public Task<BackupInfo> CreateBackupAsync(CancellationToken ct) => CreateBackupAsync(null, ct);
+
+    public async Task<BackupInfo> CreateBackupAsync(string? name, CancellationToken ct)
     {
         var dir = await GetBackupDirectoryAsync();
         Directory.CreateDirectory(dir);
@@ -107,9 +113,14 @@ public class BackupService : IBackupService
             if (File.Exists(tempDb)) File.Delete(tempDb);
         }
 
+        var label = NormalizeName(name);
+        if (label != null)
+            await File.WriteAllTextAsync(zipPath + NameMarkerSuffix, label, ct);
+
         var info = new FileInfo(zipPath);
-        _logger.LogInformation("Created backup {Id} ({Size} bytes)", id, info.Length);
-        return new BackupInfo(id, info.CreationTimeUtc, info.Length, IsPinned(dir, id));
+        _logger.LogInformation("Created backup {Id} ({Size} bytes){Named}", id, info.Length,
+            label != null ? $" named '{label}'" : "");
+        return new BackupInfo(id, info.CreationTimeUtc, info.Length, IsPinned(dir, id), label ?? id);
     }
 
     public async Task<IReadOnlyList<BackupInfo>> ListBackupsAsync(CancellationToken ct)
@@ -119,11 +130,11 @@ public class BackupService : IBackupService
 
         return Directory.EnumerateFiles(dir, "*.zip")
             .Select(p => new FileInfo(p))
-            .Select(f => new BackupInfo(
-                Path.GetFileNameWithoutExtension(f.Name),
-                f.CreationTimeUtc,
-                f.Length,
-                IsPinned(dir, Path.GetFileNameWithoutExtension(f.Name))))
+            .Select(f =>
+            {
+                var id = Path.GetFileNameWithoutExtension(f.Name);
+                return new BackupInfo(id, f.CreationTimeUtc, f.Length, IsPinned(dir, id), GetName(dir, id));
+            })
             .OrderByDescending(b => b.CreatedAtUtc)
             .ToList();
     }
@@ -151,6 +162,42 @@ public class BackupService : IBackupService
         {
             File.Delete(marker);
         }
+        return true;
+    }
+
+    public async Task<bool> SetBackupNameAsync(string id, string? name, CancellationToken ct)
+    {
+        var dir = await GetBackupDirectoryAsync();
+        var path = ResolveBackupPath(dir, id);
+        if (path == null || !File.Exists(path)) return false;
+
+        var marker = path + NameMarkerSuffix;
+        var label = NormalizeName(name);
+        if (label == null)
+        {
+            if (File.Exists(marker)) File.Delete(marker); // blank name reverts to the id
+        }
+        else
+        {
+            await File.WriteAllTextAsync(marker, label, ct);
+        }
+        _logger.LogInformation("Renamed backup {Id} to '{Name}'", id, label ?? id);
+        return true;
+    }
+
+    public async Task<bool> DeleteBackupAsync(string id, CancellationToken ct)
+    {
+        var dir = await GetBackupDirectoryAsync();
+        var path = ResolveBackupPath(dir, id);
+        if (path == null || !File.Exists(path)) return false;
+
+        File.Delete(path);
+        foreach (var suffix in new[] { PinMarkerSuffix, NameMarkerSuffix })
+        {
+            var marker = path + suffix;
+            if (File.Exists(marker)) File.Delete(marker);
+        }
+        _logger.LogWarning("Backup {Id} deleted.", id);
         return true;
     }
 
@@ -245,8 +292,11 @@ public class BackupService : IBackupService
             if (path != null && File.Exists(path))
             {
                 File.Delete(path);
-                var marker = path + PinMarkerSuffix;
-                if (File.Exists(marker)) File.Delete(marker);
+                foreach (var suffix in new[] { PinMarkerSuffix, NameMarkerSuffix })
+                {
+                    var marker = path + suffix;
+                    if (File.Exists(marker)) File.Delete(marker);
+                }
                 deleted++;
             }
         }
@@ -278,6 +328,31 @@ public class BackupService : IBackupService
 
     private static bool IsPinned(string dir, string id)
         => File.Exists(Path.Combine(dir, id + ".zip" + PinMarkerSuffix));
+
+    /// <summary>Reads the editable display name from the sidecar, falling back to the id.</summary>
+    private static string GetName(string dir, string id)
+    {
+        var marker = Path.Combine(dir, id + ".zip" + NameMarkerSuffix);
+        if (!File.Exists(marker)) return id;
+        try
+        {
+            var label = NormalizeName(File.ReadAllText(marker));
+            return label ?? id;
+        }
+        catch
+        {
+            return id;
+        }
+    }
+
+    /// <summary>Trims, collapses to a single line, and caps a user-supplied name. Returns null if blank.</summary>
+    private static string? NormalizeName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        var collapsed = name.Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ').Trim();
+        if (collapsed.Length == 0) return null;
+        return collapsed.Length > MaxNameLength ? collapsed[..MaxNameLength] : collapsed;
+    }
 
     /// <summary>
     /// Maps a backup id to its on-disk zip path, rejecting any id that would escape

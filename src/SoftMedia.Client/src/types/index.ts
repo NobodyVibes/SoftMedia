@@ -71,6 +71,10 @@ export interface MediaItem {
     // Wave E2 — link to the parent collection / franchise for movies. Null
     // when the movie isn't part of any collection.
     collectionId?: string;
+
+    // P3-WI-003 — admin metadata lock. True ⇒ auto-refresh skips this item.
+    metadataLocked?: boolean;
+    metadataLockedAt?: string | null;
 }
 
 export interface CastMember {

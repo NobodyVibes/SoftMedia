@@ -41,6 +41,7 @@ public class SoftMediaWebApplicationFactory : WebApplicationFactory<Program>
                 ["JwtSettings:Issuer"] = "SoftMediaServer",
                 ["JwtSettings:Audience"] = "SoftMediaClient",
                 ["JwtSettings:ExpiryMinutes"] = "15",
+                ["JwtSettings:CastTokenExpiryHours"] = "9", // distinct from any default, so the cast-token TTL test proves config is read
             });
         });
 

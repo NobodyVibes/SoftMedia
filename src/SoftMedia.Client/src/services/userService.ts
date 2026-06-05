@@ -14,6 +14,7 @@ export interface UserDto {
     lastName: string;
     createdByAdmin: boolean;
     usedInviteCode: string | null;
+    twoFactorEnabled: boolean;
 }
 
 export interface UpdateUserRoleRequest {
@@ -61,6 +62,12 @@ export const userService = {
 
     async resetUserPassword(userId: string, newPassword: string): Promise<void> {
         await api.put(`/users/${userId}/password`, { newPassword });
+    },
+
+    // Admin recovery: clears a user's 2FA enrollment + remembered devices (admin-only,
+    // enforced server-side on AdminController). For users locked out of their authenticator.
+    async disableUserTwoFactor(userId: string): Promise<void> {
+        await api.post(`/admin/users/${userId}/disable-2fa`);
     },
 
     // Wave C — per-user library ACL. Empty array means "unrestricted" (default).

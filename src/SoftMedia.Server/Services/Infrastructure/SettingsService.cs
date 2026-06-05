@@ -96,6 +96,7 @@ public class SettingsService : ISettingsService
             new() { Key = "MaxSimultaneousTranscodesPerUser", Value = "0", Group = "Transcoding", Description = "Maximum concurrent transcode sessions per user. 0 = unlimited." },
             new() { Key = "EnableTranscoding", Value = "true", Group = "Transcoding", Description = "Enable video transcoding. If disabled, files will be served directly." },
             new() { Key = "ForceDirectPlayWhenPossible", Value = "true", Group = "Transcoding", Description = "Prefer direct play over transcoding when client supports the format." },
+            new() { Key = "SegmentRetentionHours", Value = "24", Group = "Transcoding", Description = "How long to keep a session's transcoded segments after the player closes, so playback can resume quickly. An hourly cleanup removes folders whose newest segment is older than this. 0 = delete on close." },
             
             // Streaming (client-facing playback quality settings)
             new() { Key = "MaxTranscodeResolution", Value = "original", Group = "Streaming", Description = "Maximum output resolution (720p, 1080p, 4k, original)." },
@@ -141,6 +142,7 @@ public class SettingsService : ISettingsService
             
             // Users
             new() { Key = "AllowUserSignup", Value = "Disabled", Group = "Users", Description = "Control public registration (Disabled, InviteOnly, Enabled)." },
+            new() { Key = "TwoFactorExpirationDays", Value = "0", Group = "Users", Description = "For accounts with 2FA enabled: remember a device for this many days after a successful 2FA, so the user isn't prompted again until it expires. 0 = require 2FA on every login." },
 
             // Playback — server-wide CPU policy for intro / credits detection.
             // Per-user "auto-skip" preferences are stored on the client (localStorage)

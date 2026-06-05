@@ -124,6 +124,17 @@ public class MediaItem
     public bool IsRetryExhausted { get; set; }
 
     /// <summary>
+    /// Admin "do not auto-overwrite" flag (P3-WI-003). When true, every metadata
+    /// refresh and scan-time enrichment SKIPS this item. Set by manual-edit and
+    /// fix-match actions; cleared by the explicit Unlock admin endpoint. The single
+    /// chokepoint that honours this is MetadataQueueService.ProcessItemAsync.
+    /// </summary>
+    public bool MetadataLocked { get; set; }
+
+    /// <summary>Timestamp the lock was set, for the UI "Locked since…" hint.</summary>
+    public DateTime? MetadataLockedAt { get; set; }
+
+    /// <summary>
     /// Average rating of all users on this SoftMedia server.
     /// This is pre-calculated on write to ensure high performance for hero sections and cards.
     /// </summary>

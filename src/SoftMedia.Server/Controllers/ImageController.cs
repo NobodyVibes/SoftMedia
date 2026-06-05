@@ -124,7 +124,15 @@ public class ImageController : ControllerBase
             // metadata hosts (Wikidata, MusicBrainz, Open Library).
             var client = _httpClientFactory.CreateClient("ImageProxy");
 
-            using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            // Follows redirects manually, re-validating the allowlist on each hop (the
+            // client has AllowAutoRedirect=false). null = the chain left the allowlist.
+            using var response = await GetWithAllowlistedRedirectsAsync(client, url);
+            if (response == null)
+            {
+                _logger.LogWarning("Blocked image proxy redirect chain starting at {Url}", url);
+                await System.IO.File.WriteAllTextAsync(sentinelPath, "blocked-redirect");
+                return NotFound("Image not found at source.");
+            }
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Upstream returned {Status} for {Url}", response.StatusCode, url);
@@ -185,6 +193,54 @@ public class ImageController : ControllerBase
         finally
         {
             _fetchSemaphore.Release();
+        }
+    }
+
+    // Maximum redirect hops to follow before giving up.
+    private const int MaxRedirects = 5;
+
+    /// <summary>
+    /// Issues a GET and follows up to <see cref="MaxRedirects"/> redirects MANUALLY,
+    /// re-validating each hop's host against <see cref="AllowedHosts"/> (the client has
+    /// AllowAutoRedirect=false). This stops an allowlisted host from redirecting the
+    /// proxy to an internal address (cloud metadata, loopback, RFC1918) — a host check
+    /// only on the first URL would otherwise be bypassed by the 3xx. Returns null when
+    /// the chain leaves the allowlist or exceeds the hop limit.
+    /// </summary>
+    private async Task<HttpResponseMessage?> GetWithAllowlistedRedirectsAsync(HttpClient client, string url)
+    {
+        var currentUrl = url;
+        for (var hop = 0; ; hop++)
+        {
+            var response = await client.GetAsync(currentUrl, HttpCompletionOption.ResponseHeadersRead);
+
+            var status = (int)response.StatusCode;
+            if (status is < 300 or >= 400)
+                return response; // not a redirect — success or error, caller decides
+
+            var location = response.Headers.Location;
+            response.Dispose();
+
+            if (hop >= MaxRedirects)
+            {
+                _logger.LogWarning("Image proxy redirect chain exceeded {Max} hops for {Url}", MaxRedirects, url);
+                return null;
+            }
+            if (location == null)
+            {
+                _logger.LogWarning("Image proxy redirect with no Location header from {Url}", currentUrl);
+                return null;
+            }
+
+            var next = location.IsAbsoluteUri ? location : new Uri(new Uri(currentUrl), location);
+            if ((next.Scheme != Uri.UriSchemeHttp && next.Scheme != Uri.UriSchemeHttps)
+                || !AllowedHosts.Contains(next.Host))
+            {
+                _logger.LogWarning("Blocked image proxy redirect to non-allowlisted target {Target} (from {Url})", next, currentUrl);
+                return null;
+            }
+
+            currentUrl = next.AbsoluteUri;
         }
     }
 

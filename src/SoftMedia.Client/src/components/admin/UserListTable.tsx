@@ -118,6 +118,17 @@ export const UserListTable: React.FC = () => {
         },
     });
 
+    const disable2faMutation = useMutation({
+        mutationFn: (userId: string) => userService.disableUserTwoFactor(userId),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['users'] });
+            toast.success('Two-factor authentication removed for user');
+        },
+        onError: (error: any) => {
+            toast.error(error.response?.data || 'Failed to remove 2FA');
+        },
+    });
+
     const handleRoleChange = (user: UserDto, newRole: string) => {
         if (user.role === newRole) return;
 
@@ -181,6 +192,19 @@ export const UserListTable: React.FC = () => {
             message: `Are you sure you want to permanently delete ${user.username}? This action cannot be undone.`,
             action: () => {
                 deleteMutation.mutate(user.id);
+                setConfirmModal({ ...confirmModal, isOpen: false });
+            },
+            variant: 'danger',
+        });
+    };
+
+    const handleDisable2fa = (user: UserDto) => {
+        setConfirmModal({
+            isOpen: true,
+            title: 'Remove Two-Factor Authentication',
+            message: `Remove 2FA from ${user.username}? They will be able to sign in with just their password until they re-enable it. Use this only for users locked out of their authenticator app.`,
+            action: () => {
+                disable2faMutation.mutate(user.id);
                 setConfirmModal({ ...confirmModal, isOpen: false });
             },
             variant: 'danger',
@@ -550,6 +574,15 @@ export const UserListTable: React.FC = () => {
                                                 >
                                                     Password
                                                 </button>
+                                                {user.twoFactorEnabled && !isCurrentUser && (
+                                                    <button
+                                                        onClick={() => handleDisable2fa(user)}
+                                                        title="Remove this user's two-factor authentication (admin recovery)"
+                                                        className="px-3 py-1 rounded transition-colors bg-purple-600 hover:bg-purple-700 focus-visible:bg-purple-700 focus-visible:ring-2 focus-visible:ring-purple-400 focus-visible:outline-none text-white"
+                                                    >
+                                                        Remove 2FA
+                                                    </button>
+                                                )}
                                             </div>
                                         </td>
                                     </tr>

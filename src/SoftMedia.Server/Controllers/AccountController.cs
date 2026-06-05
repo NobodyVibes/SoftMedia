@@ -22,13 +22,15 @@ public class AccountController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IApiTokenService _apiTokens;
     private readonly ITotpService _totp;
+    private readonly ITrustedDeviceService _trustedDevices;
     private readonly IPasswordHasher _passwordHasher;
 
-    public AccountController(AppDbContext context, IApiTokenService apiTokens, ITotpService totp, IPasswordHasher passwordHasher)
+    public AccountController(AppDbContext context, IApiTokenService apiTokens, ITotpService totp, ITrustedDeviceService trustedDevices, IPasswordHasher passwordHasher)
     {
         _context = context;
         _apiTokens = apiTokens;
         _totp = totp;
+        _trustedDevices = trustedDevices;
         _passwordHasher = passwordHasher;
     }
 
@@ -228,7 +230,40 @@ public class AccountController : ControllerBase
 
         _context.UserTotps.Remove(totp);
         await _context.SaveChangesAsync();
+
+        // Disabling 2FA invalidates any remembered devices for this user.
+        await _trustedDevices.RevokeAllAsync(userId.Value);
         return Ok();
+    }
+
+    /// <summary>Lists the caller's remembered 2FA devices (for the 2FA-expiry window).</summary>
+    [HttpGet("trusted-devices")]
+    public async Task<IActionResult> GetTrustedDevices()
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+        var devices = await _trustedDevices.ListAsync(userId.Value);
+        return Ok(devices.Select(d => new TrustedDeviceDto(
+            d.Id, d.Label, d.CreatedAtUtc, d.LastSeenAtUtc, d.LastVerifiedAtUtc)));
+    }
+
+    /// <summary>Forgets one remembered device, forcing 2FA there on next login.</summary>
+    [HttpDelete("trusted-devices/{id:guid}")]
+    public async Task<IActionResult> RevokeTrustedDevice(Guid id)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+        return await _trustedDevices.RevokeAsync(userId.Value, id) ? Ok() : NotFound();
+    }
+
+    /// <summary>Forgets all remembered devices for the caller.</summary>
+    [HttpDelete("trusted-devices")]
+    public async Task<IActionResult> RevokeAllTrustedDevices()
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+        var n = await _trustedDevices.RevokeAllAsync(userId.Value);
+        return Ok(new { revoked = n });
     }
 
     private Guid? GetCurrentUserId()
@@ -241,6 +276,8 @@ public class AccountController : ControllerBase
         return userId;
     }
 }
+
+public record TrustedDeviceDto(Guid Id, string? Label, DateTime CreatedAtUtc, DateTime LastSeenAtUtc, DateTime LastVerifiedAtUtc);
 
 public record CreateApiTokenRequest(string Label, List<string>? Scopes, DateTime? ExpiresAt);
 

@@ -1,10 +1,26 @@
 # Phase 3 — Differentiation
 
 **Roadmap Phase:** 3 of 4
-**Status:** Not Started
-**Estimated Duration:** 6-10 weeks (work items are parallelisable)
+**Status:** In Progress *(scope revised by maintainer 2026-05-30)*
+**Estimated Duration:** 2-3 weeks (revised — two items only)
 **Date:** 2026-05-11
 **Parent Document:** [00-roadmap-overview.md](./00-roadmap-overview.md)
+
+## 0. Maintainer scope revision (2026-05-30)
+
+The original five-item phase was reviewed and **cut to two** before implementation. The full work-item bodies below are the *original* spec; where they conflict, **this section wins**:
+
+| Item | Original | Final decision |
+|------|----------|----------------|
+| **P3-WI-001** Chromecast sender | as written | **Keep.** Implement. |
+| **P3-WI-002** OpenSubtitles auto-download | external provider | **Dropped.** Embedded-track extraction + sidecar `.srt`/`.vtt` discovery already cover the common case; hash-matching a third party conflicts with the privacy charter. (Not replaced — no manual-upload feature in this phase either.) |
+| **P3-WI-003** Bulk edit + manual match | as written | **Keep — full Option B (provider re-search).** Includes (a) `MediaItem.MetadataLocked` flag + auto-refresh skip, (b) admin manual field/poster editing, AND (c) the Plex-style provider re-search: typed query → ranked candidates with posters/years → click to apply. Requires adding a `SearchAsync(query, year?)` method to every metadata provider that doesn't have one. |
+| **P3-WI-004** Smart playlists + tags | both | **Dropped entirely.** No tags, no smart playlists. |
+| **P3-WI-005** Reserved community slot | placeholder | **Dropped.** The "community slot" framing doesn't fit a solo OSS project. |
+
+So Phase 3 ships **two items**: Chromecast (SPA-only) and the Full manual match. The 6-10 week estimate is replaced with 2-3 weeks.
+
+A pre-implementation verification workflow (5 agents) ran against the *original* items; its findings on P3-WI-001 (cast.framework loads via Google-hosted script, not npm) and P3-WI-003 (provider `SearchAsync` is the biggest net-new gap) remain authoritative. P3-WI-002/004/005 findings are now moot.
 
 ## 1. Phase Summary
 
@@ -249,3 +265,39 @@ Phase 3 is complete when **either**:
 - LDAP authentication (Phase 4).
 - Federated multi-server deployments (Phase 4).
 - Native mobile clients (Phase 4).
+
+## 8. Verification Log *(added 2026-05-30)*
+
+Phase 3 shipped only **P3-WI-001** + **P3-WI-003** per the §0 scope revision. The other three items were dropped before any code was written:
+- **P3-WI-002 OpenSubtitles** — dropped (embedded + sidecar already cover the common case; hash-matching a third party conflicts with the privacy charter).
+- **P3-WI-004 Smart playlists + tags** — dropped (maintainer decision).
+- **P3-WI-005 Reserved community slot** — dropped (framing doesn't fit a solo OSS project).
+
+Server build clean. Client `tsc -b` clean; `vitest` 152/152. Server tests: **635 passed / 1 skipped / 0 failed** (up from 624 pre-Phase-3; +11 tests: 4 TVMaze search + 5 admin match + 1 anonymous-scope-bypass regression + 1 from earlier security fix).
+
+### Pre-implementation verification (2-agent workflow)
+- **WI-001:** `proceed-as-written`. One cosmetic correction — `StreamPlan.url` actually carries `?token=` not `?access_token=`; the JWT handler accepts both.
+- **WI-003:** the most useful finding was that **every metadata provider already calls its search endpoint internally as a private fallback path** — so `SearchAsync` was mostly extracting that into a public method that returns multiple ranked candidates, not building search from scratch. Estimate dropped from ~7 days to ~4–5 days. Also identified `MetadataQueueService.ProcessItemAsync` as the **single chokepoint** every refresh/enrichment funnels through, so one guard there covers `MetadataRefreshService`, `MetadataRetryService`, all scanners, and (via the aggregator's downstream image-extract) the image-download queue.
+
+### P3-WI-001 — Chromecast sender (frontend-only)
+- `index.html` loads Google's `cast_sender.js?loadCastFramework=1`. **SRI intentionally not applied** — Google publishes a mutable, latest-tracking URL; pinning would break Cast on every SDK roll. Documented inline with a CSP-layer mitigation note.
+- New `useCast()` hook initialises `cast.framework` against the default media receiver, tracks `isCastAvailable` / `isCasting` / `receiverName`, exposes `castNow(info)` / `stopCasting()`. Cast SDK globals typed as `any` (no @types package).
+- Cast button in `VideoPlayer.tsx` between the explainer and quality buttons. Bandwidth cap (P1-WI-003) applies server-side without extra wiring since Cast hits the same `/api/transcode/{id}/master.m3u8` URL.
+- No backend changes.
+
+### P3-WI-003 — Full manual match (Option B)
+- **Model + migration:** `MediaItem.MetadataLocked` (bool) + `MetadataLockedAt`; migration `20260530072824_AddMediaItemMetadataLock`. Surfaced in `MediaItemDto`.
+- **Single-chokepoint lock guard:** `MetadataQueueService.ProcessItemAsync` skips locked items. Covers every refresh path with one line.
+- **`ISearchableMetadataProvider`** capability interface (`SearchAsync` + `FetchByCandidateAsync`). Implemented in 5 providers, all reusing existing private search endpoints:
+  - **TVMaze** — `/search/shows`, reuses `TvMazeId` short-circuit.
+  - **OMDb** — `&s=` search respecting API-key mode, reuses `ImdbId` short-circuit.
+  - **Open Library** — `/search.json?q=&sort=editions` with cover URLs.
+  - **MusicBrainz** — release-group Lucene search with optional firstreleasedate filter.
+  - **Wikidata** — uses `wbsearchentities` REST API for search (skipping SPARQL); Q-id-direct SPARQL for fetch.
+- **Admin endpoints** (admin-only, on `AdminController`): `POST /admin/match/{id}/search`, `POST /admin/match/{id}/apply`, `PATCH /admin/match/{id}` (manual edit, auto-locks), `POST /admin/match/{id}/unlock`.
+- **Frontend:** `FixMatchCard` rendered above the detail view for admins. Re-search modal with poster grid → apply; manual edit form; unlock action.
+- **Tests (9):** `TVMazeProviderSearchTests` (4) + `AdminMatchIntegrationTests` (5).
+
+### Maintainer follow-up notes
+- Wikidata's `SearchAsync` returns all entity types from `wbsearchentities`, not just films — the description column lets the user disambiguate by eye (same UX as Plex's "Fix Match"). A future tightening could filter by `instance of (P31)` with a per-result claims call.
+- The single-chokepoint lock guard means the lock is honoured everywhere even when new metadata services are added — **provided they go through `MetadataQueueService.EnqueueMetadataRefreshAsync`**. New direct-mutation paths must add their own guard.

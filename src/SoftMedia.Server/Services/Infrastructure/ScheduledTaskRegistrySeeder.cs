@@ -18,7 +18,7 @@ public static class ScheduledTaskRegistrySeeder
         Sched(ScheduledTaskNames.RefreshTokenCleanup, "Prunes expired and revoked refresh tokens daily.");
         Sched(ScheduledTaskNames.MetadataRefresh, "Refreshes metadata for ongoing series on a configurable interval.", manual: true);
         Sched(ScheduledTaskNames.BackupRotation, "Takes a daily database backup and prunes old archives.");
-        Sched(ScheduledTaskNames.TranscodeSegmentCleanup, "Evicts stale HLS transcode segments.");
+        Sched(ScheduledTaskNames.TranscodeSegmentCleanup, "Hourly: removes transcode session folders whose newest segment is older than the retention window (Settings → Transcoding).");
         Sched(ScheduledTaskNames.ThrottleMonitor, "Monitors transcode buffers and throttles FFmpeg.");
         Sched(ScheduledTaskNames.Trickplay, "Generates scrubber-preview sprite sheets for videos that lack them.");
 

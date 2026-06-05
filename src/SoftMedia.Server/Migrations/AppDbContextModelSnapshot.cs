@@ -540,6 +540,12 @@ namespace SoftMedia.Server.Migrations
                     b.Property<string>("MetadataHash")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("MetadataLocked")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("MetadataLockedAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("MusicBrainzId")
                         .HasColumnType("TEXT");
 
@@ -958,6 +964,43 @@ namespace SoftMedia.Server.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("SystemNotifications");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.TrustedDevice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedFromIp")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Label")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("LastSeenAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("LastVerifiedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("TrustedDevices");
                 });
 
             modelBuilder.Entity("SoftMedia.Server.Models.User", b =>
@@ -1523,6 +1566,17 @@ namespace SoftMedia.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("MediaItem");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.TrustedDevice", b =>
+                {
+                    b.HasOne("SoftMedia.Server.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("SoftMedia.Server.Models.UserLibraryAccess", b =>

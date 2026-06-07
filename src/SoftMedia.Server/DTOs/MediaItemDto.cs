@@ -286,6 +286,32 @@ public class MediaItemDto
 
     private static string? ResolvePosterPath(MediaItem item, string? imageProxyBaseUrl)
     {
+        // Music items have dedicated endpoints (MusicController -> MusicImageService)
+        // that serve the LOCAL cached cover/art file directly. Prefer them over the
+        // remote-URL image proxy: the cover is already downloaded to disk
+        // (CoverArtPath), so serving it locally is faster AND sidesteps the proxy's
+        // redirect-following plus its sticky no-TTL negative cache — a stale ".404"
+        // sentinel written before the Cover Art Archive redirect fix would otherwise
+        // keep an album blank even though its cover file exists on disk. (PosterUrl
+        // is NOT cleared after caching, so without this music albums would route to
+        // the proxy and inherit that staleness; artist cards already take this local
+        // path, which is why they render.)
+        switch (item.Type)
+        {
+            case MediaType.Album when !string.IsNullOrEmpty(item.CoverArtPath):
+                return $"/api/v1/music/album/{item.Id}/cover";
+            case MediaType.Audio when item.AlbumId.HasValue:
+                // Tracks inherit their album's cover even when the track row has no
+                // CoverArtPath of its own; 404s cleanly if the album also lacks art.
+                return $"/api/v1/music/album/{item.AlbumId}/cover";
+            case MediaType.Artist:
+                // Always emit so MusicImageService's first-album cover fallback runs
+                // even when the artist row has no CoverArtPath of its own.
+                return $"/api/v1/music/artist/{item.Id}/image";
+        }
+
+        // Non-music art (and music items with no local cover) use the remote URL,
+        // proxied when it is an absolute http(s) source.
         string? url = item.PosterUrl;
 
         if (string.IsNullOrEmpty(url))
@@ -302,20 +328,6 @@ public class MediaItemDto
                 return $"{imageProxyBaseUrl}?url={Uri.EscapeDataString(url)}";
             return url;
         }
-
-        if (!string.IsNullOrEmpty(item.CoverArtPath))
-        {
-            if (item.Type == MediaType.Album || item.Type == MediaType.Audio)
-                return $"/api/v1/music/album/{(item.AlbumId ?? item.Id)}/cover";
-            if (item.Type == MediaType.Artist)
-                return $"/api/v1/music/artist/{item.Id}/image";
-        }
-
-        if (item.Type == MediaType.Album)
-            return $"/api/v1/music/album/{item.Id}/cover";
-
-        if (item.Type == MediaType.Audio && item.AlbumId.HasValue)
-            return $"/api/v1/music/album/{item.AlbumId}/cover";
 
         return null;
     }

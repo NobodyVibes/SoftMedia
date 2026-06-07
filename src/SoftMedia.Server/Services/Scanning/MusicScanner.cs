@@ -119,10 +119,16 @@ public class MusicScanner : BaseMediaScanner
             using var tagFile = TagLib.File.Create(filePath);
             var tag = tagFile.Tag;
 
-            var artistName = GetFirstOrDefault(tag.AlbumArtists) 
-                ?? GetFirstOrDefault(tag.Performers) 
+            var artistName = GetFirstOrDefault(tag.AlbumArtists)
+                ?? GetFirstOrDefault(tag.Performers)
                 ?? "Unknown Artist";
-            var albumName = tag.Album ?? "Unknown Album";
+            // Multi-disc releases often tag each disc's Album as "Name (CD1)" /
+            // "Name - CD 2: subtitle", which would otherwise split one album into
+            // several. Normalize to the canonical album name for grouping and keep
+            // the disc number it yields so tracks still sort/group per disc.
+            var (albumName, discFromTitle) = MusicNaming.NormalizeAlbumName(tag.Album);
+            if (string.IsNullOrWhiteSpace(albumName))
+                albumName = "Unknown Album";
             var trackTitle = tag.Title ?? Path.GetFileNameWithoutExtension(filePath);
 
             // Get or create artist (Thread Safe)
@@ -142,7 +148,13 @@ public class MusicScanner : BaseMediaScanner
             track.ArtistId = artist.Id;
             track.AlbumId = album.Id;
             track.TrackNumber = (int?)tag.Track > 0 ? (int)tag.Track : null;
-            track.DiscNumber = (int?)tag.Disc > 0 ? (int)tag.Disc : null;
+            // Disc number priority: embedded Disc tag → a "(CD2)"-style album-title
+            // suffix → a "CD2"/"Disc 2" parent folder. This keeps multi-disc albums
+            // whose tags omit the disc number ordered and grouped correctly on the
+            // album detail page (the repository orders by DiscNumber then TrackNumber).
+            track.DiscNumber = (int?)tag.Disc > 0
+                ? (int)tag.Disc
+                : (discFromTitle ?? MusicNaming.ParseDiscNumberFromPath(filePath));
             track.Year = (int?)tag.Year > 0 ? (int)tag.Year : null;
             track.Duration = tagFile.Properties.Duration.TotalSeconds;
             track.Size = file.Size;
@@ -266,8 +278,10 @@ public class MusicScanner : BaseMediaScanner
             if (_albumCache.TryGetValue(cacheKey, out cached))
                 return cached;
 
-            // Create new album
-            var albumDir = Path.GetDirectoryName(trackPath) ?? trackPath;
+            // Create new album. For multi-disc releases the track sits in a
+            // "CD1"/"Disc 2" subfolder; use the real release folder (its parent) so
+            // local cover-art lookup finds the album cover, not a per-disc folder.
+            var albumDir = MusicNaming.GetAlbumDirectory(trackPath);
             var album = new MediaItem
             {
                 Id = Guid.NewGuid(),

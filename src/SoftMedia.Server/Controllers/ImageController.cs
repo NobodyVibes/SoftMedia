@@ -43,7 +43,20 @@ public class ImageController : ControllerBase
         "ia.media-imdb.com",
         "covers.openlibrary.org"
     };
-    
+
+    /// <summary>
+    /// A host is allowed if it is an exact allowlist member OR a subdomain of
+    /// archive.org. Cover Art Archive "front" URLs 302/307-redirect through
+    /// archive.org to a per-release Internet Archive storage node
+    /// (iaNNN.us.archive.org / dnNNNNNN.ca.archive.org) — trusted IA infrastructure.
+    /// The suffix is anchored on ".archive.org" (note the leading dot) so it admits
+    /// only genuine subdomains and never matches look-alikes ("evilarchive.org") or
+    /// internal SSRF targets ("169.254.169.254"). Kept in sync with ImageCacheService.
+    /// </summary>
+    private static bool IsHostAllowed(string host) =>
+        AllowedHosts.Contains(host)
+        || host.EndsWith(".archive.org", StringComparison.OrdinalIgnoreCase);
+
     // Allowed content types
     private static readonly HashSet<string> AllowedContentTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -82,7 +95,7 @@ public class ImageController : ControllerBase
             return BadRequest("Invalid URL format");
         }
         
-        if (!AllowedHosts.Contains(uri.Host))
+        if (!IsHostAllowed(uri.Host))
         {
             _logger.LogWarning("Blocked proxy request for non-allowed host: {Host}", uri.Host);
             return BadRequest("Image source not allowed");
@@ -129,8 +142,12 @@ public class ImageController : ControllerBase
             using var response = await GetWithAllowlistedRedirectsAsync(client, url);
             if (response == null)
             {
+                // A blocked redirect is a policy decision (host allow-list / scheme),
+                // NOT a definitive upstream 404 — do not persist a no-TTL negative-cache
+                // sentinel here, otherwise a later allow-list widening (e.g. the Cover
+                // Art Archive datanode fix) can't self-heal and the image stays blank.
+                // A genuine upstream non-success below still gets a sentinel.
                 _logger.LogWarning("Blocked image proxy redirect chain starting at {Url}", url);
-                await System.IO.File.WriteAllTextAsync(sentinelPath, "blocked-redirect");
                 return NotFound("Image not found at source.");
             }
             if (!response.IsSuccessStatusCode)
@@ -234,7 +251,7 @@ public class ImageController : ControllerBase
 
             var next = location.IsAbsoluteUri ? location : new Uri(new Uri(currentUrl), location);
             if ((next.Scheme != Uri.UriSchemeHttp && next.Scheme != Uri.UriSchemeHttps)
-                || !AllowedHosts.Contains(next.Host))
+                || !IsHostAllowed(next.Host))
             {
                 _logger.LogWarning("Blocked image proxy redirect to non-allowlisted target {Target} (from {Url})", next, currentUrl);
                 return null;

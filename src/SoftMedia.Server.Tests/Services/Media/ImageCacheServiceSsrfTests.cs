@@ -104,4 +104,67 @@ public class ImageCacheServiceSsrfTests : IDisposable
         Assert.StartsWith("/cache/images/movies/", result);
         Assert.Contains(handler.Requested, u => u.Contains("covers.openlibrary.org"));
     }
+
+    [Fact]
+    public async Task Redirect_ToInternetArchiveDatanode_IsFollowed_AndCached()
+    {
+        // Cover Art Archive "front" URLs 307-redirect through archive.org to a
+        // per-release Internet Archive storage node (iaNNN.us.archive.org), a
+        // subdomain of archive.org but NOT an exact allowlist member. The host
+        // suffix match must follow it so album covers actually download.
+        var handler = new ScriptedHandler
+        {
+            Respond = uri =>
+            {
+                if (uri.Host == "coverartarchive.org")
+                {
+                    var r = new HttpResponseMessage(HttpStatusCode.TemporaryRedirect);
+                    r.Headers.Location = new Uri("https://ia800504.us.archive.org/cover.jpg");
+                    return r;
+                }
+                var ok = new HttpResponseMessage(HttpStatusCode.OK);
+                ok.Content = new ByteArrayContent(new byte[] { 1, 2, 3, 4 });
+                ok.Content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+                return ok;
+            },
+        };
+
+        var result = await Build(handler).CacheAlbumCoverAsync(
+            Guid.NewGuid(), "https://coverartarchive.org/release-group/abc/front");
+
+        Assert.StartsWith("/cache/images/music/", result);
+        Assert.Contains(handler.Requested, u => u.Contains("ia800504.us.archive.org"));
+    }
+
+    [Fact]
+    public async Task Redirect_ToArchiveOrgLookalike_IsBlocked()
+    {
+        // A look-alike host that merely ends with "archive.org" but has no dot
+        // boundary ("evilarchive.org") must NOT be treated as a subdomain of
+        // archive.org — the suffix is anchored on ".archive.org".
+        const string url = "https://coverartarchive.org/release-group/abc/front";
+        var handler = new ScriptedHandler
+        {
+            Respond = uri =>
+            {
+                if (uri.Host == "coverartarchive.org")
+                {
+                    var r = new HttpResponseMessage(HttpStatusCode.TemporaryRedirect);
+                    r.Headers.Location = new Uri("https://evilarchive.org/cover.jpg");
+                    return r;
+                }
+                var ok = new HttpResponseMessage(HttpStatusCode.OK);
+                ok.Content = new ByteArrayContent(new byte[] { 1, 2, 3 });
+                ok.Content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+                return ok;
+            },
+        };
+
+        var result = await Build(handler).CacheAlbumCoverAsync(Guid.NewGuid(), url);
+
+        // Download failed (redirect blocked); falls back to the original URL and
+        // the look-alike host was never contacted.
+        Assert.Equal(url, result);
+        Assert.DoesNotContain(handler.Requested, u => u.Contains("evilarchive.org"));
+    }
 }

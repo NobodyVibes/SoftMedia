@@ -20,9 +20,11 @@ interface MediaDetailLayoutProps {
     qualityItem?: MediaItem | null;
     backdropOverride?: string | null;
     customMetadata?: React.ReactNode;
+    /** Extra icon button(s) rendered in the action row (e.g. admin Fix Match). */
+    actionSlot?: ReactNode;
 }
 
-export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride, customMetadata }: MediaDetailLayoutProps) {
+export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride, customMetadata, actionSlot }: MediaDetailLayoutProps) {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
 
@@ -130,11 +132,14 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                 </button>
                             )}
 
-                            <div className="flex items-center justify-between px-2">
+                            {/* Action icons share the row evenly via flex-1, so the
+                                layout stays balanced whether there are 3 icons (regular
+                                user) or 4 (admin, with the Fix Match slot). */}
+                            <div className="flex items-center px-2">
                                 {item.type !== MediaType.Artist && item.type !== MediaType.Album && (
                                     <button
                                         onClick={() => favoriteMutation.mutate(!item.isFavorite)}
-                                        className="group"
+                                        className="group flex-1 flex justify-center"
                                         title="Favorite"
                                     >
                                         <div className={cn(
@@ -154,7 +159,7 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                     item.type !== MediaType.Track && (
                                         <button
                                             onClick={() => watchedMutation.mutate(!item.watched)}
-                                            className="group"
+                                            className="group flex-1 flex justify-center"
                                             title={item.watched ? "Mark as unwatched" : "Mark as watched"}
                                         >
                                             <div className={cn(
@@ -169,11 +174,15 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                     )}
 
                                 {item.type !== MediaType.Artist && item.type !== MediaType.Album && (
-                                    <button className="group" title="Share">
+                                    <button className="group flex-1 flex justify-center" title="Share">
                                         <div className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-white transition-all group-hover:scale-110 active:scale-95">
                                             <Share2 className="w-5 h-5" />
                                         </div>
                                     </button>
+                                )}
+
+                                {actionSlot && (
+                                    <div className="flex-1 flex justify-center">{actionSlot}</div>
                                 )}
                             </div>
                         </motion.div>

@@ -279,8 +279,8 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
             qualityItem={qualityItem}
             backdropOverride={backdropOverride}
             customMetadata={customMetadata}
+            actionSlot={isAdmin ? <FixMatchCard item={item} /> : undefined}
         >
-            {isAdmin && <FixMatchCard item={item} />}
             {renderContent()}
         </MediaDetailLayout>
     );

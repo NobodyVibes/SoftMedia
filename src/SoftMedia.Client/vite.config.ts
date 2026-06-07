@@ -50,20 +50,32 @@ export default defineConfig({
     },
   },
   server: {
-    host: '0.0.0.0',
+    // Listen dual-stack (IPv6 + IPv4) so BOTH http://localhost:5173 and
+    // http://127.0.0.1:5173 connect instantly. With IPv4-only '0.0.0.0', Windows
+    // resolves "localhost" to IPv6 ::1 first — which isn't bound — so the browser
+    // stalls ~210ms per new connection (seen as slow image loading) before falling
+    // back to 127.0.0.1. '::' binds ::1 too and still serves LAN clients via IPv4.
+    host: '::',
     proxy: {
+      // Target 127.0.0.1, NOT "localhost". The backend binds IPv4-only
+      // (http://0.0.0.0:5011), but on Windows "localhost" resolves to IPv6 ::1
+      // first — and since the proxy agent opens a fresh connection per request,
+      // every /api, /cache and /hubs call stalls ~210ms on the failed ::1 attempt
+      // before falling back to 127.0.0.1. Using the IPv4 literal skips that delay
+      // (measured ~210ms -> ~1ms per request), which is what made album covers and
+      // other images load slowly until the browser cached them.
       '/api': {
-        target: 'http://localhost:5011',
+        target: 'http://127.0.0.1:5011',
         changeOrigin: true,
         secure: false,
       },
       '/cache': {
-        target: 'http://localhost:5011',
+        target: 'http://127.0.0.1:5011',
         changeOrigin: true,
         secure: false,
       },
       '/hubs': {
-        target: 'http://localhost:5011',
+        target: 'http://127.0.0.1:5011',
         changeOrigin: true,
         secure: false,
         ws: true, // Enable WebSocket proxying for SignalR

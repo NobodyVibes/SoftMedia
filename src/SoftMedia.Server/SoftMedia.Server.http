@@ -1,4 +1,4 @@
-@SoftMedia.Server_HostAddress = http://localhost:5011
+@SoftMedia.Server_HostAddress = http://127.0.0.1:5011
 
 GET {{SoftMedia.Server_HostAddress}}/weatherforecast/
 Accept: application/json

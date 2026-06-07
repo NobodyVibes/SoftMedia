@@ -60,15 +60,34 @@ A feature in this register is **not** a permanent refusal except where explicitl
 
 ---
 
-### P4-004 — DLNA / UPnP Renderer
+### P4-004 — DLNA / UPnP Media Server — **IMPLEMENTED (2026-06-05)**
 
-**Scope if undertaken.** Implement UPnP Device Architecture, SSDP discovery, AVTransport service, CDS (ContentDirectory) service.
+Triggered by the reassessment condition below (operator with an LG webOS TV, no Chromecast).
+Built as a **DLNA Media Server (DMS)** — the TV's media player browses and plays the library —
+rather than a renderer/AVTransport "push" target, which is what that use case needs.
 
-**Reason for deferral.** Niche audience (primarily older TVs). Substantial protocol surface with well-documented security footguns (UDP discovery, XML SOAP). The Chromecast support shipping in P3-WI-001 covers most "throw to TV" use cases.
+**Delivered.** `Services/Dlna/`: `DlnaContentDirectory` (library tree → DIDL-Lite, unit-tested),
+`DlnaDescriptions` (device description + SCPDs), `DlnaProtocol`, `SsdpDiscoveryService` (UDP
+multicast announce + M-SEARCH replies), `DlnaServerInfo`; `Controllers/DlnaController` (device
+description, ContentDirectory + ConnectionManager SOAP, LAN-only file serving with range). Settings
+`EnableDlna` (default off) + `DlnaServerName`. Docs: `user-docs/features/dlna.md`.
 
-**Workaround.** A separate DLNA bridge (ReadyMedia / MiniDLNA) pointed at the same media directories as SoftMedia.
+**Security posture (the footguns, handled).** DLNA is unauthenticated, so the surface is gated
+three ways: opt-in (default off), **LAN-only** (non-LAN IPs → 404), and per-file path-jail
+validation. Per-user ACL / content ratings do **not** apply (no user). Documented as such.
 
-**Reassessment trigger.** Significant user demand from operators with TVs that lack Chromecast support and cannot run the PWA.
+**Verification.** ContentDirectory/DIDL + the HTTP surface (gate, unauthenticated description,
+SOAP Browse) are covered by tests (`DlnaContentDirectoryTests`, `DlnaIntegrationTests`). **SSDP
+discovery and real-TV rendering are NOT verifiable in-repo** — they need on-device testing per the
+docs. Treat those as "implemented, pending field verification."
+
+**Known limitations.** Direct-play only (no DLNA transcoding); per-restart UDN; first-LAN-IPv4 on
+multi-NIC hosts; AV libraries only (no books/games/photos).
+
+**Original deferral rationale (for history).** Niche audience; substantial protocol surface with
+security footguns; the Chromecast support in P3-WI-001 covered most "throw to TV" cases. Workaround
+was a separate DLNA bridge (ReadyMedia/MiniDLNA). **Reassessment trigger** (now met): demand from
+operators with TVs that lack Chromecast support.
 
 ---
 

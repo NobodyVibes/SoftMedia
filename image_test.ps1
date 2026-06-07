@@ -1,4 +1,4 @@
-$baseUrl = "http://localhost:5011/api/v1"
+$baseUrl = "http://127.0.0.1:5011/api/v1"
 $username = "admin"
 $password = "admin123"
 

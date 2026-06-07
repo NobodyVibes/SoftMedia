@@ -58,14 +58,15 @@ public class MusicImageService : IMusicImageService
         if (!string.IsNullOrEmpty(artist?.CoverArtPath))
             return artist.CoverArtPath;
 
-        // Fallback: use first album's cover
-        var firstAlbum = await _context.MediaItems
-            .Where(m => m.ArtistId == artistId && m.Type == MediaType.Album)
+        // Fallback: the EARLIEST album that actually has a cover. Skip cover-less
+        // albums (e.g. an early demo/bootleg dated before the first studio album)
+        // so the artist isn't left imageless just because its oldest entry has no art.
+        return await _context.MediaItems
+            .Where(m => m.ArtistId == artistId && m.Type == MediaType.Album
+                && m.CoverArtPath != null && m.CoverArtPath != "")
             .OrderBy(m => m.Year ?? int.MaxValue)
-            .Select(m => new { m.CoverArtPath })
+            .Select(m => m.CoverArtPath)
             .FirstOrDefaultAsync();
-
-        return firstAlbum?.CoverArtPath;
     }
 
     /// <inheritdoc/>
@@ -94,15 +95,17 @@ public class MusicImageService : IMusicImageService
 
             case MediaType.Artist:
                 imagePath = item.CoverArtPath;
-                // Fallback to first album's cover
+                // Fallback to the earliest album that actually HAS a cover — skip
+                // cover-less albums so the artist isn't imageless just because its
+                // oldest entry (e.g. a demo) has no art.
                 if (string.IsNullOrEmpty(imagePath))
                 {
-                    var firstAlbum = await _context.MediaItems
-                        .Where(m => m.ArtistId == mediaItemId && m.Type == MediaType.Album)
+                    imagePath = await _context.MediaItems
+                        .Where(m => m.ArtistId == mediaItemId && m.Type == MediaType.Album
+                            && m.CoverArtPath != null && m.CoverArtPath != "")
                         .OrderBy(m => m.Year ?? int.MaxValue)
-                        .Select(m => new { m.CoverArtPath })
+                        .Select(m => m.CoverArtPath)
                         .FirstOrDefaultAsync();
-                    imagePath = firstAlbum?.CoverArtPath;
                 }
                 break;
 
@@ -115,7 +118,7 @@ public class MusicImageService : IMusicImageService
             return null;
 
         // SECURITY: Validate path before file access
-        var fullPath = Path.GetFullPath(imagePath);
+        var fullPath = ResolveToFileSystemPath(imagePath);
         if (!IsPathAllowed(fullPath))
         {
             _logger.LogWarning("Blocked path traversal attempt for media {MediaId}: {Path}",
@@ -149,6 +152,28 @@ public class MusicImageService : IMusicImageService
             _logger.LogError(ex, "Error reading image file: {Path}", info.Value.Path);
             return null;
         }
+    }
+
+    /// <summary>
+    /// CoverArtPath is stored in one of two formats: a WEB-relative URL
+    /// ("/cache/images/music/{id}_cover.jpg") for art fetched by the metadata
+    /// pipeline (ImageCacheService returns the web URL), or an ABSOLUTE filesystem
+    /// path for local-folder / embedded-tag art written by MusicScanner.
+    /// Web-relative paths MUST be rebased onto wwwroot before file access — on
+    /// Windows Path.GetFullPath("/cache/...") resolves against the current drive
+    /// root (C:\cache\...) and misses the real file under wwwroot, so the cover
+    /// 404s. Mirrors AudioController.GetCoverArt's TrimStart + Combine.
+    /// </summary>
+    private string ResolveToFileSystemPath(string imagePath)
+    {
+        if (imagePath.StartsWith('/') || imagePath.StartsWith('\\'))
+        {
+            var webRoot = !string.IsNullOrEmpty(_env.WebRootPath)
+                ? _env.WebRootPath
+                : Path.Combine(Environment.CurrentDirectory, "wwwroot");
+            return Path.GetFullPath(Path.Combine(webRoot, imagePath.TrimStart('/', '\\')));
+        }
+        return Path.GetFullPath(imagePath);
     }
 
     /// <summary>

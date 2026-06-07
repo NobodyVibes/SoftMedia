@@ -87,4 +87,49 @@ public class LibraryRepositoryPosterTests : IDisposable
         Assert.StartsWith("/api/v1/image/proxy?url=", dto.PosterPath);
         Assert.Contains(Uri.EscapeDataString(_movie.PosterUrl!), dto.PosterPath);
     }
+
+    [Fact]
+    public void FromMediaItem_AlbumWithLocalCover_PrefersMusicEndpointOverProxy()
+    {
+        // Regression: albums keep BOTH a remote PosterUrl (coverartarchive) AND a
+        // local cached CoverArtPath. The card must serve the LOCAL file via the music
+        // endpoint, not re-fetch through the image proxy (which is subject to stale
+        // no-TTL negative caching). Artists already behaved this way, which is why
+        // they rendered while album cards stayed blank.
+        var album = new MediaItem
+        {
+            Id = Guid.NewGuid(),
+            LibraryId = Guid.NewGuid(),
+            Title = "Among The Living",
+            SortTitle = "Among The Living",
+            Path = "/m/album",
+            Type = MediaType.Album,
+            PosterUrl = "https://coverartarchive.org/release-group/abc/front",
+            CoverArtPath = "/cache/images/music/xyz_cover.jpg",
+        };
+
+        var dto = MediaItemDto.FromMediaItem(album, "/api/v1/image/proxy");
+
+        Assert.Equal($"/api/v1/music/album/{album.Id}/cover", dto.PosterPath);
+    }
+
+    [Fact]
+    public void FromMediaItem_ArtistAlwaysUsesMusicEndpoint()
+    {
+        // Artists have no PosterUrl of their own; the URL must always be emitted so
+        // MusicImageService's first-album cover fallback can run.
+        var artist = new MediaItem
+        {
+            Id = Guid.NewGuid(),
+            LibraryId = Guid.NewGuid(),
+            Title = "Anthrax",
+            SortTitle = "Anthrax",
+            Path = "/m/anthrax",
+            Type = MediaType.Artist,
+        };
+
+        var dto = MediaItemDto.FromMediaItem(artist, "/api/v1/image/proxy");
+
+        Assert.Equal($"/api/v1/music/artist/{artist.Id}/image", dto.PosterPath);
+    }
 }

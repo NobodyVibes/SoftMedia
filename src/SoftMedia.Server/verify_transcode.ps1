@@ -1,5 +1,5 @@
-$baseUrl = "http://localhost:5011/api/v1"
-$transcodeUrl = "http://localhost:5011/api/transcode"
+$baseUrl = "http://127.0.0.1:5011/api/v1"
+$transcodeUrl = "http://127.0.0.1:5011/api/transcode"
 
 # 1. Login
 Write-Host "Logging in..."

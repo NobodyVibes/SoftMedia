@@ -108,7 +108,11 @@ public class SettingsService : ISettingsService
             new() { Key = "DefaultStreamingQuality", Value = "auto", Group = "Streaming", Description = "Default quality for new streams (auto, 720p, 1080p, 4k, original)." },
             new() { Key = "DefaultAudioChannels", Value = "auto", Group = "Streaming", Description = "Default audio channel preference (auto, stereo, 5.1, 7.1)." },
             new() { Key = "MaxAudioStreamingBitrate", Value = "0", Group = "Streaming", Description = "Maximum audio transcode bitrate (kbps). 0 = unlimited. Common: 128, 192, 256, 320." },
-            
+
+            // DLNA (P4-004) — for smart TVs (LG/Samsung) that lack Chromecast.
+            new() { Key = "EnableDlna", Value = "false", Group = "DLNA", Description = "Expose the library as a DLNA/UPnP media server so smart TVs on the LAN can browse and play it directly. SECURITY: DLNA has no login, so when enabled the whole audio/video library is readable by ANY device on your local network (LAN-only; never exposed to the internet). Default off. Requires a server restart to take effect." },
+            new() { Key = "DlnaServerName", Value = "SoftMedia", Group = "DLNA", Description = "Friendly name shown for the media server on your TV." },
+
             // Scanning
             new() { Key = "EnableFileWatcher", Value = "true", Group = "Scanning", Description = "Automatically detect new files and update library. Disable for manual scanning only." },
             new() { Key = "MetadataRefreshIntervalDays", Value = "30", Group = "Scanning", Description = "Days between automatic refresh of metadata. 0 = disabled." },

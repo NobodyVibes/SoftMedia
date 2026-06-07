@@ -110,8 +110,10 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [showControls, setShowControls] = useState(true);
     const [playbackSpeed, setPlaybackSpeed] = useState(1);
-    const [showSpeedMenu, setShowSpeedMenu] = useState(false);
-    const [showQualityMenu, setShowQualityMenu] = useState(false);
+    // Consolidated overflow menu holding the less-frequently-used controls
+    // (speed, quality, PiP, stream explainer) so the right cluster stays compact
+    // and the center play/skip controls remain visually centered.
+    const [showMoreMenu, setShowMoreMenu] = useState(false);
     const [selectedQuality, setSelectedQuality] = useState<string>('auto');
     const [isPiP, setIsPiP] = useState(false);
 
@@ -415,7 +417,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         if (isPlaying && !isInsideMenuRef.current) {
             controlsTimeoutRef.current = setTimeout(() => {
                 setShowControls(false);
-                setShowSpeedMenu(false);
+                setShowMoreMenu(false);
                 setShowTrackMenu(false);
             }, 3000);
         }
@@ -482,7 +484,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     togglePiP();
                     break;
                 case 'escape':
-                    setShowSpeedMenu(false);
+                    setShowMoreMenu(false);
                     setShowDebugPanel(false);
                     break;
                 case 'd':
@@ -1221,7 +1223,6 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         if (!videoRef.current) return;
         videoRef.current.playbackRate = speed;
         setPlaybackSpeed(speed);
-        setShowSpeedMenu(false);
     };
 
     const togglePiP = async () => {
@@ -1478,7 +1479,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 onMouseLeave={() => {
                     if (isPlaying) {
                         setShowControls(false);
-                        setShowSpeedMenu(false);
+                        setShowMoreMenu(false);
                     }
                 }}
             >
@@ -1622,7 +1623,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     {/* Controls row - [Time] | [Navigation] | [Settings] */}
                     <div className="flex items-center justify-between gap-2">
                         {/* Left: Time display */}
-                        <div className="flex items-center gap-2 min-w-[140px]">
+                        <div className="flex items-center gap-2 flex-1 min-w-[140px]">
                             <div className="text-white text-base font-mono">
                                 {formatTime(displayedTime)} / {formatTime(displayDuration)}
                             </div>
@@ -1741,7 +1742,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         </div>
 
                         {/* Right: Settings controls */}
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-1 justify-end">
                             {/* Volume */}
                             <div className="relative group/volume">
                                 <button type="button" onClick={toggleMute} aria-label={isMuted || volume === 0 ? 'Unmute' : 'Mute'} className="text-white/70 hover:text-white transition-colors p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" title="Mute (M)">
@@ -1867,38 +1868,6 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                 </div>
                             )}
 
-                            {/* Playback Speed */}
-                            <div className="relative">
-                                <button
-                                    type="button"
-                                    onClick={() => setShowSpeedMenu(!showSpeedMenu)}
-                                    aria-label={`Playback speed (current ${playbackSpeed}x)`}
-                                    aria-haspopup="menu"
-                                    aria-expanded={showSpeedMenu}
-                                    className="text-white/70 hover:text-white transition-colors text-sm font-medium px-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-                                    title="Playback Speed"
-                                >
-                                    {playbackSpeed}x
-                                </button>
-                                {showSpeedMenu && (
-                                    <div
-                                        className="absolute bottom-full right-0 mb-2 bg-black/90 rounded-lg py-1 min-w-[80px] shadow-xl"
-                                        onMouseEnter={() => handleMenuInteraction(true)}
-                                        onMouseLeave={() => handleMenuInteraction(false)}
-                                    >
-                                        {PLAYBACK_SPEEDS.map(speed => (
-                                            <button
-                                                key={speed}
-                                                onClick={() => changePlaybackSpeed(speed)}
-                                                className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${playbackSpeed === speed ? 'text-blue-400' : 'text-white'}`}
-                                            >
-                                                {speed}x
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-
                             {/* Cast to Chromecast (P3-WI-001 / CC-WI-005). The cast button shows
                                 when a cast can start; otherwise a readiness affordance explains why
                                 (no HTTPS, or no Cast device on the network). */}
@@ -2008,76 +1977,100 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                 </div>
                             )}
 
-                            {/* "Why is this playing this way?" explainer trigger (P2-WI-002) */}
-                            {currentPlan && (
-                                <button
-                                    type="button"
-                                    onClick={() => setShowExplanation(true)}
-                                    aria-label="Why is this playing this way?"
-                                    className="text-white/70 hover:text-white transition-colors p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-                                    title="Why is this playing this way?"
-                                >
-                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                        <circle cx="12" cy="12" r="10" />
-                                        <path strokeLinecap="round" d="M12 16v-4M12 8h.01" />
-                                    </svg>
-                                </button>
-                            )}
-
-                            {/* Quality Selector */}
+                            {/* More options — consolidates the less-frequently-used
+                                controls (speed, quality, PiP, stream explainer) into a
+                                single upward-opening menu so the right cluster stays
+                                compact and the center play controls remain centered. */}
                             <div className="relative">
                                 <button
                                     type="button"
-                                    onClick={() => setShowQualityMenu(!showQualityMenu)}
-                                    aria-label="Video quality"
+                                    onClick={() => setShowMoreMenu(!showMoreMenu)}
+                                    aria-label="More options"
                                     aria-haspopup="menu"
-                                    aria-expanded={showQualityMenu}
+                                    aria-expanded={showMoreMenu}
                                     className="text-white/70 hover:text-white transition-colors p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-                                    title="Video Quality"
+                                    title="More options"
                                 >
                                     <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                                        <path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.44.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+                                        <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
                                     </svg>
                                 </button>
-                                {showQualityMenu && (
+                                {showMoreMenu && (
                                     <div
-                                        className="absolute bottom-full right-0 mb-2 bg-black/95 rounded-lg py-2 min-w-[140px] shadow-xl"
+                                        className="absolute bottom-full right-0 mb-2 bg-black/95 rounded-lg py-2 min-w-[240px] shadow-xl"
+                                        role="menu"
                                         onMouseEnter={() => handleMenuInteraction(true)}
                                         onMouseLeave={() => handleMenuInteraction(false)}
                                     >
-                                        <div className="px-3 py-1 text-xs text-white/50 uppercase font-semibold">Quality</div>
-                                        {['auto', '720p', '1080p', '4k', 'original'].map(quality => (
-                                            <button
-                                                key={quality}
-                                                onClick={() => {
-                                                    setSelectedQuality(quality);
-                                                    setShowQualityMenu(false);
-                                                }}
-                                                className={`w-full px-4 py-1.5 text-sm text-left hover:bg-white/10 transition-colors ${selectedQuality === quality ? 'text-blue-400' : 'text-white'}`}
-                                            >
-                                                {quality === 'auto' ? 'Auto' : quality === 'original' ? 'Original' : quality.toUpperCase()}
-                                            </button>
-                                        ))}
+                                        {/* Playback Speed */}
+                                        <div className="px-3 py-1 text-xs text-white/50 uppercase font-semibold">Playback Speed</div>
+                                        <div className="flex flex-wrap gap-1 px-3 pb-2 pt-1">
+                                            {PLAYBACK_SPEEDS.map(speed => (
+                                                <button
+                                                    key={speed}
+                                                    type="button"
+                                                    onClick={() => changePlaybackSpeed(speed)}
+                                                    className={`px-2.5 py-1 text-xs rounded-md transition-colors ${playbackSpeed === speed ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 hover:bg-white/20'}`}
+                                                >
+                                                    {speed === 1 ? 'Normal' : `${speed}x`}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        {/* Quality */}
+                                        <div className="px-3 py-1 text-xs text-white/50 uppercase font-semibold border-t border-white/10 mt-1 pt-2">Quality</div>
+                                        <div className="flex flex-wrap gap-1 px-3 pb-2 pt-1">
+                                            {['auto', '720p', '1080p', '4k', 'original'].map(quality => (
+                                                <button
+                                                    key={quality}
+                                                    type="button"
+                                                    onClick={() => setSelectedQuality(quality)}
+                                                    className={`px-2.5 py-1 text-xs rounded-md transition-colors ${selectedQuality === quality ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 hover:bg-white/20'}`}
+                                                >
+                                                    {quality === 'auto' ? 'Auto' : quality === 'original' ? 'Original' : quality.toUpperCase()}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        {/* Toggles / actions */}
+                                        <div className="border-t border-white/10 mt-1 pt-1">
+                                            {/* Picture-in-Picture */}
+                                            {document.pictureInPictureEnabled && (
+                                                <button
+                                                    type="button"
+                                                    onClick={togglePiP}
+                                                    role="menuitem"
+                                                    aria-pressed={isPiP}
+                                                    className="w-full flex items-center gap-3 px-4 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+                                                    title="Picture-in-Picture (P)"
+                                                >
+                                                    <svg className={`w-5 h-5 ${isPiP ? 'text-blue-400' : 'text-white/70'}`} fill="currentColor" viewBox="0 0 24 24">
+                                                        <path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14z" />
+                                                    </svg>
+                                                    <span className={isPiP ? 'text-blue-400' : 'text-white'}>Picture-in-Picture</span>
+                                                </button>
+                                            )}
+
+                                            {/* "Why is this playing this way?" explainer (P2-WI-002) */}
+                                            {currentPlan && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setShowExplanation(true); setShowMoreMenu(false); }}
+                                                    role="menuitem"
+                                                    className="w-full flex items-center gap-3 px-4 py-2 text-sm text-left text-white hover:bg-white/10 transition-colors"
+                                                    title="Why is this playing this way?"
+                                                >
+                                                    <svg className="w-5 h-5 text-white/70" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                        <circle cx="12" cy="12" r="10" />
+                                                        <path strokeLinecap="round" d="M12 16v-4M12 8h.01" />
+                                                    </svg>
+                                                    <span>Why is this playing this way?</span>
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 )}
                             </div>
-
-                            {/* Picture-in-Picture */}
-                            {document.pictureInPictureEnabled && (
-
-                                <button
-                                    type="button"
-                                    onClick={togglePiP}
-                                    aria-label="Picture in picture"
-                                    aria-pressed={isPiP}
-                                    className={`transition-colors p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${isPiP ? 'text-blue-400' : 'text-white/70 hover:text-white'}`}
-                                    title="Picture-in-Picture (P)"
-                                >
-                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                                        <path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14z" />
-                                    </svg>
-                                </button>
-                            )}
 
                             {/* Fullscreen */}
                             <button

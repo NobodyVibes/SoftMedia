@@ -1,4 +1,4 @@
-import { useAuthStore } from '../store/authStore';
+import { getUrlToken } from '../store/authStore';
 
 /**
  * Append `?access_token=<jwt>` to an API image URL so that `<img src="…">`
@@ -21,7 +21,7 @@ import { useAuthStore } from '../store/authStore';
  */
 export function attachAuthToApiUrl(url: string): string {
     if (!url.startsWith('/api/v1/')) return url;
-    const token = useAuthStore.getState().token;
+    const token = getUrlToken();
     if (!token) return url;
 
     // Use URL with a synthetic base so URLSearchParams handles the parsing

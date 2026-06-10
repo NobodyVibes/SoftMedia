@@ -125,6 +125,7 @@ public class AudioControllerCoverArtTests : IDisposable
         var controller = new AudioController(
             _db,
             streamSecurity,
+            unrestrictedAccess.Object,
             env.Object,
             NullLogger<AudioController>.Instance);
 

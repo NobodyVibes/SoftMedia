@@ -71,15 +71,27 @@ public class DlnaIntegrationTests : IAsyncLifetime
         Assert.Contains("ContentDirectory", xml);
     }
 
-    [Fact]
-    public async Task Enabled_BrowseRoot_ReturnsLibrariesInDidl()
+    private async Task SetExposedLibrariesAsync(string csv)
     {
+        using var scope = _factory.Services.CreateScope();
+        var settings = scope.ServiceProvider.GetRequiredService<ISettingsService>();
+        await settings.UpdateSettingsAsync(new List<AppSetting> { new() { Key = "DlnaExposedLibraries", Value = csv } });
+    }
+
+    [Fact]
+    public async Task Enabled_BrowseRoot_ReturnsOnlyExposedLibrariesInDidl()
+    {
+        var exposedLib = Guid.NewGuid();
+        var hiddenLib = Guid.NewGuid();
         await _factory.WithDbAsync(async db =>
         {
-            db.Libraries.Add(new Library { Id = Guid.NewGuid(), Name = "DLNA Movies", Type = LibraryType.Movie, Paths = new() { "/m" } });
+            db.Libraries.Add(new Library { Id = exposedLib, Name = "DLNA Movies", Type = LibraryType.Movie, Paths = new() { "/m" } });
+            db.Libraries.Add(new Library { Id = hiddenLib, Name = "Secret Films", Type = LibraryType.Movie, Paths = new() { "/s" } });
             await db.SaveChangesAsync();
         });
         await EnableDlnaAsync();
+        // Audit M7: only the explicitly-exposed library is browsable.
+        await SetExposedLibrariesAsync(exposedLib.ToString());
 
         var soap = """
 <?xml version="1.0"?>
@@ -97,7 +109,28 @@ public class DlnaIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         var xml = await resp.Content.ReadAsStringAsync();
         Assert.Contains("BrowseResponse", xml);
-        Assert.Contains("DLNA Movies", xml); // the library appears in the (escaped) DIDL result
+        Assert.Contains("DLNA Movies", xml);        // the exposed library appears
+        Assert.DoesNotContain("Secret Films", xml); // the non-exposed library is hidden
+    }
+
+    [Fact]
+    public async Task Media_NonExposedItem_Returns404()
+    {
+        // Audit L9: a media item in a library that is NOT DLNA-exposed must not be servable by id,
+        // even when DLNA is enabled and the caller is on the LAN.
+        var hiddenLib = Guid.NewGuid();
+        var itemId = Guid.NewGuid();
+        await _factory.WithDbAsync(async db =>
+        {
+            db.Libraries.Add(new Library { Id = hiddenLib, Name = "Hidden", Type = LibraryType.Movie, Paths = new() { "/h" } });
+            db.MediaItems.Add(new MediaItem { Id = itemId, Title = "Private", SortTitle = "private", Path = "/h/x.mkv", LibraryId = hiddenLib, Type = MediaType.Movie });
+            await db.SaveChangesAsync();
+        });
+        await EnableDlnaAsync();
+        await SetExposedLibrariesAsync(""); // nothing exposed
+
+        var resp = await _factory.CreateClient().GetAsync($"/dlna/media/{itemId}");
+        Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode);
     }
 
     /// Test-only factory: sets Connection.RemoteIpAddress = loopback so the LAN-only DLNA gate

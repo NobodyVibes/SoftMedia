@@ -206,7 +206,8 @@ public class TranscodeService : ITranscodeService
         {
             var settingsService = scope.ServiceProvider.GetRequiredService<ISettingsService>();
             var maxConcurrent = await settingsService.GetSettingAsync("MaxSimultaneousTranscodes", 0);
-            var maxPerUser = await settingsService.GetSettingAsync("MaxSimultaneousTranscodesPerUser", 0);
+            // Audit M9: finite per-user fallback so a missing/legacy setting doesn't mean unlimited.
+            var maxPerUser = await settingsService.GetSettingAsync("MaxSimultaneousTranscodesPerUser", 3);
 
             var requestKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex, sid);
             bool IsActiveOther(TranscodeSession s) =>

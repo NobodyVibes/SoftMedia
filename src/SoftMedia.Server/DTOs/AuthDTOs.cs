@@ -8,7 +8,14 @@ public record SignupRequest(string Username, string Password, string? InviteCode
 
 public record AuthResponse(string AccessToken, UserDto User);
 
+// Returned by /auth/signup when a self-registered account still needs admin approval.
+// Carries no token (audit M1) — the client shows a "pending approval" message.
+public record SignupPendingResponse(string Status, string Message);
+
 public record ChangePasswordRequest(string OldPassword, string NewPassword);
+
+// Reduced-privilege token for media URLs that ride in the query string (audit H3).
+public record MediaTokenResponse(string Token, int ExpiresInMinutes);
 
 // P2-WI-005 — when a user has TOTP enabled, login returns this instead of tokens.
 // The client then POSTs the code + challengeId to /auth/2fa to complete login.

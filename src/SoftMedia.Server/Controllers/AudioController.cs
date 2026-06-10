@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Security.LibraryAccess;
 using System.IO;
 
 namespace SoftMedia.Server.Controllers;
@@ -14,17 +15,20 @@ public class AudioController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IStreamSecurityService _streamSecurity;
+    private readonly IUserLibraryAccessProvider _libraryAccess;
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<AudioController> _logger;
 
     public AudioController(
         AppDbContext context,
         IStreamSecurityService streamSecurity,
+        IUserLibraryAccessProvider libraryAccess,
         IWebHostEnvironment env,
         ILogger<AudioController> logger)
     {
         _context = context;
         _streamSecurity = streamSecurity;
+        _libraryAccess = libraryAccess;
         _env = env;
         _logger = logger;
     }
@@ -33,12 +37,22 @@ public class AudioController : ControllerBase
     [ResponseCache(Duration = 86400, Location = ResponseCacheLocation.Client)] // Cache for 1 day
     public async Task<IActionResult> GetCoverArt(Guid id)
     {
-        // Include Library so the fallback path can be validated against its jail.
+        // Include Library so the path can be validated against its jail + per-user ACL.
         var item = await _context.MediaItems
             .Include(m => m.Library)
             .FirstOrDefaultAsync(m => m.Id == id);
         if (item == null)
             return NotFound();
+
+        // Audit L3: enforce the per-user library ACL up front so the CACHED cover-art
+        // path below is gated too (previously only the embedded-tag fallback was). This
+        // is an ACL-only check (NOT ValidateMediaAccessAsync) so a cached cover still
+        // serves when the source audio file has moved — only access is gated here.
+        var access = await _libraryAccess.GetCurrentAsync();
+        if (!access.IsUnrestricted && !access.AllowedLibraryIds.Contains(item.LibraryId))
+        {
+            return NotFound();
+        }
 
         // 1. Try cached cover art path — jailed to wwwroot via StreamSecurityService.
         if (!string.IsNullOrEmpty(item.CoverArtPath))
@@ -71,10 +85,8 @@ public class AudioController : ControllerBase
         }
 
         // 2. Fallback: extract embedded cover art from the audio file via TagLib.
-        // The audio file path must pass the library-jail check (and Wave C
-        // per-user ACL) before we open it.
-        var access = await _streamSecurity.ValidateMediaAccessAsync(item);
-        if (access != MediaAccessResult.Allowed)
+        // Opening the source file requires the full library-jail + existence check.
+        if (await _streamSecurity.ValidateMediaAccessAsync(item) != MediaAccessResult.Allowed)
         {
             return NotFound();
         }

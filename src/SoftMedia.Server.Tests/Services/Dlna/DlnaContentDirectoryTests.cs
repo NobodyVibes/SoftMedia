@@ -1,8 +1,10 @@
 using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Dlna;
+using SoftMedia.Server.Services.Infrastructure;
 using Xunit;
 
 namespace SoftMedia.Server.Tests.Services.Dlna;
@@ -62,7 +64,17 @@ public class DlnaContentDirectoryTests
         LibraryId = _musicLib, Type = MediaType.Audio, AlbumId = _album, TrackNumber = trackNo,
     };
 
-    private static IDlnaContentDirectory Cd(AppDbContext db) => new DlnaContentDirectory(db);
+    // Default: expose all three AV libraries (the pre-allow-set behaviour) so the existing
+    // hierarchy assertions hold. The allow-set itself is exercised by the dedicated tests below.
+    private IDlnaContentDirectory Cd(AppDbContext db) => CdExposing(db, _movieLib, _tvLib, _musicLib);
+
+    private static IDlnaContentDirectory CdExposing(AppDbContext db, params Guid[] exposed)
+    {
+        var settings = new Mock<ISettingsService>();
+        settings.Setup(s => s.GetSettingAsync(DlnaAccess.ExposedLibrariesSetting, ""))
+            .ReturnsAsync(string.Join(",", exposed));
+        return new DlnaContentDirectory(db, settings.Object);
+    }
 
     private static List<XElement> Children(string didl, string localName)
         => XDocument.Parse(didl).Root!.Elements().Where(e => e.Name.LocalName == localName).ToList();
@@ -150,5 +162,43 @@ public class DlnaContentDirectoryTests
         Assert.Equal("0", container.Attribute("id")!.Value);
         Assert.Equal("SoftMedia", Title(container));
         Assert.Equal(1, r.NumberReturned);
+    }
+
+    // --- Audit M7/L9: admin-scoped library allow-set --------------------------
+
+    [Fact]
+    public async Task Root_OnlyListsExposedLibraries()
+    {
+        using var db = NewDb();
+        // Expose ONLY the movie library; Shows + Music must not appear.
+        var r = await CdExposing(db, _movieLib).BrowseAsync("0", false, 0, 0, Base, default);
+
+        var containers = Children(r.Didl, "container");
+        Assert.Equal(1, r.TotalMatches);
+        Assert.Equal(new[] { "Movies" }, containers.Select(Title));
+    }
+
+    [Fact]
+    public async Task EmptyAllowSet_ExposesNothing()
+    {
+        using var db = NewDb();
+        // Default secure posture: nothing exposed even though AV libraries exist.
+        var r = await CdExposing(db).BrowseAsync("0", false, 0, 0, Base, default);
+        Assert.Equal(0, r.TotalMatches);
+        Assert.Empty(Children(r.Didl, "container"));
+    }
+
+    [Fact]
+    public async Task NonExposedLibrary_BrowsedDirectly_IsEmpty()
+    {
+        using var db = NewDb();
+        // Only the movie library is exposed; browsing the TV library by id yields nothing,
+        // and its episodes are not reachable by guessing the series id.
+        var lib = await CdExposing(db, _movieLib).BrowseAsync($"L:{_tvLib}", false, 0, 0, Base, default);
+        Assert.Empty(Children(lib.Didl, "container"));
+        Assert.Empty(Children(lib.Didl, "item"));
+
+        var eps = await CdExposing(db, _movieLib).BrowseAsync($"S:{_series}", false, 0, 0, Base, default);
+        Assert.Empty(Children(eps.Didl, "item"));
     }
 }

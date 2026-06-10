@@ -93,7 +93,9 @@ public class SettingsService : ISettingsService
             new() { Key = "OutputVideoCodec", Value = "auto", Group = "Transcoding", Description = "Preferred output codec: auto, h264, hevc, av1. AV1 requires hardware." },
             new() { Key = "EnableAV1Encoding", Value = "false", Group = "Transcoding", Description = "Enable AV1 encoding (requires RTX 40+, RX 7000+, or Intel Arc GPU)." },
             new() { Key = "MaxSimultaneousTranscodes", Value = "0", Group = "Transcoding", Description = "Maximum concurrent transcode sessions across all users. 0 = unlimited." },
-            new() { Key = "MaxSimultaneousTranscodesPerUser", Value = "0", Group = "Transcoding", Description = "Maximum concurrent transcode sessions per user. 0 = unlimited." },
+            // Audit M9: default to a finite per-user cap so a single account can't spin up
+            // unbounded ffmpeg sessions (CPU/disk DoS). Admins can raise it or set 0 = unlimited.
+            new() { Key = "MaxSimultaneousTranscodesPerUser", Value = "3", Group = "Transcoding", Description = "Maximum concurrent transcode sessions per user. 0 = unlimited (not recommended on shared/exposed servers)." },
             new() { Key = "EnableTranscoding", Value = "true", Group = "Transcoding", Description = "Enable video transcoding. If disabled, files will be served directly." },
             new() { Key = "ForceDirectPlayWhenPossible", Value = "true", Group = "Transcoding", Description = "Prefer direct play over transcoding when client supports the format." },
             new() { Key = "SegmentRetentionHours", Value = "24", Group = "Transcoding", Description = "How long to keep a session's transcoded segments after the player closes, so playback can resume quickly. An hourly cleanup removes folders whose newest segment is older than this. 0 = delete on close." },
@@ -110,8 +112,12 @@ public class SettingsService : ISettingsService
             new() { Key = "MaxAudioStreamingBitrate", Value = "0", Group = "Streaming", Description = "Maximum audio transcode bitrate (kbps). 0 = unlimited. Common: 128, 192, 256, 320." },
 
             // DLNA (P4-004) — for smart TVs (LG/Samsung) that lack Chromecast.
-            new() { Key = "EnableDlna", Value = "false", Group = "DLNA", Description = "Expose the library as a DLNA/UPnP media server so smart TVs on the LAN can browse and play it directly. SECURITY: DLNA has no login, so when enabled the whole audio/video library is readable by ANY device on your local network (LAN-only; never exposed to the internet). Default off. Requires a server restart to take effect." },
+            new() { Key = "EnableDlna", Value = "false", Group = "DLNA", Description = "Expose selected libraries as a DLNA/UPnP media server so smart TVs on the LAN can browse and play them directly. SECURITY: DLNA has no login, so any device on your LAN can read the EXPOSED libraries (LAN-only; never exposed to the internet). Choose which libraries to expose via 'DlnaExposedLibraries'. Default off. Requires a server restart to take effect." },
             new() { Key = "DlnaServerName", Value = "SoftMedia", Group = "DLNA", Description = "Friendly name shown for the media server on your TV." },
+            // Audit M7/L9: DLNA is unauthenticated, so only libraries the admin explicitly lists
+            // here are browsable/streamable over DLNA. Empty = none (nothing is exposed even when
+            // EnableDlna is on). Expose only libraries appropriate for unauthenticated LAN access.
+            new() { Key = "DlnaExposedLibraries", Value = "", Group = "DLNA", Description = "Comma-separated list of library IDs to expose over DLNA. Empty = none. Only audio/video libraries can be exposed; pick libraries suitable for any device on your LAN (DLNA has no login or parental controls)." },
 
             // Scanning
             new() { Key = "EnableFileWatcher", Value = "true", Group = "Scanning", Description = "Automatically detect new files and update library. Disable for manual scanning only." },
@@ -162,8 +168,11 @@ public class SettingsService : ISettingsService
             // Webhooks — outbound event notifications (P2-WI-004).
             new() { Key = "Webhooks.Enabled", Value = "true", Group = "Webhooks", Description = "Master switch for outbound webhook delivery." },
             new() { Key = "Webhooks.RequestTimeoutSeconds", Value = "10", Group = "Webhooks", Description = "Per-delivery HTTP timeout in seconds." },
-            new() { Key = "Webhooks.AllowHttp", Value = "false", Group = "Webhooks", Description = "Allow plain-HTTP webhook URLs to public hosts (HTTPS otherwise required; private/LAN targets always allowed)." },
+            new() { Key = "Webhooks.AllowHttp", Value = "false", Group = "Webhooks", Description = "Allow plain-HTTP webhook URLs to public hosts (HTTPS otherwise required)." },
             new() { Key = "Webhooks.AllowLoopback", Value = "false", Group = "Webhooks", Description = "Allow webhook URLs that resolve to loopback (127.0.0.1/::1)." },
+            // Audit M5: private/link-local targets (RFC1918, 169.254.0.0/16 incl. cloud metadata,
+            // IPv6 ULA) are BLOCKED by default to prevent SSRF into the server's internal network.
+            new() { Key = "Webhooks.AllowPrivateNetwork", Value = "false", Group = "Webhooks", Description = "Allow webhook URLs that resolve to a private/LAN address (RFC1918, link-local, IPv6 ULA). Off by default to prevent SSRF; enable only for trusted internal receivers." },
 
             // Maintenance — automatic database backups (P1-WI-001).
             new() { Key = "Maintenance.BackupEnabled", Value = "true", Group = "Maintenance", Description = "Run scheduled database backups." },

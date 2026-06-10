@@ -349,6 +349,12 @@ public class UsersController : ControllerBase
             return Unauthorized();
         }
 
+        // Audit L2: enforce the minimum password policy on admin-set passwords too.
+        if (SoftMedia.Server.Services.Identity.PasswordPolicy.Validate(request.NewPassword) is { } pwError)
+        {
+            return BadRequest(pwError);
+        }
+
         // Prevent resetting your own password via this admin endpoint (optional, but good practice to force them to use the normal change password flow)
         // However, for "Manual Password Change" by admin, maybe they SHOULD be able to change their own?
         // Let's allow it for now, as it's an admin action.

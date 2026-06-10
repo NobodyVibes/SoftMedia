@@ -29,47 +29,63 @@ public class WebhookSecurityTests
     [Fact]
     public void ValidateTarget_AllowsPublicHttps()
     {
-        Assert.Null(WebhookSecurity.ValidateTarget(U("https://example.com/hook"), Ips("93.184.216.34"), allowHttp: false, allowLoopback: false));
+        Assert.Null(WebhookSecurity.ValidateTarget(U("https://example.com/hook"), Ips("93.184.216.34"), allowHttp: false, allowLoopback: false, allowPrivate: false));
     }
 
     [Fact]
     public void ValidateTarget_RejectsNonHttpScheme()
     {
-        Assert.NotNull(WebhookSecurity.ValidateTarget(U("ftp://example.com"), Ips("93.184.216.34"), false, false));
+        Assert.NotNull(WebhookSecurity.ValidateTarget(U("ftp://example.com"), Ips("93.184.216.34"), false, false, false));
     }
 
     [Fact]
     public void ValidateTarget_RejectsLoopback_WhenDisallowed()
     {
-        var reason = WebhookSecurity.ValidateTarget(U("https://localhost/hook"), Ips("127.0.0.1"), allowHttp: false, allowLoopback: false);
+        var reason = WebhookSecurity.ValidateTarget(U("https://localhost/hook"), Ips("127.0.0.1"), allowHttp: false, allowLoopback: false, allowPrivate: false);
         Assert.Contains("Loopback", reason);
     }
 
     [Fact]
     public void ValidateTarget_AllowsLoopback_WhenEnabled()
     {
-        Assert.Null(WebhookSecurity.ValidateTarget(U("https://localhost/hook"), Ips("127.0.0.1"), allowHttp: false, allowLoopback: true));
+        Assert.Null(WebhookSecurity.ValidateTarget(U("https://localhost/hook"), Ips("127.0.0.1"), allowHttp: false, allowLoopback: true, allowPrivate: false));
     }
 
     [Fact]
     public void ValidateTarget_RejectsPublicHttp_ByDefault()
     {
-        var reason = WebhookSecurity.ValidateTarget(U("http://example.com/hook"), Ips("93.184.216.34"), allowHttp: false, allowLoopback: false);
+        var reason = WebhookSecurity.ValidateTarget(U("http://example.com/hook"), Ips("93.184.216.34"), allowHttp: false, allowLoopback: false, allowPrivate: false);
         Assert.Contains("Plain-HTTP", reason);
     }
 
     [Fact]
-    public void ValidateTarget_AllowsPrivateHttp_ByDefault()
+    public void ValidateTarget_RejectsPrivate_ByDefault()
     {
-        // HTTP to a private RFC1918 target is fine without allowHttp (it's not public).
-        Assert.Null(WebhookSecurity.ValidateTarget(U("http://192.168.1.50/hook"), Ips("192.168.1.50"), allowHttp: false, allowLoopback: false));
+        // Audit M5: a private RFC1918 target is now BLOCKED by default (was previously allowed).
+        var reason = WebhookSecurity.ValidateTarget(U("http://192.168.1.50/hook"), Ips("192.168.1.50"), allowHttp: false, allowLoopback: false, allowPrivate: false);
+        Assert.Contains("Private", reason);
     }
 
     [Fact]
-    public void ValidateTarget_RejectsMixedPublicAndPrivateResolution()
+    public void ValidateTarget_RejectsLinkLocalMetadata_ByDefault()
     {
-        // DNS-rebinding shape: host resolves to both public and private.
-        var reason = WebhookSecurity.ValidateTarget(U("https://evil.example/hook"), Ips("93.184.216.34", "10.0.0.5"), false, false);
+        // Audit M5: 169.254.169.254 (cloud-metadata) is link-local => blocked by default.
+        var reason = WebhookSecurity.ValidateTarget(U("http://169.254.169.254/latest/meta-data"), Ips("169.254.169.254"), allowHttp: false, allowLoopback: false, allowPrivate: false);
+        Assert.Contains("Private", reason);
+    }
+
+    [Fact]
+    public void ValidateTarget_AllowsPrivate_WhenEnabled()
+    {
+        Assert.Null(WebhookSecurity.ValidateTarget(U("http://192.168.1.50/hook"), Ips("192.168.1.50"), allowHttp: false, allowLoopback: false, allowPrivate: true));
+    }
+
+    [Fact]
+    public void ValidateTarget_RejectsMixedPublicAndPrivateResolution_EvenWhenPrivateAllowed()
+    {
+        // DNS-rebinding shape: host resolves to both public and private. Even with private
+        // targets enabled, a mixed resolution is rejected.
+        var reason = WebhookSecurity.ValidateTarget(U("https://evil.example/hook"), Ips("93.184.216.34", "10.0.0.5"), allowHttp: false, allowLoopback: false, allowPrivate: true);
         Assert.Contains("both public and internal", reason);
     }
 }

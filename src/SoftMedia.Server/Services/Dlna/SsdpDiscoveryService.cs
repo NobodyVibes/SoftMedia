@@ -121,10 +121,21 @@ public class SsdpDiscoveryService : BackgroundService
         }
     }
 
+    // Generic product token (audit I1): no precise build/version to fingerprint for CVE lookup.
+    // The UPnP/DLNADOC tokens are protocol-required and stay.
+    private const string ServerHeader = "SoftMedia UPnP/1.0 DLNADOC/1.50";
+
     private void HandleDatagram(UdpClient udp, UdpReceiveResult result, string location)
     {
         try
         {
+            // Audit L10: only answer probes from LAN sources. The socket binds to 0.0.0.0:1900,
+            // so without this an off-network or source-spoofed M-SEARCH could turn the server into
+            // a UDP reflection/amplification participant (one tiny probe -> several responses sent
+            // to the spoofed victim). A LAN attacker is already on-network, so the blast radius is
+            // limited to the LAN it shares with us.
+            if (!NetworkClassifier.IsLan(result.RemoteEndPoint.Address)) return;
+
             var text = Encoding.ASCII.GetString(result.Buffer);
             if (!text.StartsWith("M-SEARCH", StringComparison.OrdinalIgnoreCase)) return;
 
@@ -149,7 +160,7 @@ public class SsdpDiscoveryService : BackgroundService
         $"DATE: {DateTime.UtcNow:r}\r\n" +
         "EXT:\r\n" +
         $"LOCATION: {location}\r\n" +
-        "SERVER: SoftMedia/1.0 UPnP/1.0 DLNADOC/1.50\r\n" +
+        $"SERVER: {ServerHeader}\r\n" +
         $"ST: {(st.Length == 0 ? "upnp:rootdevice" : st)}\r\n" +
         $"USN: {Usn(suffix)}\r\n\r\n";
 
@@ -165,7 +176,7 @@ public class SsdpDiscoveryService : BackgroundService
                     $"HOST: 239.255.255.250:{SsdpPort}\r\n" +
                     "CACHE-CONTROL: max-age=1800\r\n" +
                     $"LOCATION: {location}\r\n" +
-                    "SERVER: SoftMedia/1.0 UPnP/1.0 DLNADOC/1.50\r\n" +
+                    $"SERVER: {ServerHeader}\r\n" +
                     $"NT: {(nt.Length == 0 ? $"uuid:{_info.Udn}" : nt)}\r\n" +
                     $"NTS: ssdp:{(alive ? "alive" : "byebye")}\r\n" +
                     $"USN: {Usn(suffix)}\r\n\r\n";

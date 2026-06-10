@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SoftMedia.Server.Data;
+using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Media;
@@ -19,17 +20,20 @@ public class MusicController : ControllerBase
 {
     private readonly IMusicImageService _imageService;
     private readonly IThumbnailService _thumbnailService;
+    private readonly IMediaRepository _mediaRepository;
     private readonly AppDbContext _context;
     private readonly ILogger<MusicController> _logger;
 
     public MusicController(
         IMusicImageService imageService,
         IThumbnailService thumbnailService,
+        IMediaRepository mediaRepository,
         AppDbContext context,
         ILogger<MusicController> logger)
     {
         _imageService = imageService;
         _thumbnailService = thumbnailService;
+        _mediaRepository = mediaRepository;
         _context = context;
         _logger = logger;
     }
@@ -92,6 +96,16 @@ public class MusicController : ControllerBase
     /// </summary>
     private async Task<IActionResult> ServeImageAsync(Guid mediaItemId, int? width, string debugLabel)
     {
+        // Audit L3: gate on the per-user library ACL + content-rating ceiling before
+        // serving any artwork. album/artist/track are all MediaItems with a LibraryId,
+        // so an item in a denied/over-rating library resolves to null -> 404 (anti-probe),
+        // matching the rest of the per-id media surface.
+        if (await _mediaRepository.GetByIdWithLibraryAsync(mediaItemId) is null)
+        {
+            _logger.LogDebug("{Label} access denied or not found: {Id}", debugLabel, mediaItemId);
+            return NotFound();
+        }
+
         var info = await _imageService.GetImageInfoAsync(mediaItemId);
         if (info == null)
         {

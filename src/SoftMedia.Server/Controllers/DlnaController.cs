@@ -138,7 +138,20 @@ public class DlnaController : ControllerBase
         if (!await AllowedAsync()) return NotFound();
 
         var item = await _db.MediaItems.Include(m => m.Library).FirstOrDefaultAsync(m => m.Id == id, HttpContext.RequestAborted);
-        if (item?.Library == null || !System.IO.File.Exists(item.Path)) return NotFound();
+        if (item?.Library == null) return NotFound();
+
+        // Audit M7/L9: only serve a stream-able (Movie/Episode/Audio) item whose library the
+        // admin actually exposed over DLNA — never an arbitrary item by guessed GUID (which
+        // could be a private book/PDF/photo, or a title in a non-exposed/adult library).
+        var exposed = DlnaAccess.ParseExposedLibraryIds(
+            await _settings.GetSettingAsync(DlnaAccess.ExposedLibrariesSetting, ""));
+        if (!exposed.Contains(item.LibraryId) || !DlnaAccess.IsStreamableType(item.Type))
+        {
+            return NotFound();
+        }
+
+        if (!System.IO.File.Exists(item.Path)) return NotFound();
+
         // Defense in depth: the file must live inside one of the library's configured roots.
         if (!_security.IsPathAuthorized(item.Path, item.Library.Paths))
         {

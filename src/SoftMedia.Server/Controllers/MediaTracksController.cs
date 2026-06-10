@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using SoftMedia.Server.Data;
+using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Media;
@@ -40,13 +40,32 @@ public class MediaTracksResponse
 [Route("api/media")]
 public class MediaTracksController : ControllerBase
 {
-    private readonly AppDbContext _context;
+    private readonly IMediaRepository _mediaRepository;
+    private readonly IStreamSecurityService _securityService;
     private readonly ILogger<MediaTracksController> _logger;
 
-    public MediaTracksController(AppDbContext context, ILogger<MediaTracksController> logger)
+    public MediaTracksController(
+        IMediaRepository mediaRepository,
+        IStreamSecurityService securityService,
+        ILogger<MediaTracksController> logger)
     {
-        _context = context;
+        _mediaRepository = mediaRepository;
+        _securityService = securityService;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Resolves a media item for these derived-data endpoints while enforcing the SAME
+    /// gate as the rest of the per-id media surface (audit H1): the per-user library ACL
+    /// and content-rating ceiling (via the repository) plus the file-existence + LFI
+    /// path-jail (via StreamSecurityService). Returns null when the caller may not access
+    /// the item or it does not exist; callers map null to 404 (anti-probe per SDD §6.2).
+    /// </summary>
+    private async Task<MediaItem?> ResolveAccessibleItemAsync(Guid id)
+    {
+        var item = await _mediaRepository.GetByIdWithLibraryAsync(id);
+        var access = await _securityService.ValidateMediaAccessAsync(item);
+        return access == MediaAccessResult.Allowed ? item : null;
     }
 
     /// <summary>
@@ -56,30 +75,8 @@ public class MediaTracksController : ControllerBase
     [HttpGet("{id}/duration")]
     public async Task<ActionResult<double>> GetDuration(Guid id)
     {
-        var mediaItem = await _context.MediaItems
-            .Include(m => m.Library)
-            .FirstOrDefaultAsync(m => m.Id == id);
-
-        if (mediaItem?.Library == null)
-        {
-            return NotFound("Media item not found");
-        }
-
-        if (!System.IO.File.Exists(mediaItem.Path))
-        {
-            return NotFound("File not found on disk");
-        }
-
-        // Security: LFI Protection
-        var canonicalPath = Path.GetFullPath(mediaItem.Path);
-        var isAuthorized = mediaItem.Library.Paths.Any(p =>
-            canonicalPath.StartsWith(Path.GetFullPath(p), StringComparison.OrdinalIgnoreCase));
-
-        if (!isAuthorized)
-        {
-            _logger.LogWarning("LFI attempt blocked in duration: {Path}", mediaItem.Path);
-            return Forbid();
-        }
+        var mediaItem = await ResolveAccessibleItemAsync(id);
+        if (mediaItem is null) return NotFound();
 
         try
         {
@@ -99,30 +96,8 @@ public class MediaTracksController : ControllerBase
     [HttpGet("{id}/tracks")]
     public async Task<ActionResult<MediaTracksResponse>> GetTracks(Guid id)
     {
-        var mediaItem = await _context.MediaItems
-            .Include(m => m.Library)
-            .FirstOrDefaultAsync(m => m.Id == id);
-
-        if (mediaItem?.Library == null)
-        {
-            return NotFound("Media item not found");
-        }
-
-        if (!System.IO.File.Exists(mediaItem.Path))
-        {
-            return NotFound("File not found on disk");
-        }
-
-        // Security: LFI Protection
-        var canonicalPath = Path.GetFullPath(mediaItem.Path);
-        var isAuthorized = mediaItem.Library.Paths.Any(p =>
-            canonicalPath.StartsWith(Path.GetFullPath(p), StringComparison.OrdinalIgnoreCase));
-
-        if (!isAuthorized)
-        {
-            _logger.LogWarning("LFI attempt blocked in tracks: {Path}", mediaItem.Path);
-            return Forbid();
-        }
+        var mediaItem = await ResolveAccessibleItemAsync(id);
+        if (mediaItem is null) return NotFound();
 
         try
         {
@@ -142,30 +117,8 @@ public class MediaTracksController : ControllerBase
     [HttpGet("{id}/subtitles/{trackIndex}")]
     public async Task<IActionResult> GetSubtitle(Guid id, int trackIndex)
     {
-        var mediaItem = await _context.MediaItems
-            .Include(m => m.Library)
-            .FirstOrDefaultAsync(m => m.Id == id);
-
-        if (mediaItem?.Library == null)
-        {
-            return NotFound("Media item not found");
-        }
-
-        if (!System.IO.File.Exists(mediaItem.Path))
-        {
-            return NotFound("File not found on disk");
-        }
-
-        // Security: LFI Protection
-        var canonicalPath = Path.GetFullPath(mediaItem.Path);
-        var isAuthorized = mediaItem.Library.Paths.Any(p =>
-            canonicalPath.StartsWith(Path.GetFullPath(p), StringComparison.OrdinalIgnoreCase));
-
-        if (!isAuthorized)
-        {
-            _logger.LogWarning("LFI attempt blocked in subtitles: {Path}", mediaItem.Path);
-            return Forbid();
-        }
+        var mediaItem = await ResolveAccessibleItemAsync(id);
+        if (mediaItem is null) return NotFound();
 
         try
         {

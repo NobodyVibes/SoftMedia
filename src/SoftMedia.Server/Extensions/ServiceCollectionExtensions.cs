@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
+using System.Net;
+using System.Net.Sockets;
 using System.Security.Claims;
 using System.Text;
 using System.Threading.RateLimiting;
@@ -29,6 +31,24 @@ public static class ServiceCollectionExtensions
     /// Name of the policy scheme that routes each request to either JwtBearer or
     /// the ApiToken scheme based on the Authorization header.
     public const string SmartAuthScheme = "SmartAuth";
+
+    /// <summary>
+    /// The media/streaming route prefixes where (a) a JWT may travel in the <c>?token=</c> /
+    /// <c>?access_token=</c> query string (browsers can't set Authorization on &lt;img&gt;/&lt;video&gt;),
+    /// and (b) a reduced-privilege "media" token is accepted. Single source of truth shared by
+    /// <c>OnMessageReceived</c> (query-token lift) and <c>OnTokenValidated</c> (media-token scope)
+    /// so the two can never drift apart.
+    /// </summary>
+    internal static bool IsMediaRoute(Microsoft.AspNetCore.Http.PathString path) =>
+        path.StartsWithSegments("/api/transcode") ||
+        path.StartsWithSegments("/api/v1/stream") ||
+        path.StartsWithSegments("/api/v1/audio") ||
+        path.StartsWithSegments("/api/v1/books") ||
+        path.StartsWithSegments("/api/v1/image") ||
+        path.StartsWithSegments("/api/v1/music") ||
+        path.StartsWithSegments("/api/v1/trickplay") ||
+        path.StartsWithSegments("/api/media") ||
+        path.StartsWithSegments("/hubs/media");
 
     public static IServiceCollection AddIdentityServices(this IServiceCollection services, IConfiguration config)
     {
@@ -74,16 +94,7 @@ public static class ServiceCollectionExtensions
                 {
                     OnMessageReceived = context =>
                     {
-                        var path = context.HttpContext.Request.Path;
-                        if (path.StartsWithSegments("/api/transcode") ||
-                            path.StartsWithSegments("/api/v1/stream") ||
-                            path.StartsWithSegments("/api/v1/audio") ||
-                            path.StartsWithSegments("/api/v1/books") ||
-                            path.StartsWithSegments("/api/v1/image") ||
-                            path.StartsWithSegments("/api/v1/music") ||
-                            path.StartsWithSegments("/api/v1/trickplay") ||
-                            path.StartsWithSegments("/api/media") ||
-                            path.StartsWithSegments("/hubs/media"))
+                        if (IsMediaRoute(context.HttpContext.Request.Path))
                         {
                             var token = context.Request.Query["token"];
                             var accessToken = context.Request.Query["access_token"];
@@ -100,12 +111,25 @@ public static class ServiceCollectionExtensions
                     },
                     OnTokenValidated = async context =>
                     {
+                        var principal = context.Principal;
+                        var tokenUse = principal?.FindFirst(CastTokenClaims.TokenUse)?.Value;
+
+                        // A media token (token_use=media) is a reduced-privilege token the SPA
+                        // places in media URLs (audit H3). Accept it ONLY on the media/streaming
+                        // routes so a leaked media URL cannot reach other APIs. It already omits
+                        // the role claim, so it can never act as admin regardless.
+                        if (tokenUse == CastTokenClaims.MediaUse)
+                        {
+                            if (!IsMediaRoute(context.HttpContext.Request.Path))
+                                context.Fail("Media token is restricted to media/streaming routes.");
+                            return;
+                        }
+
                         // A cast token (token_use=cast) is a long-lived token the Chromecast
                         // carries in the stream URL. It is hard-scoped to ONE media item's
                         // stream routes: reject it on every other path so a leaked cast URL
                         // can never act as the user elsewhere — even if the user is an admin.
-                        var principal = context.Principal;
-                        if (principal?.FindFirst(CastTokenClaims.TokenUse)?.Value != CastTokenClaims.CastUse)
+                        if (tokenUse != CastTokenClaims.CastUse)
                             return; // normal access tokens are unaffected
 
                         var mediaId = principal.FindFirst(CastTokenClaims.CastMedia)?.Value;
@@ -226,7 +250,35 @@ public static class ServiceCollectionExtensions
         // that check. With redirects disabled the worker sees the 3xx and treats it as
         // a blocked delivery rather than chasing the Location.
         services.AddHttpClient("Webhooks", c => c.Timeout = TimeSpan.FromSeconds(15))
-                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+                {
+                    AllowAutoRedirect = false,
+                    // SECURITY (SSRF, audit M6): connect to the exact IP the worker already
+                    // SSRF-validated (carried in the request options), NOT a fresh DNS lookup.
+                    // This closes the DNS-rebinding TOCTOU where a hostname validated as public
+                    // re-resolves to an internal address at send time. TLS SNI + certificate
+                    // validation still use the original hostname, so HTTPS is unaffected.
+                    ConnectCallback = async (ctx, ct) =>
+                    {
+                        var target = ctx.InitialRequestMessage.Options.TryGetValue(
+                                Services.Infrastructure.WebhookSecurity.PinnedIpOption, out var pinned)
+                            ? pinned
+                            : (await Dns.GetHostAddressesAsync(ctx.DnsEndPoint.Host, ct)).FirstOrDefault()
+                              ?? throw new InvalidOperationException("No address resolved for webhook host.");
+
+                        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+                        try
+                        {
+                            await socket.ConnectAsync(new IPEndPoint(target, ctx.DnsEndPoint.Port), ct);
+                            return new NetworkStream(socket, ownsSocket: true);
+                        }
+                        catch
+                        {
+                            socket.Dispose();
+                            throw;
+                        }
+                    }
+                });
 
         // Metadata Providers
         services.AddHttpClient<WikidataProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();

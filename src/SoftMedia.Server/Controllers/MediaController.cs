@@ -7,6 +7,7 @@ using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Security.ContentRating;
 using SoftMedia.Server.Services.Security.LibraryAccess;
 
 namespace SoftMedia.Server.Controllers;
@@ -20,17 +21,20 @@ public class MediaController : ControllerBase
     private readonly IMediaRetrievalService _mediaRetrievalService;
     private readonly IRecommendationService _recommendationService;
     private readonly IUserLibraryAccessProvider _libraryAccessProvider;
+    private readonly IUserContentRatingProvider _ratingProvider;
 
     public MediaController(
         AppDbContext context,
         IMediaRetrievalService mediaRetrievalService,
         IRecommendationService recommendationService,
-        IUserLibraryAccessProvider libraryAccessProvider)
+        IUserLibraryAccessProvider libraryAccessProvider,
+        IUserContentRatingProvider ratingProvider)
     {
         _context = context;
         _mediaRetrievalService = mediaRetrievalService;
         _recommendationService = recommendationService;
         _libraryAccessProvider = libraryAccessProvider;
+        _ratingProvider = ratingProvider;
     }
 
 
@@ -38,7 +42,15 @@ public class MediaController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<MediaItemDto>> GetMediaItem(Guid id)
     {
+        // Audit M4: apply the per-user library ACL + content-rating ceiling so a
+        // restricted/child account cannot pull full metadata (overview, cast, genres)
+        // for an item in a denied or over-rating library by guessing its id. A filtered-
+        // out item resolves to null -> 404, matching the anti-probe behaviour elsewhere.
+        var access = await _libraryAccessProvider.GetCurrentAsync();
+        var ceilings = await _ratingProvider.GetCurrentAsync();
         var item = await _context.MediaItems
+            .ApplyContentRatingFilter(ceilings)
+            .ApplyLibraryAccessFilter(access)
             .Include(m => m.Library)
             .Include(m => m.Series)
             .Include(m => m.Album)
@@ -103,6 +115,10 @@ public class MediaController : ControllerBase
     [HttpGet("recent")]
     public async Task<ActionResult<IEnumerable<MediaItemDto>>> GetRecentMedia([FromQuery] int limit = 20, [FromQuery] string? type = null)
     {
+        // Audit M10: clamp before the repository multiplies it (Take(limit*25)) over a
+        // join-heavy query, so a huge limit can't hydrate the whole table into memory.
+        limit = Math.Clamp(limit, 1, 100);
+
         LibraryType? libraryType = null;
         if (!string.IsNullOrEmpty(type) && Enum.TryParse<LibraryType>(type, true, out var parsedType))
         {
@@ -147,6 +163,9 @@ public class MediaController : ControllerBase
         {
             return Ok(new List<GlobalSearchResultDto>());
         }
+
+        // Audit M10: clamp before multiplying into the Take() so a huge limit can't blow up memory.
+        limit = Math.Clamp(limit, 1, 50);
 
         var searchPattern = $"%{query}%";
         var excludedTypes = new[] { MediaType.Episode, MediaType.Audio };

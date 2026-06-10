@@ -338,6 +338,15 @@ public abstract class BaseMediaScanner : IMediaScanner
     /// </summary>
     public bool CanHandleFile(string filePath)
     {
+        // Security (audit H2/M2): never admit a file whose path could inject ffmpeg/ffprobe
+        // arguments downstream (a double-quote / control char in the name). Such names are
+        // vanishingly rare for legitimate media, so skipping them is safe.
+        if (Helpers.MediaPathSafety.HasArgumentInjectionRisk(filePath))
+        {
+            _logger.LogWarning("[{Scanner}] Skipping file with unsafe characters in path: {FilePath}", DisplayName, filePath);
+            return false;
+        }
+
         var extension = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
         return SupportedExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
     }

@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.RegularExpressions;
+using System.Xml;
 using System.Xml.Linq;
 using Microsoft.Extensions.Caching.Memory;
 using SharpCompress.Archives.Rar;
@@ -20,6 +21,12 @@ public class ComicArchiveService : IComicArchiveService
     {
         ".jpg", ".jpeg", ".png", ".webp", ".gif"
     };
+
+    // Audit L4: decompression-bomb guards. A single comic page is an image — 64 MB is already
+    // generous — and ComicInfo.xml is tiny metadata. Caps are on the DECOMPRESSED size, so a
+    // small-compressed entry that inflates to GB is rejected before it can exhaust memory.
+    private const long MaxPageBytes = 64L * 1024 * 1024;
+    private const long MaxComicInfoChars = 1_000_000; // ~1 MiB of XML text
 
     // Page cache: entries expire after 10 min of disuse, capped at ~50MB total size.
     private static readonly MemoryCacheEntryOptions PageCacheOptions = new()
@@ -83,9 +90,8 @@ public class ComicArchiveService : IComicArchiveService
 
         var entry = entries[pageNumber - 1];
         using var stream = entry.OpenStream();
-        using var ms = new MemoryStream();
-        stream.CopyTo(ms);
-        var page = new ComicPage(ms.ToArray(), ResolveContentType(entry.FullName));
+        var data = ReadAllBounded(stream, MaxPageBytes, entry.FullName);
+        var page = new ComicPage(data, ResolveContentType(entry.FullName));
 
         _cache.Set(cacheKey, page, PageCacheOptions);
         return Task.FromResult<ComicPage?>(page);
@@ -117,7 +123,16 @@ public class ComicArchiveService : IComicArchiveService
             if (entry is not null)
             {
                 using var stream = entry.OpenStream();
-                var doc = XDocument.Load(stream);
+                // Audit L4: cap the decompressed XML size and disable DTDs/external entities
+                // (the latter is the XmlReader default, but we make it explicit).
+                var settings = new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Prohibit,
+                    XmlResolver = null,
+                    MaxCharactersInDocument = MaxComicInfoChars,
+                };
+                using var reader = XmlReader.Create(stream, settings);
+                var doc = XDocument.Load(reader);
                 parsed = MapComicInfo(doc);
             }
         }
@@ -213,6 +228,28 @@ public class ComicArchiveService : IComicArchiveService
                         && ImageExtensions.Contains(Path.GetExtension(e.FullName)))
             .OrderBy(e => e.FullName, NaturalStringComparer.Instance)
             .ToList();
+    }
+
+    /// <summary>
+    /// Copies a (decompressed) entry stream into memory but aborts if it exceeds
+    /// <paramref name="maxBytes"/> — defeating a zip/rar bomb whose tiny compressed entry
+    /// inflates to gigabytes (audit L4). The cap is enforced on bytes actually read, so a
+    /// lying archive header can't bypass it.
+    /// </summary>
+    private static byte[] ReadAllBounded(Stream stream, long maxBytes, string entryName)
+    {
+        using var ms = new MemoryStream();
+        var buffer = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            total += read;
+            if (total > maxBytes)
+                throw new InvalidOperationException($"Comic entry '{entryName}' exceeds the {maxBytes}-byte limit.");
+            ms.Write(buffer, 0, read);
+        }
+        return ms.ToArray();
     }
 
     private static string ResolveContentType(string entryName)

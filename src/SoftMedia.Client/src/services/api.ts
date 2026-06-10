@@ -149,4 +149,28 @@ api.interceptors.response.use(
     }
 );
 
+// Media-token lifecycle (audit H3). Fetches the reduced-privilege media token and stores it
+// in memory so media URLs (?token=/?access_token=) carry it instead of the full access token.
+// Single-flight so concurrent callers share one request; failures are swallowed (URLs fall
+// back to the access token via getUrlToken). Driven by a top-level effect in App.tsx.
+let mediaTokenInFlight: Promise<void> | null = null;
+
+export function fetchMediaToken(): Promise<void> {
+    if (mediaTokenInFlight) return mediaTokenInFlight;
+
+    mediaTokenInFlight = api
+        .get<{ token: string }>('/auth/media-token')
+        .then((response) => {
+            useAuthStore.getState().setMediaToken(response.data.token);
+        })
+        .catch(() => {
+            // Leave mediaToken as-is; media URLs degrade to the access token.
+        })
+        .finally(() => {
+            mediaTokenInFlight = null;
+        });
+
+    return mediaTokenInFlight;
+}
+
 export default api;

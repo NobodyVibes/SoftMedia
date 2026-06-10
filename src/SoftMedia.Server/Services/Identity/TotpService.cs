@@ -29,6 +29,14 @@ public interface ITotpService
     string CreateChallenge(Guid userId);
     bool TryConsumeChallenge(string challengeId, out Guid userId);
     void Complete(string challengeId);
+
+    // --- per-user 2FA brute-force lockout (audit M3) ---
+    /// True if the user has hit the failed-code threshold and is in a cooldown window.
+    bool IsLockedOut(Guid userId);
+    /// Records one failed 2FA code for the user, arming a lockout once the threshold is reached.
+    void RegisterFailedAttempt(Guid userId);
+    /// Clears the failure counter on a successful 2FA.
+    void ResetFailedAttempts(Guid userId);
 }
 
 public class TotpService : ITotpService
@@ -38,6 +46,13 @@ public class TotpService : ITotpService
 
     private readonly byte[] _aesKey;
     private readonly ConcurrentDictionary<string, (Guid UserId, DateTime Expires)> _challenges = new();
+
+    // Per-user 2FA failure tracking (audit M3). Keyed by userId so it bounds brute force
+    // REGARDLESS of how many challenge ids an attacker mints by re-logging-in. In-memory: a
+    // single-instance self-hosted server can't be reset remotely; documented as such.
+    private const int MaxFailedAttempts = 10;
+    private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
+    private readonly ConcurrentDictionary<Guid, (int Failures, DateTime? LockedUntil)> _failures = new();
 
     public TotpService(IConfiguration config)
     {
@@ -139,6 +154,26 @@ public class TotpService : ITotpService
 
     /// Removes a challenge once login completes successfully.
     public void Complete(string challengeId) => _challenges.TryRemove(challengeId, out _);
+
+    public bool IsLockedOut(Guid userId)
+        => _failures.TryGetValue(userId, out var s) && s.LockedUntil is { } until && until > DateTime.UtcNow;
+
+    public void RegisterFailedAttempt(Guid userId)
+    {
+        _failures.AddOrUpdate(
+            userId,
+            _ => (1, null),
+            (_, s) =>
+            {
+                // If a prior lockout already elapsed, start a fresh count.
+                if (s.LockedUntil is { } until && until <= DateTime.UtcNow) s = (0, null);
+                var failures = s.Failures + 1;
+                DateTime? lockedUntil = failures >= MaxFailedAttempts ? DateTime.UtcNow.Add(LockoutDuration) : s.LockedUntil;
+                return (failures, lockedUntil);
+            });
+    }
+
+    public void ResetFailedAttempts(Guid userId) => _failures.TryRemove(userId, out _);
 
     private void PruneExpired()
     {

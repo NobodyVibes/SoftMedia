@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
@@ -182,6 +183,7 @@ public class AccountController : ControllerBase
     }
 
     /// <summary>Confirms enrollment with a current code; enables 2FA and returns recovery codes (shown once).</summary>
+    [EnableRateLimiting(ServiceCollectionExtensions.TwoFactorRateLimitPolicy)] // audit L12
     [HttpPost("totp/enroll/confirm")]
     public async Task<IActionResult> ConfirmTotp([FromBody] TotpConfirmRequest request)
     {
@@ -205,6 +207,7 @@ public class AccountController : ControllerBase
     }
 
     /// <summary>Disables 2FA for the caller. Requires the account password plus a current code (or recovery code).</summary>
+    [EnableRateLimiting(ServiceCollectionExtensions.TwoFactorRateLimitPolicy)] // audit L12
     [HttpPost("totp/disable")]
     public async Task<IActionResult> DisableTotp([FromBody] TotpDisableRequest request)
     {

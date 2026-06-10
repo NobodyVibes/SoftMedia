@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { AddToPlaylistMenu } from '../playlists/AddToPlaylistMenu';
 import { API_URL } from '../../services/api';
-import { useAuthStore } from '../../store/authStore';
+import { getUrlToken } from '../../store/authStore';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 import { cn } from '../../lib/utils';
 import type { MediaItem } from '../../types';
@@ -119,7 +119,7 @@ export const PersistentPlayer: React.FC = () => {
     // Get auth token for stream URL
     const getStreamUrl = useCallback((track: MediaItem | null) => {
         if (!track) return '';
-        const token = useAuthStore.getState().token;
+        const token = getUrlToken();
         return `${API_URL}/stream/${track.id}${token ? `?token=${token}` : ''}`;
     }, []);
 

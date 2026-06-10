@@ -1,5 +1,5 @@
 import api, { API_URL } from './api';
-import { useAuthStore } from '../store/authStore';
+import { getUrlToken } from '../store/authStore';
 
 export type BookFormat = 'pdf' | 'epub' | 'cbz' | 'cbr';
 
@@ -26,7 +26,7 @@ export async function getBookInfo(id: string): Promise<BookInfo> {
  * <img> tags (which cannot send Authorization headers) can load pages.
  */
 export function getBookPageUrl(id: string, pageNumber: number): string {
-    const token = useAuthStore.getState().token;
+    const token = getUrlToken();
     const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
     return `${API_URL}/books/${id}/page/${pageNumber}${tokenParam}`;
 }
@@ -42,7 +42,7 @@ export function getBookThumbnailUrl(
     pageNumber: number,
     size: 'sm' | 'md' | 'lg' = 'sm',
 ): string {
-    const token = useAuthStore.getState().token;
+    const token = getUrlToken();
     const params = new URLSearchParams();
     params.set('size', size);
     if (token) params.set('token', token);

@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import { useAuthStore } from './store/authStore';
+import { fetchMediaToken } from './services/api';
 import MainLayout from './components/layout/MainLayout';
 import HomePage from './pages/HomePage';
 import LibraryPage from './pages/LibraryPage';
@@ -20,6 +21,19 @@ import { PersistentPlayer } from './components/player/PersistentPlayer';
 
 function App() {
   const user = useAuthStore((state: any) => state.user);
+  const token = useAuthStore((state: any) => state.token);
+
+  // Media-token lifecycle (audit H3): whenever the access token appears or rotates
+  // (initial login, persisted session, silent refresh), fetch a reduced-privilege media
+  // token for use in media URLs; clear it on logout. URLs fall back to the access token
+  // until this resolves, so playback never depends on it.
+  useEffect(() => {
+    if (token) {
+      void fetchMediaToken();
+    } else {
+      useAuthStore.getState().setMediaToken(null);
+    }
+  }, [token]);
 
   // Offline shell (P2-WI-003): when the browser reports no connectivity, show the
   // branded offline screen instead of letting fetches fail silently. The PWA service

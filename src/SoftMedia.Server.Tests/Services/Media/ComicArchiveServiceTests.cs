@@ -40,6 +40,21 @@ public class ComicArchiveServiceTests : IDisposable
         new(new MemoryCache(new MemoryCacheOptions { SizeLimit = 200 }), NullLogger<ComicArchiveService>.Instance);
 
     [Fact]
+    public async Task ExtractComicInfo_OversizedXml_IsRejectedNotParsed_L4()
+    {
+        // ComicInfo.xml whose decompressed text far exceeds the 1 MiB cap — a small-compressed
+        // entry that inflates large. The capped XmlReader must abort rather than build the tree.
+        var hugeXml = "<ComicInfo><Notes>" + new string('a', 1_100_000) + "</Notes></ComicInfo>";
+        var path = CreateCbz("bomb.cbz",
+            ("page1.jpg", new byte[] { 1, 2, 3 }),
+            ("ComicInfo.xml", System.Text.Encoding.UTF8.GetBytes(hugeXml)));
+
+        var info = await NewService().ExtractComicInfoAsync(path);
+
+        Assert.Null(info); // over-cap XML is treated as absent metadata, never fully materialised
+    }
+
+    [Fact]
     public void IsSupportedArchive_ReturnsTrueForCbzAndCbr()
     {
         var svc = NewService();

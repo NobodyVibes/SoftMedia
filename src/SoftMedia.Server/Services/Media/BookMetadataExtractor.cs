@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.RegularExpressions;
+using System.Xml;
 using System.Xml.Linq;
 using SoftMedia.Server.Services.Abstractions;
 using UglyToad.PdfPig;
@@ -21,6 +22,22 @@ public sealed class BookMetadataExtractor : IBookMetadataExtractor
     private static readonly XNamespace Dc = "http://purl.org/dc/elements/1.1/";
     private static readonly XNamespace OpfNs = "http://www.idpf.org/2007/opf";
     private static readonly XNamespace Container = "urn:oasis:names:tc:opendocument:xmlns:container";
+
+    // Audit L5: cap the decompressed XML size and forbid DTDs/external entities so a small
+    // EPUB whose container.xml/OPF inflates to a huge tree can't exhaust memory during a scan.
+    private static readonly XmlReaderSettings SafeXmlSettings = new()
+    {
+        DtdProcessing = DtdProcessing.Prohibit,
+        XmlResolver = null,
+        MaxCharactersInDocument = 4_000_000, // ~4 MiB of XML text — generous for an OPF manifest
+    };
+
+    private static XDocument LoadXmlCapped(ZipArchiveEntry entry)
+    {
+        using var s = entry.Open();
+        using var reader = XmlReader.Create(s, SafeXmlSettings);
+        return XDocument.Load(reader);
+    }
 
     public BookMetadataExtractor(ILogger<BookMetadataExtractor> logger)
     {
@@ -64,9 +81,8 @@ public sealed class BookMetadataExtractor : IBookMetadataExtractor
         if (containerEntry == null) return null;
 
         string opfPath;
-        using (var cs = containerEntry.Open())
         {
-            var containerDoc = XDocument.Load(cs);
+            var containerDoc = LoadXmlCapped(containerEntry);
             var rootfile = containerDoc.Descendants(Container + "rootfile").FirstOrDefault()
                           ?? containerDoc.Descendants().FirstOrDefault(e => e.Name.LocalName == "rootfile");
             opfPath = rootfile?.Attribute("full-path")?.Value ?? string.Empty;
@@ -78,8 +94,7 @@ public sealed class BookMetadataExtractor : IBookMetadataExtractor
                 StringComparison.OrdinalIgnoreCase));
         if (opfEntry == null) return null;
 
-        using var os = opfEntry.Open();
-        var opf = XDocument.Load(os);
+        var opf = LoadXmlCapped(opfEntry);
 
         // Some publishers omit the dc namespace prefix or use a different one —
         // match on LocalName so we catch both "<dc:title>" and "<title>".

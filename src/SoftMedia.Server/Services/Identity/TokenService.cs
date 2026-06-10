@@ -17,6 +17,26 @@ public static class CastTokenClaims
     public const string TokenUse = "token_use";
     public const string CastUse = "cast";
     public const string CastMedia = "cast_media";
+
+    /// <summary>
+    /// Marks a "media" token (audit H3): a reduced-privilege JWT the SPA places in media
+    /// URLs (<c>?token=</c>/<c>?access_token=</c>) instead of the full access token. It omits the
+    /// role claim and is accepted ONLY on the media/streaming routes (enforced in
+    /// <c>JwtBearerEvents.OnTokenValidated</c>), so a leaked media URL can neither act as admin
+    /// nor reach non-media endpoints.
+    /// </summary>
+    public const string MediaUse = "media";
+}
+
+public static class AuthClaims
+{
+    /// <summary>
+    /// Present (value "true") on the access token of a user whose password must be
+    /// changed before they may use the API. Enforced server-side by a pipeline gate
+    /// in Program.cs so the SPA's first-login prompt cannot be bypassed by calling the
+    /// API directly (security audit C1).
+    /// </summary>
+    public const string MustChangePassword = "must_change";
 }
 
 public interface ITokenService
@@ -30,6 +50,13 @@ public interface ITokenService
     /// stream routes so a leaked cast URL cannot act as the user elsewhere.
     /// </summary>
     string GenerateCastToken(User user, Guid mediaId);
+
+    /// <summary>
+    /// Issues a reduced-privilege "media" token for use in media URLs that ride in the query
+    /// string (audit H3). Role-omitted and accepted only on the media/streaming routes, so a
+    /// URL that leaks (proxy logs, history, Referer) cannot act as admin or reach other APIs.
+    /// </summary>
+    (string Token, int ExpiryMinutes) GenerateMediaToken(User user);
 }
 
 public class TokenService : ITokenService
@@ -66,17 +93,48 @@ public class TokenService : ITokenService
         return BuildToken(claims, DateTime.UtcNow.AddHours(expiryHours));
     }
 
-    private static List<Claim> IdentityClaims(User user) => new()
+    public (string Token, int ExpiryMinutes) GenerateMediaToken(User user)
     {
-        new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-        // `jti` gives each token a unique identifier even when two are issued for the same
-        // user within the same second — required so rotated tokens are string-distinguishable,
-        // and useful for future per-token revocation / audit.
-        new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-        new Claim(JwtRegisteredClaimNames.UniqueName, user.Username),
-        new Claim(ClaimTypes.Role, user.Role.ToString()),
-        new Claim("MaxRating", user.MaxRating),
-    };
+        // Default 120 min: long enough that media URLs rendered into a page stay valid for a
+        // typical viewing session, short enough to bound the value of a leaked URL.
+        var expiryMinutes = int.Parse(_configuration["JwtSettings:MediaTokenExpiryMinutes"] ?? "120");
+        // Deliberately OMIT the role claim (same rationale as the cast token) and mark
+        // token_use=media so OnTokenValidated confines it to the media/streaming routes.
+        var claims = new List<Claim>
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(JwtRegisteredClaimNames.UniqueName, user.Username),
+            new Claim("MaxRating", user.MaxRating),
+            new Claim(CastTokenClaims.TokenUse, CastTokenClaims.MediaUse),
+        };
+        var token = BuildToken(claims, DateTime.UtcNow.AddMinutes(expiryMinutes));
+        return (token, expiryMinutes);
+    }
+
+    private static List<Claim> IdentityClaims(User user)
+    {
+        var claims = new List<Claim>
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            // `jti` gives each token a unique identifier even when two are issued for the same
+            // user within the same second — required so rotated tokens are string-distinguishable,
+            // and useful for future per-token revocation / audit.
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(JwtRegisteredClaimNames.UniqueName, user.Username),
+            new Claim(ClaimTypes.Role, user.Role.ToString()),
+            new Claim("MaxRating", user.MaxRating),
+        };
+
+        // Mark tokens issued to a must-change-password user so the pipeline gate can
+        // restrict them to the change-password flow (security audit C1).
+        if (user.MustChangePassword)
+        {
+            claims.Add(new Claim(AuthClaims.MustChangePassword, "true"));
+        }
+
+        return claims;
+    }
 
     private string BuildToken(IEnumerable<Claim> claims, DateTime expires)
     {

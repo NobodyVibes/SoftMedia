@@ -148,10 +148,12 @@ public class LibrariesController : ControllerBase
         [FromQuery] bool? watched = null,
         [FromQuery] string? viewMode = null)
     {
+        // Audit M8: clamp paging so a caller can't request millions of rows in one query
+        // and exhaust server memory (the repository eagerly Includes joins).
         var filter = new LibraryItemFilter
         {
-            Page = page,
-            PageSize = pageSize,
+            Page = Math.Max(page, 1),
+            PageSize = Math.Clamp(pageSize, 1, 100),
             Search = search,
             SortBy = sortBy,
             Genre = genre,

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -39,6 +40,14 @@ public class WebhookDispatcher : IWebhookDispatcher
 /// </summary>
 public static class WebhookSecurity
 {
+    /// <summary>
+    /// Carries the SSRF-validated IP to the "Webhooks" HttpClient's ConnectCallback so the
+    /// socket connects to exactly the address that passed <see cref="ValidateTarget"/> —
+    /// closing the DNS-rebinding TOCTOU where HttpClient would otherwise re-resolve the host
+    /// at send time and could reach an internal address (audit M6).
+    /// </summary>
+    public static readonly HttpRequestOptionsKey<IPAddress> PinnedIpOption = new("SoftMedia.Webhooks.PinnedIp");
+
     /// HMAC-SHA256 of the raw body, hex, prefixed "sha256=" (GitHub-style).
     public static string Sign(string secret, string body)
     {
@@ -51,8 +60,11 @@ public static class WebhookSecurity
     /// Validates a target URL against SSRF policy. Returns null if allowed, or a reason
     /// string if rejected. <paramref name="resolvedIps"/> are the DNS-resolved addresses
     /// of the host (caller resolves; this keeps the method synchronous + testable).
+    /// Private (RFC1918 / IPv6 ULA / link-local incl. 169.254.169.254 cloud-metadata) and
+    /// loopback targets are blocked by default (audit M5) and require explicit opt-in.
     /// </summary>
-    public static string? ValidateTarget(Uri uri, IReadOnlyList<IPAddress> resolvedIps, bool allowHttp, bool allowLoopback)
+    public static string? ValidateTarget(
+        Uri uri, IReadOnlyList<IPAddress> resolvedIps, bool allowHttp, bool allowLoopback, bool allowPrivate)
     {
         if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
             return "Only http(s) URLs are allowed.";
@@ -64,13 +76,20 @@ public static class WebhookSecurity
         if (anyLoopback && !allowLoopback)
             return "Loopback webhook targets are disabled.";
 
+        // Block RFC1918 / link-local (incl. 169.254.169.254 cloud metadata) / IPv6 ULA unless
+        // the operator explicitly opts in. This is the core SSRF guard (audit M5): without it,
+        // any user who can create a webhook can probe/poke the server's internal network.
+        if (anyPrivate && !allowPrivate)
+            return "Private/link-local webhook targets are disabled.";
+
+        // Reject DNS-rebinding-style mixes (a host that resolves to both public and internal).
+        // Reached only when the internal target was explicitly allowed above.
+        if (anyPublic && (anyPrivate || anyLoopback))
+            return "Webhook host resolves to both public and internal addresses.";
+
         // HTTP (non-TLS) is only permitted to private/loopback targets unless explicitly allowed.
         if (uri.Scheme == Uri.UriSchemeHttp && anyPublic && !allowHttp)
             return "Plain-HTTP webhooks to public hosts are disabled; use HTTPS.";
-
-        // Reject DNS-rebinding-style mixes (a host that resolves to both public and private).
-        if (anyPublic && (anyPrivate || anyLoopback))
-            return "Webhook host resolves to both public and internal addresses.";
 
         return null;
     }

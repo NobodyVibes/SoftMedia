@@ -63,6 +63,8 @@ public class WebhookDispatchWorker : BackgroundService
 
         var allowHttp = await settings.GetSettingAsync("Webhooks.AllowHttp", false);
         var allowLoopback = await settings.GetSettingAsync("Webhooks.AllowLoopback", false);
+        // SSRF (audit M5): private/link-local targets are blocked unless the operator opts in.
+        var allowPrivate = await settings.GetSettingAsync("Webhooks.AllowPrivateNetwork", false);
         var timeoutSec = await settings.GetSettingAsync("Webhooks.RequestTimeoutSeconds", 10);
 
         var subs = await db.WebhookSubscriptions.Where(w => w.Active).ToListAsync(ct);
@@ -82,13 +84,13 @@ public class WebhookDispatchWorker : BackgroundService
         });
 
         foreach (var sub in matching)
-            await DeliverAsync(db, sub, evt.EventName, body, allowHttp, allowLoopback, timeoutSec, ct);
+            await DeliverAsync(db, sub, evt.EventName, body, allowHttp, allowLoopback, allowPrivate, timeoutSec, ct);
 
         await db.SaveChangesAsync(ct);
     }
 
     private async Task DeliverAsync(AppDbContext db, WebhookSubscription sub, string eventName, string body,
-        bool allowHttp, bool allowLoopback, int timeoutSec, CancellationToken ct)
+        bool allowHttp, bool allowLoopback, bool allowPrivate, int timeoutSec, CancellationToken ct)
     {
         sub.LastDeliveryAt = DateTime.UtcNow;
 
@@ -101,9 +103,15 @@ public class WebhookDispatchWorker : BackgroundService
         IReadOnlyList<IPAddress> ips;
         try { ips = (await Dns.GetHostAddressesAsync(uri.Host, ct)).ToList(); }
         catch { sub.LastDeliveryStatus = "DNS resolution failed"; return; }
+        if (ips.Count == 0) { sub.LastDeliveryStatus = "DNS resolution failed"; return; }
 
-        var rejection = WebhookSecurity.ValidateTarget(uri, ips, allowHttp, allowLoopback);
+        var rejection = WebhookSecurity.ValidateTarget(uri, ips, allowHttp, allowLoopback, allowPrivate);
         if (rejection != null) { sub.LastDeliveryStatus = "blocked: " + rejection; return; }
+
+        // Pin to a validated address so the actual connection cannot be rebound to an internal
+        // host between validation and send (audit M6). All ips passed ValidateTarget collectively,
+        // so any is safe; the ConnectCallback on the "Webhooks" client honours this option.
+        var pinnedIp = ips[0];
 
         var signature = WebhookSecurity.Sign(sub.Secret, body);
         var client = _httpClientFactory.CreateClient("Webhooks");
@@ -117,6 +125,7 @@ public class WebhookDispatchWorker : BackgroundService
                 {
                     Content = new StringContent(body, Encoding.UTF8, "application/json"),
                 };
+                req.Options.Set(WebhookSecurity.PinnedIpOption, pinnedIp);
                 req.Headers.TryAddWithoutValidation("X-SoftMedia-Event", eventName);
                 req.Headers.TryAddWithoutValidation("X-SoftMedia-Signature", signature);
                 req.Headers.TryAddWithoutValidation("User-Agent", "SoftMedia-Webhooks/1.0");

@@ -139,19 +139,20 @@ public class AudioStreamController : ControllerBase
                 _ => "audio/aac"
             };
 
-            // Start FFmpeg process
-            var process = new Process
+            // Start FFmpeg process.
+            // Security (audit M2): pass each token via ArgumentList rather than joining into
+            // an Arguments string. ArgumentList is not re-tokenized, so a media filename can
+            // never break out of the input argument to inject ffmpeg options.
+            var startInfo = new ProcessStartInfo
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = ffmpegPath,
-                    Arguments = string.Join(" ", args),
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
+                FileName = ffmpegPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
             };
+            foreach (var arg in args) startInfo.ArgumentList.Add(arg);
+            var process = new Process { StartInfo = startInfo };
 
             process.Start();
 
@@ -191,7 +192,9 @@ public class AudioStreamController : ControllerBase
         {
             "-hide_banner",
             "-loglevel", "warning",
-            "-i", $"\"{inputPath}\"",
+            // No surrounding quotes: ArgumentList passes this verbatim as a single argv
+            // element, so the path is never re-parsed (audit M2).
+            "-i", inputPath,
             "-vn" // No video
         };
 

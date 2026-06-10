@@ -24,6 +24,15 @@ public class StreamSecurityService : IStreamSecurityService
             return false;
         }
 
+        // Security (audit H2): reject paths that could inject arguments into ffmpeg/ffprobe
+        // (a double-quote / control char). Defense-in-depth for user-facing stream/transcode
+        // flows and for any item that predates the scan-time guard.
+        if (SoftMedia.Server.Helpers.MediaPathSafety.HasArgumentInjectionRisk(filePath))
+        {
+            _logger.LogWarning("Access denied: path contains unsafe characters: {FilePath}", filePath);
+            return false;
+        }
+
         try
         {
             // SDD §6.2: canonicalisation MUST resolve symlinks in addition to collapsing `..`.

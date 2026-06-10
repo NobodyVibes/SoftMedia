@@ -84,6 +84,12 @@ public class AuthController : ControllerBase
             return BadRequest("Username already exists.");
         }
 
+        // Audit L2: enforce a minimum password policy at registration.
+        if (PasswordPolicy.Validate(request.Password) is { } pwError)
+        {
+            return BadRequest(pwError);
+        }
+
         if (!string.IsNullOrEmpty(request.InviteCode))
         {
             var invite = await _context.Invites
@@ -119,20 +125,45 @@ public class AuthController : ControllerBase
         }
 
         _context.Users.Add(user);
+        await _context.SaveChangesAsync();
 
         if (!string.IsNullOrEmpty(request.InviteCode))
         {
-            var invite = await _context.Invites.FirstOrDefaultAsync(i => i.Code == request.InviteCode);
-            if (invite != null)
+            // Audit L11: consume the invite ATOMICALLY via a single conditional UPDATE. Only one
+            // of N concurrent signups sharing a code can match (UsedAt IS NULL), so a single-use
+            // invite can never onboard multiple accounts through a race.
+            var now = DateTime.UtcNow;
+            var consumed = await _context.Invites
+                .Where(i => i.Code == request.InviteCode && i.UsedAt == null && !i.IsRevoked
+                    && (i.ExpiresAt == null || i.ExpiresAt > now))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(i => i.UsedAt, (DateTime?)now)
+                    .SetProperty(i => i.UsedById, (Guid?)user.Id)
+                    .SetProperty(i => i.UsedByUsername, user.Username));
+
+            if (consumed == 0)
             {
-                invite.UsedAt = DateTime.UtcNow;
-                invite.UsedById = user.Id;
-                invite.UsedByUsername = user.Username;
+                // Lost the race (or the invite was revoked/expired/used since validation): roll back.
+                _context.Users.Remove(user);
+                await _context.SaveChangesAsync();
+                return BadRequest("This invite has already been used.");
             }
         }
 
-        await _context.SaveChangesAsync();
         await _userPreferencesService.InitializeDefaultsAsync(user.Id);
+
+        // Security (audit M1): a self-registered, non-invited account is created
+        // IsApproved=false and must be approved by an admin before it gets tokens.
+        // Login (L155) and Refresh (L335) already reject unapproved users — issuing a
+        // token here would defeat that approval gate. Return a pending response with
+        // no credentials. First-user setup and invite-based signups are IsApproved=true
+        // above, so they fall through to normal token issuance.
+        if (!user.IsApproved)
+        {
+            return Accepted(new SignupPendingResponse(
+                "pending_approval",
+                "Account created. An administrator must approve it before you can sign in."));
+        }
 
         var accessToken = _tokenService.GenerateAccessToken(user);
         var (refreshRaw, _) = await _refreshTokens.IssueAsync(user, ClientIp());
@@ -146,7 +177,10 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<AuthResponse>> Login(LoginRequest request)
     {
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
-        if (user == null || !_passwordHasher.VerifyPassword(request.Password, user.PasswordHash))
+        // Audit L1: always run the (slow) Argon2 verify — against a dummy hash when the user
+        // doesn't exist — so response latency can't be used to enumerate valid usernames.
+        var passwordValid = _passwordHasher.VerifyPassword(request.Password, user?.PasswordHash ?? DummyPasswordHash());
+        if (user == null || !passwordValid)
         {
             return Unauthorized("Invalid username or password.");
         }
@@ -189,6 +223,12 @@ public class AuthController : ControllerBase
         if (!_totpService.TryConsumeChallenge(id, out var userId))
             return Unauthorized("2FA challenge expired or invalid. Please log in again.");
 
+        // Audit M3: per-user brute-force lockout. Bounds guessing regardless of how many
+        // challenge ids an attacker mints by re-logging-in (the per-challenge rate limit alone
+        // was re-armable). The minute-window code keyspace is only 10^6, so this matters.
+        if (_totpService.IsLockedOut(userId))
+            return Unauthorized("Too many incorrect codes. Please wait a few minutes and try again.");
+
         var totp = await _context.UserTotps.FirstOrDefaultAsync(t => t.UserId == userId);
         var user = await _context.Users.FindAsync(userId);
         if (totp?.EnabledAt == null || user == null)
@@ -198,7 +238,11 @@ public class AuthController : ControllerBase
 
         var verified = _totpService.VerifyCode(totp.EncryptedSecret, request.Code);
         if (!verified && !TryConsumeRecoveryCode(totp, request.Code))
+        {
+            _totpService.RegisterFailedAttempt(userId);
             return Unauthorized("Invalid authentication code.");
+        }
+        _totpService.ResetFailedAttempts(userId);
 
         await _context.SaveChangesAsync(); // persist a consumed recovery code, if any
         _totpService.Complete(id);
@@ -265,6 +309,12 @@ public class AuthController : ControllerBase
             return BadRequest("Invalid old password.");
         }
 
+        // Audit L2: the new password must meet the minimum policy.
+        if (PasswordPolicy.Validate(request.NewPassword) is { } pwError)
+        {
+            return BadRequest(pwError);
+        }
+
         user.PasswordHash = _passwordHasher.HashPassword(request.NewPassword);
         user.MustChangePassword = false;
 
@@ -282,6 +332,35 @@ public class AuthController : ControllerBase
         return Ok("Password changed successfully.");
     }
 
+    /// <summary>
+    /// Vends a reduced-privilege "media" token (audit H3) for use in media URLs that ride in
+    /// the query string (&lt;img&gt;/&lt;video&gt; can't set an Authorization header). Requires a normal
+    /// access token; the returned token omits the role claim and is accepted only on the
+    /// media/streaming routes, so a leaked media URL can neither act as admin nor reach other APIs.
+    /// </summary>
+    [Authorize]
+    [HttpGet("media-token")]
+    public async Task<ActionResult<MediaTokenResponse>> GetMediaToken()
+    {
+        var userIdString = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (userIdString == null || !Guid.TryParse(userIdString, out var userId))
+        {
+            return Unauthorized();
+        }
+
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null || user.IsBanned || user.IsDeleted || !user.IsApproved)
+        {
+            return Unauthorized();
+        }
+
+        var (token, expiry) = _tokenService.GenerateMediaToken(user);
+        return Ok(new MediaTokenResponse(token, expiry));
+    }
+
+    // Audit L12: bound abuse of the refresh endpoint (each call is a DB round-trip + hash
+    // verify + token rotation). Per-IP, generous enough for legitimate multi-session refresh.
+    [EnableRateLimiting(Extensions.ServiceCollectionExtensions.AuthRateLimitPolicy)]
     [HttpPost("refresh-token")]
     public async Task<ActionResult<AuthResponse>> Refresh()
     {
@@ -397,6 +476,12 @@ public class AuthController : ControllerBase
     }
 
     private string? ClientIp() => HttpContext.Connection.RemoteIpAddress?.ToString();
+
+    // Precomputed once: a valid Argon2 hash to verify against when the username is unknown,
+    // so the not-found path costs the same as a real verify (audit L1).
+    private static string? _dummyPasswordHash;
+    private string DummyPasswordHash() =>
+        _dummyPasswordHash ??= _passwordHasher.HashPassword("timing-equalizer-not-a-real-credential");
 
     private void SetRefreshTokenCookie(string rawToken)
     {

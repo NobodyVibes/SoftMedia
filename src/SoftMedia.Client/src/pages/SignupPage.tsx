@@ -6,7 +6,7 @@ import api from '../services/api';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 
-type Step = 'form' | 'offer' | 'enroll' | 'recovery';
+type Step = 'form' | 'offer' | 'enroll' | 'recovery' | 'pending';
 
 export default function SignupPage() {
     const navigate = useNavigate();
@@ -31,6 +31,7 @@ export default function SignupPage() {
     const [twoFaError, setTwoFaError] = useState('');
     const [twoFaBusy, setTwoFaBusy] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [pendingMessage, setPendingMessage] = useState('');
 
     const authHeader = () => ({ headers: { Authorization: `Bearer ${signupToken}` } });
 
@@ -43,9 +44,17 @@ export default function SignupPage() {
         }
         setIsLoading(true);
         try {
-            const res = await api.post<{ accessToken: string }>('/auth/signup', {
+            const res = await api.post<{ accessToken?: string; status?: string; message?: string }>('/auth/signup', {
                 username, password, inviteCode, firstName, lastName,
             });
+            // A self-registered account may need admin approval first: the server then
+            // returns a pending response with NO token (security: unapproved users get
+            // no credentials). Show a pending message instead of the 2FA offer.
+            if (!res.data.accessToken) {
+                setPendingMessage(res.data.message || 'Your account is pending administrator approval.');
+                setStep('pending');
+                return;
+            }
             // Don't log in globally — keep the token only to (optionally) enroll 2FA now.
             setSignupToken(res.data.accessToken);
             setStep('offer');
@@ -199,6 +208,19 @@ export default function SignupPage() {
                             </button>
                             <button type="button" onClick={finish} className={btnPrimary}>Done — go to sign in</button>
                         </div>
+                    </div>
+                )}
+
+                {step === 'pending' && (
+                    <div className="space-y-5 text-center">
+                        <ShieldCheck className="w-12 h-12 text-primary mx-auto" />
+                        <p className="text-sm text-gray-300">{pendingMessage}</p>
+                        <p className="text-xs text-gray-400">
+                            You'll be able to sign in once an administrator approves your account.
+                        </p>
+                        <button type="button" onClick={finish} className={`${btnPrimary} w-full`}>
+                            Go to sign in
+                        </button>
                     </div>
                 )}
             </div>

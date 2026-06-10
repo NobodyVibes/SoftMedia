@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Infrastructure;
 
 namespace SoftMedia.Server.Services.Dlna;
 
@@ -26,9 +27,18 @@ public interface IDlnaContentDirectory
 public class DlnaContentDirectory : IDlnaContentDirectory
 {
     private readonly AppDbContext _db;
-    public DlnaContentDirectory(AppDbContext db) => _db = db;
+    private readonly ISettingsService _settings;
+    public DlnaContentDirectory(AppDbContext db, ISettingsService settings)
+    {
+        _db = db;
+        _settings = settings;
+    }
 
     private static readonly LibraryType[] AvLibraries = { LibraryType.Movie, LibraryType.TV, LibraryType.Music };
+
+    /// Audit M7/L9: the admin-configured set of libraries exposed over DLNA (empty = none).
+    private async Task<List<Guid>> ExposedLibraryIdsAsync(CancellationToken ct)
+        => DlnaAccess.ParseExposedLibraryIds(await _settings.GetSettingAsync(DlnaAccess.ExposedLibrariesSetting, ""));
 
     private const string DidlNs = "urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/";
     private const string DcNs = "http://purl.org/dc/elements/1.1/";
@@ -41,26 +51,29 @@ public class DlnaContentDirectory : IDlnaContentDirectory
         var take = requestedCount <= 0 ? int.MaxValue : requestedCount;
         var skip = Math.Max(0, startingIndex);
 
+        // Audit M7/L9: only libraries the admin exposed are visible over DLNA (empty = none).
+        var exposed = await ExposedLibraryIdsAsync(ct);
+
         if (metadata)
-            return await BrowseMetadataAsync(objectId, resBaseUrl, ct);
+            return await BrowseMetadataAsync(objectId, exposed, resBaseUrl, ct);
 
         var (kind, key) = ParseId(objectId);
         return kind switch
         {
-            "0" => await RootChildrenAsync(skip, take, ct),
-            "L" => await LibraryChildrenAsync(Guid.Parse(key), skip, take, resBaseUrl, ct),
-            "S" => await SeriesChildrenAsync(Guid.Parse(key), skip, take, resBaseUrl, ct),
-            "A" => await AlbumChildrenAsync(Guid.Parse(key), skip, take, resBaseUrl, ct),
+            "0" => await RootChildrenAsync(exposed, skip, take, ct),
+            "L" => await LibraryChildrenAsync(Guid.Parse(key), exposed, skip, take, resBaseUrl, ct),
+            "S" => await SeriesChildrenAsync(Guid.Parse(key), exposed, skip, take, resBaseUrl, ct),
+            "A" => await AlbumChildrenAsync(Guid.Parse(key), exposed, skip, take, resBaseUrl, ct),
             _ => Empty(),
         };
     }
 
     // --- Children listings -------------------------------------------------
 
-    private async Task<DlnaBrowseResult> RootChildrenAsync(int skip, int take, CancellationToken ct)
+    private async Task<DlnaBrowseResult> RootChildrenAsync(List<Guid> exposed, int skip, int take, CancellationToken ct)
     {
         var libs = await _db.Libraries
-            .Where(l => AvLibraries.Contains(l.Type))
+            .Where(l => AvLibraries.Contains(l.Type) && exposed.Contains(l.Id))
             .OrderBy(l => l.Order).ThenBy(l => l.Name)
             .ToListAsync(ct);
 
@@ -74,8 +87,11 @@ public class DlnaContentDirectory : IDlnaContentDirectory
         return new DlnaBrowseResult(Close(sb), page.Count, libs.Count);
     }
 
-    private async Task<DlnaBrowseResult> LibraryChildrenAsync(Guid libraryId, int skip, int take, string resBaseUrl, CancellationToken ct)
+    private async Task<DlnaBrowseResult> LibraryChildrenAsync(Guid libraryId, List<Guid> exposed, int skip, int take, string resBaseUrl, CancellationToken ct)
     {
+        // Audit M7: a library the admin did not expose is invisible even if its id is guessed.
+        if (!exposed.Contains(libraryId)) return Empty();
+
         var lib = await _db.Libraries.FirstOrDefaultAsync(l => l.Id == libraryId, ct);
         if (lib == null) return Empty();
 
@@ -112,9 +128,10 @@ public class DlnaContentDirectory : IDlnaContentDirectory
         return new DlnaBrowseResult(Close(sb), page.Count, total);
     }
 
-    private async Task<DlnaBrowseResult> SeriesChildrenAsync(Guid seriesId, int skip, int take, string resBaseUrl, CancellationToken ct)
+    private async Task<DlnaBrowseResult> SeriesChildrenAsync(Guid seriesId, List<Guid> exposed, int skip, int take, string resBaseUrl, CancellationToken ct)
     {
-        var q = _db.MediaItems.Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode)
+        // Audit M7: only episodes whose library is exposed are listed (guards a guessed series id).
+        var q = _db.MediaItems.Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode && exposed.Contains(m.LibraryId))
             .OrderBy(m => m.SeasonNumber).ThenBy(m => m.EpisodeNumber).ThenBy(m => m.SortTitle);
         var total = await q.CountAsync(ct);
         var page = await q.Skip(skip).Take(take).ToListAsync(ct);
@@ -125,9 +142,10 @@ public class DlnaContentDirectory : IDlnaContentDirectory
         return new DlnaBrowseResult(Close(sb), page.Count, total);
     }
 
-    private async Task<DlnaBrowseResult> AlbumChildrenAsync(Guid albumId, int skip, int take, string resBaseUrl, CancellationToken ct)
+    private async Task<DlnaBrowseResult> AlbumChildrenAsync(Guid albumId, List<Guid> exposed, int skip, int take, string resBaseUrl, CancellationToken ct)
     {
-        var q = _db.MediaItems.Where(m => m.AlbumId == albumId && m.Type == MediaType.Audio)
+        // Audit M7: only tracks whose library is exposed are listed (guards a guessed album id).
+        var q = _db.MediaItems.Where(m => m.AlbumId == albumId && m.Type == MediaType.Audio && exposed.Contains(m.LibraryId))
             .OrderBy(m => m.DiscNumber).ThenBy(m => m.TrackNumber).ThenBy(m => m.SortTitle);
         var total = await q.CountAsync(ct);
         var page = await q.Skip(skip).Take(take).ToListAsync(ct);
@@ -140,7 +158,7 @@ public class DlnaContentDirectory : IDlnaContentDirectory
 
     // --- Metadata (the object itself) -------------------------------------
 
-    private async Task<DlnaBrowseResult> BrowseMetadataAsync(string objectId, string resBaseUrl, CancellationToken ct)
+    private async Task<DlnaBrowseResult> BrowseMetadataAsync(string objectId, List<Guid> exposed, string resBaseUrl, CancellationToken ct)
     {
         var (kind, key) = ParseId(objectId);
         var sb = new StringBuilder();
@@ -149,18 +167,23 @@ public class DlnaContentDirectory : IDlnaContentDirectory
             switch (kind)
             {
                 case "0":
-                    WriteContainer(w, "0", "-1", "SoftMedia", await _db.Libraries.CountAsync(l => AvLibraries.Contains(l.Type), ct));
+                    WriteContainer(w, "0", "-1", "SoftMedia", await _db.Libraries.CountAsync(l => AvLibraries.Contains(l.Type) && exposed.Contains(l.Id), ct));
                     break;
                 case "L":
                     {
-                        var lib = await _db.Libraries.FirstOrDefaultAsync(l => l.Id == Guid.Parse(key), ct);
+                        // Audit M7: don't reveal metadata for a non-exposed library.
+                        var libId = Guid.Parse(key);
+                        var lib = exposed.Contains(libId)
+                            ? await _db.Libraries.FirstOrDefaultAsync(l => l.Id == libId, ct)
+                            : null;
                         if (lib != null) WriteContainer(w, objectId, "0", lib.Name, await LibraryChildCountAsync(lib, ct));
                         break;
                     }
                 case "I":
                     {
                         var item = await _db.MediaItems.FirstOrDefaultAsync(m => m.Id == Guid.Parse(key), ct);
-                        if (item != null)
+                        // Audit M7/L9: only stream-able items in an exposed library.
+                        if (item != null && exposed.Contains(item.LibraryId) && DlnaAccess.IsStreamableType(item.Type))
                         {
                             if (item.Type == MediaType.Audio) WriteAudioItem(w, item, "0", resBaseUrl);
                             else WriteVideoItem(w, item, "0", resBaseUrl);

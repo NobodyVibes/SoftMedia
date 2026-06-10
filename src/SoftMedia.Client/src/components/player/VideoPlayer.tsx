@@ -160,7 +160,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         setPlayerToast(null);
     }, []);
 
-    const token = useAuthStore((state) => state.token);
+    // Audit H3: prefer the reduced-privilege media token in stream/transcode URLs; fall
+    // back to the access token until it loads. Reactive so URLs update when it arrives.
+    const token = useAuthStore((state) => state.mediaToken ?? state.token);
     const navigate = useNavigate();
     const location = useLocation();
 

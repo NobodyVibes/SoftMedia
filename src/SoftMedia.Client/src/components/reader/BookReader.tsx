@@ -570,7 +570,8 @@ interface BookReaderProps {
 
 export default function BookReader({ item }: BookReaderProps) {
     const navigate = useNavigate();
-    const token = useAuthStore(s => s.token);
+    // Audit H3: reduced-privilege media token for the stream URL, falling back to access token.
+    const token = useAuthStore(s => s.mediaToken ?? s.token);
 
     const ext = (item.path?.split('.').pop() ?? '').toLowerCase();
     const isPdf = ext === 'pdf';

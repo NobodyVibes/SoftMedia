@@ -100,14 +100,23 @@ builder.Services.AddBackgroundServices();
 builder.Services.AddSignalR();
 
 // API Configuration
-var corsAllowAnyOrigin = builder.Configuration.GetValue<bool>("Cors:AllowAnyOriginForLAN");
-if (corsAllowAnyOrigin)
+// Audit L6: reflect-ANY-origin together with AllowCredentials is the CORS spec's forbidden
+// combination and a session-takeover footgun if it ever ships to production. Honour the flag
+// ONLY in Development; in any other environment it is ignored (and we say so loudly), so the
+// policy falls back to the explicit Cors:AllowedOrigins allowlist.
+var corsAllowAnyOriginRequested = builder.Configuration.GetValue<bool>("Cors:AllowAnyOriginForLAN");
+var corsAllowAnyOrigin = corsAllowAnyOriginRequested && builder.Environment.IsDevelopment();
+if (corsAllowAnyOriginRequested && !corsAllowAnyOrigin)
 {
-    // Surface this loudly: it is correct for the Vite dev proxy but unsafe when the
-    // server is reachable from outside the LAN (e.g., behind DuckDNS + Caddy).
     Console.Error.WriteLine(
-        "[WARN] Cors:AllowAnyOriginForLAN=true — credentialed CORS is wide open. " +
-        "This is the dev default. Disable it in production (default in appsettings.json is false).");
+        "[WARN] Cors:AllowAnyOriginForLAN=true is IGNORED outside Development — credentialed " +
+        "wildcard CORS is unsafe in production. Configure Cors:AllowedOrigins instead.");
+}
+else if (corsAllowAnyOrigin)
+{
+    Console.Error.WriteLine(
+        "[WARN] Cors:AllowAnyOriginForLAN=true (Development only) — credentialed CORS is wide open. " +
+        "This is the Vite dev-proxy default; it can never take effect in production.");
 }
 
 builder.Services.AddCors(options =>
@@ -195,6 +204,18 @@ if (!jwtValidation.IsValid)
 // in builder.Services.Configure<ForwardedHeadersOptions>.
 app.UseForwardedHeaders();
 
+// Security response headers (audit H3 Referer leak + L7 hardening). Early so it covers
+// the API, the static SPA, and error responses alike.
+app.UseSecurityHeaders();
+
+// Audit L8: optional HTTP->HTTPS redirect. OFF by default so HTTP-only LAN deployments and
+// TLS-terminating reverse proxies (which forward plain HTTP with X-Forwarded-Proto=https) are
+// not broken. Operators terminating TLS at the app can enable Security:ForceHttpsRedirect.
+if (app.Configuration.GetValue<bool>("Security:ForceHttpsRedirect"))
+{
+    app.UseHttpsRedirection();
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -207,6 +228,34 @@ app.UseResponseCompression();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Security gate (audit C1): a principal flagged "must change password" may reach ONLY
+// the password-change / logout / refresh-token endpoints until they rotate the credential.
+// Enforced here, server-side, so the SPA's first-login prompt cannot be bypassed by
+// calling the API directly with a seeded/default credential. Runs after authentication so
+// the claim is populated, and before controllers so it covers every endpoint.
+app.Use(async (context, next) =>
+{
+    if (context.User.MustChangePassword())
+    {
+        var path = context.Request.Path;
+        var allowed =
+            path.StartsWithSegments("/api/v1/auth/change-password") ||
+            path.StartsWithSegments("/api/v1/auth/logout") ||
+            path.StartsWithSegments("/api/v1/auth/refresh-token");
+        if (!allowed)
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(new
+            {
+                error = "password_change_required",
+                message = "You must change your password before continuing."
+            });
+            return;
+        }
+    }
+    await next();
+});
 
 app.UseStaticFiles();
 

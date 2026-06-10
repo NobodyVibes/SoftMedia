@@ -29,12 +29,16 @@ dist/
 Thumbs.db
 
 # SoftMedia Specific
-# Anchored to the repo root: this ignores the top-level runtime media folder ONLY.
-# Without the leading slash, "media/" also matched source directories named Media
-# (e.g. src/SoftMedia.Server/Services/Media) — case-insensitively on Windows — which
-# silently hid newly-added source files there from git.
+# Anchored to the repo root (leading slash): these ignore the TOP-LEVEL runtime media/data
+# folders ONLY. Without the leading slash, "media/" and "data/" also matched SOURCE directories
+# named Media/Data (e.g. src/SoftMedia.Server/Services/Media, src/SoftMedia.Server/Data) —
+# case-insensitively on Windows — silently hiding source files. The unanchored "data/" rule had
+# excluded AppDbContext.cs / AppDbContextFactory.cs / DbInitializer.cs from git entirely.
 /media/
-data/
+/data/
+# Runtime artifacts that live alongside the now-tracked Data-layer source.
+/src/SoftMedia.Server/Data/backups/
+/src/SoftMedia.Server/Data/task-status.json
 *.db
 *.db-shm
 *.db-wal

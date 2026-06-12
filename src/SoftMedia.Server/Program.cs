@@ -223,11 +223,17 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("AllowFrontend");
-app.UseRateLimiter();
 app.UseResponseCompression();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Audit wave-2 L-19: UseRateLimiter MUST run AFTER UseAuthentication so the per-user partitions
+// (e.g. the image-proxy policy keyed on the user id) see the authenticated principal. Previously
+// it ran before authentication, so User was always null and every per-user policy silently
+// collapsed to a per-IP bucket. The auth/login policy is per-IP and [AllowAnonymous], so it is
+// unaffected by the move.
+app.UseRateLimiter();
 
 // Security gate (audit C1): a principal flagged "must change password" may reach ONLY
 // the password-change / logout / refresh-token endpoints until they rotate the credential.

@@ -76,6 +76,34 @@ public class DlnaContentDirectoryTests
         return new DlnaContentDirectory(db, settings.Object);
     }
 
+    // audit wave-2 M-6: expose libraries AND apply a per-type DLNA rating ceiling (JSON).
+    private static IDlnaContentDirectory CdExposingWithCeiling(AppDbContext db, string ratingJson, params Guid[] exposed)
+    {
+        var settings = new Mock<ISettingsService>();
+        settings.Setup(s => s.GetSettingAsync(DlnaAccess.ExposedLibrariesSetting, ""))
+            .ReturnsAsync(string.Join(",", exposed));
+        settings.Setup(s => s.GetSettingAsync(DlnaAccess.MaxContentRatingsSetting, ""))
+            .ReturnsAsync(ratingJson);
+        return new DlnaContentDirectory(db, settings.Object);
+    }
+
+    [Fact]
+    public async Task DlnaRatingCeiling_HidesOverRatingMovies()
+    {
+        using var db = NewDb();
+        db.MediaItems.First(m => m.Title == "Arrival").ContentRating = "G";
+        db.MediaItems.First(m => m.Title.StartsWith("Blade")).ContentRating = "R";
+        db.SaveChanges();
+
+        // Ceiling Movie:PG-13 → the R movie must be hidden from Browse.
+        var cd = CdExposingWithCeiling(db, """{"Movie":"PG-13"}""", _movieLib);
+        var r = await cd.BrowseAsync($"L:{_movieLib}", false, 0, 0, Base, default);
+        var titles = Children(r.Didl, "item").Select(Title).ToList();
+
+        Assert.Equal(1, r.TotalMatches);
+        Assert.Equal("Arrival", Assert.Single(titles));
+    }
+
     private static List<XElement> Children(string didl, string localName)
         => XDocument.Parse(didl).Root!.Elements().Where(e => e.Name.LocalName == localName).ToList();
 

@@ -150,6 +150,19 @@ public class DlnaController : ControllerBase
             return NotFound();
         }
 
+        // Audit wave-2 M-6: enforce the DLNA rating ceiling on the direct-stream path too — a device
+        // can request a media GUID without going through Browse, so the ceiling can't live only in
+        // the content-directory listing.
+        var dlnaRatingsJson = await _settings.GetSettingAsync(DlnaAccess.MaxContentRatingsSetting, "");
+        var dlnaCeilings = string.IsNullOrWhiteSpace(dlnaRatingsJson)
+            ? Services.Security.ContentRating.UserRatingCeilings.Unrestricted
+            : Services.Security.ContentRating.UserRatingCeilings.From(
+                new Models.User { MaxRating = "", ContentRatings = dlnaRatingsJson });
+        if (!Services.Security.ContentRating.RatingFilterExtensions.IsRatingAllowed(dlnaCeilings, item.Type, item.ContentRating))
+        {
+            return NotFound();
+        }
+
         if (!System.IO.File.Exists(item.Path)) return NotFound();
 
         // Defense in depth: the file must live inside one of the library's configured roots.

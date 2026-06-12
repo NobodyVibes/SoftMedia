@@ -5,6 +5,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Infrastructure;
+using SoftMedia.Server.Services.Security.ContentRating;
 
 namespace SoftMedia.Server.Services.Dlna;
 
@@ -40,6 +41,20 @@ public class DlnaContentDirectory : IDlnaContentDirectory
     private async Task<List<Guid>> ExposedLibraryIdsAsync(CancellationToken ct)
         => DlnaAccess.ParseExposedLibraryIds(await _settings.GetSettingAsync(DlnaAccess.ExposedLibrariesSetting, ""));
 
+    /// Audit wave-2 M-6: the admin-configured per-type rating ceiling for DLNA (empty = no cap).
+    /// Built from the same per-type JSON the user ceiling uses so the exact same EF predicate gates
+    /// both surfaces.
+    private async Task<UserRatingCeilings> DlnaCeilingsAsync(CancellationToken ct)
+    {
+        var json = await _settings.GetSettingAsync(DlnaAccess.MaxContentRatingsSetting, "");
+        if (string.IsNullOrWhiteSpace(json)) return UserRatingCeilings.Unrestricted;
+        return UserRatingCeilings.From(new Models.User { MaxRating = "", ContentRatings = json });
+    }
+
+    /// DLNA Browse page-size ceiling (audit wave-2 L-15) — RequestedCount=0 means "all" in UPnP,
+    /// which previously mapped to Take(int.MaxValue) over MediaItems. Bound it.
+    private const int DlnaMaxPageSize = 1000;
+
     private const string DidlNs = "urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/";
     private const string DcNs = "http://purl.org/dc/elements/1.1/";
     private const string UpnpNs = "urn:schemas-upnp-org:metadata-1-0/upnp/";
@@ -48,7 +63,8 @@ public class DlnaContentDirectory : IDlnaContentDirectory
 
     public async Task<DlnaBrowseResult> BrowseAsync(string objectId, bool metadata, int startingIndex, int requestedCount, string resBaseUrl, CancellationToken ct)
     {
-        var take = requestedCount <= 0 ? int.MaxValue : requestedCount;
+        // Audit wave-2 L-15: clamp the page size (RequestedCount=0 = "all" must not be unbounded).
+        var take = requestedCount <= 0 ? DlnaMaxPageSize : Math.Min(requestedCount, DlnaMaxPageSize);
         var skip = Math.Max(0, startingIndex);
 
         // Audit M7/L9: only libraries the admin exposed are visible over DLNA (empty = none).
@@ -103,6 +119,9 @@ public class DlnaContentDirectory : IDlnaContentDirectory
             _ => _db.MediaItems.Where(_ => false),
         };
 
+        // Audit wave-2 M-6: apply the DLNA rating ceiling (gates Movie/Series; Music is ungated).
+        q = q.ApplyContentRatingFilter(await DlnaCeilingsAsync(ct));
+
         var total = await q.CountAsync(ct);
         var page = await q.Skip(skip).Take(take).ToListAsync(ct);
 
@@ -132,7 +151,8 @@ public class DlnaContentDirectory : IDlnaContentDirectory
     {
         // Audit M7: only episodes whose library is exposed are listed (guards a guessed series id).
         var q = _db.MediaItems.Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode && exposed.Contains(m.LibraryId))
-            .OrderBy(m => m.SeasonNumber).ThenBy(m => m.EpisodeNumber).ThenBy(m => m.SortTitle);
+            .OrderBy(m => m.SeasonNumber).ThenBy(m => m.EpisodeNumber).ThenBy(m => m.SortTitle)
+            .ApplyContentRatingFilter(await DlnaCeilingsAsync(ct)); // audit wave-2 M-6
         var total = await q.CountAsync(ct);
         var page = await q.Skip(skip).Take(take).ToListAsync(ct);
 
@@ -182,8 +202,10 @@ public class DlnaContentDirectory : IDlnaContentDirectory
                 case "I":
                     {
                         var item = await _db.MediaItems.FirstOrDefaultAsync(m => m.Id == Guid.Parse(key), ct);
-                        // Audit M7/L9: only stream-able items in an exposed library.
-                        if (item != null && exposed.Contains(item.LibraryId) && DlnaAccess.IsStreamableType(item.Type))
+                        // Audit M7/L9: only stream-able items in an exposed library. Audit wave-2
+                        // M-6: and only within the DLNA rating ceiling.
+                        if (item != null && exposed.Contains(item.LibraryId) && DlnaAccess.IsStreamableType(item.Type)
+                            && RatingFilterExtensions.IsRatingAllowed(await DlnaCeilingsAsync(ct), item.Type, item.ContentRating))
                         {
                             if (item.Type == MediaType.Audio) WriteAudioItem(w, item, "0", resBaseUrl);
                             else WriteVideoItem(w, item, "0", resBaseUrl);

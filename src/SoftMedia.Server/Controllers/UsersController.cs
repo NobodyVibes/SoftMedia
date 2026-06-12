@@ -93,6 +93,13 @@ public class UsersController : ControllerBase
             return BadRequest("Invalid role.");
         }
 
+        // Audit wave-2 L-7: enforce the same minimum password policy on admin-created accounts as
+        // signup and reset already do — otherwise a family account could be seeded empty/1-char.
+        if (PasswordPolicy.Validate(request.Password) is { } pwError)
+        {
+            return BadRequest(pwError);
+        }
+
         var user = new User
         {
             Username = request.Username,

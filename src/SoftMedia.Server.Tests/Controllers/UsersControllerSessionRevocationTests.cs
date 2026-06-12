@@ -89,6 +89,18 @@ public class UsersControllerSessionRevocationTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateUser_RejectsWeakPassword()
+    {
+        // Audit wave-2 L-7: admin CreateUser must enforce the password policy like signup/reset.
+        var weak = await NewController().CreateUser(new CreateUserRequest("freshuser", "short", "User", "F", "L"));
+        Assert.IsType<BadRequestObjectResult>(weak);
+        Assert.DoesNotContain(_db.Users, u => u.Username == "freshuser"); // not created
+
+        var ok = await NewController().CreateUser(new CreateUserRequest("freshuser", "Str0ngP@ssw0rd!", "User", "F", "L"));
+        Assert.IsNotType<BadRequestObjectResult>(ok);
+    }
+
+    [Fact]
     public async Task Deny_And_Delete_And_Unapprove_RevokeSessions()
     {
         await NewController().DenyUser(_targetId);

@@ -90,6 +90,30 @@ public class MediaTokenIntegrationTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task MediaToken_RejectedAfterUserBanned()
+    {
+        // Audit wave-2 L-3: a stateless media token must stop working within its lifetime once the
+        // user is banned, mirroring the cast-token recheck (and complementing WS-3 revocation).
+        var user = await Factory.SeedUserAsync("media-banned");
+        var token = MediaToken(user);
+
+        // Works while eligible (404 = authenticated, media simply missing).
+        var before = await BearerClient(token).GetAsync($"/api/v1/stream/{Guid.NewGuid()}");
+        Assert.Equal(HttpStatusCode.NotFound, before.StatusCode);
+
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<SoftMedia.Server.Data.AppDbContext>();
+            var u = await db.Users.FindAsync(user.Id);
+            u!.IsBanned = true;
+            await db.SaveChangesAsync();
+        }
+
+        var after = await BearerClient(token).GetAsync($"/api/v1/stream/{Guid.NewGuid()}");
+        Assert.Equal(HttpStatusCode.Unauthorized, after.StatusCode);
+    }
+
+    [Fact]
     public async Task SecurityHeaders_AreEmitted()
     {
         var resp = await Factory.CreateClient().GetAsync("/api/v1/media/hero"); // 401, headers still present

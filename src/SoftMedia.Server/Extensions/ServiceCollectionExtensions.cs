@@ -50,6 +50,24 @@ public static class ServiceCollectionExtensions
         path.StartsWithSegments("/api/media") ||
         path.StartsWithSegments("/hubs/media");
 
+    /// <summary>
+    /// Re-checks, against the live DB, that the subject of a long-lived scoped token (cast or
+    /// media) is still eligible (not banned/deleted/un-approved). A stateless JWT is otherwise
+    /// unrevocable for its whole lifetime; this is the per-request revocation point for the
+    /// cast/media token paths (audit wave-2 L-3, complements WS-3's admin-side revocation).
+    /// </summary>
+    private static async Task<bool> IsTokenUserEligibleAsync(
+        Microsoft.AspNetCore.Http.HttpContext http, ClaimsPrincipal? principal)
+    {
+        var sub = principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                  ?? principal?.FindFirst("sub")?.Value;
+        if (!Guid.TryParse(sub, out var userId)) return false;
+
+        var db = http.RequestServices.GetRequiredService<AppDbContext>();
+        return await db.Users.AsNoTracking()
+            .AnyAsync(u => u.Id == userId && !u.IsBanned && !u.IsDeleted && u.IsApproved);
+    }
+
     public static IServiceCollection AddIdentityServices(this IServiceCollection services, IConfiguration config)
     {
         services.AddScoped<IPasswordHasher, PasswordHasher>();
@@ -121,7 +139,17 @@ public static class ServiceCollectionExtensions
                         if (tokenUse == CastTokenClaims.MediaUse)
                         {
                             if (!IsMediaRoute(context.HttpContext.Request.Path))
+                            {
                                 context.Fail("Media token is restricted to media/streaming routes.");
+                                return;
+                            }
+                            // Audit wave-2 L-3: re-check live user state every request so a ban /
+                            // soft-delete / un-approve takes effect within the media token's
+                            // (120-min) lifetime — mirroring the cast-token recheck below.
+                            // Complements WS-3: admin revocation kills the refresh chain, this
+                            // closes the stateless-media-token window.
+                            if (!await IsTokenUserEligibleAsync(context.HttpContext, principal))
+                                context.Fail("Media token user is no longer eligible.");
                             return;
                         }
 
@@ -146,17 +174,7 @@ public static class ServiceCollectionExtensions
                         // Re-check user state every request so a ban / soft-delete / un-approve
                         // (or admin revocation) takes effect within the token's lifetime — a
                         // stateless JWT is otherwise unrevocable. Mirrors the ApiToken scheme.
-                        var sub = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                                  ?? principal.FindFirst("sub")?.Value;
-                        if (!Guid.TryParse(sub, out var userId))
-                        {
-                            context.Fail("Cast token has no valid subject.");
-                            return;
-                        }
-                        var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
-                        var ok = await db.Users.AsNoTracking()
-                            .AnyAsync(u => u.Id == userId && !u.IsBanned && !u.IsDeleted && u.IsApproved);
-                        if (!ok)
+                        if (!await IsTokenUserEligibleAsync(context.HttpContext, principal))
                             context.Fail("Cast token user is no longer eligible.");
                     }
                 };

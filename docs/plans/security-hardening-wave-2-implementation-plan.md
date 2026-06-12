@@ -4,6 +4,24 @@
 **Branch:** suggest `security/hardening-wave-2` off `main` (wave-1 is merged at `04a6988`).
 **Goal:** Close the residual gaps the second audit found — the same systemic patterns as wave 1 (enforcement applied at most but not all entry points; state changes not propagated to issued credentials) plus a handful of new issues — while preserving streaming/transcoding/auth behaviour.
 
+## Implementation status
+
+**Branch `security/hardening-wave-2`. P0 complete — all four High findings remediated.** Suite `SoftMedia.Server.Tests`: **788 passing, 1 skipped (pre-existing .cbr fixture), 0 failing** (one pre-existing flaky timing test in the scanner/metadata suite passes on retry). SPA `tsc` clean; `npm audit --omit=dev` clean.
+
+| WS | Status | Commit summary |
+|----|--------|----------------|
+| WS‑0 | ✅ done | Confirmed the ⚠ findings: real advisories (System.Text.Json/Caching.Memory High, SharpCompress Moderate, react-router/axios High) + a **new** frame-cache ACL bypass (static cross-user cache read before the access check) + lock-eviction/web.archive.org confirmed. |
+| WS‑1 | ✅ done | Bumped server packages (STJ 8.0.5, Caching.Memory 8.0.1, ASP.NET/EF 8.0.13, SharpCompress 0.49.1 + RarFactory API migration), `TargetLatestRuntimePatch` for CVE-2025-55315; react-router-dom 7.17.0, axios 1.17.0, `@xmldom/xmldom` override 0.8.13; added `.github/workflows/security.yml` SCA gate. |
+| WS‑2 | ✅ done | H-1 recent-cache ACL+rating gate + `MediaItemDto.Path`→filename-only; M-1 collections rating ceiling; L-1 watchlist; L-2 playlists AddItems ACL; frame-cache ACL fix. New `IsRatingAllowed` shared predicate + regression tests. |
+| WS‑3 | ✅ done | H-2/L-6 — `RevokeUserSessionsAsync` on admin password-reset/ban/deny/delete/un-approve. |
+| WS‑4 | ✅ done | H-3 — `ImageSafety` header-only pixel-budget guard at both SkiaSharp decode sites. |
+| WS‑6 | ◑ partial | T6.3 done — media token re-checks live user state (L-3). **T6.1/T6.2/T6.4 deferred** (reject role-bearing query tokens + SPA hard-depend + GET-only): need coordinated SPA migration + E2E testing because the SignalR hub and cold-load media URLs currently ride the full access token in the query string. |
+| WS‑5, WS‑7…WS‑14 | ☐ todo | Not yet started. WS-7 should fold in the WS-0 lock-eviction + frame-preview-DoS confirmations. |
+
+> **Note for the next session:** WS-5 (path canonicalisation, M-7) and WS-7 (transcode `sid` validation + atomic caps + lock eviction) are the next-highest value. WS-6's deferred parts and WS-13 (CSP) require running the SPA end-to-end (reader/player/casting/SignalR) to avoid breakage.
+
+---
+
 ## Guiding principles (same as wave 1)
 
 - **Fix the root cause, not each symptom.** Two systemic helpers close ~half the list: a combined `ApplyAccess()` (library ACL **+** rating ceiling) reused by every read path, and a single `RevokeAllForUserAsync(...)` + `_trustedDevices.RevokeAllAsync(...)` call invoked from every account-state mutation.

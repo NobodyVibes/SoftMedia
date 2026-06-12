@@ -59,6 +59,14 @@ public class ThumbnailService : IThumbnailService
         {
             try
             {
+                // Security (audit wave-2 H-3): reject decode-bombs by checking the header
+                // dimensions BEFORE SKBitmap.Decode allocates the full pixel buffer.
+                if (!Helpers.ImageSafety.IsDecodableWithinBudget(sourcePath))
+                {
+                    _logger.LogWarning("Refusing to decode oversized/undecodable image: {Path}", sourcePath);
+                    return null;
+                }
+
                 using var original = SKBitmap.Decode(sourcePath);
                 if (original == null)
                 {

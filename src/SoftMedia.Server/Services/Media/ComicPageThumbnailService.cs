@@ -84,6 +84,11 @@ public class ComicPageThumbnailService : IComicPageThumbnailService
 
     private static byte[] ResizeToJpeg(byte[] source, int targetWidth)
     {
+        // Security (audit wave-2 H-3): reject a decode-bomb page (huge declared dimensions in a
+        // small file) by checking the header before SKBitmap.Decode allocates the pixel buffer.
+        if (!Helpers.ImageSafety.IsDecodableWithinBudget(source))
+            return Array.Empty<byte>();
+
         using var src = SKBitmap.Decode(source);
         if (src is null) return Array.Empty<byte>();
 

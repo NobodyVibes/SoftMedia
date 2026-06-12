@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Media;
 using Xunit;
 
@@ -38,7 +39,12 @@ public class MusicImageServiceArtistFallbackTests : IDisposable
     {
         var env = new Mock<IWebHostEnvironment>();
         env.Setup(e => e.WebRootPath).Returns("/tmp/wwwroot");
-        return new MusicImageService(db, env.Object, NullLogger<MusicImageService>.Instance);
+        // These tests exercise the artist->album cover FALLBACK logic, not the path jail, so a
+        // permissive security stub keeps them focused (path-jail coverage lives in
+        // StreamSecurityServiceTests).
+        var security = new Mock<IStreamSecurityService>();
+        security.Setup(s => s.IsPathAuthorized(It.IsAny<string>(), It.IsAny<IEnumerable<string>>())).Returns(true);
+        return new MusicImageService(db, env.Object, security.Object, NullLogger<MusicImageService>.Instance);
     }
 
     private MediaItem Album(Guid artistId, int year, string? cover) => new()

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Abstractions;
 
 namespace SoftMedia.Server.Services.Media;
 
@@ -12,15 +13,18 @@ public class MusicImageService : IMusicImageService
 {
     private readonly AppDbContext _context;
     private readonly IWebHostEnvironment _env;
+    private readonly IStreamSecurityService _streamSecurity;
     private readonly ILogger<MusicImageService> _logger;
 
     public MusicImageService(
         AppDbContext context,
         IWebHostEnvironment env,
+        IStreamSecurityService streamSecurity,
         ILogger<MusicImageService> logger)
     {
         _context = context;
         _env = env;
+        _streamSecurity = streamSecurity;
         _logger = logger;
     }
 
@@ -182,28 +186,27 @@ public class MusicImageService : IMusicImageService
     /// </summary>
     private bool IsPathAllowed(string fullPath)
     {
-        // Get all library paths - select libraries then flatten in memory
-        var libraries = _context.Libraries.ToList();
-        var libraryPaths = libraries.SelectMany(l => l.Paths ?? new List<string>()).ToList();
+        // Library roots: reuse the hardened central jail (audit wave-2 L-13). StreamSecurityService
+        // resolves symlinks at every path component, anchors the prefix on a directory separator,
+        // and rejects argument-injection characters — the bespoke GetFullPath + raw StartsWith here
+        // did none of those and diverged from AudioController.GetCoverArt, which already delegates.
+        var libraryPaths = _context.Libraries.ToList()
+            .SelectMany(l => l.Paths ?? new List<string>()).ToList();
+        if (_streamSecurity.IsPathAuthorized(fullPath, libraryPaths))
+            return true;
 
-        // Cache directory — use WebRootPath for reliable path resolution
+        // Server-managed image cache (wwwroot/cache/images). These files are written by the server,
+        // so a literal prefix check is sufficient — but anchor it on a trailing separator so a
+        // sibling directory ("cache/images-evil") can't match.
         var webRoot = !string.IsNullOrEmpty(_env.WebRootPath)
             ? _env.WebRootPath
             : Path.Combine(Environment.CurrentDirectory, "wwwroot");
-        var cachePath1 = Path.GetFullPath(Path.Combine(webRoot, "cache", "images"));
+        var cacheRoot = Path.GetFullPath(Path.Combine(webRoot, "cache", "images"));
+        if (!cacheRoot.EndsWith(Path.DirectorySeparatorChar))
+            cacheRoot += Path.DirectorySeparatorChar;
 
-        _logger.LogDebug("IsPathAllowed check: FullPath={FullPath}, CachePath={CachePath}",
-            fullPath, cachePath1);
-
-        // Check if path starts with any allowed path
-        foreach (var libPath in libraryPaths)
-        {
-            var normalizedLibPath = Path.GetFullPath(libPath);
-            if (fullPath.StartsWith(normalizedLibPath, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-
-        if (fullPath.StartsWith(cachePath1, StringComparison.OrdinalIgnoreCase))
+        var normalizedFull = Path.GetFullPath(fullPath);
+        if (normalizedFull.StartsWith(cacheRoot, StringComparison.OrdinalIgnoreCase))
             return true;
 
         _logger.LogWarning("Path not in allowed directories: {Path}", fullPath);

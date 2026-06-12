@@ -219,6 +219,19 @@ public class StreamSecurityServiceTests : IDisposable
         catch (PlatformNotSupportedException) { return false; }
     }
 
+    /// Audit wave-2 T5.4: symlink creation needs elevated privilege / Developer Mode on Windows,
+    /// so on a Windows dev box we genuinely skip (return false -> caller returns). But on a POSIX
+    /// host symlink creation always works, so a failure means the path-jail test never actually
+    /// ran — fail LOUDLY there instead of silently passing, which is how the leaf-only resolver
+    /// bug (M-7) hid for so long.
+    private static bool CreateSymlinkOrSkipOnWindows(string link, string target)
+    {
+        if (TryCreateSymlink(link, target)) return true;
+        if (!OperatingSystem.IsWindows())
+            Assert.Fail($"Symlink creation failed on a POSIX host — the path-jail test could not run: {link} -> {target}");
+        return false;
+    }
+
     [Fact]
     public void IsPathAuthorized_SymlinkInsideJailEscapingTarget_ReturnsFalse()
     {
@@ -228,7 +241,7 @@ public class StreamSecurityServiceTests : IDisposable
         // symlink resolution the real path is /tmp/.../Movies-secret/leak.mkv,
         // which does not start with the prefix, so access is denied.
         var symlink = Path.Combine(_libRoot, "escape");
-        if (!TryCreateSymlink(symlink, _siblingRoot)) return;
+        if (!CreateSymlinkOrSkipOnWindows(symlink, _siblingRoot)) return;
 
         var probe = Path.Combine(symlink, "leak.mkv");
         Assert.True(File.Exists(probe), "symlink target should resolve to the seeded sibling file");
@@ -243,7 +256,7 @@ public class StreamSecurityServiceTests : IDisposable
         // a symlinked library root must still be able to serve real files
         // beneath it — the resolver applies to the root as well as the file.
         var rootLink = Path.Combine(_tempRoot, "link-root");
-        if (!TryCreateSymlink(rootLink, _libRoot)) return;
+        if (!CreateSymlinkOrSkipOnWindows(rootLink, _libRoot)) return;
 
         var probe = Path.Combine(rootLink, "file.mkv");
         Assert.True(File.Exists(probe));
@@ -257,7 +270,7 @@ public class StreamSecurityServiceTests : IDisposable
         // Symlink target lands back in the jail — the real path is legitimate.
         // Sanity check that the symlink resolution does not over-block.
         var inwardLink = Path.Combine(_libRoot, "shortcut");
-        if (!TryCreateSymlink(inwardLink, _fileInside)) return;
+        if (!CreateSymlinkOrSkipOnWindows(inwardLink, _fileInside)) return;
 
         Assert.True(NewService().IsPathAuthorized(inwardLink, new[] { _libRoot }));
     }

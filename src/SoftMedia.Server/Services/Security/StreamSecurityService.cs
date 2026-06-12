@@ -65,29 +65,53 @@ public class StreamSecurityService : IStreamSecurityService
         }
     }
 
-    // Resolve symlinks AND collapse `..`. ResolveLinkTarget(true) returns the final
-    // target by walking the symlink chain; if the path is not a symlink, it returns
-    // null and we fall back to GetFullPath. Library roots are themselves checked
-    // because admins may add a symlinked directory as a root.
+    // Resolve symlinks at EVERY path component (not just the leaf) and collapse `..`.
+    // Path.GetFullPath collapses `..` but does NOT follow symlinks, and ResolveLinkTarget only
+    // resolves a component that is ITSELF a link — so a leaf-only resolve misses an intermediate
+    // symlinked directory (audit wave-2 M-7): a symlink dropped inside a library (e.g. lib/sub ->
+    // /etc) would otherwise satisfy the StartsWith(lib) jail and re-introduce LFI. We walk the
+    // path root -> leaf, resolving each component, so the final value is the true on-disk target.
+    // Library roots are canonicalised the same way because an admin may add a symlinked root.
     private static string ResolveRealPath(string path)
     {
-        var fullPath = Path.GetFullPath(path);
+        var full = Path.GetFullPath(path);
         try
         {
-            FileSystemInfo? info = File.Exists(fullPath)
-                ? new FileInfo(fullPath)
-                : Directory.Exists(fullPath)
-                    ? new DirectoryInfo(fullPath)
-                    : null;
+            var root = Path.GetPathRoot(full);
+            if (string.IsNullOrEmpty(root)) return full;
 
-            var resolved = info?.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
-            return resolved ?? fullPath;
+            var current = root;
+            var segments = full.Substring(root.Length).Split(
+                new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var segment in segments)
+            {
+                current = Path.Combine(current, segment);
+
+                FileSystemInfo? info = File.Exists(current)
+                    ? new FileInfo(current)
+                    : Directory.Exists(current)
+                        ? new DirectoryInfo(current)
+                        : null;
+
+                // ResolveLinkTarget(true) walks the whole symlink chain (throwing on a cycle);
+                // a non-link component returns null and is kept as-is. Resolving onto `current`
+                // each step means subsequent segments build on the already-resolved location.
+                var resolved = info?.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+                if (!string.IsNullOrEmpty(resolved))
+                {
+                    current = resolved;
+                }
+            }
+
+            return current;
         }
         catch
         {
-            // ResolveLinkTarget can throw on broken/cyclic links — treat as the literal
-            // path; the caller's StartsWith check will then reject anything escaping.
-            return fullPath;
+            // Broken/cyclic link or odd path — fall back to the lexical full path. The caller's
+            // StartsWith check then rejects anything escaping, and a broken link won't open anyway.
+            return full;
         }
     }
 

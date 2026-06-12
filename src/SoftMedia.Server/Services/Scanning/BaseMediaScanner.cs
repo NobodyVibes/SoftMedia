@@ -243,19 +243,51 @@ public abstract class BaseMediaScanner : IMediaScanner
         }
     }
 
+    // Bound on directory recursion depth. Deep enough for any real media library, but caps a
+    // pathological/hostile tree (audit wave-2 L-22).
+    private const int MaxScanDepth = 64;
+
     protected virtual IEnumerable<string> EnumerateDirectories(List<string> libraryPaths)
     {
-         foreach (var path in libraryPaths)
-         {
-             if (Directory.Exists(path))
-             {
-                 yield return path; // The root itself
-                 foreach (var dir in Directory.EnumerateDirectories(path, "*", SearchOption.AllDirectories))
-                 {
-                     yield return dir;
-                 }
-             }
-         }
+        foreach (var path in libraryPaths)
+        {
+            if (!Directory.Exists(path)) continue;
+
+            yield return path; // The root itself
+
+            // Manual DFS instead of Directory.EnumerateDirectories(SearchOption.AllDirectories):
+            // (1) skip reparse points (symlinks/junctions) so a hostile symlink dropped inside a
+            //     library can't redirect the scan outside it or create an unbounded cycle, and
+            // (2) bound the depth. The framework recursive enumerator follows reparse points with
+            //     no cycle detection (audit wave-2 L-22).
+            var stack = new Stack<(string Path, int Depth)>();
+            stack.Push((path, 0));
+            while (stack.Count > 0)
+            {
+                var (dir, depth) = stack.Pop();
+                if (depth >= MaxScanDepth) continue;
+
+                List<string> subdirs;
+                try { subdirs = Directory.EnumerateDirectories(dir).ToList(); }
+                catch { continue; /* permission / transient IO */ }
+
+                foreach (var sub in subdirs)
+                {
+                    bool isReparse;
+                    try { isReparse = (File.GetAttributes(sub) & FileAttributes.ReparsePoint) != 0; }
+                    catch { continue; }
+
+                    if (isReparse)
+                    {
+                        _logger.LogWarning("[{Scanner}] Skipping reparse point (symlink/junction): {Dir}", DisplayName, sub);
+                        continue;
+                    }
+
+                    yield return sub;
+                    stack.Push((sub, depth + 1));
+                }
+            }
+        }
     }
 
     protected virtual IEnumerable<FileDiscoveryResult> EnumerateFilesCurrentDir(string dirPath)

@@ -29,7 +29,18 @@ public class TranscodeSessionManager : ITranscodeSessionManager
 
     public bool TryRemoveSession(TranscodeSessionKey key, out TranscodeSession? session)
     {
-        return _activeSessions.TryRemove(key, out session);
+        var removed = _activeSessions.TryRemove(key, out session);
+
+        // Security (audit wave-2 L-25): tie the per-session lock's lifetime to the session so the
+        // lock table can't grow without bound as an attacker cycles distinct ?sid= values. Disposed
+        // only when the session is gone; a later op for the same key simply re-creates it via
+        // GetOrAdd. We dispose the semaphore to release its handle.
+        if (_sessionLocks.TryRemove(key, out var lockObj))
+        {
+            try { lockObj.Dispose(); } catch { /* a concurrent waiter may race; safe to ignore */ }
+        }
+
+        return removed;
     }
 
     public async Task<IDisposable> AcquireLockAsync(TranscodeSessionKey key)

@@ -136,6 +136,9 @@ public class TranscodeController : ControllerBase
     public async Task<IActionResult> GetMasterPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] double? seek = null, [FromQuery] string? resolution = null, [FromQuery] string? codec = null, [FromQuery] bool? hdr = null, [FromQuery] int? audio = null, [FromQuery] int? bitrate = null, [FromQuery] bool? burnSubtitles = null, [FromQuery] string? sid = null)
     {
         if (sub.HasValue && sub.Value < 0) sub = null;
+        // Security (audit wave-2 M-4): reject a malformed session id at the boundary with a clean
+        // 400 (the service also re-validates before it touches the filesystem).
+        if (!TranscodeSid.IsValid(sid)) return BadRequest("Invalid session id.");
         try
         {
             var userId = GetUserId();

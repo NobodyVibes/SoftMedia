@@ -78,10 +78,25 @@ public class TranscodeService : ITranscodeService
     /// </summary>
     public string GetSessionDir(Guid mediaId, Guid userId, int? subtitleTrackIndex, string? sid = null)
     {
+        // Security (audit wave-2 M-4): the client-supplied sid is concatenated into the directory
+        // name, so an unvalidated value (e.g. "../../etc") would traverse out of the temp root.
+        // Reject anything outside the safe charset before it touches the filesystem.
+        if (!TranscodeSid.IsValid(sid))
+            throw new ArgumentException("Invalid transcode session id.", nameof(sid));
+
         var suffix = subtitleTrackIndex.HasValue ? $"_sub{subtitleTrackIndex.Value}" : "";
         var streamSuffix = !string.IsNullOrEmpty(sid) ? $"_{sid}" : "";
         // Include userId and sid to isolate transcode sessions per stream
-        return Path.Combine(_tempDir, $"{mediaId}_{userId}{suffix}{streamSuffix}");
+        var dir = Path.Combine(_tempDir, $"{mediaId}_{userId}{suffix}{streamSuffix}");
+
+        // Defense-in-depth: even with the charset guard above, assert the resolved path stays
+        // under the temp root before any caller writes/reads segments there.
+        var tempRootWithSep = _tempDir.EndsWith(Path.DirectorySeparatorChar)
+            ? _tempDir : _tempDir + Path.DirectorySeparatorChar;
+        if (!Path.GetFullPath(dir).StartsWith(Path.GetFullPath(tempRootWithSep), StringComparison.Ordinal))
+            throw new ArgumentException("Resolved transcode session path escapes the temp root.", nameof(sid));
+
+        return dir;
     }
 
     /// <summary>
@@ -205,9 +220,16 @@ public class TranscodeService : ITranscodeService
         using (var scope = _scopeFactory.CreateScope())
         {
             var settingsService = scope.ServiceProvider.GetRequiredService<ISettingsService>();
-            var maxConcurrent = await settingsService.GetSettingAsync("MaxSimultaneousTranscodes", 0);
-            // Audit M9: finite per-user fallback so a missing/legacy setting doesn't mean unlimited.
-            var maxPerUser = await settingsService.GetSettingAsync("MaxSimultaneousTranscodesPerUser", 3);
+            var maxConcurrentCfg = await settingsService.GetSettingAsync("MaxSimultaneousTranscodes", 0);
+            var maxPerUserCfg = await settingsService.GetSettingAsync("MaxSimultaneousTranscodesPerUser", 3);
+
+            // Audit wave-2 L-14: a config value of 0 (or a huge value) must NOT disable the DoS
+            // bound. Always enforce a finite HARD ceiling that config can clamp DOWN but never
+            // remove — ffmpeg is CPU-bound, so these are already extreme for home hardware.
+            const int HardGlobalCeiling = 16;
+            const int HardPerUserCeiling = 6;
+            var maxConcurrent = maxConcurrentCfg > 0 ? Math.Min(maxConcurrentCfg, HardGlobalCeiling) : HardGlobalCeiling;
+            var maxPerUser = maxPerUserCfg > 0 ? Math.Min(maxPerUserCfg, HardPerUserCeiling) : 3;
 
             var requestKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex, sid);
             bool IsActiveOther(TranscodeSession s) =>
@@ -215,14 +237,14 @@ public class TranscodeService : ITranscodeService
 
             var active = _sessionManager.GetAllSessions().Where(IsActiveOther).ToList();
 
-            if (maxConcurrent > 0 && active.Count >= maxConcurrent)
+            if (active.Count >= maxConcurrent)
             {
                 _logger.LogWarning("Global max concurrent transcodes ({Max}) reached, rejecting {MediaId}", maxConcurrent, mediaId);
                 throw new TranscodeCapacityException(
                     $"Server transcode limit ({maxConcurrent}) reached. Try again shortly.");
             }
 
-            if (maxPerUser > 0 && active.Count(s => s.UserId == userId) >= maxPerUser)
+            if (active.Count(s => s.UserId == userId) >= maxPerUser)
             {
                 _logger.LogWarning("Per-user max concurrent transcodes ({Max}) reached for user {UserId}", maxPerUser, userId);
                 throw new TranscodeCapacityException(

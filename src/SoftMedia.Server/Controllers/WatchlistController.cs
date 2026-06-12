@@ -5,6 +5,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Security.ContentRating;
 using SoftMedia.Server.Services.Security.LibraryAccess;
 
 namespace SoftMedia.Server.Controllers;
@@ -26,11 +27,16 @@ public class WatchlistController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IUserLibraryAccessProvider _libraryAccess;
+    private readonly IUserContentRatingProvider _ratings;
 
-    public WatchlistController(AppDbContext db, IUserLibraryAccessProvider libraryAccess)
+    public WatchlistController(
+        AppDbContext db,
+        IUserLibraryAccessProvider libraryAccess,
+        IUserContentRatingProvider ratings)
     {
         _db = db;
         _libraryAccess = libraryAccess;
+        _ratings = ratings;
     }
 
     [HttpGet]
@@ -38,6 +44,7 @@ public class WatchlistController : ControllerBase
     {
         var userId = User.GetUserId();
         var access = await _libraryAccess.GetCurrentAsync();
+        var ceilings = await _ratings.GetCurrentAsync(); // audit wave-2 L-1
 
         // Cap the limit so a malicious caller can't request 100k rows and OOM us.
         limit = Math.Clamp(limit, 1, 200);
@@ -77,6 +84,7 @@ public class WatchlistController : ControllerBase
                 && m.Type != MediaType.Album
                 && m.Type != MediaType.Artist)
             .ApplyLibraryAccessFilter(access)
+            .ApplyContentRatingFilter(ceilings) // audit wave-2 L-1: match the repository's combined gate
             .ToListAsync();
 
         // Reorder by the watchlist-stamp ordering and trim to limit.

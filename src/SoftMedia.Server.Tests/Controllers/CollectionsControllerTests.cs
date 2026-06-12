@@ -75,9 +75,12 @@ public class CollectionsControllerTests : IDisposable
     {
         var libraryAccess = new Mock<IUserLibraryAccessProvider>();
         libraryAccess.Setup(p => p.GetCurrentAsync()).ReturnsAsync(access);
+        var ratings = new Mock<SoftMedia.Server.Services.Security.ContentRating.IUserContentRatingProvider>();
+        ratings.Setup(p => p.GetCurrentAsync())
+            .ReturnsAsync(SoftMedia.Server.Services.Security.ContentRating.UserRatingCeilings.Unrestricted);
 
         var controller = new CollectionsController(
-            _db, libraryAccess.Object, NullLogger<CollectionsController>.Instance);
+            _db, libraryAccess.Object, ratings.Object, NullLogger<CollectionsController>.Instance);
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext(),

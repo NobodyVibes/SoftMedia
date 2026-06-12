@@ -8,6 +8,8 @@ using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Scanning;
+using SoftMedia.Server.Services.Security.ContentRating;
+using SoftMedia.Server.Services.Security.LibraryAccess;
 using Xunit;
 
 namespace SoftMedia.Server.Tests.Services.Media;
@@ -177,9 +179,20 @@ public class LibraryServicePathCanonicalisationTests : IDisposable
             .UseInMemoryDatabase($"libsvc-tests-{Guid.NewGuid()}")
             .Options);
 
+        var (access, ratings) = UnrestrictedProviders();
         return new LibraryService(
             libraryRepo, mediaRepo.Object, scanQueue.Object, imageCache.Object,
-            watcher, db, NullLogger<LibraryService>.Instance);
+            watcher, db, access, ratings, NullLogger<LibraryService>.Instance);
+    }
+
+    // audit wave-2 WS-2: LibraryService now takes the ACL + rating providers; tests run unrestricted.
+    private static (IUserLibraryAccessProvider, IUserContentRatingProvider) UnrestrictedProviders()
+    {
+        var access = new Mock<IUserLibraryAccessProvider>();
+        access.Setup(p => p.GetCurrentAsync()).ReturnsAsync(LibraryAccess.Unrestricted);
+        var ratings = new Mock<IUserContentRatingProvider>();
+        ratings.Setup(p => p.GetCurrentAsync()).ReturnsAsync(UserRatingCeilings.Unrestricted);
+        return (access.Object, ratings.Object);
     }
 
     private LibraryService BuildService(out Mock<ILibraryRepository> libraryRepo)
@@ -203,6 +216,7 @@ public class LibraryServicePathCanonicalisationTests : IDisposable
             .UseInMemoryDatabase($"libsvc-tests-{Guid.NewGuid()}")
             .Options);
 
+        var (access, ratings) = UnrestrictedProviders();
         return new LibraryService(
             libraryRepo.Object,
             mediaRepo.Object,
@@ -210,6 +224,8 @@ public class LibraryServicePathCanonicalisationTests : IDisposable
             imageCache.Object,
             watcher,
             db,
+            access,
+            ratings,
             NullLogger<LibraryService>.Instance);
     }
 }

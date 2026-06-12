@@ -35,17 +35,13 @@ public class VideoPreviewService : IVideoPreviewService
         // Round time to 1 second to increase cache hits
         var roundedTime = Math.Floor(time);
         var cacheKey = $"{mediaId}_{roundedTime}";
-        
-        // Check cache first
-        lock (_frameCacheLock)
-        {
-            if (_frameCache.TryGetValue(cacheKey, out var cached) && cached.Expires > DateTime.UtcNow)
-            {
-                return (cached.Data, "image/jpeg");
-            }
-        }
 
-        // Get media item path from DB
+        // Security (audit wave-2, frame-cache ACL bypass): resolve the item through the
+        // ACL/rating-aware repository BEFORE consulting the shared static frame cache. The cache is
+        // keyed only by (mediaId, time) and shared across all users, so reading it first let a
+        // restricted user pull a frame that an allowed user had cached — bypassing the library ACL.
+        // GetByIdAsync applies the per-user library ACL + content-rating ceiling and returns null
+        // when the caller may not see the item; map that to "no frame".
         string mediaPath;
         using (var scope = _scopeFactory.CreateScope())
         {
@@ -53,6 +49,15 @@ public class VideoPreviewService : IVideoPreviewService
             var mediaItem = await repository.GetByIdAsync(mediaId);
             if (mediaItem == null) return (null, string.Empty);
             mediaPath = mediaItem.Path;
+        }
+
+        // Now safe to serve from the shared cache — the caller has passed the access check above.
+        lock (_frameCacheLock)
+        {
+            if (_frameCache.TryGetValue(cacheKey, out var cached) && cached.Expires > DateTime.UtcNow)
+            {
+                return (cached.Data, "image/jpeg");
+            }
         }
 
         // Extract single frame using FFmpeg

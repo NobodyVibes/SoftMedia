@@ -53,8 +53,11 @@ public class WatchlistControllerTests : IDisposable
     {
         var libraryAccess = new Mock<IUserLibraryAccessProvider>();
         libraryAccess.Setup(p => p.GetCurrentAsync()).ReturnsAsync(access);
+        var ratings = new Mock<SoftMedia.Server.Services.Security.ContentRating.IUserContentRatingProvider>();
+        ratings.Setup(p => p.GetCurrentAsync())
+            .ReturnsAsync(SoftMedia.Server.Services.Security.ContentRating.UserRatingCeilings.Unrestricted);
 
-        var controller = new WatchlistController(_db, libraryAccess.Object);
+        var controller = new WatchlistController(_db, libraryAccess.Object, ratings.Object);
         var identity = new ClaimsIdentity(new[]
         {
             new Claim(ClaimTypes.NameIdentifier, _userId.ToString()),

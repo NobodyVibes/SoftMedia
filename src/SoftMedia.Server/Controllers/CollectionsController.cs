@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Security.ContentRating;
 using SoftMedia.Server.Services.Security.LibraryAccess;
 
 namespace SoftMedia.Server.Controllers;
@@ -28,15 +29,18 @@ public class CollectionsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IUserLibraryAccessProvider _libraryAccess;
+    private readonly IUserContentRatingProvider _ratings;
     private readonly ILogger<CollectionsController> _logger;
 
     public CollectionsController(
         AppDbContext db,
         IUserLibraryAccessProvider libraryAccess,
+        IUserContentRatingProvider ratings,
         ILogger<CollectionsController> logger)
     {
         _db = db;
         _libraryAccess = libraryAccess;
+        _ratings = ratings;
         _logger = logger;
     }
 
@@ -50,6 +54,10 @@ public class CollectionsController : ControllerBase
     public async Task<ActionResult<List<CollectionSummaryDto>>> List()
     {
         var access = await _libraryAccess.GetCurrentAsync();
+        // Audit wave-2 M-1: the visible-count must honour BOTH the per-library ACL and the
+        // content-rating ceiling, otherwise a rating-restricted caller sees over-rating movies
+        // (and a hidden movie still counts toward the >=2 display threshold).
+        var ceilings = await _ratings.GetCurrentAsync();
 
         // Pull every collection's items once, count visible-to-caller per id,
         // filter to ≥2.
@@ -58,7 +66,7 @@ public class CollectionsController : ControllerBase
             .Select(c => new
             {
                 c.Id, c.Name, c.Overview, c.PosterUrl, c.WikidataId,
-                Items = c.Items.Select(m => new { m.Id, m.LibraryId, m.PosterUrl }).ToList(),
+                Items = c.Items.Select(m => new { m.Id, m.LibraryId, m.PosterUrl, m.Type, m.ContentRating }).ToList(),
             })
             .ToListAsync();
 
@@ -66,9 +74,9 @@ public class CollectionsController : ControllerBase
             .Select(c => new
             {
                 c.Id, c.Name, c.Overview, c.PosterUrl, c.WikidataId,
-                Visible = access.IsUnrestricted
-                    ? c.Items
-                    : c.Items.Where(i => access.AllowedLibraryIds.Contains(i.LibraryId)).ToList(),
+                Visible = c.Items.Where(i =>
+                    (access.IsUnrestricted || access.AllowedLibraryIds.Contains(i.LibraryId)) &&
+                    RatingFilterExtensions.IsRatingAllowed(ceilings, i.Type, i.ContentRating)).ToList(),
             })
             .Where(c => c.Visible.Count >= 2)
             .OrderBy(c => c.Name)
@@ -92,6 +100,7 @@ public class CollectionsController : ControllerBase
     public async Task<ActionResult<CollectionDetailDto>> Get(Guid id)
     {
         var access = await _libraryAccess.GetCurrentAsync();
+        var ceilings = await _ratings.GetCurrentAsync(); // audit wave-2 M-1
         var collection = await _db.Collections
             .AsNoTracking()
             .FirstOrDefaultAsync(c => c.Id == id);
@@ -101,6 +110,7 @@ public class CollectionsController : ControllerBase
             .AsNoTracking()
             .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
             .Where(m => m.CollectionId == id && m.Type == MediaType.Movie)
+            .ApplyContentRatingFilter(ceilings)
             .OrderBy(m => m.ReleaseDate)
                 .ThenBy(m => m.Year)
                 .ThenBy(m => m.Title)
@@ -136,16 +146,19 @@ public class CollectionsController : ControllerBase
     public async Task<IActionResult> GetByMovie(Guid movieId)
     {
         var access = await _libraryAccess.GetCurrentAsync();
+        var ceilings = await _ratings.GetCurrentAsync(); // audit wave-2 M-1
 
         var movie = await _db.MediaItems
             .AsNoTracking()
             .Where(m => m.Id == movieId)
-            .Select(m => new { m.Id, m.CollectionId, m.LibraryId })
+            .Select(m => new { m.Id, m.CollectionId, m.LibraryId, m.Type, m.ContentRating })
             .FirstOrDefaultAsync();
 
         if (movie == null) return NotFound();
-        // Caller can't see the source movie at all? 404 (anti-probe).
+        // Caller can't see the source movie at all (library ACL OR rating ceiling)? 404 (anti-probe).
         if (!access.IsUnrestricted && !access.AllowedLibraryIds.Contains(movie.LibraryId))
+            return NotFound();
+        if (!RatingFilterExtensions.IsRatingAllowed(ceilings, movie.Type, movie.ContentRating))
             return NotFound();
         if (movie.CollectionId == null) return NoContent();
 
@@ -158,6 +171,7 @@ public class CollectionsController : ControllerBase
             .AsNoTracking()
             .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
             .Where(m => m.CollectionId == movie.CollectionId.Value && m.Type == MediaType.Movie)
+            .ApplyContentRatingFilter(ceilings)
             .OrderBy(m => m.ReleaseDate)
                 .ThenBy(m => m.Year)
                 .ThenBy(m => m.Title)

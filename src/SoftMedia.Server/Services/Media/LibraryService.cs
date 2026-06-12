@@ -3,6 +3,8 @@ using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Constants;
 using SoftMedia.Server.Services.Scanning;
+using SoftMedia.Server.Services.Security.ContentRating;
+using SoftMedia.Server.Services.Security.LibraryAccess;
 using Microsoft.Extensions.Logging;
 using SoftMedia.Server.Data;
 using Microsoft.EntityFrameworkCore;
@@ -18,15 +20,19 @@ public class LibraryService : ILibraryService
     private readonly IImageCacheService _imageCacheService;
     private readonly LibraryWatcher _libraryWatcher;
     private readonly AppDbContext _context; // Direct access for cache management
+    private readonly IUserLibraryAccessProvider _libraryAccess;
+    private readonly IUserContentRatingProvider _ratings;
     private readonly ILogger<LibraryService> _logger;
 
     public LibraryService(
-        ILibraryRepository libraryRepository, 
+        ILibraryRepository libraryRepository,
         IMediaRepository mediaRepository,
         ILibraryScanQueueService scanQueueService,
         IImageCacheService imageCacheService,
         LibraryWatcher libraryWatcher,
         AppDbContext context,
+        IUserLibraryAccessProvider libraryAccess,
+        IUserContentRatingProvider ratings,
         ILogger<LibraryService> logger)
     {
         _libraryRepository = libraryRepository;
@@ -35,6 +41,8 @@ public class LibraryService : ILibraryService
         _imageCacheService = imageCacheService;
         _libraryWatcher = libraryWatcher;
         _context = context;
+        _libraryAccess = libraryAccess;
+        _ratings = ratings;
         _logger = logger;
     }
 
@@ -454,6 +462,17 @@ public class LibraryService : ILibraryService
 
     public async Task<IEnumerable<MediaItemDto>> GetRecentlyAddedAsync(Guid libraryId, Guid userId)
     {
+        // Audit wave-2 H-1: the recently-added cache is built with an UNFILTERED system view
+        // (UpdateRecentlyAddedCacheAsync uses UserId=Guid.Empty), so it must be gated per-caller
+        // before return — both the per-library ACL and the content-rating ceiling — matching the
+        // combined gate MediaRepository applies everywhere else. Without this, a denied/rating-
+        // restricted user reads cross-library metadata (and previously the on-disk path).
+        var access = await _libraryAccess.GetCurrentAsync();
+        if (!access.IsUnrestricted && !access.AllowedLibraryIds.Contains(libraryId))
+        {
+            return Enumerable.Empty<MediaItemDto>();
+        }
+
         var cache = await _context.LibraryRecentCaches.AsNoTracking().FirstOrDefaultAsync(c => c.LibraryId == libraryId);
         
         List<MediaItemDto>? items = null;
@@ -482,6 +501,21 @@ public class LibraryService : ILibraryService
                 UserId = Guid.Empty
             });
             items = result.Items.Select(x => MapToDto(x.Media, null)).ToList();
+        }
+
+        // Audit wave-2 H-1: re-apply the content-rating ceiling per caller — the shared cache is
+        // rating-blind. Reuse the canonical EF predicate via a cheap PK lookup over the <=20 ids so
+        // a rating-restricted (but library-allowed) child never sees over-rating titles.
+        var ceilings = await _ratings.GetCurrentAsync();
+        if (!ceilings.IsUnrestricted && items != null && items.Count > 0)
+        {
+            var ratingIds = items.Select(i => i.Id).ToList();
+            var allowedIds = (await _context.MediaItems.AsNoTracking()
+                .Where(m => ratingIds.Contains(m.Id))
+                .ApplyContentRatingFilter(ceilings)
+                .Select(m => m.Id)
+                .ToListAsync()).ToHashSet();
+            items = items.Where(i => allowedIds.Contains(i.Id)).ToList();
         }
 
         // Inject personalized interactions and live ratings if we have items

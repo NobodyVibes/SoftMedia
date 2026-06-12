@@ -209,8 +209,12 @@ public class PlaylistsController : ControllerBase
 
         // v1 scope: audio tracks only. Reject non-audio explicitly so the
         // client gets a clean 400 instead of a silent "added but won't play".
+        // Audit wave-2 L-2: filter through the per-library ACL so a restricted user can't attach
+        // tracks from a library they're denied (the id set leaks via shared/public content).
+        var access = await _libraryAccess.GetCurrentAsync();
         var requested = request.MediaItemIds.Distinct().ToList();
         var allowed = await _db.MediaItems
+            .ApplyLibraryAccessFilter(access)
             .Where(m => requested.Contains(m.Id) && m.Type == MediaType.Audio)
             .Select(m => m.Id)
             .ToListAsync();

@@ -177,6 +177,49 @@ public class RatingFilterTests : IDisposable
         Assert.Contains("NC17-Movie", titles);
     }
 
+    // ── In-memory IsRatingAllowed helper (audit wave-2 WS-2) ──────────────────
+    // The collections/recent-cache paths can't run the EF predicate, so they use
+    // RatingFilterExtensions.IsRatingAllowed. These lock it to the SAME semantics.
+
+    [Fact]
+    public void IsRatingAllowed_Unrestricted_AllowsEverythingIncludingNull()
+    {
+        Assert.True(RatingFilterExtensions.IsRatingAllowed(UserRatingCeilings.Unrestricted, MediaType.Movie, "NC-17"));
+        Assert.True(RatingFilterExtensions.IsRatingAllowed(UserRatingCeilings.Unrestricted, MediaType.Movie, null));
+    }
+
+    [Fact]
+    public void IsRatingAllowed_MovieCeiling_MatchesQueryableSemantics()
+    {
+        var ceilings = UserRatingCeilings.From(new User { MaxRating = "PG-13", ContentRatings = "{}" });
+
+        Assert.True(RatingFilterExtensions.IsRatingAllowed(ceilings, MediaType.Movie, "G"));
+        Assert.True(RatingFilterExtensions.IsRatingAllowed(ceilings, MediaType.Movie, "PG-13"));
+        Assert.False(RatingFilterExtensions.IsRatingAllowed(ceilings, MediaType.Movie, "R"));
+        Assert.False(RatingFilterExtensions.IsRatingAllowed(ceilings, MediaType.Movie, "NC-17"));
+        // Fail-safe: null rating blocked when a ceiling applies to the type.
+        Assert.False(RatingFilterExtensions.IsRatingAllowed(ceilings, MediaType.Movie, null));
+        // Ungated types pass through regardless of rating.
+        Assert.True(RatingFilterExtensions.IsRatingAllowed(ceilings, MediaType.Audio, null));
+    }
+
+    [Fact]
+    public void IsRatingAllowed_PerTypeCeilings_GateEachTypeIndependently()
+    {
+        var ceilings = UserRatingCeilings.From(new User
+        {
+            MaxRating = "PG-13",
+            ContentRatings = """{"Movie":"G","TV":"TV-PG","Game":"E"}"""
+        });
+
+        Assert.True(RatingFilterExtensions.IsRatingAllowed(ceilings, MediaType.Movie, "G"));
+        Assert.False(RatingFilterExtensions.IsRatingAllowed(ceilings, MediaType.Movie, "R"));
+        Assert.True(RatingFilterExtensions.IsRatingAllowed(ceilings, MediaType.Series, "TV-PG"));
+        Assert.False(RatingFilterExtensions.IsRatingAllowed(ceilings, MediaType.Episode, "TV-MA"));
+        Assert.True(RatingFilterExtensions.IsRatingAllowed(ceilings, MediaType.Game, "E"));
+        Assert.False(RatingFilterExtensions.IsRatingAllowed(ceilings, MediaType.Game, "M"));
+    }
+
     [Fact]
     public async Task MalformedContentRatingsJson_TreatedAsEmpty()
     {

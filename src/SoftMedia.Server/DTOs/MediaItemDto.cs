@@ -135,7 +135,11 @@ public class MediaItemDto
             LibraryId = item.LibraryId,
             Title = item.Title,
             SortTitle = item.SortTitle,
-            Path = item.Path,
+            // Security (audit wave-2 H-1): expose only the FILE NAME, never the absolute on-disk
+            // path. The SPA needs the extension (book-format detection in BookReader/BookDetailView);
+            // the server's directory layout is not the client's business and was leaking via every
+            // MediaItemDto (notably the unfiltered recently-added cache).
+            Path = System.IO.Path.GetFileName(item.Path),
             DateAdded = item.DateAdded,
             Container = item.Container,
             VideoCodec = item.VideoCodec,

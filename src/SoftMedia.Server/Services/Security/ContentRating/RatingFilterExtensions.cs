@@ -56,4 +56,27 @@ public static class RatingFilterExtensions
 
         return query;
     }
+
+    /// In-memory counterpart to <see cref="ApplyContentRatingFilter"/> for callers that already
+    /// hold materialised items (a deserialized cache, an in-memory projection) and cannot run the
+    /// EF predicate. Returns true iff an item of the given type+rating is visible under the
+    /// ceilings, with the SAME fail-safe semantics (null ContentRating is blocked when a ceiling
+    /// applies). Audit wave-2 WS-2 — shared so the cache/collection paths can't drift from the
+    /// repository's SQL gate.
+    public static bool IsRatingAllowed(UserRatingCeilings ceilings, MediaType type, string? contentRating)
+    {
+        if (ceilings.IsUnrestricted) return true;
+
+        IReadOnlyList<string>? allowed = type switch
+        {
+            MediaType.Movie => RatingTables.AllowedAtOrBelow(RatingTables.Movie, ceilings.Movie),
+            MediaType.Series or MediaType.Season or MediaType.Episode
+                => RatingTables.AllowedAtOrBelow(RatingTables.Tv, ceilings.Tv),
+            MediaType.Game => RatingTables.AllowedAtOrBelow(RatingTables.Game, ceilings.Game),
+            _ => null, // ungated types (Audio/Album/Artist/Photo/Book/Comic) pass through
+        };
+
+        if (allowed == null) return true; // no ceiling configured for this type
+        return contentRating != null && allowed.Contains(contentRating);
+    }
 }

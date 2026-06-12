@@ -5,22 +5,38 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>f50a9853-2b0d-466c-abb4-c1d63b3a7f77</UserSecretsId>
+    <!-- Security (audit H-4 / CVE-2025-55315, Kestrel request smuggling, CVSS 9.9): roll the
+         published app forward to the latest installed 8.0.x runtime patch. The Kestrel fix ships
+         in the .NET 8 RUNTIME (>= 8.0.21), not in a NuGet package, so the BUILD/DEPLOY host must
+         have runtime >= 8.0.21 installed. See docs deploy guide. The package pins below are at the
+         patched 8.0.13 band to clear the System.Text.Json / Caching.Memory advisories. -->
+    <TargetLatestRuntimePatch>true</TargetLatestRuntimePatch>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Konscious.Security.Cryptography.Argon2" Version="1.3.1" />
     <PackageReference Include="MetadataExtractor" Version="2.9.0" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.2" />
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.2" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.2">
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.13" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.13" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.13">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.2" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.13" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.13" />
+    <!-- Security (audit H-4 / dependency SCA): explicit pins that lift the transitively-resolved
+         8.0.0 versions flagged High by the dotnet vulnerable-package scan
+         (System.Text.Json: GHSA-hh2w-p6rv-4g7w + GHSA-8g4q-xg66-9fp4;
+          Microsoft.Extensions.Caching.Memory: GHSA-qj66-m88j-hmgj). -->
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />
     <PackageReference Include="Otp.NET" Version="1.4.1" />
     <PackageReference Include="PdfPig" Version="0.1.11" />
-    <PackageReference Include="SharpCompress" Version="0.38.0" />
+    <!-- Security (audit H-4 / dependency SCA): SharpCompress <= 0.47.4 carries the
+         WriteToDirectory zip-slip (GHSA-6c8g-7p36-r338, Moderate), fixed in 0.48.0. SoftMedia
+         never calls WriteToDirectory (the comic reader streams entries via OpenEntryStream, so the
+         advisory is unreachable), but we bump to the latest patched line for hygiene + clean SCA. -->
+    <PackageReference Include="SharpCompress" Version="0.49.1" />
     <PackageReference Include="SkiaSharp" Version="3.119.2" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0" />

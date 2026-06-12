@@ -1,0 +1,54 @@
+# Security dependency scanning (audit wave-2 WS-1 / finding I-16).
+# Fails the build when a known-vulnerable NuGet or npm package is present, so a
+# future dependency bump (or a transitive regression) can't silently reintroduce
+# an advisory like the ones cleared in this wave (System.Text.Json,
+# Microsoft.Extensions.Caching.Memory, SharpCompress, react-router-dom, axios).
+name: security-scan
+
+on:
+  push:
+    branches: [main, "security/**"]
+  pull_request:
+  schedule:
+    # Weekly, so newly-disclosed advisories against pinned versions surface even
+    # without a code change.
+    - cron: "0 6 * * 1"
+
+jobs:
+  dotnet-vulnerable-packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          # >= 8.0.21 carries the Kestrel CVE-2025-55315 fix (audit H-4).
+          dotnet-version: "8.0.x"
+      - name: Restore
+        run: dotnet restore src/SoftMedia.Server/SoftMedia.Server.csproj
+      - name: Scan for vulnerable + deprecated packages
+        run: |
+          set -euo pipefail
+          dotnet list src/SoftMedia.Server/SoftMedia.Server.csproj package --vulnerable --include-transitive 2>&1 | tee scan.txt
+          if grep -Eiq "has the following vulnerable packages" scan.txt; then
+            echo "::error::Vulnerable NuGet packages detected — see scan above."
+            exit 1
+          fi
+          echo "No vulnerable NuGet packages."
+
+  npm-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/SoftMedia.Client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      # Production dependencies are shipped to the browser — gate on High there.
+      # Dev-only advisories (test/build tooling) are reported but not gated.
+      - name: npm audit (production, gate on high)
+        run: npm audit --omit=dev --audit-level=high
+      - name: npm audit (full, report-only)
+        run: npm audit || true

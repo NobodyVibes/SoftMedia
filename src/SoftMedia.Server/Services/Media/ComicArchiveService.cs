@@ -3,7 +3,8 @@ using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 using Microsoft.Extensions.Caching.Memory;
-using SharpCompress.Archives.Rar;
+using SharpCompress.Archives;
+using SharpCompress.Factories;
 using SoftMedia.Server.Services.Abstractions;
 
 namespace SoftMedia.Server.Services.Media;
@@ -302,12 +303,15 @@ public class ComicArchiveService : IComicArchiveService
 
     private sealed class RarComicArchiveReader : IComicArchiveReader
     {
-        private readonly RarArchive _archive;
+        private readonly IArchive _archive;
 
-        private RarComicArchiveReader(RarArchive archive) { _archive = archive; }
+        private RarComicArchiveReader(IArchive archive) { _archive = archive; }
 
+        // SharpCompress >= 0.48 replaced the static RarArchive.Open overloads with the factory
+        // OpenArchive API. The archive opens and owns the file handle and releases it on
+        // _archive.Dispose().
         public static RarComicArchiveReader Open(string filePath) =>
-            new(RarArchive.Open(filePath));
+            new(new RarFactory().OpenArchive(new FileInfo(filePath), new SharpCompress.Readers.ReaderOptions()));
 
         public IEnumerable<ComicArchiveEntry> Entries =>
             _archive.Entries

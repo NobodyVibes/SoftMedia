@@ -83,6 +83,21 @@ public class BackupServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateBackup_DoesNotBundleAppSettings()
+    {
+        // Audit wave-2 M-8: appsettings.json (JWT signing secret = TOTP AES root, + provider API
+        // keys) must NEVER be bundled — it's unused on restore and would turn a leaked backup into
+        // a full authentication-system compromise on top of the password hashes in the DB.
+        SeedUsers(1);
+        var (svc, _) = Build();
+        var info = await svc.CreateBackupAsync(CancellationToken.None);
+
+        using var zip = ZipFile.OpenRead(Path.Combine(_backupDir, info.Id + ".zip"));
+        Assert.Null(zip.GetEntry("appsettings.json"));
+        Assert.NotNull(zip.GetEntry("softmedia.db")); // still functional
+    }
+
+    [Fact]
     public async Task CreateBackup_ManifestSha256_MatchesDbEntryBytes()
     {
         SeedUsers(1);

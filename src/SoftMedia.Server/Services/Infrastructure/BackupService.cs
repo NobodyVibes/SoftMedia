@@ -35,6 +35,9 @@ public class BackupService : IBackupService
     // Keeps the archive id/filename immutable while the label can change freely.
     private const string NameMarkerSuffix = ".label";
     private const int MaxNameLength = 120;
+    // Security (audit wave-2 L-20): upper bound on a restored database to stop a decompression-bomb
+    // backup from filling the disk. Generous for a large home library; far below a bomb.
+    private const long MaxRestoreDbBytes = 4L * 1024 * 1024 * 1024;
 
     private readonly AppDbContext _db;
     private readonly ISettingsService _settings;
@@ -77,11 +80,12 @@ public class BackupService : IBackupService
 
             var dbBytes = await File.ReadAllBytesAsync(tempDb, ct);
 
-            // 2. appsettings.json (best-effort; may be absent in some deployments).
-            byte[]? appSettingsBytes = null;
-            var appSettingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
-            if (File.Exists(appSettingsPath))
-                appSettingsBytes = await File.ReadAllBytesAsync(appSettingsPath, ct);
+            // Security (audit wave-2 M-8): do NOT bundle appsettings.json. It is never consumed on
+            // restore (StageRestoreAsync only extracts the database), but it typically holds the JWT
+            // signing secret — which is ALSO the root of the TOTP-secret AES key — and metadata
+            // provider API keys, turning any leaked backup into a complete authentication-system
+            // compromise on top of the password hashes already in the DB. Operators restore their
+            // own config; the database is the only thing a backup needs to carry.
 
             var lastMigration = (await _db.Database.GetAppliedMigrationsAsync(ct)).LastOrDefault();
 
@@ -92,8 +96,6 @@ public class BackupService : IBackupService
                 var files = new List<object>();
 
                 await AddEntryAsync(zip, DbEntryName, dbBytes, files, ct);
-                if (appSettingsBytes != null)
-                    await AddEntryAsync(zip, "appsettings.json", appSettingsBytes, files, ct);
 
                 var manifest = new
                 {
@@ -232,7 +234,29 @@ public class BackupService : IBackupService
                     }
                 }
 
-                dbEntry.ExtractToFile(tempDb, overwrite: true);
+                // Security (audit wave-2 L-20): bound the extraction so a malicious/oversized
+                // backup (decompression bomb) can't fill the disk during an admin restore. Guard
+                // on the declared size AND on the actual decompressed bytes (a ratio bomb can lie
+                // about Length), aborting past the cap.
+                if (dbEntry.Length > MaxRestoreDbBytes)
+                    return new RestoreStageResult(false,
+                        $"Backup database is implausibly large ({dbEntry.Length / (1024 * 1024)} MB).", false);
+
+                await using (var entryStream = dbEntry.Open())
+                await using (var outStream = new FileStream(tempDb, FileMode.Create, FileAccess.Write))
+                {
+                    var buffer = new byte[81920];
+                    long total = 0;
+                    int read;
+                    while ((read = await entryStream.ReadAsync(buffer, ct)) > 0)
+                    {
+                        total += read;
+                        if (total > MaxRestoreDbBytes)
+                            return new RestoreStageResult(false,
+                                "Backup database exceeds the maximum restore size.", false);
+                        await outStream.WriteAsync(buffer.AsMemory(0, read), ct);
+                    }
+                }
             }
 
             // Validate the extracted DB is a real SQLite database before staging.

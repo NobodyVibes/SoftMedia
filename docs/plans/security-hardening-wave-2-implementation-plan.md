@@ -6,19 +6,26 @@
 
 ## Implementation status
 
-**Branch `security/hardening-wave-2`. P0 complete — all four High findings remediated.** Suite `SoftMedia.Server.Tests`: **788 passing, 1 skipped (pre-existing .cbr fixture), 0 failing** (one pre-existing flaky timing test in the scanner/metadata suite passes on retry). SPA `tsc` clean; `npm audit --omit=dev` clean.
+**Branch `security/hardening-wave-2`. All four High findings + most Mediums + many Lows remediated, each with regression tests.** Suite `SoftMedia.Server.Tests`: **~815 passing, 1 skipped (pre-existing .cbr fixture), 0 failing** (a pre-existing flaky in-memory-SQLite teardown + scanner-timing test occasionally fails in the full parallel run but passes in isolation/retry — unrelated to these changes). SPA `tsc` clean; `npm audit --omit=dev` clean.
 
-| WS | Status | Commit summary |
-|----|--------|----------------|
-| WS‑0 | ✅ done | Confirmed the ⚠ findings: real advisories (System.Text.Json/Caching.Memory High, SharpCompress Moderate, react-router/axios High) + a **new** frame-cache ACL bypass (static cross-user cache read before the access check) + lock-eviction/web.archive.org confirmed. |
-| WS‑1 | ✅ done | Bumped server packages (STJ 8.0.5, Caching.Memory 8.0.1, ASP.NET/EF 8.0.13, SharpCompress 0.49.1 + RarFactory API migration), `TargetLatestRuntimePatch` for CVE-2025-55315; react-router-dom 7.17.0, axios 1.17.0, `@xmldom/xmldom` override 0.8.13; added `.github/workflows/security.yml` SCA gate. |
-| WS‑2 | ✅ done | H-1 recent-cache ACL+rating gate + `MediaItemDto.Path`→filename-only; M-1 collections rating ceiling; L-1 watchlist; L-2 playlists AddItems ACL; frame-cache ACL fix. New `IsRatingAllowed` shared predicate + regression tests. |
-| WS‑3 | ✅ done | H-2/L-6 — `RevokeUserSessionsAsync` on admin password-reset/ban/deny/delete/un-approve. |
+| WS | Status | Summary |
+|----|--------|---------|
+| WS‑0 | ✅ done | Confirmed ⚠ findings: real advisories (STJ/Caching.Memory High, SharpCompress Moderate, react-router/axios High) + a **new** frame-cache ACL bypass + lock-eviction/web.archive.org. |
+| WS‑1 | ✅ done | H-4/I-16 — server package bumps + RarFactory API migration + `TargetLatestRuntimePatch`; react-router-dom 7.17, axios 1.17, `@xmldom/xmldom` 0.8.13 override; `.github/workflows/security.yml` SCA gate. |
+| WS‑2 | ✅ done | H-1/M-1/L-1/L-2 — recent-cache ACL+rating gate + `MediaItemDto.Path`→filename; collections/watchlist rating ceiling; playlists AddItems ACL; frame-cache ACL fix. |
+| WS‑3 | ✅ done | H-2/L-6 — revoke refresh tokens + trusted devices on admin reset/ban/deny/delete/un-approve. |
 | WS‑4 | ✅ done | H-3 — `ImageSafety` header-only pixel-budget guard at both SkiaSharp decode sites. |
-| WS‑6 | ◑ partial | T6.3 done — media token re-checks live user state (L-3). **T6.1/T6.2/T6.4 deferred** (reject role-bearing query tokens + SPA hard-depend + GET-only): need coordinated SPA migration + E2E testing because the SignalR hub and cold-load media URLs currently ride the full access token in the query string. |
-| WS‑5, WS‑7…WS‑14 | ☐ todo | Not yet started. WS-7 should fold in the WS-0 lock-eviction + frame-preview-DoS confirmations. |
+| WS‑5 | ✅ done | M-7/L-13/L-22 — full per-component symlink canonicalisation; scanner skips reparse points + depth bound; MusicImageService routed through the central jail; symlink tests fail-loud on POSIX. |
+| WS‑6 | ◑ partial | T6.3 done — media token re-checks live user state (L-3). **T6.1/T6.2/T6.4 deferred** (reject role-bearing query tokens + SPA hard-depend + GET-only): need SPA migration + E2E (hub + cold-load media URLs ride the full access token in the query string). |
+| WS‑7 | ◑ partial | M-4/L-14/L-25 done — `sid` validation + path re-jail; finite hard transcode ceiling; lock eviction on session removal. **M-5** (full count-and-reserve atomicity) and **L-21** (frame-preview cap) deferred. |
+| WS‑8 | ✅ done | M-6/L-15 — opt-in DLNA per-rating ceiling on browse + metadata + media-stream; Browse page-size clamp. |
+| WS‑9 | ◑ partial | M-8/L-20 done — stop bundling appsettings.json (secret) in backups; bounded restore extraction. **wwwroot backup-dir guard deferred** (needs IWebHostEnvironment injection). |
+| WS‑10 | ◑ partial | L-7 done — password policy on admin CreateUser. **M-3/L-8/L-9/L-10/I-2/I-4/I-5 deferred.** |
+| WS‑11 | ✅ done | L-11/L-12 — webhook SSRF classifier blocks unspecified address (0.0.0.0/::) + CGNAT 100.64/10. |
+| WS‑12 | ◑ partial | L-19 done — rate limiter moved after authentication (per-user partitions now see the principal). **L-18 deferred** (Clients.All scan-progress powers the app-wide toast; scoping needs admin+group targeting + frontend coordination); L-23/L-24 deferred. |
+| WS‑13, WS‑14 | ☐ todo | CSP + token-at-rest (needs SPA E2E); consistency cleanup (ArgumentList migration, hardcoded binary paths, archive.org allowlist). |
 
-> **Note for the next session:** WS-5 (path canonicalisation, M-7) and WS-7 (transcode `sid` validation + atomic caps + lock eviction) are the next-highest value. WS-6's deferred parts and WS-13 (CSP) require running the SPA end-to-end (reader/player/casting/SignalR) to avoid breakage.
+> **Remaining work for a follow-up session (in priority order):** M-5 atomic transcode cap (needs concurrency testing); M-3 TOTP-lockout TOCTOU + L-10 recovery-code KDF (auth hardening); the WS-6 query-token rejection + WS-13 CSP + L-18 scan-progress scoping (all need the SPA run end-to-end — reader/player/casting/SignalR — to avoid breakage); WS-9 wwwroot guard; WS-14 cleanup. The deferred items are documented inline in their workstreams above.
 
 ---
 

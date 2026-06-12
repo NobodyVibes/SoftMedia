@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Media;
@@ -21,12 +22,33 @@ public class UsersController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IPasswordHasher _passwordHasher;
     private readonly IUserPreferencesService _userPreferencesService;
+    private readonly IRefreshTokenService _refreshTokens;
+    private readonly ITrustedDeviceService _trustedDevices;
 
-    public UsersController(AppDbContext context, IPasswordHasher passwordHasher, IUserPreferencesService userPreferencesService)
+    public UsersController(
+        AppDbContext context,
+        IPasswordHasher passwordHasher,
+        IUserPreferencesService userPreferencesService,
+        IRefreshTokenService refreshTokens,
+        ITrustedDeviceService trustedDevices)
     {
         _context = context;
         _passwordHasher = passwordHasher;
         _userPreferencesService = userPreferencesService;
+        _refreshTokens = refreshTokens;
+        _trustedDevices = trustedDevices;
+    }
+
+    /// <summary>
+    /// Audit wave-2 WS-3 (H-2/L-6): revoke every refresh token and remembered-2FA device for a
+    /// user so an admin action (password reset, ban, delete, deny/un-approve) actually evicts any
+    /// live session. Mirrors the self-service AuthController.ChangePassword revocation — without
+    /// this, a stolen refresh-token chain keeps minting access tokens after the "fix".
+    /// </summary>
+    private async Task RevokeUserSessionsAsync(Guid userId, string reason)
+    {
+        await _refreshTokens.RevokeAllForUserAsync(userId, reason);
+        await _trustedDevices.RevokeAllAsync(userId);
     }
 
     [HttpGet]
@@ -186,6 +208,13 @@ public class UsersController : ControllerBase
         user.IsBanned = request.IsBanned;
         await _context.SaveChangesAsync();
 
+        // Audit wave-2 L-6: banning must immediately cut off live sessions (refresh chain +
+        // remembered 2FA device), otherwise a stateless access/refresh token outlives the ban.
+        if (request.IsBanned)
+        {
+            await RevokeUserSessionsAsync(user.Id, RefreshTokenRevocationReason.AccountSuspended);
+        }
+
         return Ok();
     }
 
@@ -200,6 +229,12 @@ public class UsersController : ControllerBase
 
         user.IsApproved = request.IsApproved;
         await _context.SaveChangesAsync();
+
+        // Audit wave-2 L-6: un-approving is an account-suspension — evict live sessions.
+        if (!request.IsApproved)
+        {
+            await RevokeUserSessionsAsync(user.Id, RefreshTokenRevocationReason.AccountSuspended);
+        }
 
         return Ok();
     }
@@ -216,6 +251,9 @@ public class UsersController : ControllerBase
         user.IsRejected = true;
         user.IsApproved = false; // Ensure they are not approved
         await _context.SaveChangesAsync();
+
+        // Audit wave-2 L-6: denying revokes any session the user established before denial.
+        await RevokeUserSessionsAsync(user.Id, RefreshTokenRevocationReason.AccountSuspended);
 
         return Ok();
     }
@@ -265,6 +303,9 @@ public class UsersController : ControllerBase
         }
 
         await _context.SaveChangesAsync();
+
+        // Audit wave-2 L-6: a deleted account's sessions must die immediately.
+        await RevokeUserSessionsAsync(id, RefreshTokenRevocationReason.AccountSuspended);
 
         return Ok();
     }
@@ -371,6 +412,10 @@ public class UsersController : ControllerBase
         user.MustChangePassword = false;
 
         await _context.SaveChangesAsync();
+
+        // Audit wave-2 H-2: an admin password reset is the canonical "the account is compromised"
+        // response — it MUST evict the attacker's live sessions, not just rotate the hash.
+        await RevokeUserSessionsAsync(user.Id, RefreshTokenRevocationReason.PasswordChange);
 
         return Ok();
     }

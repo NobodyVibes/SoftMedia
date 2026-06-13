@@ -20,6 +20,13 @@ public class VideoPreviewService : IVideoPreviewService
     private static readonly Dictionary<string, (byte[] Data, DateTime Expires)> _frameCache = new();
     private static readonly object _frameCacheLock = new();
 
+    // Audit wave-2 L-21: bound concurrent frame extractions. Each is a separate CPU-heavy ffmpeg
+    // decode that is NOT counted against the transcode session cap, so without this a flood of
+    // distinct ?time= values could spawn unlimited ffmpeg processes and exhaust the host. Process-
+    // wide gate; requests that can't get a slot promptly are shed rather than queued unboundedly.
+    private const int MaxConcurrentExtractions = 4;
+    private static readonly SemaphoreSlim _extractionGate = new(MaxConcurrentExtractions, MaxConcurrentExtractions);
+
     public VideoPreviewService(
         IBinaryLocationService binaryLocationService,
         IServiceScopeFactory scopeFactory,
@@ -60,10 +67,18 @@ public class VideoPreviewService : IVideoPreviewService
             }
         }
 
+        // Audit wave-2 L-21: acquire a frame-extraction slot or shed the request, so a flood of
+        // distinct timestamps can't spawn unbounded concurrent ffmpeg decodes.
+        if (!await _extractionGate.WaitAsync(TimeSpan.FromSeconds(3)))
+        {
+            _logger.LogWarning("Frame-extraction gate saturated; shedding request for {MediaId}", mediaId);
+            return (null, string.Empty);
+        }
+
         // Extract single frame using FFmpeg
         var ffmpegPath = _binaryLocationService.ResolveFFmpegPath();
         var tempFile = Path.Combine(Path.GetTempPath(), $"frame_{mediaId}_{roundedTime}.jpg");
-        
+
         try
         {
             // Use FFmpeg to extract frame at timestamp (fast seek with -ss before -i)
@@ -145,6 +160,10 @@ public class VideoPreviewService : IVideoPreviewService
         {
             _logger.LogError(ex, "Error extracting frame for {MediaId} at {Time}", mediaId, time);
             return (null, string.Empty);
+        }
+        finally
+        {
+            _extractionGate.Release();
         }
     }
 }

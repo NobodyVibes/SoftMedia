@@ -154,6 +154,7 @@ public class AccountController : ControllerBase
     /// Begins enrollment: generates a secret + otpauth URI (client renders the QR) and
     /// stores the encrypted secret in a not-yet-enabled row. Confirm with a code next.
     /// </summary>
+    [EnableRateLimiting(ServiceCollectionExtensions.TwoFactorRateLimitPolicy)] // audit wave-2 I-4
     [HttpPost("totp/enroll")]
     public async Task<IActionResult> EnrollTotp()
     {
@@ -222,6 +223,12 @@ public class AccountController : ControllerBase
         var totp = await _context.UserTotps.FirstOrDefaultAsync(t => t.UserId == userId.Value);
         if (totp?.EnabledAt == null) return BadRequest("2FA is not enabled.");
 
+        // Audit wave-2 L-8: bound code guessing on the disable path with the same atomic per-user
+        // lockout the login 2FA flow uses (in addition to the password check above and the
+        // per-policy rate limit), so an attacker who has the password can't brute-force the code.
+        if (_totp.TryBeginAttempt(userId.Value))
+            return StatusCode(StatusCodes.Status429TooManyRequests, "Too many incorrect codes. Please wait a few minutes and try again.");
+
         var ok = _totp.VerifyCode(totp.EncryptedSecret, request.Code);
         if (!ok)
         {
@@ -231,6 +238,7 @@ public class AccountController : ControllerBase
         }
         if (!ok) return BadRequest("Invalid authentication code.");
 
+        _totp.ResetFailedAttempts(userId.Value); // clear the counter on a successful disable
         _context.UserTotps.Remove(totp);
         await _context.SaveChangesAsync();
 

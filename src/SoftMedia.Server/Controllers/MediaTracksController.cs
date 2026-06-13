@@ -42,15 +42,18 @@ public class MediaTracksController : ControllerBase
 {
     private readonly IMediaRepository _mediaRepository;
     private readonly IStreamSecurityService _securityService;
+    private readonly IBinaryLocationService _binaryLocation;
     private readonly ILogger<MediaTracksController> _logger;
 
     public MediaTracksController(
         IMediaRepository mediaRepository,
         IStreamSecurityService securityService,
+        IBinaryLocationService binaryLocation,
         ILogger<MediaTracksController> logger)
     {
         _mediaRepository = mediaRepository;
         _securityService = securityService;
+        _binaryLocation = binaryLocation;
         _logger = logger;
     }
 
@@ -142,7 +145,7 @@ public class MediaTracksController : ControllerBase
     /// </summary>
     private async Task<MediaTracksResponse> ExtractTracksAsync(string path)
     {
-        var ffprobePath = ResolveFFprobePath();
+        var ffprobePath = _binaryLocation.ResolveFFprobePath();
         var startInfo = new ProcessStartInfo
         {
             FileName = ffprobePath,
@@ -278,7 +281,7 @@ public class MediaTracksController : ControllerBase
     /// </summary>
     private async Task<string?> ExtractSubtitleAsWebVTTAsync(string path, int trackIndex)
     {
-        var ffmpegPath = ResolveFFmpegPath();
+        var ffmpegPath = _binaryLocation.ResolveFFmpegPath();
         
         _logger.LogInformation("Extracting subtitle track {TrackIndex} from {Path} using {FFmpeg}", 
             trackIndex, path, ffmpegPath);
@@ -335,52 +338,17 @@ public class MediaTracksController : ControllerBase
         return output;
     }
 
-    private string ResolveFFprobePath()
-    {
-        var candidates = new[]
-        {
-            Path.Combine(Directory.GetCurrentDirectory(), "ffprobe.exe"),
-            @"C:\Program Files\ffmpeg-2024-06-27-git-9a3bc59a38-full_build\bin\ffprobe.exe",
-            @"C:\ffmpeg\bin\ffprobe.exe",
-            @"C:\Program Files\ffmpeg\bin\ffprobe.exe",
-            @"C:\ProgramData\chocolatey\bin\ffprobe.exe",
-        };
-
-        foreach (var candidate in candidates)
-        {
-            if (System.IO.File.Exists(candidate))
-                return candidate;
-        }
-
-        return "ffprobe";
-    }
-
-    private string ResolveFFmpegPath()
-    {
-        var candidates = new[]
-        {
-            Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg.exe"),
-            @"C:\Program Files\ffmpeg-2024-06-27-git-9a3bc59a38-full_build\bin\ffmpeg.exe",
-            @"C:\ffmpeg\bin\ffmpeg.exe",
-            @"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
-            @"C:\ProgramData\chocolatey\bin\ffmpeg.exe",
-        };
-
-        foreach (var candidate in candidates)
-        {
-            if (System.IO.File.Exists(candidate))
-                return candidate;
-        }
-
-        return "ffmpeg";
-    }
+    // Audit wave-2 I-6: the bespoke hardcoded Windows ffmpeg/ffprobe path resolvers were removed
+    // in favour of the shared IBinaryLocationService, which honours the FFmpeg:Path config and the
+    // bundled ffmpeg-bin/ folder and works cross-platform (the old list 404'd ffprobe on Linux,
+    // falling back to a bare "ffprobe" on PATH).
 
     /// <summary>
     /// Probe media file duration using FFprobe.
     /// </summary>
     private async Task<double> ProbeDurationAsync(string path)
     {
-        var ffprobePath = ResolveFFprobePath();
+        var ffprobePath = _binaryLocation.ResolveFFprobePath();
         var startInfo = new ProcessStartInfo
         {
             FileName = ffprobePath,

@@ -43,17 +43,19 @@ public class ImageCacheService : IImageCacheService
     };
 
     /// <summary>
-    /// A host is allowed if it is an exact allowlist member OR a subdomain of
-    /// archive.org. Cover Art Archive "front" URLs 302/307-redirect through
-    /// archive.org to a per-release Internet Archive storage node
-    /// (iaNNN.us.archive.org / dnNNNNNN.ca.archive.org) — trusted IA infrastructure.
-    /// The suffix is anchored on ".archive.org" (note the leading dot) so it admits
-    /// only genuine subdomains and never matches look-alikes ("evilarchive.org") or
-    /// internal SSRF targets ("169.254.169.254").
+    /// A host is allowed if it is an exact allowlist member OR an Internet Archive STORAGE node.
+    /// Cover Art Archive "front" URLs 302/307-redirect to a per-release IA storage node
+    /// (iaNNN.us.archive.org / dnNNNNNN.ca.archive.org). Audit wave-2 L-26: the suffix is anchored
+    /// on ".us.archive.org" / ".ca.archive.org" (the documented storage patterns) rather than the
+    /// broad ".archive.org", so it admits the genuine CAA targets but NOT web.archive.org — the
+    /// Wayback Machine, a content-rewriting fetch proxy that could launder an arbitrary upstream
+    /// fetch through an allowlisted host. Look-alikes ("evilarchive.org") and internal SSRF targets
+    /// never matched the dot-anchored suffix.
     /// </summary>
     private static bool IsHostAllowed(string host) =>
         AllowedHosts.Contains(host)
-        || host.EndsWith(".archive.org", StringComparison.OrdinalIgnoreCase);
+        || host.EndsWith(".us.archive.org", StringComparison.OrdinalIgnoreCase)
+        || host.EndsWith(".ca.archive.org", StringComparison.OrdinalIgnoreCase);
 
     public ImageCacheService(HttpClient httpClient, ILogger<ImageCacheService> logger, IWebHostEnvironment env)
     {

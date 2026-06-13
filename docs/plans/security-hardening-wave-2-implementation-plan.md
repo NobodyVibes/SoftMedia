@@ -23,7 +23,7 @@
 | WS‑10 | ◑ partial | **M-3** (atomic 2FA lockout — closes the brute-force race), L-7 (password policy on CreateUser), L-8 (disable-path lockout), I-4 (enroll rate limit) done. **L-9/L-10/I-2/I-5 deferred** — L-10 recovery-code KDF invalidates existing codes (migration); I-2 enumeration is rate-limited with a UX tradeoff; I-5 refresh-rotation atomicity needs an interface change + InMemory-provider fallback. |
 | WS‑11 | ✅ done | L-11/L-12 — webhook SSRF classifier blocks unspecified address (0.0.0.0/::) + CGNAT 100.64/10. |
 | WS‑12 | ◑ partial | L-19 (rate limiter after auth) + **L-23** (SignalR Join throttle) done. **L-18 deferred** (Clients.All scan-progress powers the app-wide toast; scoping needs admin+group targeting + frontend coordination); L-24 (hub ACL re-check on revocation) deferred. |
-| WS‑13 | ☐ todo | CSP + token-at-rest — needs the SPA run end-to-end (reader/player/casting/SignalR) to tune sources without white-screening. |
+| WS‑13 | ◑ partial | **CSP shipped report-only** (tuned policy + `Security:EnforceCsp` flag, default off — safe, never blocks). **Promoting to enforcing + token-in-memory (T13.2) deferred** — need the SPA run end-to-end (reader/player/casting/SignalR) to confirm the policy is clean before flipping the flag. |
 | WS‑14 | ◑ partial | **I-6** (MediaTracks → IBinaryLocationService) + **L-26** (image allowlist narrowed off web.archive.org) done. **I-9** (full ArgumentList migration — defense-in-depth, MediaPathSafety already closes the live vector) and **I-3** (DB-backed must_change) deferred. |
 
 > **Remaining work for a follow-up session, by why it's deferred:**

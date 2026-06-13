@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -52,7 +53,10 @@ public class BackupServiceTests : IDisposable
         var settings = new Mock<ISettingsService>();
         settings.Setup(s => s.GetSettingAsync("Maintenance.BackupDirectory", It.IsAny<string>()))
                 .ReturnsAsync(_backupDir);
-        var svc = new BackupService(db, settings.Object, NullLogger<BackupService>.Instance);
+        // Web root is a sibling of the backup dir, so the wwwroot guard (L-20) doesn't trip.
+        var env = new Mock<IWebHostEnvironment>();
+        env.Setup(e => e.WebRootPath).Returns(Path.Combine(_tempRoot, "wwwroot"));
+        var svc = new BackupService(db, settings.Object, env.Object, NullLogger<BackupService>.Instance);
         return (svc, db);
     }
 
@@ -95,6 +99,45 @@ public class BackupServiceTests : IDisposable
         using var zip = ZipFile.OpenRead(Path.Combine(_backupDir, info.Id + ".zip"));
         Assert.Null(zip.GetEntry("appsettings.json"));
         Assert.NotNull(zip.GetEntry("softmedia.db")); // still functional
+    }
+
+    [Fact]
+    public async Task BackupDirectory_InsideWebRoot_IsRejected_AndFallsBack()
+    {
+        // Audit wave-2 L-20: a backup dir configured inside wwwroot would publish secret-bearing
+        // backups for anonymous download. The service must refuse it and fall back to the default.
+        var webRoot = Path.Combine(_tempRoot, "wwwroot");
+        var unsafeDir = Path.Combine(webRoot, "backups");
+        Directory.CreateDirectory(webRoot);
+
+        var db = new AppDbContext(_options);
+        var settings = new Mock<ISettingsService>();
+        settings.Setup(s => s.GetSettingAsync("Maintenance.BackupDirectory", It.IsAny<string>()))
+                .ReturnsAsync(unsafeDir);
+        var env = new Mock<IWebHostEnvironment>();
+        env.Setup(e => e.WebRootPath).Returns(webRoot);
+        var svc = new BackupService(db, settings.Object, env.Object, NullLogger<BackupService>.Instance);
+
+        SeedUsers(1);
+        var fallbackDir = Path.GetFullPath("./data/backups", Directory.GetCurrentDirectory());
+        string? createdId = null;
+        try
+        {
+            var info = await svc.CreateBackupAsync(CancellationToken.None);
+            createdId = info.Id;
+
+            // Nothing must have been written under the web root.
+            Assert.False(Directory.Exists(unsafeDir) && Directory.EnumerateFiles(unsafeDir).Any());
+            // It went to the safe fallback instead.
+            Assert.True(File.Exists(Path.Combine(fallbackDir, info.Id + ".zip")));
+        }
+        finally
+        {
+            // Clean up only the artifacts THIS test created in the cwd fallback dir.
+            if (createdId != null && Directory.Exists(fallbackDir))
+                foreach (var f in Directory.EnumerateFiles(fallbackDir, createdId + "*"))
+                    try { File.Delete(f); } catch { /* best-effort */ }
+        }
     }
 
     [Fact]

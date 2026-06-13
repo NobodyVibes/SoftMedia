@@ -41,12 +41,14 @@ public class BackupService : IBackupService
 
     private readonly AppDbContext _db;
     private readonly ISettingsService _settings;
+    private readonly IWebHostEnvironment _env;
     private readonly ILogger<BackupService> _logger;
 
-    public BackupService(AppDbContext db, ISettingsService settings, ILogger<BackupService> logger)
+    public BackupService(AppDbContext db, ISettingsService settings, IWebHostEnvironment env, ILogger<BackupService> logger)
     {
         _db = db;
         _settings = settings;
+        _env = env;
         _logger = logger;
     }
 
@@ -330,10 +332,31 @@ public class BackupService : IBackupService
 
     // --- helpers ---
 
+    private const string DefaultBackupDir = "./data/backups";
+
     private async Task<string> GetBackupDirectoryAsync()
     {
-        var configured = await _settings.GetSettingAsync("Maintenance.BackupDirectory", "./data/backups");
-        return Path.GetFullPath(configured, Directory.GetCurrentDirectory());
+        var configured = await _settings.GetSettingAsync("Maintenance.BackupDirectory", DefaultBackupDir);
+        var resolved = Path.GetFullPath(configured, Directory.GetCurrentDirectory());
+
+        // Security (audit wave-2 L-20): refuse a backup directory that lives inside the web root.
+        // Backups carry the full database (password hashes, encrypted TOTP secrets, recovery-code
+        // hashes); a dir under wwwroot would make them anonymously web-downloadable via the static
+        // file middleware. Fall back to the safe default rather than honour an unsafe location.
+        var webRoot = !string.IsNullOrEmpty(_env.WebRootPath)
+            ? _env.WebRootPath
+            : Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
+        var webRootFull = Path.GetFullPath(webRoot);
+        if (!webRootFull.EndsWith(Path.DirectorySeparatorChar)) webRootFull += Path.DirectorySeparatorChar;
+        if ((resolved + Path.DirectorySeparatorChar).StartsWith(webRootFull, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogError(
+                "Configured backup directory {Configured} is inside the web root — it would expose secret-bearing " +
+                "backups for anonymous download. Falling back to {Default}.", resolved, DefaultBackupDir);
+            return Path.GetFullPath(DefaultBackupDir, Directory.GetCurrentDirectory());
+        }
+
+        return resolved;
     }
 
     /// <summary>

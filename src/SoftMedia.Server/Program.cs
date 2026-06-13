@@ -204,9 +204,11 @@ if (!jwtValidation.IsValid)
 // in builder.Services.Configure<ForwardedHeadersOptions>.
 app.UseForwardedHeaders();
 
-// Security response headers (audit H3 Referer leak + L7 hardening). Early so it covers
-// the API, the static SPA, and error responses alike.
-app.UseSecurityHeaders();
+// Security response headers (audit H3 Referer leak + L7 hardening + WS-13 CSP). Early so it covers
+// the API, the static SPA, and error responses alike. The CSP ships REPORT-ONLY unless the
+// operator opts into enforcement via Security:EnforceCsp (default false) — so it can't white-screen
+// the SPA before a live reader/player/casting/SignalR run confirms the policy is clean.
+app.UseSecurityHeaders(app.Configuration.GetValue<bool>("Security:EnforceCsp"));
 
 // Audit L8: optional HTTP->HTTPS redirect. OFF by default so HTTP-only LAN deployments and
 // TLS-terminating reverse proxies (which forward plain HTTP with X-Forwarded-Proto=https) are

@@ -120,5 +120,11 @@ public class MediaTokenIntegrationTests : IntegrationTestBase
         Assert.Equal("no-referrer", resp.Headers.GetValues("Referrer-Policy").Single());
         Assert.Equal("nosniff", resp.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.Equal("SAMEORIGIN", resp.Headers.GetValues("X-Frame-Options").Single());
+
+        // Audit wave-2 WS-13: CSP ships report-only by default (Security:EnforceCsp unset in tests),
+        // so it is observed but never blocks — and the enforcing header must NOT be present.
+        Assert.True(resp.Headers.Contains("Content-Security-Policy-Report-Only"));
+        Assert.False(resp.Headers.Contains("Content-Security-Policy"));
+        Assert.Contains("default-src 'self'", resp.Headers.GetValues("Content-Security-Policy-Report-Only").Single());
     }
 }

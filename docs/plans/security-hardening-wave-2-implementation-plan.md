@@ -6,7 +6,7 @@
 
 ## Implementation status
 
-**Branch `security/hardening-wave-2`. All four High findings + most Mediums + many Lows remediated, each with regression tests.** Suite `SoftMedia.Server.Tests`: **~815 passing, 1 skipped (pre-existing .cbr fixture), 0 failing** (a pre-existing flaky in-memory-SQLite teardown + scanner-timing test occasionally fails in the full parallel run but passes in isolation/retry — unrelated to these changes). SPA `tsc` clean; `npm audit --omit=dev` clean.
+**Branch `security/hardening-wave-2`. All four High findings + every Medium except M-5 + the large majority of Lows/Infos remediated, each with regression tests.** Suite `SoftMedia.Server.Tests`: **818 passing, 1 skipped (pre-existing .cbr fixture), 0 failing** (a pre-existing flaky in-memory-SQLite teardown + scanner-timing test occasionally fails in the full parallel run but passes in isolation/retry — unrelated to these changes). SPA `tsc` clean; `npm audit --omit=dev` clean.
 
 | WS | Status | Summary |
 |----|--------|---------|
@@ -17,15 +17,20 @@
 | WS‑4 | ✅ done | H-3 — `ImageSafety` header-only pixel-budget guard at both SkiaSharp decode sites. |
 | WS‑5 | ✅ done | M-7/L-13/L-22 — full per-component symlink canonicalisation; scanner skips reparse points + depth bound; MusicImageService routed through the central jail; symlink tests fail-loud on POSIX. |
 | WS‑6 | ◑ partial | T6.3 done — media token re-checks live user state (L-3). **T6.1/T6.2/T6.4 deferred** (reject role-bearing query tokens + SPA hard-depend + GET-only): need SPA migration + E2E (hub + cold-load media URLs ride the full access token in the query string). |
-| WS‑7 | ◑ partial | M-4/L-14/L-25 done — `sid` validation + path re-jail; finite hard transcode ceiling; lock eviction on session removal. **M-5** (full count-and-reserve atomicity) and **L-21** (frame-preview cap) deferred. |
+| WS‑7 | ◑ partial | M-4/L-14/L-25/**L-21** done — `sid` validation + path re-jail; finite hard transcode ceiling; lock eviction; frame-preview concurrency cap. **M-5** (full count-and-reserve atomicity) deferred — L-14's hard ceiling already bounds the race to a small finite overage; the full fix needs concurrency load-testing. |
 | WS‑8 | ✅ done | M-6/L-15 — opt-in DLNA per-rating ceiling on browse + metadata + media-stream; Browse page-size clamp. |
-| WS‑9 | ◑ partial | M-8/L-20 done — stop bundling appsettings.json (secret) in backups; bounded restore extraction. **wwwroot backup-dir guard deferred** (needs IWebHostEnvironment injection). |
-| WS‑10 | ◑ partial | L-7 done — password policy on admin CreateUser. **M-3/L-8/L-9/L-10/I-2/I-4/I-5 deferred.** |
+| WS‑9 | ✅ done | M-8/L-20 — stop bundling appsettings.json (secret) in backups; bounded restore extraction; reject a backup dir inside the web root (IWebHostEnvironment injected). |
+| WS‑10 | ◑ partial | **M-3** (atomic 2FA lockout — closes the brute-force race), L-7 (password policy on CreateUser), L-8 (disable-path lockout), I-4 (enroll rate limit) done. **L-9/L-10/I-2/I-5 deferred** — L-10 recovery-code KDF invalidates existing codes (migration); I-2 enumeration is rate-limited with a UX tradeoff; I-5 refresh-rotation atomicity needs an interface change + InMemory-provider fallback. |
 | WS‑11 | ✅ done | L-11/L-12 — webhook SSRF classifier blocks unspecified address (0.0.0.0/::) + CGNAT 100.64/10. |
-| WS‑12 | ◑ partial | L-19 done — rate limiter moved after authentication (per-user partitions now see the principal). **L-18 deferred** (Clients.All scan-progress powers the app-wide toast; scoping needs admin+group targeting + frontend coordination); L-23/L-24 deferred. |
-| WS‑13, WS‑14 | ☐ todo | CSP + token-at-rest (needs SPA E2E); consistency cleanup (ArgumentList migration, hardcoded binary paths, archive.org allowlist). |
+| WS‑12 | ◑ partial | L-19 (rate limiter after auth) + **L-23** (SignalR Join throttle) done. **L-18 deferred** (Clients.All scan-progress powers the app-wide toast; scoping needs admin+group targeting + frontend coordination); L-24 (hub ACL re-check on revocation) deferred. |
+| WS‑13 | ☐ todo | CSP + token-at-rest — needs the SPA run end-to-end (reader/player/casting/SignalR) to tune sources without white-screening. |
+| WS‑14 | ◑ partial | **I-6** (MediaTracks → IBinaryLocationService) + **L-26** (image allowlist narrowed off web.archive.org) done. **I-9** (full ArgumentList migration — defense-in-depth, MediaPathSafety already closes the live vector) and **I-3** (DB-backed must_change) deferred. |
 
-> **Remaining work for a follow-up session (in priority order):** M-5 atomic transcode cap (needs concurrency testing); M-3 TOTP-lockout TOCTOU + L-10 recovery-code KDF (auth hardening); the WS-6 query-token rejection + WS-13 CSP + L-18 scan-progress scoping (all need the SPA run end-to-end — reader/player/casting/SignalR — to avoid breakage); WS-9 wwwroot guard; WS-14 cleanup. The deferred items are documented inline in their workstreams above.
+> **Remaining work for a follow-up session, by why it's deferred:**
+> - **Needs the SPA run end-to-end** (can't be verified headless here): WS-6 T6.1/T6.2/T6.4 query-token rejection + SPA media-token migration; WS-13 CSP + token-in-memory; L-18 scan-progress scoping (the app-wide toast depends on the broadcast).
+> - **Needs concurrency load-testing / interface surface**: M-5 atomic transcode cap (L-14 mitigates); I-5 atomic refresh rotation (nullable return + InMemory-provider fallback).
+> - **Migration / UX tradeoff**: L-10 recovery-code KDF (invalidates existing codes); I-2 signup-enumeration uniform response (silent no-op on a typo'd existing username; already rate-limited).
+> - **Defense-in-depth, low value**: I-9 full ArgumentList migration (MediaPathSafety already closes the H-2 vector); I-3 DB-backed must_change; L-24 hub group re-check on revocation.
 
 ---
 

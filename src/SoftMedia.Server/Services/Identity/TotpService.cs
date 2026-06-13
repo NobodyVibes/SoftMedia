@@ -35,6 +35,15 @@ public interface ITotpService
     bool IsLockedOut(Guid userId);
     /// Records one failed 2FA code for the user, arming a lockout once the threshold is reached.
     void RegisterFailedAttempt(Guid userId);
+    /// <summary>
+    /// Atomically registers a 2FA ATTEMPT and reports whether the user is (now) locked out — the
+    /// race-free primitive the 2FA handler should call at the top, BEFORE verifying the code
+    /// (audit wave-2 M-3). Counting attempts up front under a single atomic update means concurrent
+    /// in-flight guesses are debited immediately, so the check-then-increment window that let a
+    /// caller fan out parallel guesses past the threshold no longer exists. Returns true when the
+    /// caller must reject. <see cref="ResetFailedAttempts"/> clears the counter on success.
+    /// </summary>
+    bool TryBeginAttempt(Guid userId);
     /// Clears the failure counter on a successful 2FA.
     void ResetFailedAttempts(Guid userId);
 }
@@ -171,6 +180,28 @@ public class TotpService : ITotpService
                 DateTime? lockedUntil = failures >= MaxFailedAttempts ? DateTime.UtcNow.Add(LockoutDuration) : s.LockedUntil;
                 return (failures, lockedUntil);
             });
+    }
+
+    public bool TryBeginAttempt(Guid userId)
+    {
+        // The AddOrUpdate update delegate runs under the dictionary's per-key lock, so concurrent
+        // calls for the same user are serialised — each increments exactly once and the call that
+        // crosses the threshold arms the lockout that every subsequent in-flight call then sees.
+        var state = _failures.AddOrUpdate(
+            userId,
+            _ => (1, (DateTime?)null),
+            (_, s) =>
+            {
+                // A prior lockout that has elapsed starts a fresh window.
+                if (s.LockedUntil is { } until && until <= DateTime.UtcNow) s = (0, null);
+                // Already locked and still cooling down — keep as-is (don't extend on each probe).
+                if (s.LockedUntil is { } active && active > DateTime.UtcNow) return s;
+                var attempts = s.Failures + 1;
+                DateTime? lockedUntil = attempts >= MaxFailedAttempts ? DateTime.UtcNow.Add(LockoutDuration) : null;
+                return (attempts, lockedUntil);
+            });
+
+        return state.LockedUntil is { } lu && lu > DateTime.UtcNow;
     }
 
     public void ResetFailedAttempts(Guid userId) => _failures.TryRemove(userId, out _);

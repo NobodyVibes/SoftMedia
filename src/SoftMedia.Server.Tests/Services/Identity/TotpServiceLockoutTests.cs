@@ -58,4 +58,54 @@ public class TotpServiceLockoutTests
         Assert.True(svc.IsLockedOut(locked));
         Assert.False(svc.IsLockedOut(other)); // a different user is unaffected
     }
+
+    // --- TryBeginAttempt: the atomic, race-free primitive (audit wave-2 M-3) ---
+
+    [Fact]
+    public void TryBeginAttempt_AllowsUpToThresholdMinusOne_ThenLocks()
+    {
+        var svc = NewService();
+        var user = Guid.NewGuid();
+
+        for (var i = 0; i < Threshold - 1; i++)
+            Assert.False(svc.TryBeginAttempt(user)); // attempts 1..9 proceed
+
+        Assert.True(svc.TryBeginAttempt(user));  // 10th attempt arms + reports lockout
+        Assert.True(svc.TryBeginAttempt(user));  // subsequent attempts stay locked
+        Assert.True(svc.IsLockedOut(user));
+    }
+
+    [Fact]
+    public async Task TryBeginAttempt_ConcurrentCalls_NeverExceedThreshold()
+    {
+        // The whole point of M-3: firing many parallel attempts must NOT let more than
+        // (Threshold-1) guesses through before the lockout arms — the check-then-increment race
+        // previously allowed concurrent callers to slip past.
+        var svc = NewService();
+        var user = Guid.NewGuid();
+        var proceeded = 0;
+
+        await Parallel.ForEachAsync(Enumerable.Range(0, 200), async (_, _) =>
+        {
+            if (!svc.TryBeginAttempt(user)) Interlocked.Increment(ref proceeded);
+            await Task.CompletedTask;
+        });
+
+        Assert.Equal(Threshold - 1, proceeded); // exactly 9 proceed, regardless of concurrency
+        Assert.True(svc.IsLockedOut(user));
+    }
+
+    [Fact]
+    public void TryBeginAttempt_ResetClearsCounter()
+    {
+        var svc = NewService();
+        var user = Guid.NewGuid();
+        for (var i = 0; i < Threshold - 1; i++) svc.TryBeginAttempt(user);
+
+        svc.ResetFailedAttempts(user); // a successful 2FA clears the count
+
+        // Fresh budget after reset.
+        Assert.False(svc.TryBeginAttempt(user));
+        Assert.False(svc.IsLockedOut(user));
+    }
 }

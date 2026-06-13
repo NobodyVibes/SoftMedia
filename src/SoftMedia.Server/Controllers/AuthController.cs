@@ -223,10 +223,12 @@ public class AuthController : ControllerBase
         if (!_totpService.TryConsumeChallenge(id, out var userId))
             return Unauthorized("2FA challenge expired or invalid. Please log in again.");
 
-        // Audit M3: per-user brute-force lockout. Bounds guessing regardless of how many
-        // challenge ids an attacker mints by re-logging-in (the per-challenge rate limit alone
-        // was re-armable). The minute-window code keyspace is only 10^6, so this matters.
-        if (_totpService.IsLockedOut(userId))
+        // Audit M3 + wave-2 M-3: per-user brute-force lockout. Bounds guessing regardless of how
+        // many challenge ids an attacker mints by re-logging-in (the per-challenge rate limit alone
+        // was re-armable). TryBeginAttempt atomically counts THIS attempt and reports lockout up
+        // front, so firing N concurrent /auth/2fa requests can't slip past the threshold via the
+        // old check-then-increment race. The minute-window keyspace is only 10^6, so this matters.
+        if (_totpService.TryBeginAttempt(userId))
             return Unauthorized("Too many incorrect codes. Please wait a few minutes and try again.");
 
         var totp = await _context.UserTotps.FirstOrDefaultAsync(t => t.UserId == userId);
@@ -239,7 +241,8 @@ public class AuthController : ControllerBase
         var verified = _totpService.VerifyCode(totp.EncryptedSecret, request.Code);
         if (!verified && !TryConsumeRecoveryCode(totp, request.Code))
         {
-            _totpService.RegisterFailedAttempt(userId);
+            // The attempt was already debited by TryBeginAttempt above (race-free), so we don't
+            // double-count here — just reject.
             return Unauthorized("Invalid authentication code.");
         }
         _totpService.ResetFailedAttempts(userId);

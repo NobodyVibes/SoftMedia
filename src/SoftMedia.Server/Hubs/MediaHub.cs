@@ -17,10 +17,36 @@ public class MediaHub : Hub
     private readonly ILogger<MediaHub> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
 
+    // Audit wave-2 L-23: bound Join* invocations per connection. Each Join runs 1-2 SQLite queries,
+    // so an authenticated client spamming joins is a cheap DB-pressure vector. Fixed-window counter
+    // keyed by connection id (evicted on disconnect); excess joins are silently dropped. 30 / 10s
+    // is far above any legitimate burst (the SPA joins one library group on navigation).
+    private const int MaxJoinsPerWindow = 30;
+    private static readonly TimeSpan JoinWindow = TimeSpan.FromSeconds(10);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime WindowStart, int Count)> _joinRates = new();
+
     public MediaHub(ILogger<MediaHub> logger, IServiceScopeFactory scopeFactory)
     {
         _logger = logger;
         _scopeFactory = scopeFactory;
+    }
+
+    /// <summary>Fixed-window per-connection throttle for the Join* methods (audit wave-2 L-23).
+    /// Returns true when the caller has exceeded the window budget and the join should be dropped.</summary>
+    private bool JoinThrottleExceeded()
+    {
+        var now = DateTime.UtcNow;
+        var entry = _joinRates.AddOrUpdate(
+            Context.ConnectionId,
+            _ => (now, 1),
+            (_, s) => (now - s.WindowStart) > JoinWindow ? (now, 1) : (s.WindowStart, s.Count + 1));
+        if (entry.Count > MaxJoinsPerWindow)
+        {
+            _logger.LogWarning("Connection {ConnectionId} exceeded the Join throttle ({Count}/{Window}s)",
+                Context.ConnectionId, entry.Count, JoinWindow.TotalSeconds);
+            return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -29,6 +55,7 @@ public class MediaHub : Hub
     /// </summary>
     public async Task JoinLibrary(string libraryId)
     {
+        if (JoinThrottleExceeded()) return;
         if (!Guid.TryParse(libraryId, out var libGuid))
         {
             _logger.LogWarning("Client {ConnectionId} attempted to join invalid library ID: {LibraryId}",
@@ -108,6 +135,7 @@ public class MediaHub : Hub
     /// </summary>
     public async Task JoinMedia(string mediaId)
     {
+        if (JoinThrottleExceeded()) return;
         if (!Guid.TryParse(mediaId, out var mediaGuid))
         {
             _logger.LogWarning("Client {ConnectionId} attempted to join invalid media ID: {MediaId}",
@@ -163,6 +191,7 @@ public class MediaHub : Hub
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         _logger.LogInformation("Client disconnected: {ConnectionId}", Context.ConnectionId);
+        _joinRates.TryRemove(Context.ConnectionId, out _); // audit wave-2 L-23: evict throttle state
         await base.OnDisconnectedAsync(exception);
     }
 }

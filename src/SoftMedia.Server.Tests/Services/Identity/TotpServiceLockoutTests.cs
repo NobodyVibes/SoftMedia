@@ -96,6 +96,25 @@ public class TotpServiceLockoutTests
     }
 
     [Fact]
+    public void GenerateRecoveryCodes_Have80BitsEntropy_AndAreDistinct()
+    {
+        // Audit wave-2 L-10: recovery codes must carry >= 80 bits (20 hex chars) so they're not
+        // offline-brute-forceable from a DB/backup leak.
+        var svc = NewService();
+        var (plaintext, hashes) = svc.GenerateRecoveryCodes(10);
+
+        Assert.Equal(10, plaintext.Count);
+        Assert.Equal(10, hashes.Count);
+        foreach (var code in plaintext)
+        {
+            var hex = code.Replace("-", "");
+            Assert.Equal(20, hex.Length); // 20 hex chars = 80 bits
+            Assert.Matches("^[0-9a-f]{20}$", hex);
+        }
+        Assert.Equal(plaintext.Count, plaintext.Distinct().Count()); // no collisions
+    }
+
+    [Fact]
     public void TryBeginAttempt_ResetClearsCounter()
     {
         var svc = NewService();

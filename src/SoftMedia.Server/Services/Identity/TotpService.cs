@@ -126,9 +126,13 @@ public class TotpService : ITotpService
         var hashes = new List<string>(count);
         for (var i = 0; i < count; i++)
         {
-            // 10 hex chars, dash-grouped for readability (e.g. "a1b2-c3d4e").
-            var raw = Convert.ToHexString(RandomNumberGenerator.GetBytes(5)).ToLowerInvariant();
-            var code = $"{raw[..4]}-{raw[4..]}";
+            // Audit wave-2 L-10: 80 bits of entropy (10 CSPRNG bytes -> 20 hex chars, dash-grouped
+            // for readability). The old 40-bit code was offline-brute-forceable from a DB/backup
+            // leak (~10^12 keyspace); 80 bits makes that infeasible regardless of the (fast) hash.
+            // Forward-only: existing codes use the same hash function so they still verify — no
+            // migration breakage; users get longer codes on their next (re-)enrollment.
+            var raw = Convert.ToHexString(RandomNumberGenerator.GetBytes(10)).ToLowerInvariant();
+            var code = string.Join('-', Enumerable.Range(0, 5).Select(g => raw.Substring(g * 4, 4)));
             plaintext.Add(code);
             hashes.Add(HashRecoveryCode(code));
         }

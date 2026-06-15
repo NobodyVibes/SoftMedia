@@ -4,11 +4,19 @@ public static class SecurityHeadersExtensions
 {
     /// <summary>
     /// Content-Security-Policy for the SPA (audit wave-2 WS-13). Tuned for SoftMedia's actual
-    /// sources: same-origin everything, plus <c>blob:</c> for hls.js media workers / react-pdf
-    /// (pdf.js) workers, <c>data:</c>/<c>blob:</c> images and media, and <c>'unsafe-inline'</c>
-    /// styles (framer-motion injects inline styles; Tailwind ships external CSS). Scripts are
-    /// same-origin only — the Vite production build emits external JS, no inline script. Same-origin
-    /// iframes (<c>frame-src 'self'</c>) keep the epub.js reader working.
+    /// sources (verified against the Vite production build):
+    ///   - <c>script-src 'self' https://www.gstatic.com</c> — the bundle is same-origin (no inline
+    ///     script), plus the Google Cast Web Sender SDK (<c>cast_sender.js</c>) that index.html
+    ///     loads from gstatic for the casting feature; without gstatic an enforcing CSP breaks Cast.
+    ///   - <c>style-src 'self' 'unsafe-inline'</c> — framer-motion injects inline styles at runtime;
+    ///     Tailwind ships external CSS.
+    ///   - <c>img-src</c>/<c>media-src</c> <c>data:</c>/<c>blob:</c> — hls.js / react-pdf (pdf.js)
+    ///     workers and decoded media use blob URLs; external posters are same-origin via the image
+    ///     proxy. gstatic is allowed for Cast UI assets.
+    ///   - <c>worker-src 'self' blob:</c> — hls.js/pdf.js workers + the PWA service worker (/sw.js).
+    ///   - <c>frame-src 'self' https://www.gstatic.com</c> — the epub.js reader iframe (same-origin)
+    ///     and the Cast framework's media-router iframe.
+    ///   - <c>connect-src 'self' ws: wss: https://www.gstatic.com</c> — API + SignalR websocket + Cast.
     ///
     /// Shipped in REPORT-ONLY by default so it can never white-screen the SPA: browsers evaluate
     /// it and report violations but enforce nothing. After an operator confirms a clean run
@@ -16,14 +24,14 @@ public static class SecurityHeadersExtensions
     /// </summary>
     private const string ContentSecurityPolicy =
         "default-src 'self'; " +
-        "script-src 'self'; " +
+        "script-src 'self' https://www.gstatic.com; " +
         "style-src 'self' 'unsafe-inline'; " +
-        "img-src 'self' data: blob:; " +
+        "img-src 'self' data: blob: https://www.gstatic.com; " +
         "media-src 'self' blob:; " +
         "font-src 'self' data:; " +
-        "connect-src 'self' ws: wss:; " +
+        "connect-src 'self' ws: wss: https://www.gstatic.com; " +
         "worker-src 'self' blob:; " +
-        "frame-src 'self'; " +
+        "frame-src 'self' https://www.gstatic.com; " +
         "object-src 'none'; " +
         "base-uri 'self'; " +
         "form-action 'self'; " +

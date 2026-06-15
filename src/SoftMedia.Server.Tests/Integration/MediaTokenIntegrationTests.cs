@@ -125,6 +125,10 @@ public class MediaTokenIntegrationTests : IntegrationTestBase
         // so it is observed but never blocks — and the enforcing header must NOT be present.
         Assert.True(resp.Headers.Contains("Content-Security-Policy-Report-Only"));
         Assert.False(resp.Headers.Contains("Content-Security-Policy"));
-        Assert.Contains("default-src 'self'", resp.Headers.GetValues("Content-Security-Policy-Report-Only").Single());
+        var csp = resp.Headers.GetValues("Content-Security-Policy-Report-Only").Single();
+        Assert.Contains("default-src 'self'", csp);
+        // The Google Cast SDK (cast_sender.js) loads from gstatic — the policy must allow it so an
+        // enforcing CSP doesn't break casting (verified against the built index.html).
+        Assert.Contains("script-src 'self' https://www.gstatic.com", csp);
     }
 }

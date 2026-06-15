@@ -137,7 +137,9 @@ public class RefreshTokenServiceTests
         var svc = new RefreshTokenService(db);
 
         var (_, oldEntity) = await svc.IssueAsync(user, null);
-        var (newRaw, newEntity) = await svc.RotateAsync(oldEntity, "10.0.0.1");
+        var rotated = await svc.RotateAsync(oldEntity, "10.0.0.1");
+        Assert.NotNull(rotated);
+        var (newRaw, newEntity) = rotated!.Value;
 
         var refreshedOld = await db.RefreshTokens.FindAsync(oldEntity.Id);
         Assert.NotNull(refreshedOld!.RevokedAt);
@@ -152,6 +154,28 @@ public class RefreshTokenServiceTests
         // Raw returned for new is valid
         var result = await svc.ValidateAsync(newRaw);
         Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public async Task RotateAsync_SecondRotationOfSameToken_ReturnsNull_AndDoesNotForkTheChain()
+    {
+        // Audit wave-2 I-5: rotating the SAME token twice (the concurrent-refresh case) must claim
+        // it atomically — the second rotation returns null instead of creating a second live
+        // replacement that would fork the chain and defeat reuse-detection.
+        using var db = NewDb();
+        var user = NewUser(); db.Users.Add(user); await db.SaveChangesAsync();
+        var svc = new RefreshTokenService(db);
+
+        var (_, oldEntity) = await svc.IssueAsync(user, null);
+
+        var first = await svc.RotateAsync(oldEntity, null);
+        Assert.NotNull(first); // first rotation wins
+
+        var second = await svc.RotateAsync(oldEntity, null);
+        Assert.Null(second);   // loser gets null, no second replacement
+
+        // old (now revoked) + exactly one replacement = 2 rows. No fork.
+        Assert.Equal(2, db.RefreshTokens.Count());
     }
 
     [Fact]

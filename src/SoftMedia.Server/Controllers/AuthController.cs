@@ -428,7 +428,19 @@ public class AuthController : ControllerBase
             return Unauthorized("Account not eligible. Please login again.");
         }
 
-        var (newRaw, _) = await _refreshTokens.RotateAsync(validation.Token, ClientIp());
+        var rotated = await _refreshTokens.RotateAsync(validation.Token, ClientIp());
+        if (rotated is null)
+        {
+            // Audit wave-2 I-5: a concurrent refresh of the SAME token won the atomic claim. This is
+            // a benign race (e.g. two tabs), NOT token theft — clear the cookie and ask the client
+            // to re-authenticate WITHOUT nuking the whole chain (the winner already has a fresh one).
+            _logger.LogInformation(
+                "Refresh lost the concurrent rotation race for user {UserId}; asking client to re-login.",
+                validation.Token.UserId);
+            ClearRefreshTokenCookie();
+            return Unauthorized("Session was refreshed concurrently. Please login again.");
+        }
+        var (newRaw, _) = rotated.Value;
         SetRefreshTokenCookie(newRaw);
 
         var accessToken = _tokenService.GenerateAccessToken(user);

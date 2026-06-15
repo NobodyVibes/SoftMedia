@@ -82,7 +82,7 @@ public class RefreshTokenService : IRefreshTokenService
         return RefreshTokenValidationResult.Ok(token);
     }
 
-    public async Task<(string rawToken, RefreshToken entity)> RotateAsync(
+    public async Task<(string rawToken, RefreshToken entity)?> RotateAsync(
         RefreshToken current, string? ip, CancellationToken ct = default)
     {
         var now = _time.GetUtcNow().UtcDateTime;
@@ -98,14 +98,45 @@ public class RefreshTokenService : IRefreshTokenService
             CreatedByIp = Truncate(ip, 45),
         };
 
-        current.RevokedAt = now;
-        current.RevokedByIp = Truncate(ip, 45);
-        current.ReasonRevoked = RefreshTokenRevocationReason.Rotated;
-        current.ReplacedByTokenId = replacement.Id;
+        // Audit wave-2 I-5: atomically CLAIM the current token (flip RevokedAt null->now) so two
+        // concurrent refreshes of the same token can't each create a replacement and fork the chain
+        // (which would silently defeat reuse-detection). Only the claim that flips RevokedAt
+        // proceeds; the loser returns null.
+        if (_db.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            // The InMemory provider (tests) doesn't support ExecuteUpdate and doesn't enforce FKs;
+            // tests are single-threaded so a tracked check-and-set is sufficient there.
+            if (current.RevokedAt != null) return null;
+            current.RevokedAt = now;
+            current.RevokedByIp = Truncate(ip, 45);
+            current.ReasonRevoked = RefreshTokenRevocationReason.Rotated;
+            current.ReplacedByTokenId = replacement.Id;
+            _db.RefreshTokens.Add(replacement);
+            await _db.SaveChangesAsync(ct);
+            return (raw, replacement);
+        }
 
+        // Real provider: INSERT the replacement first so the ReplacedByTokenId FK target exists,
+        // THEN atomically claim `current` via a conditional UPDATE ... WHERE RevokedAt IS NULL.
+        // (Setting ReplacedByTokenId before the replacement row exists violates the self-FK.)
         _db.RefreshTokens.Add(replacement);
         await _db.SaveChangesAsync(ct);
-        return (raw, replacement);
+
+        var affected = await _db.RefreshTokens
+            .Where(rt => rt.Id == current.Id && rt.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(rt => rt.RevokedAt, now)
+                .SetProperty(rt => rt.RevokedByIp, Truncate(ip, 45))
+                .SetProperty(rt => rt.ReasonRevoked, RefreshTokenRevocationReason.Rotated)
+                .SetProperty(rt => rt.ReplacedByTokenId, replacement.Id), ct);
+
+        if (affected == 1) return (raw, replacement);
+
+        // Lost the race — another concurrent refresh already rotated `current`. Remove the orphan
+        // replacement we inserted (its raw token was never handed out) so the chain doesn't fork.
+        _db.RefreshTokens.Remove(replacement);
+        await _db.SaveChangesAsync(ct);
+        return null;
     }
 
     public async Task RevokeAsync(

@@ -25,7 +25,14 @@ public interface IRefreshTokenService
     /// Revokes <paramref name="current"/> (reason = "rotated"), issues a fresh
     /// token, and links the two via <c>ReplacedByTokenId</c> so future reuse
     /// detection can find the chain.
-    Task<(string rawToken, RefreshToken entity)> RotateAsync(
+    /// <para>
+    /// The revoke-and-replace is performed as a single ATOMIC conditional claim (audit wave-2
+    /// I-5): if a concurrent refresh of the SAME token already rotated it, this returns
+    /// <c>null</c> instead of forking the chain into two live replacements (which would defeat
+    /// reuse-detection). The caller treats <c>null</c> as a benign lost race — clear the cookie
+    /// and ask the client to re-authenticate, WITHOUT triggering chain-wide reuse revocation.
+    /// </para>
+    Task<(string rawToken, RefreshToken entity)?> RotateAsync(
         RefreshToken current, string? ip, CancellationToken ct = default);
 
     /// Marks a single token revoked. No-op if already revoked.

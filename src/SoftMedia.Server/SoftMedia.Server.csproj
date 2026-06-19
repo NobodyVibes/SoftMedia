@@ -11,6 +11,7 @@
          have runtime >= 8.0.21 installed. See docs deploy guide. The package pins below are at the
          patched 8.0.13 band to clear the System.Text.Json / Caching.Memory advisories. -->
     <TargetLatestRuntimePatch>true</TargetLatestRuntimePatch>
+    <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
   </PropertyGroup>
 
   <ItemGroup>
@@ -43,10 +44,11 @@
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Content Include="ffmpeg-bin\**">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-  </ItemGroup>
+  <!-- ffmpeg is NOT vendored in this repo. SoftMedia requires the jellyfin-ffmpeg build
+       (it carries the chromaprint muxer used by intro/credits detection, plus the hwaccel paths).
+       It is fetched at setup time via setup.ps1 -> install_ffmpeg.ps1 (Windows) / install_ffmpeg.sh
+       (macOS), or apt-installed (jellyfin-ffmpeg7) in the Docker image. BinaryLocationService resolves
+       it from FFmpeg:Path -> a co-located ffmpeg-bin/ -> PATH. See
+       docs/plans/licensing-and-repo-hygiene-plan-2026-06-18.md. -->
 
 </Project>

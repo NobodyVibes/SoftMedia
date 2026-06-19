@@ -1,5 +1,10 @@
 # SoftMedia — Feature & Settings Gap Analysis vs Plex / Jellyfin
 
+> **⚠️ SUPERSEDED (2026-06-16).** This May-2026 analysis is stale — many gaps it lists (DLNA, webhooks,
+> trickplay, 2FA, API tokens, invites, PWA, etc.) have since shipped. See the current, code-verified
+> `docs/reports/feature-gap-analysis-2026-06-16.md` and `docs/plans/feature-implementation-plan-2026-06-16.md`.
+> Retained for historical context only.
+
 **Author:** Engineering review
 **Date:** 2026-05-07
 **Status:** Peer-reviewed

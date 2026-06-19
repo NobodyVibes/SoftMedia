@@ -31,3 +31,16 @@
 - [x] Phase 5: Scanner Performance Optimization (FileDiscoveryResult caching, O(1) TV Episode lookups)
 - [x] Phase 6: MetadataJson Dual-Write Cleanup (Removed legacy Genres column)
 
+## Licensing & Repo Hygiene (June 2026)
+_Plan: `docs/plans/licensing-and-repo-hygiene-plan-2026-06-18.md` (rev. 3)._
+- [x] Relicense under AGPL-3.0-or-later (LICENSE + SPDX in csproj/package.json)
+- [x] THIRD-PARTY-NOTICES.md + `scripts/gen-licenses.ps1` regenerator
+- [x] De-vendor ffmpeg from git (4 binaries untracked, .gitignore, csproj ItemGroup removed)
+- [x] Fetch jellyfin-ffmpeg at setup (install_ffmpeg.ps1 rewrite + install_ffmpeg.sh; chromaprint gate)
+- [x] Harden BinaryLocationService (assembly-relative + jellyfin-ffmpeg candidates; warn on bare-PATH)
+- [x] CONTRIBUTING.md + CLA.md + CLA-assistant workflow + SECURITY.md
+- [x] README: License, Privacy/egress, AGPL §13 (repo-level) sections; CHANGELOG.md
+- [ ] In-app (UI) AGPL §13 source link (repo-level offer done; UI link pending)
+- [ ] Git-history purge of the old binaries (deferred pending repo public/private status)
+- [ ] Wire CLA-assistant PAT secret + a CI license-compatibility gate (maintainer action)
+

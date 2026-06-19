@@ -42,7 +42,12 @@ public class BinaryLocationService : IBinaryLocationService
             Path.Combine(Directory.GetCurrentDirectory(), executableName),
             Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg-bin", executableName),
             Path.Combine(Directory.GetCurrentDirectory(), "Tools", executableName),
-            Path.Combine(Directory.GetCurrentDirectory(), "bin", executableName)
+            Path.Combine(Directory.GetCurrentDirectory(), "bin", executableName),
+            // Assembly-relative (CWD-independent) — covers published / non-server-dir launches.
+            Path.Combine(AppContext.BaseDirectory, executableName),
+            Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin", executableName),
+            // jellyfin-ffmpeg apt-package install location (Linux/Docker) — NOT on PATH.
+            "/usr/lib/jellyfin-ffmpeg/ffmpeg"
         };
 
         foreach (var candidate in candidates)
@@ -54,8 +59,14 @@ public class BinaryLocationService : IBinaryLocationService
             }
         }
 
-        // 3. Fallback to System PATH
-        _logger.LogDebug("ffmpeg not found in common locations, falling back to system PATH 'ffmpeg'.");
+        // 3. Last-resort fallback to System PATH. WARN, not Debug: SoftMedia requires the
+        // jellyfin-ffmpeg build (it has the chromaprint muxer used by intro/credits detection).
+        // A bare "ffmpeg" on PATH may be a distro/Gyan build WITHOUT chromaprint, which breaks
+        // fingerprinting with a non-obvious error. Set FFmpeg:Path (env FFmpeg__Path) to the
+        // jellyfin-ffmpeg binary to avoid this path.
+        _logger.LogWarning("ffmpeg not found in configured/known locations; falling back to system PATH " +
+            "'ffmpeg'. This may resolve a build WITHOUT the chromaprint muxer — set FFmpeg:Path to a " +
+            "jellyfin-ffmpeg binary if intro/credits detection misbehaves.");
         return "ffmpeg";
     }
 
@@ -80,7 +91,12 @@ public class BinaryLocationService : IBinaryLocationService
             Path.Combine(Directory.GetCurrentDirectory(), executableName),
             Path.Combine(Directory.GetCurrentDirectory(), "ffmpeg-bin", executableName),
             Path.Combine(Directory.GetCurrentDirectory(), "Tools", executableName),
-            Path.Combine(Directory.GetCurrentDirectory(), "bin", executableName)
+            Path.Combine(Directory.GetCurrentDirectory(), "bin", executableName),
+            // Assembly-relative (CWD-independent) — covers published / non-server-dir launches.
+            Path.Combine(AppContext.BaseDirectory, executableName),
+            Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin", executableName),
+            // jellyfin-ffmpeg apt-package install location (Linux/Docker) — NOT on PATH.
+            "/usr/lib/jellyfin-ffmpeg/ffprobe"
         };
 
         foreach (var candidate in candidates)
@@ -92,8 +108,9 @@ public class BinaryLocationService : IBinaryLocationService
             }
         }
 
-        // 3. Fallback to System PATH
-        _logger.LogDebug("ffprobe not found in common locations, falling back to system PATH 'ffprobe'.");
+        // 3. Last-resort fallback to System PATH (see ResolveFFmpegPath for the chromaprint caveat).
+        _logger.LogWarning("ffprobe not found in configured/known locations; falling back to system PATH " +
+            "'ffprobe'. Set FFmpeg:ProbePath to a jellyfin-ffmpeg binary to be explicit.");
         return "ffprobe";
     }
 }

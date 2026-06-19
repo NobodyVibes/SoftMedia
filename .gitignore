@@ -54,3 +54,10 @@ test-fixtures/
 **/test_run_*.txt
 **/test_build_*.txt
 **/errors.log
+
+# Vendored ffmpeg removed from git (see docs/plans/licensing-and-repo-hygiene-plan-2026-06-18.md).
+# jellyfin-ffmpeg is fetched at setup time, not committed. These rules prevent re-vendoring.
+/src/SoftMedia.Server/ffmpeg-bin/
+/src/SoftMedia.Server/ffmpeg.exe.bak
+/src/SoftMedia.Server/ffprobe.exe.bak
+*.exe.bak

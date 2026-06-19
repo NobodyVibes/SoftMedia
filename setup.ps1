@@ -115,8 +115,23 @@ function Test-NodeJs {
     return $false
 }
 
+function Get-SoftMediaFFmpeg {
+    # Prefer the fetched jellyfin-ffmpeg in the server's ffmpeg-bin; else any ffmpeg on PATH.
+    $local = Join-Path $ServerPath "ffmpeg-bin\ffmpeg.exe"
+    if (Test-Path $local) { return $local }
+    if (Test-CommandExists "ffmpeg") { return "ffmpeg" }
+    return $null
+}
+
 function Test-FFmpeg {
-    return Test-CommandExists "ffmpeg"
+    # SoftMedia REQUIRES the jellyfin-ffmpeg build: it carries the chromaprint muxer used by
+    # intro/credits detection (`ffmpeg -f chromaprint`). A bare/Gyan/distro ffmpeg without it is
+    # treated as "not installed" so setup fetches the correct build.
+    $exe = Get-SoftMediaFFmpeg
+    if (-not $exe) { return $false }
+    $ver = & $exe -hide_banner -version 2>$null
+    $mux = & $exe -hide_banner -muxers 2>$null
+    return (($ver -match "--enable-chromaprint") -and ($mux -match "chromaprint"))
 }
 
 function Install-Prerequisites {
@@ -170,24 +185,21 @@ function Install-Prerequisites {
         }
     }
     
-    # Check FFmpeg
-    Write-Info "Checking FFmpeg..."
+    # Check FFmpeg — SoftMedia REQUIRES jellyfin-ffmpeg (chromaprint muxer). Gyan/distro builds won't do.
+    Write-Info "Checking jellyfin-ffmpeg (chromaprint-enabled)..."
     if (Test-FFmpeg) {
-        Write-Success "FFmpeg is installed"
+        Write-Success "jellyfin-ffmpeg (chromaprint) is available"
     }
     else {
-        Write-Warning "FFmpeg not found"
-        if ($isAdmin -and (Get-WingetAvailable)) {
-            Install-WithWinget "Gyan.FFmpeg" "FFmpeg"
-            # Refresh PATH
-            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        Write-Warning "jellyfin-ffmpeg not found (or the ffmpeg on PATH lacks the chromaprint muxer)"
+        $ffmpegInstaller = Join-Path $ServerPath "install_ffmpeg.ps1"
+        if (Test-Path $ffmpegInstaller) {
+            Write-Info "Fetching the official jellyfin-ffmpeg build via install_ffmpeg.ps1..."
+            try { & $ffmpegInstaller } catch { Write-Warning "jellyfin-ffmpeg fetch failed: $_" }
         }
         else {
-            Write-Info "Please install FFmpeg from: https://ffmpeg.org/download.html"
-            Write-Info "Make sure to add FFmpeg to your system PATH."
-            if (-not $isAdmin) {
-                Write-Info "Or run this script as Administrator to auto-install."
-            }
+            Write-Info "Download jellyfin-ffmpeg from https://repo.jellyfin.org/ and place ffmpeg.exe/ffprobe.exe"
+            Write-Info "in src\SoftMedia.Server\ffmpeg-bin (or set FFmpeg:Path). Gyan/distro ffmpeg lacks chromaprint."
         }
     }
     
@@ -206,8 +218,8 @@ function Install-Prerequisites {
     }
     
     if (-not (Test-FFmpeg)) {
-        Write-Warning "FFmpeg is not installed. Transcoding features will not work."
-        # Don't fail on FFmpeg - it's optional for basic functionality
+        Write-Warning "jellyfin-ffmpeg (chromaprint) not available. Transcoding and intro/credits detection will not work."
+        # Don't hard-fail on ffmpeg - the server still starts; transcoding/fingerprinting degrade.
     }
     
     return $allGood

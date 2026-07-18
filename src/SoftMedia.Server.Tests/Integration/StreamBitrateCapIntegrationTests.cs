@@ -1,5 +1,9 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Identity;
@@ -85,6 +89,43 @@ public class StreamBitrateCapIntegrationTests : IntegrationTestBase
 
         var free = await ClientFor(uncapped).GetAsync($"/api/v1/stream/{movieId}");
         Assert.True(free.IsSuccessStatusCode, $"uncapped user should stream, got {free.StatusCode}");
+    }
+
+    [Fact]
+    public async Task StreamPlanUrl_EmbedsAServerMintedMediaToken_ThatActuallyAuthenticates()
+    {
+        // WS-6 regression (found live): the plan URL echoed the CALLER'S bearer token —
+        // which is now the full ACCESS token (the plan POST authenticates via header),
+        // and T6.1 rejects access tokens in query strings — so every DirectPlay src
+        // fetch 401'd. The server must mint a reduced media token for the URL instead,
+        // mirroring what the cast branch already did.
+        var (movieId, _, _) = await SeedAsync(movieBitrateBps: 2_000_000);
+        var user = await Factory.SeedUserAsync("plan-url-user");
+        var client = ClientFor(user); // Authorization: Bearer <ACCESS token>
+
+        var resp = await client.PostAsJsonAsync($"/api/transcode/{movieId}/plan", new
+        {
+            videoCodecs = new[] { "h264" },
+            audioCodecs = new[] { "aac" },
+            maxAudioChannels = 2,
+            supportsHdr = false,
+            supportedContainers = new[] { "hls", "mp4" },
+            supportedSubtitleFormats = new[] { "vtt" },
+        });
+        resp.EnsureSuccessStatusCode();
+        var plan = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        var url = plan.GetProperty("url").GetString()!;
+        var embedded = url.Split("token=")[1].Split('&')[0];
+
+        var jwt = new JwtSecurityTokenHandler().ReadJwtToken(embedded);
+        Assert.Equal(CastTokenClaims.MediaUse, jwt.Claims.First(c => c.Type == CastTokenClaims.TokenUse).Value);
+        Assert.DoesNotContain(jwt.Claims, c => c.Type == ClaimTypes.Role || c.Type == "role");
+
+        // The minted token must authenticate a bare query-string request — exactly how
+        // a <video src> uses it (no Authorization header available).
+        var anon = Factory.CreateClient();
+        var stream = await anon.GetAsync($"/api/v1/stream/{movieId}?token={embedded}");
+        Assert.True(stream.IsSuccessStatusCode, $"query-token stream should work, got {stream.StatusCode}");
     }
 
     [Fact]

@@ -122,15 +122,24 @@ public class TranscodeController : ControllerBase
             if (accessResult == MediaAccessResult.FileNotFound) return NotFound("File not found on disk.");
             if (accessResult == MediaAccessResult.Unauthorized) return NotFound();
 
-            var token = Request.GetToken();
+            // WS-6: the plan URL must NEVER echo the caller's bearer token. The plan POST
+            // authenticates with the full ACCESS token in a header — and T6.1 rejects
+            // access tokens in query strings, so echoing it would 401 every DirectPlay
+            // src fetch (and would put a role-bearing token into a URL besides). Mint the
+            // right reduced-privilege token for the URL instead, mirroring the cast path.
+            string token;
+            var user = await _dbContext.Users.FindAsync(userId);
+            if (user == null) return Unauthorized();
             if (cast)
             {
                 // Casting: the Chromecast fetches the stream itself and can't refresh the
                 // short-lived session JWT, so embed a long-lived token in the plan URL. It is
                 // scoped to THIS media's stream routes only (CC-WI-003) — see CastTokenClaims.
-                var user = await _dbContext.Users.FindAsync(userId);
-                if (user == null) return Unauthorized();
                 token = _tokenService.GenerateCastToken(user, id);
+            }
+            else
+            {
+                token = _tokenService.GenerateMediaToken(user).Token;
             }
 
             var userMaxBitrate = await GetUserMaxBitrateAsync(userId);

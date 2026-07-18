@@ -7,6 +7,13 @@ from 1.0 onward.
 ## [Unreleased]
 
 ### Security
+- **The main login token no longer travels in URLs** (WS-6). Query-string authentication on
+  media routes now accepts only the reduced-privilege media/cast tokens — a full access token
+  in a `?token=`/`?access_token=` query string is rejected (query strings leak into logs,
+  proxies, and browser history). Media tokens are additionally restricted to GET/HEAD, so a
+  leaked media URL can read content but never mutate anything. The web app hard-depends on
+  the media token (brief "Connecting…" gate on cold load), the real-time hub rides it too,
+  and all mutating player calls moved to Authorization headers.
 - **API-token scopes are now enforced** (previously the `read:library`/`read:state` checkboxes were
   decorative — any valid token could read all catalog metadata and user state). `read:library` gates
   every catalog/content surface (browse, search, images, book pages, streaming/transcoding);

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Tests.Helpers;
 using Xunit;
@@ -175,11 +176,23 @@ public class FileServingControllerIntegrationTests : IntegrationTestBase
     }
 
     // --- Query-string token auth (browser <img> compatibility) ------------
+    // WS-6 T6.1: query strings accept MEDIA tokens only — a full access token in
+    // the query is rejected (covered in MediaTokenIntegrationTests). These pin
+    // that the <img> path still works with the token the SPA actually uses.
+
+    private async Task<string> GetMediaTokenAsync()
+    {
+        var user = await Factory.SeedUserAsync("img-media-user");
+        using var scope = Factory.Services.CreateScope();
+        return scope.ServiceProvider
+            .GetRequiredService<SoftMedia.Server.Services.Identity.ITokenService>()
+            .GenerateMediaToken(user).Token;
+    }
 
     [Fact]
-    public async Task ImageProxy_WithQueryStringToken_PassesAuthorization()
+    public async Task ImageProxy_WithQueryStringMediaToken_PassesAuthorization()
     {
-        var token = await GetAccessTokenAsync();
+        var token = await GetMediaTokenAsync();
         var client = Factory.CreateClient();
         var response = await client.GetAsync(
             $"/api/v1/image/proxy?access_token={Uri.EscapeDataString(token)}&url=https://attacker.example.com/x.jpg");
@@ -190,9 +203,9 @@ public class FileServingControllerIntegrationTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task MusicCover_WithQueryStringToken_PassesAuthorization()
+    public async Task MusicCover_WithQueryStringMediaToken_PassesAuthorization()
     {
-        var token = await GetAccessTokenAsync();
+        var token = await GetMediaTokenAsync();
         var client = Factory.CreateClient();
         var response = await client.GetAsync(
             $"/api/v1/music/album/{Guid.NewGuid()}/cover?access_token={Uri.EscapeDataString(token)}");

@@ -341,7 +341,16 @@ public class AuthController : ControllerBase
     /// access token; the returned token omits the role claim and is accepted only on the
     /// media/streaming routes, so a leaked media URL can neither act as admin nor reach other APIs.
     /// </summary>
-    [Authorize]
+    // WS-6/B-18: a media token grants GET access to the content routes, so minting one
+    // requires the read:library scope — otherwise an unscoped API token could launder
+    // itself into content access the scope enforcement just denied it. Full sessions
+    // pass unchanged (scope policies only constrain API tokens); media tokens can't
+    // reach this route at all (/api/v1/auth is not a media route).
+    //
+    // NOTE: the class-level [AllowAnonymous] SUPPRESSES [Authorize] attributes on this
+    // controller's actions, so the gate below is enforced IN-METHOD. The attribute is
+    // kept as defense-in-depth should the class attribute ever go away.
+    [Authorize(Policy = ScopePolicies.ReadLibrary)]
     [HttpGet("media-token")]
     public async Task<ActionResult<MediaTokenResponse>> GetMediaToken()
     {
@@ -349,6 +358,17 @@ public class AuthController : ControllerBase
         if (userIdString == null || !Guid.TryParse(userIdString, out var userId))
         {
             return Unauthorized();
+        }
+
+        // In-method scope gate (see note above): an API-token principal (identified by
+        // its scope claims) must hold read:library or admin to mint a media token.
+        var apiScopes = User.FindAll(ApiTokenAuthenticationHandler.ScopeClaimType)
+            .Select(c => c.Value).ToList();
+        if (apiScopes.Count > 0
+            && !apiScopes.Contains(ApiTokenScopes.ReadLibrary)
+            && !apiScopes.Contains(ApiTokenScopes.Admin))
+        {
+            return Forbid();
         }
 
         var user = await _context.Users.FindAsync(userId);

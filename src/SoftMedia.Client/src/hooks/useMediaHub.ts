@@ -52,7 +52,13 @@ class SignalRLogger implements ILogger {
  */
 export function useMediaHub({ libraryId, mediaId }: UseMediaHubOptions) {
     const queryClient = useQueryClient();
-    const { token } = useAuthStore();
+    // WS-6 T6.1: SignalR sends its token as ?access_token= on the WebSocket
+    // handshake — a query string — so the hub must ride the MEDIA token; the
+    // server rejects full access tokens there now. App.tsx gates the authed UI
+    // until the media token exists, so this is normally true on mount.
+    // Subscribed as a BOOLEAN: the media token rotates every ~15 min and a value
+    // dependency would tear down a healthy hub connection on every rotation.
+    const hasMediaToken = useAuthStore((s) => !!s.mediaToken);
     const connectionRef = useRef<HubConnection | null>(null);
     const optionsRef = useRef({ libraryId, mediaId });
 
@@ -60,13 +66,15 @@ export function useMediaHub({ libraryId, mediaId }: UseMediaHubOptions) {
     optionsRef.current = { libraryId, mediaId };
 
     useEffect(() => {
-        // Don't connect if not authenticated
-        if (!token) return;
+        // Don't connect if not authenticated / media token not yet minted
+        if (!hasMediaToken) return;
 
-        // Build connection with auto-reconnect
+        // Build connection with auto-reconnect. The factory reads the store at
+        // CALL time so automatic reconnects pick up a rotated media token
+        // instead of replaying the one captured at mount.
         const connection = new HubConnectionBuilder()
             .withUrl('/hubs/media', {
-                accessTokenFactory: () => token
+                accessTokenFactory: () => useAuthStore.getState().mediaToken ?? ''
             })
             .withAutomaticReconnect([0, 2000, 5000, 10000, 30000]) // Retry: immediately, 2s, 5s, 10s, 30s
             .configureLogging(new SignalRLogger()) // Use custom logger
@@ -154,7 +162,7 @@ export function useMediaHub({ libraryId, mediaId }: UseMediaHubOptions) {
                     });
             }
         };
-    }, [token, queryClient]);
+    }, [hasMediaToken, queryClient]);
 
     // Handle group changes without reconnecting
     useEffect(() => {

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -49,6 +50,22 @@ public static class ServiceCollectionExtensions
         path.StartsWithSegments("/api/v1/trickplay") ||
         path.StartsWithSegments("/api/media") ||
         path.StartsWithSegments("/hubs/media");
+
+    /// <summary>
+    /// The SignalR hub is the one media route where a media token must be allowed on
+    /// non-GET requests: the connection handshake (<c>/hubs/media/negotiate</c>) is a
+    /// POST. Hub method calls are guarded by the hub's own [Authorize] + per-method
+    /// validation, not by HTTP verbs, so exempting it does not reopen WS-6 T6.4.
+    /// </summary>
+    internal static bool IsHubPath(Microsoft.AspNetCore.Http.PathString path) =>
+        path.StartsWithSegments("/hubs/media");
+
+    /// <summary>
+    /// HttpContext.Items marker set by <c>OnMessageReceived</c> when the bearer token was
+    /// lifted from the query string, so <c>OnTokenValidated</c> can enforce WS-6 T6.1
+    /// (query tokens must be media/cast tokens, never full access tokens).
+    /// </summary>
+    internal const string QueryTokenSourceKey = "softmedia:query-token-source";
 
     /// <summary>
     /// Re-checks, against the live DB, that the subject of a long-lived scoped token (cast or
@@ -124,6 +141,15 @@ public static class ServiceCollectionExtensions
                             {
                                 context.Token = accessToken;
                             }
+                            // WS-6 T6.1: remember the token rode the QUERY STRING so
+                            // OnTokenValidated can require token_use ∈ {media, cast}
+                            // there. Query strings land in logs, proxies, and browser
+                            // history — a full role-bearing access token must never be
+                            // accepted from one.
+                            if (!string.IsNullOrEmpty(context.Token))
+                            {
+                                context.HttpContext.Items[QueryTokenSourceKey] = true;
+                            }
                         }
                         return Task.CompletedTask;
                     },
@@ -131,6 +157,19 @@ public static class ServiceCollectionExtensions
                     {
                         var principal = context.Principal;
                         var tokenUse = principal?.FindFirst(CastTokenClaims.TokenUse)?.Value;
+
+                        // WS-6 T6.1 (M-2): a token lifted from the QUERY STRING must be a
+                        // reduced-privilege media or cast token. Full access tokens carry
+                        // the role claim and session-wide power; query strings leak into
+                        // logs/proxies/history, so they are header-or-nothing.
+                        if (context.HttpContext.Items.ContainsKey(QueryTokenSourceKey)
+                            && tokenUse != CastTokenClaims.MediaUse
+                            && tokenUse != CastTokenClaims.CastUse)
+                        {
+                            context.Fail("Query-string authentication requires a media or cast token; " +
+                                         "full access tokens are accepted only in the Authorization header.");
+                            return;
+                        }
 
                         // A media token (token_use=media) is a reduced-privilege token the SPA
                         // places in media URLs (audit H3). Accept it ONLY on the media/streaming
@@ -141,6 +180,18 @@ public static class ServiceCollectionExtensions
                             if (!IsMediaRoute(context.HttpContext.Request.Path))
                             {
                                 context.Fail("Media token is restricted to media/streaming routes.");
+                                return;
+                            }
+                            // WS-6 T6.4 (L-4/L-5): media tokens are for READS — <img>/<video>/
+                            // hls.js fetches and the SignalR handshake. The book bookmark /
+                            // highlight writes and transcode session mutations live under
+                            // media-route prefixes, so without this a leaked media URL could
+                            // mutate state. Writes use the access token in a header.
+                            var method = context.HttpContext.Request.Method;
+                            if (!HttpMethods.IsGet(method) && !HttpMethods.IsHead(method)
+                                && !IsHubPath(context.HttpContext.Request.Path))
+                            {
+                                context.Fail("Media token permits GET/HEAD requests only.");
                                 return;
                             }
                             // Audit wave-2 L-3: re-check live user state every request so a ban /

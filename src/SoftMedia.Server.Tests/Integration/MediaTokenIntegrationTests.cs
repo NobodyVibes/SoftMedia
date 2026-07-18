@@ -113,6 +113,84 @@ public class MediaTokenIntegrationTests : IntegrationTestBase
         Assert.Equal(HttpStatusCode.Unauthorized, after.StatusCode);
     }
 
+    // ── WS-6 T6.1/T6.4/T6.7 — query-token rejection + media-token read-only ──
+
+    [Fact]
+    public async Task FullAccessToken_InQueryString_IsRejectedOnMediaRoutes()
+    {
+        // T6.1 (M-2): query strings leak into logs/proxies/history — a full
+        // role-bearing access token must be header-or-nothing.
+        var user = await Factory.SeedUserAsync("ws6-queryjwt");
+        var access = AccessToken(user);
+        var client = Factory.CreateClient();
+
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await client.GetAsync($"/api/v1/stream/{Guid.NewGuid()}?token={access}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await client.GetAsync($"/api/v1/music/album/{Guid.NewGuid()}/cover?access_token={access}")).StatusCode);
+
+        // Control: the SAME access token still authenticates via the Authorization
+        // header on the same route (404 = authed, media simply missing).
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await BearerClient(access).GetAsync($"/api/v1/stream/{Guid.NewGuid()}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task MediaToken_InQueryString_StillAuthenticates()
+    {
+        // The whole point of the media token: it is the ONE thing allowed in a query
+        // string (browsers can't set headers on <img>/<video>).
+        var user = await Factory.SeedUserAsync("ws6-querymedia");
+        var client = Factory.CreateClient();
+
+        var resp = await client.GetAsync($"/api/v1/stream/{Guid.NewGuid()}?token={MediaToken(user)}");
+        Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode); // authed; media missing
+    }
+
+    [Fact]
+    public async Task MediaToken_IsRejectedOnWrites()
+    {
+        // T6.4 (L-4/L-5): media tokens are GET/HEAD-only — the book bookmark writes and
+        // transcode session mutations live under media-route prefixes, so a leaked
+        // media URL must not be able to mutate state.
+        var user = await Factory.SeedUserAsync("ws6-mediawrite");
+        var media = MediaToken(user);
+        var client = Factory.CreateClient();
+
+        // Query-string form on a transcode mutation.
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await client.DeleteAsync($"/api/transcode/{Guid.NewGuid()}?sid=abc&token={media}")).StatusCode);
+        // Header form on a book write.
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await BearerClient(media).PostAsJsonAsync($"/api/v1/books/{Guid.NewGuid()}/bookmarks",
+                new { position = "1", label = "x" })).StatusCode);
+
+        // Control: GET with the same token on the same prefix still authenticates.
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await BearerClient(media).GetAsync($"/api/v1/stream/{Guid.NewGuid()}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task MediaTokenMint_RequiresReadLibraryScope_ForApiTokens()
+    {
+        // WS-6/B-18 interaction: a media token grants GET access to the content routes,
+        // so minting one must require read:library — otherwise an unscoped API token
+        // launders itself into the very access the scope enforcement denied.
+        var user = await Factory.SeedUserAsync("ws6-mint");
+        var jwt = BearerClient(AccessToken(user));
+
+        var mintResp = await jwt.PostAsJsonAsync("/api/v1/account/api-tokens",
+            new { label = "ws6", scopes = new[] { ApiTokenScopes.WriteState }, expiresAt = (DateTime?)null });
+        mintResp.EnsureSuccessStatusCode();
+        var writeOnly = (await mintResp.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>())
+            .GetProperty("token").GetString()!;
+
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await BearerClient(writeOnly).GetAsync("/api/v1/auth/media-token")).StatusCode);
+
+        // A full session still mints (asserted by MediaTokenEndpoint_VendsRoleOmittedMediaToken).
+    }
+
     [Fact]
     public async Task SecurityHeaders_AreEmitted()
     {

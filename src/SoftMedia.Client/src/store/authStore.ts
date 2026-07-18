@@ -52,11 +52,20 @@ export const useAuthStore = create<AuthState>()(
 
 /**
  * The token to embed in media URLs (`?token=` / `?access_token=`): the reduced-privilege
- * media token when available, otherwise the full access token (audit H3). Pure read — the
- * media token is fetched by the lifecycle effect in App.tsx, so URLs degrade gracefully to
- * the access token rather than ever breaking playback.
+ * media token, and ONLY the media token (WS-6 T6.1/T6.2). The server now rejects full
+ * access tokens in query strings, so falling back to the access token would produce
+ * guaranteed 401s — App.tsx blocks the authed UI until the media token resolves instead.
+ * Null before that resolution (and for logged-out users).
+ *
+ * NOTE: media tokens are GET/HEAD-only (T6.4). Mutating calls to media routes
+ * (transcode session lifecycle, book writes) must send the ACCESS token in an
+ * Authorization header — use getAccessToken() for those.
  */
 export function getUrlToken(): string | null {
-    const s = useAuthStore.getState();
-    return s.mediaToken ?? s.token;
+    return useAuthStore.getState().mediaToken;
+}
+
+/** The full access token, for Authorization HEADERS only — never place it in a URL. */
+export function getAccessToken(): string | null {
+    return useAuthStore.getState().token;
 }

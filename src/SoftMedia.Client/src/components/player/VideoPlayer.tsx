@@ -6,7 +6,7 @@ import Hls from 'hls.js';
 import api from '../../services/api';
 import { type MediaItem } from '../../types';
 import { useTrackSelection } from '../../hooks/useTrackSelection';
-import { useAuthStore, getUrlToken } from '../../store/authStore';
+import { useAuthStore, getUrlToken, getAccessToken } from '../../store/authStore';
 import { NextEpisodeOverlay, type NextEpisodeInfo } from './NextEpisodeOverlay';
 import { MovieEndOverlay } from './MovieEndOverlay';
 import { postPlayService, type PostPlayInfo } from '../../services/postPlayService';
@@ -76,6 +76,17 @@ const CHROMECAST_CAPABILITIES: ClientCapabilities = {
     supportedSubtitleFormats: ['vtt'],
     supportedContainers: ['hls', 'mp4'],
 };
+
+/**
+ * WS-6 T6.4: mutating transcode calls (DELETE / pause / resume / plan) must carry the
+ * ACCESS token in an Authorization header — media tokens are GET/HEAD-only and full
+ * access tokens are rejected in query strings. Read at CALL time so token rotation
+ * never leaves a stale closure.
+ */
+function transcodeAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+    const t = getAccessToken();
+    return { ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+}
 
 /**
  * VideoPlayer component with custom controls, keyboard shortcuts, playback speed, and PiP support.
@@ -178,11 +189,15 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     // Audit H3: prefer the reduced-privilege media token in stream/transcode URLs; fall
     // back to the access token until it loads. Reactive so URLs update when it arrives.
     // Reduced-privilege media token for URL-EMBEDDED stream/transcode auth only (?token=…).
+    // WS-6 T6.1: media-only, no access-token fallback — the server rejects full access
+    // tokens in query strings, and App.tsx gates the authed UI until this exists.
+    // MUTATING transcode calls (DELETE/pause/resume/plan) send the ACCESS token in an
+    // Authorization header via transcodeAuthHeaders() — media tokens are GET/HEAD-only.
     // JSON API calls (interaction progress/watched/rate, episode nav) go through the shared
     // axios client instead: its request interceptor reads the CURRENT access token from the
     // store at call time (no stale closures) and its response interceptor transparently
     // refreshes + retries on 401 — which raw fetch with a captured token cannot do.
-    const token = useAuthStore((state) => state.mediaToken ?? state.token);
+    const token = useAuthStore((state) => state.mediaToken);
     const navigate = useNavigate();
     const location = useLocation();
     const queryClient = useQueryClient();
@@ -627,10 +642,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             try {
                 const response = await fetch(`/api/transcode/${item.id}/plan`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${urlToken}`
-                    },
+                    headers: transcodeAuthHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify(capabilitiesToSend)
                 });
 
@@ -705,7 +717,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     // new one when the change happened in the first second of playback.
                     if (isSubtitleChange) {
                         setIsSubtitleChange(false);
-                        fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${urlToken}`, { method: 'DELETE' }).catch(() => { });
+                        fetch(`/api/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() }).catch(() => { });
                     }
                 }
                 // Priority 4: Resume position for fresh loads
@@ -970,12 +982,13 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 hlsRef.current.destroy();
                 hlsRef.current = null;
             }
-            // Explicitly stop transcode when leaving the player. The token is read fresh at
-            // cleanup time — the one from stream start may have rotated since.
-            const cleanupToken = getUrlToken();
-            if (isTranscoding && cleanupToken && item.id) {
-                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${cleanupToken}`, {
-                    method: 'DELETE'
+            // Explicitly stop transcode when leaving the player. transcodeAuthHeaders reads
+            // the access token fresh at cleanup time — the one from stream start may have
+            // rotated since.
+            if (isTranscoding && item.id) {
+                fetch(`/api/transcode/${item.id}?sid=${streamId}`, {
+                    method: 'DELETE',
+                    headers: transcodeAuthHeaders()
                 }).catch(() => { /* Ignore cleanup errors */ });
             }
         };
@@ -1024,8 +1037,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
             // Clean up transcode session before navigating
             if (isTranscoding) {
-                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, {
-                    method: 'DELETE'
+                fetch(`/api/transcode/${item.id}?sid=${streamId}`, {
+                    method: 'DELETE',
+                    headers: transcodeAuthHeaders()
                 }).catch(() => { });
             }
         }
@@ -1058,8 +1072,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
             // Clean up transcode session before navigating
             if (isTranscoding) {
-                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, {
-                    method: 'DELETE'
+                fetch(`/api/transcode/${item.id}?sid=${streamId}`, {
+                    method: 'DELETE',
+                    headers: transcodeAuthHeaders()
                 }).catch(() => { });
             }
         }
@@ -1080,8 +1095,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
             // Clean up transcode session
             if (isTranscoding) {
-                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, {
-                    method: 'DELETE'
+                fetch(`/api/transcode/${item.id}?sid=${streamId}`, {
+                    method: 'DELETE',
+                    headers: transcodeAuthHeaders()
                 }).catch(() => { });
             }
         }
@@ -1154,10 +1170,10 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     // recommendation card): stop the transcode session, then navigate.
     const handleLeaveMovie = useCallback((path: string) => {
         setShowMovieEndOverlay(false);
-        const cleanupToken = getUrlToken();
-        if (isTranscoding && cleanupToken && item.id) {
-            fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${cleanupToken}`, {
-                method: 'DELETE'
+        if (isTranscoding && item.id) {
+            fetch(`/api/transcode/${item.id}?sid=${streamId}`, {
+                method: 'DELETE',
+                headers: transcodeAuthHeaders()
             }).catch(() => { });
         }
         navigate(path);
@@ -1185,8 +1201,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             setIsPlaying(true);
             // Signal backend to resume transcoding (throttle control)
             if (isTranscoding && token && item.id) {
-                fetch(`/api/transcode/${item.id}/resume?token=${token}${selectedSubtitleTrack !== null ? `&sub=${selectedSubtitleTrack}` : ''}`, {
-                    method: 'POST'
+                fetch(`/api/transcode/${item.id}/resume${selectedSubtitleTrack !== null ? `?sub=${selectedSubtitleTrack}` : ''}`, {
+                    method: 'POST',
+                    headers: transcodeAuthHeaders()
                 }).catch(() => { });
             }
         };
@@ -1194,8 +1211,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             setIsPlaying(false);
             // Signal backend to pause transcoding (throttle control)
             if (isTranscoding && token && item.id) {
-                fetch(`/api/transcode/${item.id}/pause?token=${token}${selectedSubtitleTrack !== null ? `&sub=${selectedSubtitleTrack}` : ''}`, {
-                    method: 'POST'
+                fetch(`/api/transcode/${item.id}/pause${selectedSubtitleTrack !== null ? `?sub=${selectedSubtitleTrack}` : ''}`, {
+                    method: 'POST',
+                    headers: transcodeAuthHeaders()
                 }).catch(() => { });
             }
         };
@@ -1238,8 +1256,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             }
             // Signal backend to clean up transcode session when video ends
             if (isTranscoding && token && item.id) {
-                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, {
-                    method: 'DELETE'
+                fetch(`/api/transcode/${item.id}?sid=${streamId}`, {
+                    method: 'DELETE',
+                    headers: transcodeAuthHeaders()
                 }).catch(() => { });
             }
         };
@@ -1374,10 +1393,14 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         if (!isTranscoding || !token || !item.id) return;
 
         const handleBeforeUnload = () => {
-            // Use sendBeacon for reliable delivery even during page unload
-            // Using POST /stop endpoint since sendBeacon only sends POST
-            const url = `/api/transcode/${item.id}/stop?all=true&token=${token}`;
-            navigator.sendBeacon(url);
+            // WS-6: sendBeacon can't set headers and query tokens no longer authenticate
+            // POSTs — a keepalive fetch is the modern equivalent (survives page unload)
+            // and carries the access token in the Authorization header.
+            fetch(`/api/transcode/${item.id}/stop?all=true`, {
+                method: 'POST',
+                keepalive: true,
+                headers: transcodeAuthHeaders()
+            }).catch(() => { });
         };
 
         window.addEventListener('beforeunload', handleBeforeUnload);
@@ -1504,7 +1527,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         // Clean up transcode session before navigating
         if (isTranscoding && token && item.id) {
             try {
-                await fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, { method: 'DELETE' });
+                await fetch(`/api/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() });
             } catch { /* Ignore cleanup errors */ }
         }
 
@@ -1554,7 +1577,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             // path already guards against (and R-WI-015 broadcasts to the OS scrubber).
             setCurrentTime(0);
 
-            fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, { method: 'DELETE' })
+            fetch(`/api/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() })
                 .catch(() => { });
 
             setSrc(buildTranscodeSeekUrl(seekTime));
@@ -1568,7 +1591,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 setSeekOffset(Math.floor(seekTime));
                 setCurrentTime(0); // same transient guard as the forward-restart branch
 
-                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, { method: 'DELETE' })
+                fetch(`/api/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() })
                     .catch(() => { });
 
                 setSrc(buildTranscodeSeekUrl(seekTime));
@@ -2203,7 +2226,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                             // the short-lived session JWT mid-movie).
                                             const resp = await fetch(`/api/transcode/${item.id}/plan?cast=true`, {
                                                 method: 'POST',
-                                                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                                                headers: transcodeAuthHeaders({ 'Content-Type': 'application/json' }),
                                                 body: JSON.stringify(castCaps),
                                             });
                                             if (!resp.ok) throw new Error(`stream plan request failed (${resp.status})`);

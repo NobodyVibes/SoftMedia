@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { getAccessToken } from '../../store/authStore';
 
 interface DebugInfo {
     playbackMode: string;
@@ -86,10 +87,12 @@ export function PlayerDebugPanel({ mediaId, token, subtitleTrack, clientCapabili
                 const subParam = subtitleTrack !== null ? `&sub=${subtitleTrack}` : '';
                 const sidParam = streamId ? `&sid=${streamId}` : '';
 
-                // POST request with client capabilities
-                const response = await fetch(`/api/transcode/${mediaId}/debug?token=${token}${subParam}${sidParam}`, {
+                // POST request with client capabilities. WS-6: POSTs authenticate via
+                // the Authorization header (query tokens are media/cast + GET-only now).
+                const query = [subParam, sidParam].join('').replace(/^&/, '?');
+                const response = await fetch(`/api/transcode/${mediaId}/debug${query}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAccessToken()}` },
                     body: JSON.stringify(clientCapabilities || {
                         videoCodecs: ['h264'],
                         audioCodecs: ['aac'],

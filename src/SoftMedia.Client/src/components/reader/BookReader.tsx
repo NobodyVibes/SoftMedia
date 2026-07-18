@@ -570,8 +570,11 @@ interface BookReaderProps {
 
 export default function BookReader({ item }: BookReaderProps) {
     const navigate = useNavigate();
-    // Audit H3: reduced-privilege media token for the stream URL, falling back to access token.
-    const token = useAuthStore(s => s.mediaToken ?? s.token);
+    // WS-6 T6.1: the reduced-privilege media token, and ONLY the media token — the
+    // server rejects full access tokens in query strings, and App.tsx gates the
+    // authed UI until this exists. Subscribed (not getUrlToken()) so the URL
+    // re-renders when the token rotates.
+    const token = useAuthStore(s => s.mediaToken);
 
     const ext = (item.path?.split('.').pop() ?? '').toLowerCase();
     const isPdf = ext === 'pdf';

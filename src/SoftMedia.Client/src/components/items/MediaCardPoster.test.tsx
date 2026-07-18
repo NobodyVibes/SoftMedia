@@ -30,7 +30,7 @@ describe('MediaCard poster rendering', () => {
             addToQueue: vi.fn(),
         });
         // Set a token so attachAuthToApiUrl produces a deterministic URL.
-        useAuthStore.setState({ token: 'test-jwt-token' });
+        useAuthStore.setState({ mediaToken: 'test-jwt-token' });
     });
 
     /**

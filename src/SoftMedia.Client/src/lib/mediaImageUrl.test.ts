@@ -14,17 +14,17 @@ import { attachAuthToApiUrl, resolveCardPosterUrl } from './mediaImageUrl';
  */
 describe('attachAuthToApiUrl', () => {
     beforeEach(() => {
-        useAuthStore.setState({ token: null });
+        useAuthStore.setState({ mediaToken: null });
     });
 
     it('appends access_token when missing', () => {
-        useAuthStore.setState({ token: 'tok-1' });
+        useAuthStore.setState({ mediaToken: 'tok-1' });
         const out = attachAuthToApiUrl('/api/v1/image/proxy?url=foo');
         expect(out).toBe('/api/v1/image/proxy?url=foo&access_token=tok-1');
     });
 
     it('replaces existing access_token rather than duplicating', () => {
-        useAuthStore.setState({ token: 'tok-2' });
+        useAuthStore.setState({ mediaToken: 'tok-2' });
         const out = attachAuthToApiUrl('/api/v1/image/proxy?url=foo&access_token=tok-1');
 
         // Only one access_token should remain, with the current token's value.
@@ -35,7 +35,7 @@ describe('attachAuthToApiUrl', () => {
     });
 
     it('is idempotent under repeated application', () => {
-        useAuthStore.setState({ token: 'tok-3' });
+        useAuthStore.setState({ mediaToken: 'tok-3' });
         const once = attachAuthToApiUrl('/api/v1/image/proxy?url=foo');
         const twice = attachAuthToApiUrl(once);
         const thrice = attachAuthToApiUrl(twice);
@@ -43,7 +43,7 @@ describe('attachAuthToApiUrl', () => {
     });
 
     it('passes non-API URLs through unchanged', () => {
-        useAuthStore.setState({ token: 'tok-4' });
+        useAuthStore.setState({ mediaToken: 'tok-4' });
         expect(attachAuthToApiUrl('https://example.com/poster.jpg'))
             .toBe('https://example.com/poster.jpg');
         expect(attachAuthToApiUrl('/cache/images/something.jpg'))
@@ -51,13 +51,13 @@ describe('attachAuthToApiUrl', () => {
     });
 
     it('returns URL unchanged when no token present', () => {
-        useAuthStore.setState({ token: null });
+        useAuthStore.setState({ mediaToken: null });
         expect(attachAuthToApiUrl('/api/v1/image/proxy?url=foo'))
             .toBe('/api/v1/image/proxy?url=foo');
     });
 
     it('preserves other query parameters and their order semantics', () => {
-        useAuthStore.setState({ token: 'tok-5' });
+        useAuthStore.setState({ mediaToken: 'tok-5' });
         const out = attachAuthToApiUrl('/api/v1/image/proxy?url=foo&width=300');
         // url and width must still be present.
         expect(out).toContain('url=foo');
@@ -66,7 +66,7 @@ describe('attachAuthToApiUrl', () => {
     });
 
     it('encodes URL-unsafe characters in the token', () => {
-        useAuthStore.setState({ token: 'a/b+c=' });
+        useAuthStore.setState({ mediaToken: 'a/b+c=' });
         const out = attachAuthToApiUrl('/api/v1/image/proxy?url=foo');
         // URLSearchParams encodes deterministically; just confirm the literal
         // unsafe characters are not present in the final query.
@@ -79,7 +79,7 @@ describe('attachAuthToApiUrl', () => {
 
 describe('resolveCardPosterUrl (integration through the full chain)', () => {
     beforeEach(() => {
-        useAuthStore.setState({ token: 'tok-card' });
+        useAuthStore.setState({ mediaToken: 'tok-card' });
     });
 
     it('produces a single access_token even when called repeatedly', () => {

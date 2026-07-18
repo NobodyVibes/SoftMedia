@@ -20,8 +20,9 @@ vi.mock('./EpubView', () => ({
 }));
 vi.mock('../../store/authStore', () => ({
     useAuthStore: Object.assign(
-        (selector: (s: { token: string | null }) => unknown) => selector({ token: 'test-token' }),
-        { getState: () => ({ token: 'test-token' }) },
+        (selector: (s: { token: string | null; mediaToken: string | null }) => unknown) =>
+            selector({ token: 'test-token', mediaToken: 'test-media-token' }),
+        { getState: () => ({ token: 'test-token', mediaToken: 'test-media-token' }) },
     ),
 }));
 

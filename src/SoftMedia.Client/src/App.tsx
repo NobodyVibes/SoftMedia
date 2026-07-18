@@ -22,18 +22,34 @@ import { PersistentPlayer } from './components/player/PersistentPlayer';
 function App() {
   const user = useAuthStore((state: any) => state.user);
   const token = useAuthStore((state: any) => state.token);
+  const mediaToken = useAuthStore((state: any) => state.mediaToken);
 
-  // Media-token lifecycle (audit H3): whenever the access token appears or rotates
-  // (initial login, persisted session, silent refresh), fetch a reduced-privilege media
-  // token for use in media URLs; clear it on logout. URLs fall back to the access token
-  // until this resolves, so playback never depends on it.
+  // Media-token lifecycle (audit H3 → WS-6 T6.2 hard dependency): whenever the access
+  // token appears or rotates (initial login, persisted session, silent refresh), fetch
+  // the reduced-privilege media token; clear it on logout. The server now REJECTS full
+  // access tokens in media-URL query strings (T6.1), so there is no fallback — the
+  // authed UI below is gated until the media token resolves, and this effect retries
+  // while it hasn't (e.g. the server was briefly unreachable on a cold load).
+  // connectAttempts drives the gate's escape hatch below: a non-401 failure
+  // (server down, proxy broken) never trips the axios refresh/logout path, so
+  // without it the spinner would be inescapable.
+  const [connectAttempts, setConnectAttempts] = useState(0);
   useEffect(() => {
-    if (token) {
-      void fetchMediaToken();
-    } else {
+    if (!token) {
       useAuthStore.getState().setMediaToken(null);
+      return;
     }
-  }, [token]);
+    void fetchMediaToken();
+    if (mediaToken) {
+      setConnectAttempts(0);
+      return;
+    }
+    const retry = setInterval(() => {
+      setConnectAttempts((n) => n + 1);
+      void fetchMediaToken();
+    }, 4000);
+    return () => clearInterval(retry);
+  }, [token, mediaToken]);
 
   // Offline shell (P2-WI-003): when the browser reports no connectivity, show the
   // branded offline screen instead of letting fetches fail silently. The PWA service
@@ -51,6 +67,38 @@ function App() {
   }, []);
 
   if (!isOnline) return <OfflinePage />;
+
+  // WS-6 T6.2: with a session but no media token yet (cold load, ~1 round-trip),
+  // hold the authed UI — every media URL and the hub handshake depend on it, and
+  // rendering early would spray guaranteed-401 requests. Logged-out routes
+  // (login/signup) don't depend on it and render normally.
+  if (token && !mediaToken) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="w-10 h-10 mx-auto mb-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-gray-400">Connecting to your library…</p>
+          {/* Escape hatch (review MED): a network-level failure produces no 401,
+              so the axios logout path never fires — after ~12s of retries, offer
+              a way out instead of an inescapable spinner. Retries continue. */}
+          {connectAttempts >= 3 && (
+            <div className="mt-6">
+              <p className="text-xs text-gray-500 mb-3">
+                The server isn't responding. Retrying automatically…
+              </p>
+              <button
+                type="button"
+                onClick={() => useAuthStore.getState().logout()}
+                className="px-4 py-2 text-sm rounded-lg text-gray-300 bg-white/10 hover:bg-white/20 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+              >
+                Log out
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>

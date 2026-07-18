@@ -205,7 +205,11 @@ public class TranscodeService : ITranscodeService
         int? audioTrack = null,
         int? maxBitrate = null,
         bool? burnSubtitles = null,
-        string? sid = null)
+        string? sid = null,
+        bool remux = false,
+        bool audioCopy = false,
+        string? audioCodec = null,
+        int audioChannels = 0)
     {
         // Sanitize subtitle track index: if negative, treat as null (disabled)
         if (subtitleTrackIndex.HasValue && subtitleTrackIndex.Value < 0)
@@ -305,6 +309,20 @@ public class TranscodeService : ITranscodeService
                          parametersChanged = true;
                          restartReason = $"Burn subtitles preference changed from {existingSession.BurnSubtitles} to {burnSubtitles ?? false}";
                      }
+                     // A switch between remux (stream-copy) and transcode requires a fresh ffmpeg (R-WI-003)
+                     else if (existingSession.IsRemux != remux)
+                     {
+                         parametersChanged = true;
+                         restartReason = $"Playback method changed (remux={existingSession.IsRemux} -> {remux})";
+                     }
+                     // An audio-decision change (copy/codec/channels) requires a fresh ffmpeg (R-WI-004)
+                     else if (existingSession.AudioCopy != audioCopy ||
+                              existingSession.AudioCodec != audioCodec ||
+                              existingSession.AudioChannels != audioChannels)
+                     {
+                         parametersChanged = true;
+                         restartReason = $"Audio decision changed (copy={existingSession.AudioCopy}->{audioCopy}, codec={existingSession.AudioCodec}->{audioCodec}, ch={existingSession.AudioChannels}->{audioChannels})";
+                     }
 
                      if (parametersChanged)
                     {
@@ -342,11 +360,13 @@ public class TranscodeService : ITranscodeService
                                 var extracted = await ffmpegService.ExtractSubtitleToVttAsync(inputPath, subtitleStreamIndex, vttPath);
                                 if (extracted)
                                 {
-                                    existingSession.SubtitleVttPath = vttPath;
-                                    if (existingSession.SeekPosition.HasValue && existingSession.SeekPosition.Value > 0)
-                                    {
-                                        ffmpegService.OffsetWebVttTimestamps(vttPath, existingSession.SeekPosition.Value);
-                                    }
+                                    // Serve only if the seek alignment succeeded (R-WI-018 review:
+                                    // absolute cues on an offset stream are worse than none).
+                                    var aligned = !(existingSession.SeekPosition.HasValue && existingSession.SeekPosition.Value > 0)
+                                                  || ffmpegService.OffsetWebVttTimestamps(vttPath, existingSession.SeekPosition.Value);
+                                    existingSession.SubtitleVttPath = aligned ? vttPath : null;
+                                    if (!aligned)
+                                        _logger.LogError("VTT offset failed for session {MediaId} — subtitles disabled for this stream", mediaId);
                                 }
                                 return existingSession;
                             }
@@ -391,7 +411,11 @@ public class TranscodeService : ITranscodeService
                 SessionStartTime = DateTime.UtcNow,
                 LastClientRequestTime = DateTime.UtcNow,
                 MaxBitrate = maxBitrate,
-                BurnSubtitles = burnSubtitles ?? false
+                BurnSubtitles = burnSubtitles ?? false,
+                IsRemux = remux,
+                AudioCopy = audioCopy,
+                AudioCodec = audioCodec,
+                AudioChannels = audioChannels
             };
 
             // Detect if source is HDR for accurate reporting
@@ -460,14 +484,16 @@ public class TranscodeService : ITranscodeService
                     var extracted = await ffmpegService.ExtractSubtitleToVttAsync(inputPath, subtitleStreamIndex, vttPath);
                     if (extracted)
                     {
-                        session.SubtitleVttPath = vttPath;
-                        _logger.LogInformation("Subtitle extracted successfully for session {MediaId}", mediaId);
-                        
-                        // Offset timestamps if seeking - VTT has absolute times but HLS plays from 0
-                        if (seekPosition.HasValue && seekPosition.Value > 0)
-                        {
-                            ffmpegService.OffsetWebVttTimestamps(vttPath, seekPosition.Value);
-                        }
+                        // Offset timestamps if seeking - VTT has absolute times but HLS plays from 0.
+                        // Serve only if that alignment succeeded (R-WI-018 review: absolute cues on
+                        // an offset stream are off by the whole seek — worse than no subtitles).
+                        var aligned = !(seekPosition.HasValue && seekPosition.Value > 0)
+                                      || ffmpegService.OffsetWebVttTimestamps(vttPath, seekPosition.Value);
+                        session.SubtitleVttPath = aligned ? vttPath : null;
+                        if (aligned)
+                            _logger.LogInformation("Subtitle extracted successfully for session {MediaId}", mediaId);
+                        else
+                            _logger.LogError("VTT offset failed for session {MediaId} — subtitles disabled for this stream", mediaId);
                     }
                     else
                     {
@@ -584,18 +610,38 @@ public class TranscodeService : ITranscodeService
             _logger.LogInformation("Using burn-in for bitmap subtitle track {Index}", subtitleBurnInIndex);
         }
         
-        var startInfo = await ffmpegService.GetTranscodeArgumentsAsync(
-            session.InputPath, 
-            session.SessionDirectory, 
-            "seg", 
-            subtitleBurnInIndex,  // Pass subtitle for burn-in if bitmap, null otherwise (sidecar WebVTT)
-            seekPosition,
-            null,  // No read rate - FFmpeg runs at full speed, throttled via suspend/resume
-            session.TargetResolution,  // Pass resolution from session
-            session.TargetCodec,       // Pass codec from session
-            session.PreserveHdr,       // Pass HDR preference from session
-            session.AudioTrackIndex,   // Pass audio track from session
-            session.MaxBitrate);       // Pass max bitrate from session
+        // R-WI-003: a Remux plan copies the compatible A/V streams (no re-encode) via a distinct
+        // arg path. Bitmap-subtitle burn-in requires a real encode, so it never takes this branch
+        // (CanRemux only picks Remux when video+audio are already client-compatible; text subs ride
+        // as sidecar VTT). Fall back to the transcode path if a burn-in was somehow requested.
+        ProcessStartInfo startInfo;
+        if (session.IsRemux && subtitleBurnInIndex == null)
+        {
+            startInfo = ffmpegService.GetRemuxArguments(
+                session.InputPath,
+                session.SessionDirectory,
+                "seg",
+                seekPosition,
+                session.AudioTrackIndex);
+        }
+        else
+        {
+            startInfo = await ffmpegService.GetTranscodeArgumentsAsync(
+                session.InputPath,
+                session.SessionDirectory,
+                "seg",
+                subtitleBurnInIndex,  // Pass subtitle for burn-in if bitmap, null otherwise (sidecar WebVTT)
+                seekPosition,
+                null,  // No read rate - FFmpeg runs at full speed, throttled via suspend/resume
+                session.TargetResolution,  // Pass resolution from session
+                session.TargetCodec,       // Pass codec from session
+                session.PreserveHdr,       // Pass HDR preference from session
+                session.AudioTrackIndex,   // Pass audio track from session
+                session.MaxBitrate,        // Pass max bitrate from session
+                session.AudioCopy,         // R-WI-004: audio decision from session
+                session.AudioCodec,
+                session.AudioChannels);
+        }
 
         _logger.LogInformation("Starting FFmpeg for {MediaId} (seek={Seek}): {Args}", 
             session.Key.MediaId, seekPosition, startInfo.Arguments);

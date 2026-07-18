@@ -52,6 +52,7 @@ const userRow: UserDto = {
     createdByAdmin: false,
     usedInviteCode: null,
     twoFactorEnabled: false,
+    maxStreamBitrateKbps: 0,
 };
 
 const adminRow: UserDto = { ...userRow, id: 'admin-1', username: 'admin', role: 'Admin' };

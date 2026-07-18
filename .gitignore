@@ -42,18 +42,41 @@ Thumbs.db
 *.db
 *.db-shm
 *.db-wal
+# Pre-restore DB snapshots — the ".pre-restore-<timestamp>" suffix escapes the *.db rule above
+# and previously leaked four full snapshots (with user password hashes) into git. See R-WI-001,
+# docs/plans/remediation-and-gap-closure-plan-2026-07-15.md.
+*.db.pre-restore-*
 transcode-temp/
 **/cache/
 **/wwwroot/cache/
 test-fixtures/
 
-# Test / build output noise (never commit; see Phase 2 / E1 of the hardening plan)
+# Test / build output noise (never commit; see Phase 2 / E1 of the hardening plan,
+# and R-WI-001 in docs/plans/remediation-and-gap-closure-plan-2026-07-15.md which purged the rest)
 **/build*.log
-**/build_*.txt
+**/build*.txt
 **/test_log*.txt
 **/test_run_*.txt
 **/test_build_*.txt
+**/test_*.txt
+**/test_*.log
+**/test_results*.txt
 **/errors.log
+**/ef_errors*.txt
+**/dump.txt
+**/dunedump.*
+**/*.trx
+
+# Credentials & tokens — never commit (R-WI-001 removed the tracked copies; rotate any that leaked).
+# login.json held admin/admin123; token.json held an admin JWT.
+login.json
+token.json
+
+# Ad-hoc local diagnostic scripts — keep them out of git by convention.
+**/*.local.ps1
+image_test.ps1
+library_test.ps1
+music_diagnostic.ps1
 
 # Vendored ffmpeg removed from git (see docs/plans/licensing-and-repo-hygiene-plan-2026-06-18.md).
 # jellyfin-ffmpeg is fetched at setup time, not committed. These rules prevent re-vendoring.

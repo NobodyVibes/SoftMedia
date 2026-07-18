@@ -1,4 +1,5 @@
-import { useMemo, memo, useState } from 'react';
+import { useMemo, memo, useState, useRef } from 'react';
+import { toast } from 'sonner';
 import { Link, useNavigate } from 'react-router-dom';
 import { Play, ListMusic, ListPlus, Heart, Check, Clock, Star } from 'lucide-react';
 import { type MediaItem, MediaType } from '../../types';
@@ -22,7 +23,8 @@ interface MediaCardProps {
 
 export default memo(function MediaCard({ item, libraryType, groupReady, onImageLoad, onImageError }: MediaCardProps) {
     const navigate = useNavigate();
-    const { playTrack, addToQueue } = useAudioStore();
+    const { playTrack, addToQueue, playPlaylist } = useAudioStore();
+    const albumFetchRef = useRef(false);
     // Track-card-only: anchors the AddToPlaylistMenu popover. We render it as
     // a sibling of the card poster so the menu survives losing :hover on the
     // card (the play overlay fades out, but the open menu must stay visible).
@@ -63,7 +65,29 @@ export default memo(function MediaCard({ item, libraryType, groupReady, onImageL
         e.preventDefault();
         e.stopPropagation();
 
-        if (isAudio) {
+        if (item.type === MediaType.Album) {
+            // An album is NOT streamable itself — playTrack(album) requested
+            // /stream/{albumId} which 404s and left the bar as a silent zombie
+            // "playing" nothing. Enqueue its tracks, same as the album page's
+            // Play All.
+            if (albumFetchRef.current) return; // double-click on a slow fetch would restart the album
+            albumFetchRef.current = true;
+            try {
+                const response = await api.get<MediaItem[]>(`/libraries/albums/${item.id}/tracks`);
+                if (response.data && response.data.length > 0) {
+                    playPlaylist(response.data);
+                    return;
+                }
+            } catch (error) {
+                console.error('[MediaCard] Failed to fetch album tracks:', error);
+            } finally {
+                albumFetchRef.current = false;
+            }
+            navigate(`/media/${item.id}`); // no tracks / fetch failed → album page
+        } else if (item.type === MediaType.Artist) {
+            // Artists aren't streamable either — open their page.
+            navigate(`/media/${item.id}`);
+        } else if (isAudio) {
             playTrack(item);
         } else if (isMovie || isTVEpisode) {
             // Navigate directly to player
@@ -84,9 +108,25 @@ export default memo(function MediaCard({ item, libraryType, groupReady, onImageL
         }
     };
 
-    const handleAddToQueue = (e: React.MouseEvent) => {
+    const handleAddToQueue = async (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
+        if (item.type === MediaType.Album) {
+            // Same 404 class as handlePlay: queue the album's TRACKS, not the album row.
+            // Toasts match the sibling playlist action — this path can genuinely fail
+            // (network fetch), and silence reads as a broken button.
+            try {
+                const response = await api.get<MediaItem[]>(`/libraries/albums/${item.id}/tracks`);
+                const tracks = response.data ?? [];
+                tracks.forEach(track => addToQueue(track));
+                if (tracks.length > 0) toast.success(`Added ${tracks.length} tracks to queue`);
+                else toast.error('This album has no tracks to queue');
+            } catch (error) {
+                console.error('[MediaCard] Failed to fetch album tracks for queue:', error);
+                toast.error('Could not load the album’s tracks');
+            }
+            return;
+        }
         addToQueue(item);
     };
 
@@ -176,8 +216,8 @@ export default memo(function MediaCard({ item, libraryType, groupReady, onImageL
                                 <Play className="w-8 h-8 fill-white ml-1" />
                             </button>
 
-                            {/* Add to Queue Button (Audio Only) attached near play button */}
-                            {isAudio && (
+                            {/* Add to Queue Button (tracks + albums; artists have nothing streamable to queue) */}
+                            {isAudio && item.type !== MediaType.Artist && (
                                 <button
                                     type="button"
                                     aria-label={`Add ${item.title ?? 'track'} to queue`}

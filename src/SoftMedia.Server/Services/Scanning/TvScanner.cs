@@ -115,6 +115,23 @@ public class TvScanner : BaseMediaScanner
 
         await base.ScanLibraryAsync(library, progress, cancellationToken);
 
+        // R-WI-014: post-scan local-artwork sweep over every series seen this scan (deferred,
+        // like enrichment below, because cached series entities are detached from the per-file
+        // contexts). Fresh-loads each series, applies poster.jpg/folder.jpg/fanart sidecars
+        // from the series folder, and forces a re-enqueue when a local poster was removed or a
+        // local-postered series hasn't had its one enrichment pass yet (TvScanner otherwise
+        // only enqueues brand-new series). Failure-isolated: artwork trouble must never stop
+        // the deferred enrichment drain below.
+        try
+        {
+            await ApplyLocalSeriesArtworkAsync(library, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[TvScanner] Local artwork sweep failed; continuing to enrichment enqueue.");
+        }
+
         // Deferred metadata enrichment: enqueue ALL series that need enrichment AFTER
         // the scan completes. This guarantees every season and episode exists in the DB
         // before FilterToLocalEpisodesAsync runs, so no season images are lost.
@@ -123,6 +140,93 @@ public class TvScanner : BaseMediaScanner
         {
             await _metadataQueue.EnqueueMetadataRefreshAsync(seriesId, LibraryType.TV);
         }
+    }
+
+    /// <summary>
+    /// Sweeps the series folder for local artwork sidecars. Series.Path may be a SEASON
+    /// subfolder (it's the first-discovered episode's directory), so when it looks like one
+    /// ("Season 01", "Specials", "S1"…) the parent folder is swept as the series root instead.
+    /// Never sweeps above that (a poster.jpg in the library root belongs to nothing).
+    /// </summary>
+    private async Task ApplyLocalSeriesArtworkAsync(Library library, CancellationToken cancellationToken)
+    {
+        var seriesIds = _seriesCache.Values.Select(s => s.Id).Distinct().ToList();
+        if (seriesIds.Count == 0) return;
+
+        // A poster.jpg in the LIBRARY ROOT belongs to no particular series — never sweep roots
+        // (also neutralises the season-folder heuristic's parent-walk landing on a root when a
+        // show is literally named "Specials"/"S10" directly under it).
+        var libraryRoots = library.Paths
+            .Select(p => Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        using var scope = _scopeFactory.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var localArtwork = scope.ServiceProvider.GetRequiredService<ILocalArtworkService>();
+
+        // Resolve each series' sweep folder up front so folders CLAIMED BY MULTIPLE SERIES can
+        // be skipped — a bare poster.jpg in a shared folder belongs to no one (verifier: the TV
+        // analog of the flat-multi-movie bug).
+        var resolvedFolders = new Dictionary<Guid, string>();
+        foreach (var s in _seriesCache.Values.DistinctBy(s => s.Id))
+        {
+            if (string.IsNullOrEmpty(s.Path)) continue;
+            var f = s.Path;
+            var name = Path.GetFileName(f.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (LooksLikeSeasonFolder(name))
+            {
+                f = Path.GetDirectoryName(f.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) ?? f;
+            }
+            resolvedFolders[s.Id] = Path.GetFullPath(f).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        var folderClaims = resolvedFolders.Values
+            .GroupBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var seriesId in seriesIds)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                if (!resolvedFolders.TryGetValue(seriesId, out var folder)) continue;
+                if (libraryRoots.Contains(folder)) continue;
+                if (folderClaims.GetValueOrDefault(folder) > 1) continue; // shared folder → ambiguous art
+
+                var series = await context.MediaItems.FirstOrDefaultAsync(m => m.Id == seriesId, cancellationToken);
+                if (series == null) continue;
+
+                var artwork = await localArtwork.ApplyLocalArtworkAsync(series, folder, fileStem: null);
+                if (artwork.Changed)
+                {
+                    await context.SaveChangesAsync(cancellationToken);
+                }
+                // Re-enqueue for the one-pass enrichment — but honour retry exhaustion like the
+                // policy does, or an unmatchable series would retry on every scan forever.
+                if ((artwork.LocalPosterRemoved ||
+                     (series.PosterFromLocalFile && string.IsNullOrEmpty(series.MetadataHash)))
+                    && !series.IsRetryExhausted)
+                {
+                    _seriesNeedingEnrichment.TryAdd(seriesId, 0);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                // One unreadable folder / transient DB error must not abort the rest of the sweep.
+                // Clear the tracker so a poisoned entity (failed SaveChanges) can't re-fail every
+                // subsequent series' save on this shared context.
+                _logger.LogWarning(ex, "[TvScanner] Local artwork sweep failed for series {SeriesId}; continuing.", seriesId);
+                context.ChangeTracker.Clear();
+            }
+        }
+    }
+
+    private static bool LooksLikeSeasonFolder(string? folderName)
+    {
+        if (string.IsNullOrEmpty(folderName)) return false;
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            folderName, @"^(season[ ._-]*\d+|specials?|s\d{1,2})$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
 

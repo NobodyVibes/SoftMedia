@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     SoftMedia Setup Script - Installs all dependencies and configures the application.
@@ -185,7 +185,7 @@ function Install-Prerequisites {
         }
     }
     
-    # Check FFmpeg — SoftMedia REQUIRES jellyfin-ffmpeg (chromaprint muxer). Gyan/distro builds won't do.
+    # Check FFmpeg - SoftMedia REQUIRES jellyfin-ffmpeg (chromaprint muxer). Gyan/distro builds won't do.
     Write-Info "Checking jellyfin-ffmpeg (chromaprint-enabled)..."
     if (Test-FFmpeg) {
         Write-Success "jellyfin-ffmpeg (chromaprint) is available"

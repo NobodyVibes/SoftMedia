@@ -1,6 +1,8 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Sessions;
 
 namespace SoftMedia.Server.Controllers;
 
@@ -17,13 +19,16 @@ namespace SoftMedia.Server.Controllers;
 public class StreamController : ControllerBase
 {
     private readonly IMediaService _mediaService;
+    private readonly IActiveStreamRegistry _streamRegistry;
     private readonly ILogger<StreamController> _logger;
 
     public StreamController(
         IMediaService mediaService,
+        IActiveStreamRegistry streamRegistry,
         ILogger<StreamController> logger)
     {
         _mediaService = mediaService;
+        _streamRegistry = streamRegistry;
         _logger = logger;
     }
 
@@ -42,6 +47,25 @@ public class StreamController : ControllerBase
             {
                 return NotFound();
             }
+
+            // R-WI-016: register direct-play liveness by RESPONSE LIFETIME (a range
+            // response can be one multi-hour request — per-request counting is wrong).
+            // O(1) dictionary stamp either side of the file result; HEAD probes are
+            // metadata-only and never represent playback.
+            if (!HttpMethods.IsHead(Request.Method)
+                && Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var streamUserId))
+            {
+                // The entry HANDLE is captured so the completion callback releases the
+                // exact generation it incremented (key-based release could hit a
+                // recreated entry after a prune race).
+                var entry = _streamRegistry.OnResponseStarted(streamUserId, id);
+                Response.OnCompleted(() =>
+                {
+                    _streamRegistry.OnResponseEnded(entry);
+                    return Task.CompletedTask;
+                });
+            }
+
             // Serve the file with Range processing enabled (HTTP 206 Partial Content)
             return PhysicalFile(streamInfo.Path, streamInfo.ContentType, enableRangeProcessing: true);
         }

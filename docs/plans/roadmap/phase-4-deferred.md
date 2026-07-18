@@ -173,6 +173,83 @@ operators with TVs that lack Chromecast support.
 
 **Reassessment trigger.** A mature .NET WebAuthn implementation is available, **and** ≥10 user requests for passkey support.
 
+### P4-012 — Web Player Shader Upscaler (Anime4K-class)
+
+**Scope if undertaken.** Client-side GPU upscaling in the web player for low-resolution sources: the
+`<video>` element keeps owning HLS/audio/seek/subtitles but renders visually hidden; frames are
+pulled per `requestVideoFrameCallback` through a WebGL2/WebGPU shader pipeline (Anime4K-class CNN
+shaders are MIT-licensed with existing web ports; an FSR-style sharpen+scale is the low-end
+fallback) onto a canvas positioned with the player's existing `object-contain` letterbox math.
+Control model settled during 2026-07 design discussion: **default Off**; per-user setting plus a
+player quick-menu with Off / Auto / On; "Auto" enables only when the source is meaningfully below
+display size AND a measured first-seconds shader frame-time stays under budget (~4 ms), silently
+falling back to native rendering otherwise. No server-side admin surface — it runs on the viewer's
+GPU. Casting, PiP, and fullscreen are unaffected by design.
+
+**Reason for deferral.** Post-release exploration, deliberately. Zero server cost but a large new
+client complexity surface (GPU pipelines across browser/driver combinations, per-device
+performance variance = support burden). The 2026-07 stream-quality Tier 1 work (deinterlacing,
+no-upscale clamp, lanczos) already banked the high-impact/low-cost wins, and viewers on RTX 30/40
+GPUs get AI upscaling for free from NVIDIA RTX Video Super Resolution in Chrome/Edge today.
+
+**Workaround.** Browser bilinear upscaling (correct, just soft); RTX VSR for NVIDIA users; TV/box
+hardware upscalers when casting.
+
+**Reassessment trigger.** SoftMedia 1.0 released and stable, **and** user feedback identifies
+low-resolution playback in the browser as a recurring pain point. Would be the first genuinely
+differentiating feature over Plex/Jellyfin web (neither offers in-browser shader upscaling —
+Jellyfin's FSRCNNX/Anime4K support exists only in its desktop mpv clients).
+
+---
+
+### P4-013 — AV1 Film-Grain-Synthesis "Optimize" Pipeline
+
+**Scope if undertaken.** Netflix-style grain handling for old/grainy films: a background
+"optimize" job (admin-only — never viewer-triggerable) encodes an AV1+FGS version of selected
+titles via **software SVT-AV1** (hardware encoders cannot produce FGS), stored alongside the
+original; the existing stream-plan capability negotiation direct-plays the AV1 version to
+AV1-decoding clients (all modern browsers via dav1d, most 2020+ devices) and falls back to the
+original otherwise — no per-playback cost, no viewer decision. Requires a job queue with core
+throttling and idle-hours scheduling, storage management for the second version, and
+plan-negotiation extension. Interacts with P4-005 (multi-version support) — the "N files per
+logical title" schema work would serve both.
+
+**Reason for deferral.** Post-release exploration, deliberately. Real encode costs on typical home
+hardware (2 h 1080p movie at SVT-AV1 preset ~6 with FGS: ~2–5 h on an 8-core desktop, ~10–20 h on
+an N100-class mini PC; live FGS transcoding is NOT viable on home hardware) plus a whole
+background-job subsystem. Benefit is per-title, not universal.
+
+**Workaround.** None in-app; users can pre-encode grainy titles with SVT-AV1 (`--film-grain`)
+externally and add the result to the library.
+
+**Reassessment trigger.** SoftMedia 1.0 released and stable, a background-job subsystem exists for
+other reasons (or P4-005 lands), **and** grainy-classic playback quality is a demonstrated user
+pain point. Like P4-012, this would be a genuine differentiator — neither Plex nor Jellyfin
+exposes FGS.
+
+### P4-014 — Dedicated Desktop Client (mpv-based)
+
+**Scope if undertaken.** A first-party desktop app in the Jellyfin Media Player mould: a thin
+shell (webview reusing the existing web UI, or native) around an embedded **mpv** for playback.
+The payoff is inheriting mpv's mature playback stack as configuration rather than code: flawless
+client-side deinterlacing, the enthusiast shader-scaler ecosystem (FSRCNNX, Anime4K, NNEDI3 shader
+packs), audio passthrough, and wide codec support. The client declares broad capabilities in the
+stream-plan negotiation (see `docs/api/stream-plan-negotiation.md`) and therefore receives Direct
+Play — the server ships untouched bytes and mpv owns the pixels; no server-side changes required.
+
+**Reason for deferral.** A whole new client product (packaging for Windows/macOS/Linux, updater,
+per-release QA) for an audience the browser already serves. Sibling decision to P4-002 (native
+mobile). Note the interaction with P4-012: a desktop mpv client delivers shader upscaling to the
+users most likely to want it, reducing the urgency of the in-browser upscaler.
+
+**Workaround.** The web app in any browser; RTX Video Super Resolution provides AI upscaling in
+Chrome/Edge for NVIDIA users. Third-party mpv frontends could target the documented stream-plan
+API today.
+
+**Reassessment trigger.** SoftMedia 1.0 released and stable, **and** either sustained user demand
+for capabilities browsers cannot provide (audio passthrough, advanced scalers, HDR passthrough
+beyond browser support) or a contributor commits to owning the client.
+
 ## 3. Re-Activation Procedure
 
 To move an item from this register into an active phase:

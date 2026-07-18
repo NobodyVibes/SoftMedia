@@ -11,8 +11,13 @@ namespace SoftMedia.Server.Services.Scanning;
 /// Can be triggered manually via TriggerRefreshNow() or runs on a configurable interval.
 /// </summary>
 
-public class MetadataRefreshService : BackgroundService
+public class MetadataRefreshService : BackgroundService, IManuallyTriggerableTask
 {
+    public string TaskName => ScheduledTaskNames.MetadataRefresh;
+
+    /// <summary>R-WI-008 generalised task triggering; the admin endpoint dispatches here.</summary>
+    public void TriggerNow() => TriggerRefreshNow();
+
     private readonly IServiceProvider _services;
     private readonly ILogger<MetadataRefreshService> _logger;
     private readonly TimeSpan _initialDelay = TimeSpan.FromMinutes(1); // Short delay to check startup setting

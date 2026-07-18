@@ -37,6 +37,7 @@ public class TranscodeController : ControllerBase
     // New Services
     private readonly ITranscodeSessionService _sessionService;
     private readonly IStreamResultService _streamResultService;
+    private readonly IStreamPlanStore _planStore;
 
     public TranscodeController(
         ITranscodeService transcodeService,
@@ -47,6 +48,7 @@ public class TranscodeController : ControllerBase
         IStreamSecurityService streamSecurityService,
         ITranscodeSessionService sessionService,
         IStreamResultService streamResultService,
+        IStreamPlanStore planStore,
         AppDbContext dbContext,
         ITokenService tokenService,
         ILogger<TranscodeController> logger)
@@ -59,6 +61,7 @@ public class TranscodeController : ControllerBase
         _streamSecurityService = streamSecurityService;
         _sessionService = sessionService;
         _streamResultService = streamResultService;
+        _planStore = planStore;
         _dbContext = dbContext;
         _tokenService = tokenService;
         _logger = logger;
@@ -119,6 +122,24 @@ public class TranscodeController : ControllerBase
                 id, mediaItem, capabilities, token ?? string.Empty,
                 HttpContext.Connection.RemoteIpAddress, userMaxBitrate);
 
+            // R-WI-002: persist the negotiated quality/security params, keyed by this session's
+            // sid, so a later master.m3u8 request (especially a far-seek that rebuilds the URL
+            // with only token+sid) is resolved against the authoritative plan rather than the
+            // client-controlled query string — closing the far-seek quality loss and the
+            // per-user bitrate-cap bypass (D-4). DirectPlay/sid-less requests are stateless.
+            if (plan.Method is PlaybackMethod.Transcode or PlaybackMethod.Remux)
+            {
+                _planStore.Save(id, userId, capabilities.StreamId, new PersistedStreamPlan(
+                    plan.Method,
+                    plan.TranscodeResolution,
+                    plan.TranscodeCodec,
+                    plan.TranscodeMaxBitrate,
+                    plan.TranscodePreserveHdr,
+                    plan.TranscodeAudioCopy,
+                    plan.TranscodeAudioCodec,
+                    plan.TranscodeAudioChannels));
+            }
+
             _logger.LogInformation("Stream plan for {Id}: Method={Method}, Profile={Profile}, Reason={Reason}{Cast}",
                 id, plan.Method, plan.DisplayProfile, plan.Reason, cast ? " [cast]" : "");
 
@@ -150,9 +171,48 @@ public class TranscodeController : ControllerBase
             if (accessResult == MediaAccessResult.FileNotFound) return NotFound("File not found on disk.");
             if (accessResult == MediaAccessResult.Unauthorized) return NotFound();
 
-            _logger.LogInformation("Starting transcode for media {Id} (user={UserId})", id, userId);
+            // R-WI-002/R-WI-005: if a plan was negotiated for this session (sid), its quality/
+            // security params are authoritative — override any (possibly minimal, e.g. far-seek)
+            // query values so the negotiated resolution/codec/HDR and the per-user bitrate cap
+            // cannot be dropped or bypassed by a client-crafted URL. User-controlled choices —
+            // subtitle/audio track, seek position, burn-in — still come from the request.
+            var storedPlan = _planStore.Get(id, userId, sid);
+            if (storedPlan != null)
+            {
+                resolution = storedPlan.Resolution;
+                codec = storedPlan.Codec;
+                hdr = storedPlan.PreserveHdr;
+                bitrate = storedPlan.MaxBitrate;
+            }
 
-            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr, audioTrack: audio, maxBitrate: bitrate, burnSubtitles: burnSubtitles, sid: sid);
+            // Enforce the per-user bitrate cap on EVERY transcode request, independent of whether
+            // a plan was persisted. A client can reach master.m3u8 with a never-negotiated sid and
+            // a high ?bitrate=, which would otherwise flow to ffmpeg unclamped — the residual D-4
+            // hole the plan-store resolver alone did not close (it only covered the happy path).
+            // The stored plan's bitrate was already cap-clamped at negotiation, so this is a
+            // redundant-but-safe re-clamp there and the sole guard on the null-plan path.
+            var userBitrateCap = await GetUserMaxBitrateAsync(userId);
+            if (userBitrateCap is > 0 && (bitrate is null or <= 0 || bitrate > userBitrateCap))
+            {
+                bitrate = userBitrateCap;
+            }
+
+            // R-WI-003: honour the negotiated Remux method (stream-copy) when the plan says so.
+            // Only trust the persisted plan for this — a client cannot force a copy of an
+            // incompatible source by fiddling the URL (there is no remux query param).
+            var remux = storedPlan?.Method == PlaybackMethod.Remux;
+
+            // R-WI-004: the audio decision (copy / codec / channels) comes ONLY from the negotiated
+            // plan — there is no audio-codec query param, so a fabricated-sid request with no stored
+            // plan safely falls back to the default stereo AAC.
+            var audioCopy = storedPlan?.AudioCopy ?? false;
+            var audioCodec = storedPlan?.AudioCodec;
+            var audioChannels = storedPlan?.AudioChannels ?? 0;
+
+            _logger.LogInformation("Starting {Method} for media {Id} (user={UserId}){Restored}",
+                remux ? "remux" : "transcode", id, userId, storedPlan != null ? " [plan restored]" : "");
+
+            await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr, audioTrack: audio, maxBitrate: bitrate, burnSubtitles: burnSubtitles, sid: sid, remux: remux, audioCopy: audioCopy, audioCodec: audioCodec, audioChannels: audioChannels);
 
             var token = Request.GetToken();
             return await _streamResultService.GenerateMasterPlaylistResultAsync(id, userId, sub, token, sid);
@@ -208,6 +268,11 @@ public class TranscodeController : ControllerBase
         try
         {
             var userId = GetUserId();
+            // R-WI-018 review: the VTT URL is IDENTICAL across far-seek restarts of a
+            // playback while its CONTENT changes with every seek offset — any cache
+            // (browser heuristic, proxy, service worker) serving a stale copy desyncs
+            // subtitles by the whole seek. Never cache it.
+            Response.Headers.CacheControl = "no-store";
             return _streamResultService.GetSubtitleResult(id, userId, sub, sid);
         }
         catch (UnauthorizedAccessException) { return Unauthorized(); }

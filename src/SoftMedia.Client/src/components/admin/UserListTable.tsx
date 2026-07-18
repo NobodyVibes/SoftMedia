@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { CreateUserModal } from './CreateUserModal';
 import { RatingsModal } from '../modals/RatingsModal';
 import { LibraryAccessModal } from '../modals/LibraryAccessModal';
+import { StreamingModal } from '../modals/StreamingModal';
 import { ResetPasswordModal } from './ResetPasswordModal';
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
@@ -42,6 +43,7 @@ export const UserListTable: React.FC = () => {
 
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [ratingsModalUser, setRatingsModalUser] = useState<UserDto | null>(null);
+    const [streamingModalUser, setStreamingModalUser] = useState<UserDto | null>(null);
     const [accessModalUser, setAccessModalUser] = useState<UserDto | null>(null);
     const [resetPasswordUser, setResetPasswordUser] = useState<UserDto | null>(null);
 
@@ -493,6 +495,12 @@ export const UserListTable: React.FC = () => {
                                                 >
                                                     Edit Library Access
                                                 </button>
+                                                <button
+                                                    onClick={() => setStreamingModalUser(user)}
+                                                    className="text-primary hover:text-primary/80 focus-visible:text-primary/80 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none underline rounded text-left"
+                                                >
+                                                    Edit Streaming Limit{user.maxStreamBitrateKbps > 0 ? ` (${user.maxStreamBitrateKbps} kbps)` : ''}
+                                                </button>
                                             </div>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
@@ -617,6 +625,12 @@ export const UserListTable: React.FC = () => {
                 isOpen={!!accessModalUser}
                 onClose={() => setAccessModalUser(null)}
                 user={accessModalUser}
+            />
+
+            <StreamingModal
+                isOpen={!!streamingModalUser}
+                onClose={() => setStreamingModalUser(null)}
+                user={streamingModalUser}
             />
 
             <ResetPasswordModal

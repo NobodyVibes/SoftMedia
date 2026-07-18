@@ -15,6 +15,8 @@ export interface UserDto {
     createdByAdmin: boolean;
     usedInviteCode: string | null;
     twoFactorEnabled: boolean;
+    /** R-WI-009: per-user max streaming bitrate in kbps (0 = unlimited). */
+    maxStreamBitrateKbps: number;
 }
 
 export interface UpdateUserRoleRequest {
@@ -51,13 +53,20 @@ export const userService = {
         await api.delete(`/users/${userId}`);
     },
 
-    async createUser(data: { username: string; password: string; role: string; firstName: string; lastName: string }): Promise<UserDto> {
+    // R-WI-011: contentRatings lets the admin set content ceilings at creation.
+    // Omitted = no restrictions (the default — new users are never capped implicitly).
+    async createUser(data: { username: string; password: string; role: string; firstName: string; lastName: string; contentRatings?: Record<string, string> }): Promise<UserDto> {
         const response = await api.post<UserDto>('/users', data);
         return response.data;
     },
 
     async updateUserRatings(userId: string, contentRatings: Record<string, string>): Promise<void> {
         await api.put(`/users/${userId}/ratings`, { contentRatings });
+    },
+
+    // R-WI-009: set the per-user streaming bitrate cap (kbps; 0 = unlimited). Admin-only.
+    async updateUserStreaming(userId: string, maxStreamBitrateKbps: number): Promise<void> {
+        await api.put(`/users/${userId}/streaming`, { maxStreamBitrateKbps });
     },
 
     async resetUserPassword(userId: string, newPassword: string): Promise<void> {

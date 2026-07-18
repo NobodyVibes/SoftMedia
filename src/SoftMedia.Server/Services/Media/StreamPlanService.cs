@@ -65,6 +65,21 @@ public class StreamPlanService : IStreamPlanService
         "aac", "mp3", "opus", "vorbis", "flac"
     };
 
+    // Codecs that can be *stream-copied into fMP4-HLS* (the remux container, R-WI-003). This is
+    // STRICTER than direct-play eligibility: a codec can play fine in its original container yet be
+    // rejected by ffmpeg's mp4/fMP4 muxer — Vorbis in particular ("Could not find tag for codec
+    // vorbis"), and MP3/VP8 are unreliable in fMP4. Such sources must transcode, not remux. Kept
+    // conservative on purpose; opus/flac remux can be added later once verified end-to-end.
+    private static readonly HashSet<string> RemuxVideoCodecs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "h264", "hevc"
+    };
+
+    private static readonly HashSet<string> RemuxAudioCodecs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "aac", "ac3", "eac3"
+    };
+
     // Resource limits for security
     private const int MaxAllowedBitrate = 100_000; // 100 Mbps
     private const int MaxAllowedResolution = 4320; // 8K
@@ -130,7 +145,7 @@ public class StreamPlanService : IStreamPlanService
             {
                 _logger.LogWarning("Could not probe media {Id} and no DB metadata available, defaulting to transcode", mediaId);
                 // In absolute failure, we assume SDR H.264
-                return CreateTranscodePlan(mediaId, mediaItem, SanitizeCapabilities(clientCaps), token, "Unable to probe source file", outputCodecSetting, false, false, enableAV1);
+                return CreateTranscodePlan(mediaId, mediaItem, SanitizeCapabilities(clientCaps), token, "Unable to probe source file", outputCodecSetting, false, false, enableAV1, mediaItem.AudioCodec ?? "", 0);
             }
             
             _logger.LogWarning("Live probe failed for {Id}, using cached DB metadata", mediaId);
@@ -228,8 +243,15 @@ public class StreamPlanService : IStreamPlanService
             return AppendNote(direct, bitrateNote, bitrateCode);
         }
 
-        // Check 2: Remux
-        if (CanRemux(sourceVideoCodec, sourceAudioCodec, sourceIsHdr, sourceResolution, sanitizedCaps))
+        // Check 2: Remux — only when a stream-copy would stay within the effective bitrate ceiling.
+        // A remux copies the source at its ORIGINAL bitrate (no `-maxrate`), so choosing it for a
+        // source above the cap would let a bitrate-capped user pull it uncapped. When it would
+        // exceed the cap, fall through to Transcode (which applies `-maxrate`). Before R-WI-003 the
+        // "remux" path re-encoded, so it respected the cap incidentally; a true stream-copy must be
+        // gated explicitly. (DirectPlay has the same original-bitrate property but is pre-existing
+        // and out of scope here — noted as a follow-up.)
+        if (RemuxFitsBitrateCeiling(probe, sanitizedCaps.MaxBitrate) &&
+            CanRemux(sourceVideoCodec, sourceAudioCodec, sourceIsHdr, sourceResolution, sanitizedCaps))
         {
             var remux = CreateRemuxPlan(mediaId, mediaItem, sourceVideoCodec, sourceAudioCodec, sourceIsHdr, sourceResolution, sanitizedCaps, token);
             remux.ReasonCodes.Add(new StreamReasonCode(StreamReasonCodes.RemuxContainer,
@@ -240,7 +262,8 @@ public class StreamPlanService : IStreamPlanService
         // Fallback: Transcode
         var transcode = CreateTranscodePlan(mediaId, mediaItem, sanitizedCaps, token,
             DetermineTranscodeReason(sourceVideoCodec, sourceAudioCodec, sourceContainer, sourceIsHdr, sourceResolution, sanitizedCaps),
-            outputCodecSetting, effectivePreserveHdr, sourceIsHdr, enableAV1);
+            outputCodecSetting, effectivePreserveHdr, sourceIsHdr, enableAV1,
+            sourceAudioCodec, probe.AudioChannels ?? 0, bitrateCapped: maxServerBitrate > 0);
         transcode.ReasonCodes.AddRange(
             DetermineTranscodeReasonCodes(sourceVideoCodec, sourceAudioCodec, sourceIsHdr, sourceResolution, sanitizedCaps));
         return AppendNote(transcode, bitrateNote, bitrateCode);
@@ -331,21 +354,32 @@ public class StreamPlanService : IStreamPlanService
         return true;
     }
 
+    /// True when a stream-copy of the source would stay within <paramref name="effectiveMaxBitrateKbps"/>
+    /// (the ceiling a transcode would enforce). Returns true when the source bitrate is unknown or
+    /// there is effectively no cap, so we don't force a needless transcode on missing probe data.
+    private static bool RemuxFitsBitrateCeiling(MediaProbeResult probe, int effectiveMaxBitrateKbps)
+    {
+        if (probe.Bitrate is not > 0 || effectiveMaxBitrateKbps <= 0) return true;
+        var sourceKbps = probe.Bitrate.Value / 1000;
+        return sourceKbps <= effectiveMaxBitrateKbps;
+    }
+
     private bool CanRemux(string videoCodec, string audioCodec, bool isHdr, int resolution, ClientCapabilities caps)
     {
-        // For remux, we just copy streams to HLS/MP4 container
-        // Video codec must be playable in their browser
-        var codecSupported = DirectPlayVideoCodecs.Contains(videoCodec) ||
-                              caps.VideoCodecs.Any(c => NormalizeCodecName(c) == videoCodec);
-
-        if (!codecSupported)
+        // For remux we stream-copy into fMP4-HLS, so each track must be BOTH (a) copyable into that
+        // container and (b) decodable by the client. (a) is the stricter test the old code missed:
+        // some codecs direct-play in their native container but the fMP4 muxer rejects them (Vorbis)
+        // or MSE won't decode them there (VP8) — those must transcode, not remux (R-WI-003 review).
+        var videoMuxable = RemuxVideoCodecs.Contains(videoCodec);
+        var videoClientPlayable = DirectPlayVideoCodecs.Contains(videoCodec) ||
+                                  caps.VideoCodecs.Any(c => NormalizeCodecName(c) == videoCodec);
+        if (!videoMuxable || !videoClientPlayable)
             return false;
 
-        // Audio must be compatible (or we can copy it since HLS supports AAC/AC3)
-        var audioSupported = DirectPlayAudioCodecs.Contains(audioCodec) ||
-                              caps.AudioCodecs.Any(c => NormalizeCodecName(c) == audioCodec);
-
-        if (!audioSupported)
+        var audioMuxable = RemuxAudioCodecs.Contains(audioCodec);
+        var audioClientPlayable = DirectPlayAudioCodecs.Contains(audioCodec) ||
+                                  caps.AudioCodecs.Any(c => NormalizeCodecName(c) == audioCodec);
+        if (!audioMuxable || !audioClientPlayable)
             return false;
 
         // HDR requires HDR client (can't tonemap in remux, that's transcode)
@@ -404,7 +438,7 @@ public class StreamPlanService : IStreamPlanService
         };
     }
 
-    private StreamPlan CreateTranscodePlan(Guid mediaId, MediaItem item, ClientCapabilities caps, string token, string reason, string outputCodecSetting, bool preserveHdr, bool sourceIsHdr, bool enableAV1)
+    private StreamPlan CreateTranscodePlan(Guid mediaId, MediaItem item, ClientCapabilities caps, string token, string reason, string outputCodecSetting, bool preserveHdr, bool sourceIsHdr, bool enableAV1, string sourceAudioCodec = "", int sourceAudioChannels = 0, bool bitrateCapped = false)
     {
         // Determine output resolution based on client's max or keep original
         var targetResolution = caps.MaxResolution > 0 ? $"{caps.MaxResolution}p" : "1080p";
@@ -444,13 +478,47 @@ public class StreamPlanService : IStreamPlanService
             // else fallback to h264
         }
 
-        // Audio: use AAC stereo as default, or AC3 for surround
-        var targetAudioCodec = "aac";
-        var targetChannels = 2;
-        if (caps.MaxAudioChannels >= 6 && caps.AudioCodecs.Any(c => NormalizeCodecName(c) == "ac3" || NormalizeCodecName(c) == "eac3"))
+        // Audio ladder (R-WI-004) — previously the builder forced stereo AAC 128k regardless of this.
+        //   1. COPY the source audio when the client can decode it (best quality, no CPU, preserves
+        //      the source's channels — this is how surround usually survives: an AC3 5.1 source to
+        //      an AC3-capable client is copied, not re-encoded).
+        //   2. else ENCODE to AC3 5.1 when the client wants surround AND the source is multichannel.
+        //   3. else stereo AAC.
+        // Copy is only safe when the source audio can be muxed into the transcode's HLS container
+        // (TS or fMP4). That is STRICTER than direct-play decodability — the same constraint as
+        // remux (RemuxAudioCodecs = aac/ac3/eac3); e.g. a FLAC/Opus/Vorbis source must be encoded,
+        // not copied, even though the browser could decode it in its native container.
+        var normalizedSourceAudio = NormalizeCodecName(sourceAudioCodec);
+        var clientPlaysSourceAudio = RemuxAudioCodecs.Contains(normalizedSourceAudio) &&
+            (DirectPlayAudioCodecs.Contains(normalizedSourceAudio) ||
+             caps.AudioCodecs.Any(c => NormalizeCodecName(c) == normalizedSourceAudio));
+
+        bool audioCopy;
+        string targetAudioCodec;
+        int targetChannels;
+        // When a per-user / network bitrate cap is in effect, prefer a BOUNDED encode over a copy:
+        // a stream-copy preserves the source's original (uncapped) audio bitrate — a copied E-AC3
+        // Atmos track can run ~1.5 Mbps — which would blow a capped user's budget on top of the
+        // video -maxrate. Encoding caps audio at ≤448k while still preserving surround as AC3 5.1
+        // (diff-review MEDIUM; mirrors the remux RemuxFitsBitrateCeiling gate).
+        if (clientPlaysSourceAudio && !bitrateCapped)
         {
+            audioCopy = true;
+            targetAudioCodec = normalizedSourceAudio;                     // for display; ffmpeg copies
+            targetChannels = sourceAudioChannels > 0 ? sourceAudioChannels : 2;
+        }
+        else if (caps.MaxAudioChannels >= 6 && sourceAudioChannels >= 6 &&
+                 caps.AudioCodecs.Any(c => NormalizeCodecName(c) == "ac3" || NormalizeCodecName(c) == "eac3"))
+        {
+            audioCopy = false;
             targetAudioCodec = "ac3";
             targetChannels = 6;
+        }
+        else
+        {
+            audioCopy = false;
+            targetAudioCodec = "aac";
+            targetChannels = 2;
         }
 
         // Build URL with codec and HDR parameters
@@ -482,7 +550,17 @@ public class StreamPlanService : IStreamPlanService
             Resolution = targetResolution,
             AudioChannels = targetChannels,
             Reason = reason,
-            SourceIsHdr = sourceIsHdr
+            SourceIsHdr = sourceIsHdr,
+            // R-WI-002: expose the resolved transcode params so the controller can persist the
+            // authoritative plan. These are exactly the values encoded into the URL above.
+            TranscodeResolution = targetResolution,
+            TranscodeCodec = targetVideoCodec,
+            TranscodeMaxBitrate = caps.MaxBitrate < MaxAllowedBitrate ? caps.MaxBitrate : null,
+            TranscodePreserveHdr = outputIsHdr,
+            // R-WI-004: the resolved audio decision (copy / encode codec + channels).
+            TranscodeAudioCopy = audioCopy,
+            TranscodeAudioCodec = targetAudioCodec,
+            TranscodeAudioChannels = targetChannels
         };
     }
 

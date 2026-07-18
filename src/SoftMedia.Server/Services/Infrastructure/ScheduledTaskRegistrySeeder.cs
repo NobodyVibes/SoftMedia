@@ -21,6 +21,7 @@ public static class ScheduledTaskRegistrySeeder
         Sched(ScheduledTaskNames.TranscodeSegmentCleanup, "Hourly: removes transcode session folders whose newest segment is older than the retention window (Settings → Transcoding).");
         Sched(ScheduledTaskNames.ThrottleMonitor, "Monitors transcode buffers and throttles FFmpeg.");
         Sched(ScheduledTaskNames.Trickplay, "Generates scrubber-preview sprite sheets for videos that lack them.");
+        Sched(ScheduledTaskNames.ScheduledLibraryScan, "Scans all libraries for new/changed files on a configurable interval (Settings → Libraries). A backstop for changes the realtime file watcher can miss. Disabled when the interval is 0.", manual: true);
 
         Event(ScheduledTaskNames.LibraryWatcher, "Watches library folders for filesystem changes in real time.");
         Event(ScheduledTaskNames.LibraryScanQueue, "Processes queued library scan jobs.");

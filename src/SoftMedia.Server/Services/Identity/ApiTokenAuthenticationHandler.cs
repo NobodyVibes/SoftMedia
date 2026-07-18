@@ -16,8 +16,9 @@ namespace SoftMedia.Server.Services.Identity;
 ///
 /// On success the principal carries:
 ///   - ClaimTypes.NameIdentifier = user id (so ClaimsPrincipal.GetUserId() works)
-///   - ClaimTypes.Role           = the user's role (so [Authorize(Roles=...)] works
-///                                  for admin-scoped tokens)
+///   - ClaimTypes.Role           = the user's role — emitted ONLY for admin-scoped
+///                                  tokens, so a non-admin-scoped token can never
+///                                  satisfy [Authorize(Roles="Admin")] (D-5/R-WI-006)
 ///   - "scope" claims            = the token's granted scopes (for scope policies)
 /// </summary>
 public class ApiTokenAuthenticationHandler : AuthenticationHandler<AuthenticationSchemeOptions>
@@ -57,8 +58,15 @@ public class ApiTokenAuthenticationHandler : AuthenticationHandler<Authenticatio
         {
             new(ClaimTypes.NameIdentifier, result.User.Id.ToString()),
             new(ClaimTypes.Name, result.User.Username),
-            new(ClaimTypes.Role, result.User.Role.ToString()),
         };
+
+        // D-5/R-WI-006: emit the role claim ONLY for admin-scoped tokens. It was previously
+        // emitted unconditionally, so a read-only token minted by an admin still satisfied
+        // [Authorize(Roles="Admin")] — a full privilege escalation. The value is the user's
+        // live role, so a demoted admin's admin-scoped token no longer reads as Admin either.
+        if (result.Scopes.Contains(ApiTokenScopes.Admin))
+            claims.Add(new Claim(ClaimTypes.Role, result.User.Role.ToString()));
+
         foreach (var scope in result.Scopes)
             claims.Add(new Claim(ScopeClaimType, scope));
 

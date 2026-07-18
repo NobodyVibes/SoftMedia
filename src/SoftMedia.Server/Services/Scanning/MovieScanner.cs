@@ -16,6 +16,7 @@ namespace SoftMedia.Server.Services.Scanning;
 public class MovieScanner : BaseMediaScanner
 {
     private readonly IMediaAnalysisService _mediaAnalysisService;
+    private readonly ILocalArtworkService _localArtwork;
 
     public override LibraryType SupportedType => LibraryType.Movie;
     public override string[] SupportedExtensions => SoftMedia.Server.Constants.MediaExtensions.Video;
@@ -26,10 +27,12 @@ public class MovieScanner : BaseMediaScanner
         ILogger<MovieScanner> logger,
         IMediaNotificationService notificationService,
         IMediaAnalysisService mediaAnalysisService,
-        IMetadataQueue metadataQueue)
+        IMetadataQueue metadataQueue,
+        ILocalArtworkService localArtwork)
         : base(scopeFactory, logger, notificationService, metadataQueue)
     {
         _mediaAnalysisService = mediaAnalysisService;
+        _localArtwork = localArtwork;
     }
 
     /// <summary>
@@ -69,6 +72,14 @@ public class MovieScanner : BaseMediaScanner
             var refreshMode = isNew ? MetadataRefreshMode.Full : MetadataRefreshMode.Missing;
             await _mediaAnalysisService.AnalyzeAsync(movie, filePath, refreshMode, cancellationToken);
 
+            // R-WI-014: local sidecar artwork (poster.jpg / folder.jpg / <stem>-poster.* beside
+            // the movie) wins over provider art. Runs every scan so added/updated/removed
+            // sidecars are picked up; a removed local poster forces re-enrichment so provider
+            // art returns. Enrichment still happens for local-art items (the policy treats a
+            // local-only poster as incomplete until one pass stamps MetadataHash).
+            var artwork = await _localArtwork.ApplyLocalArtworkAsync(
+                movie, Path.GetDirectoryName(filePath) ?? string.Empty, Path.GetFileNameWithoutExtension(filePath));
+
             if (isNew)
             {
                 // Assign ID early if needed for queue? 
@@ -84,8 +95,11 @@ public class MovieScanner : BaseMediaScanner
             }
             else
             {
-                // Check if metadata needs refresh
-                var needsEnrichment = MetadataEnrichmentPolicy.NeedsEnrichment(existing!, _strictEnrichment);
+                // Check if metadata needs refresh. A removed local poster forces a re-enqueue
+                // even though the policy alone wouldn't (the item may still look "complete"),
+                // so provider art comes back promptly.
+                var needsEnrichment = artwork.LocalPosterRemoved
+                    || MetadataEnrichmentPolicy.NeedsEnrichment(existing!, _strictEnrichment);
 
                 if (needsEnrichment)
                 {

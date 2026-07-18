@@ -147,6 +147,68 @@ public class ApiTokenIntegrationTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task AdminMintedReadOnlyToken_Is403_OnAdminEndpoint()
+    {
+        // R-WI-006/D-5: a NON-admin-scoped token — even one minted by an admin — must not
+        // carry the admin role claim, so it can no longer satisfy [Authorize(Roles="Admin")].
+        // Previously the role claim was emitted unconditionally (a privilege escalation).
+        var admin = await Factory.SeedUserAsync("tokadmin-ro", role: UserRole.Admin);
+        var mint = await MintAsync(JwtClient(admin), ApiTokenScopes.ReadLibrary);
+
+        var tokenClient = ApiTokenClient(Factory, mint.token);
+        var resp = await tokenClient.GetAsync("/api/v1/admin/backup");
+
+        Assert.Equal(HttpStatusCode.Forbidden, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task ReadOnlyToken_Is403_OnPlaylistCreate()
+    {
+        // R-WI-006: playlist creation now requires write:state (previously plain [Authorize],
+        // so any token could mutate). A read-only token must be 403.
+        var user = await Factory.SeedUserAsync("tokuser-pl");
+        var mint = await MintAsync(JwtClient(user), ApiTokenScopes.ReadLibrary);
+
+        var tokenClient = ApiTokenClient(Factory, mint.token);
+        var resp = await tokenClient.PostAsJsonAsync("/api/v1/playlists", new { name = "x" });
+
+        Assert.Equal(HttpStatusCode.Forbidden, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task ApiToken_CannotMintAnotherToken()
+    {
+        // R-WI-006 / diff-review CRITICAL: token administration is full-session only. Even a
+        // write:state token must be 403 when trying to mint — otherwise a leaked read/write
+        // token trivially escalates itself by minting a higher-scoped (or admin) token,
+        // making the rest of the scope enforcement illusory.
+        var user = await Factory.SeedUserAsync("tokuser-mint");
+        var mint = await MintAsync(JwtClient(user), ApiTokenScopes.WriteState);
+
+        var tokenClient = ApiTokenClient(Factory, mint.token);
+        var resp = await tokenClient.PostAsJsonAsync("/api/v1/account/api-tokens",
+            new { label = "escalate", scopes = new[] { ApiTokenScopes.WriteState }, expiresAt = (DateTime?)null });
+
+        Assert.Equal(HttpStatusCode.Forbidden, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task ReadOnlyToken_Is403_OnWebhookCreate()
+    {
+        // R-WI-006 / diff-review HIGH: a read-only token must not register an outbound webhook
+        // (data-exfil + SSRF surface). Authorization fails before body binding, so the request
+        // shape is irrelevant to the 403.
+        var user = await Factory.SeedUserAsync("tokuser-wh");
+        var mint = await MintAsync(JwtClient(user), ApiTokenScopes.ReadLibrary);
+
+        var tokenClient = ApiTokenClient(Factory, mint.token);
+        var resp = await tokenClient.PostAsJsonAsync("/api/v1/webhooks",
+            new { url = "https://example.com/hook", events = new[] { "library.scan.completed" } });
+
+        Assert.Equal(HttpStatusCode.Forbidden, resp.StatusCode);
+    }
+
+    [Fact]
     public async Task RawToken_IsNeverPersisted_OnlyHash()
     {
         var user = await Factory.SeedUserAsync("tokuser7");

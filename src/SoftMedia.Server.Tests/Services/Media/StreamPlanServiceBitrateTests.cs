@@ -155,4 +155,193 @@ public class StreamPlanServiceBitrateTests
         Assert.Equal("10000", clamp!.Params["kbps"]);
         Assert.Equal("WAN cap", clamp.Params["source"]);
     }
+
+    // --- R-WI-003: remux must not bypass the bitrate cap ---
+
+    // h264/aac in mkv → codec-compatible but container needs remux. Client supports the codecs but
+    // only the mp4 container, so DirectPlay is out and Remux is the natural choice — unless the
+    // source bitrate exceeds the cap, in which case a copy would blow it and Transcode must win.
+    private static MediaItem RemuxItem() => new()
+    {
+        Id = Guid.NewGuid(), Title = "R", Path = "/r.mkv",
+        VideoCodec = "h264", AudioCodec = "aac", Container = "mkv", Resolution = "1080p",
+    };
+
+    private static StreamPlanService BuildRemuxService(int wanKbps, long sourceBitrateBps,
+        string videoCodec = "h264", string audioCodec = "aac")
+    {
+        var ffmpeg = new Mock<IFFmpegService>();
+        ffmpeg.Setup(f => f.ProbeMediaAsync(It.IsAny<string>())).ReturnsAsync(new MediaProbeResult
+        {
+            VideoCodec = videoCodec, AudioCodec = audioCodec, Resolution = "1080p",
+            PixelFormat = "yuv420p", Duration = 100, Bitrate = sourceBitrateBps,
+        });
+        var settings = new Mock<ISettingsService>();
+        settings.Setup(s => s.GetSettingAsync("MaxStreamingBitrate", It.IsAny<int>())).ReturnsAsync(wanKbps);
+        settings.Setup(s => s.GetSettingAsync("MaxStreamingBitrateLan", It.IsAny<int>())).ReturnsAsync(0);
+        settings.Setup(s => s.GetSettingAsync("ForceDirectPlayWhenPossible", It.IsAny<bool>())).ReturnsAsync(true);
+        settings.Setup(s => s.GetSettingAsync("DefaultStreamingQuality", It.IsAny<string>())).ReturnsAsync("auto");
+        settings.Setup(s => s.GetSettingAsync("DefaultAudioChannels", It.IsAny<string>())).ReturnsAsync("auto");
+        settings.Setup(s => s.GetSettingAsync("OutputVideoCodec", It.IsAny<string>())).ReturnsAsync("auto");
+        settings.Setup(s => s.GetSettingAsync("PreserveHDR", It.IsAny<bool>())).ReturnsAsync(false);
+        settings.Setup(s => s.GetSettingAsync("EnableAV1Encoding", It.IsAny<bool>())).ReturnsAsync(false);
+        settings.Setup(s => s.GetSettingAsync("MaxTranscodeResolution", It.IsAny<string>())).ReturnsAsync("original");
+        return new StreamPlanService(ffmpeg.Object, settings.Object, NullLogger<StreamPlanService>.Instance);
+    }
+
+    [Fact]
+    public async Task Remux_Chosen_WhenSourceBitrateWithinCap()
+    {
+        var svc = BuildRemuxService(wanKbps: 8000, sourceBitrateBps: 3_000_000); // 3 Mbps ≤ 8 Mbps cap
+        var plan = await svc.ComputeStreamPlanAsync(
+            Guid.NewGuid(), RemuxItem(), Caps(20000), "tok",
+            clientIp: IPAddress.Parse("203.0.113.9"));
+
+        Assert.Equal(PlaybackMethod.Remux, plan.Method);
+    }
+
+    [Fact]
+    public async Task Transcode_NotRemux_WhenSourceBitrateExceedsCap()
+    {
+        // 20 Mbps source, 5 Mbps cap: a stream-copy would bypass the cap, so the planner must
+        // transcode (which applies -maxrate) instead of remuxing (R-WI-003 diff-review).
+        var svc = BuildRemuxService(wanKbps: 5000, sourceBitrateBps: 20_000_000);
+        var plan = await svc.ComputeStreamPlanAsync(
+            Guid.NewGuid(), RemuxItem(), Caps(20000), "tok",
+            clientIp: IPAddress.Parse("203.0.113.9"));
+
+        Assert.Equal(PlaybackMethod.Transcode, plan.Method);
+    }
+
+    [Fact]
+    public async Task Remux_Chosen_WhenNoCap_EvenForHighBitrateSource()
+    {
+        var svc = BuildRemuxService(wanKbps: 0, sourceBitrateBps: 20_000_000); // no cap
+        var plan = await svc.ComputeStreamPlanAsync(
+            Guid.NewGuid(), RemuxItem(), Caps(0), "tok",
+            clientIp: IPAddress.Parse("203.0.113.9"));
+
+        Assert.Equal(PlaybackMethod.Remux, plan.Method);
+    }
+
+    // --- R-WI-004: audio ladder decision (on a forced-transcode source) ---
+
+    private static StreamPlanService BuildForcedTranscodeAudioService(string audioCodec, int audioChannels, int wanKbps = 0)
+    {
+        var ffmpeg = new Mock<IFFmpegService>();
+        ffmpeg.Setup(f => f.ProbeMediaAsync(It.IsAny<string>())).ReturnsAsync(new MediaProbeResult
+        {
+            VideoCodec = "mpeg2", // forces Transcode regardless of audio
+            AudioCodec = audioCodec, AudioChannels = audioChannels,
+            Resolution = "1080p", PixelFormat = "yuv420p", Duration = 100,
+        });
+        var settings = new Mock<ISettingsService>();
+        settings.Setup(s => s.GetSettingAsync("MaxStreamingBitrate", It.IsAny<int>())).ReturnsAsync(wanKbps);
+        settings.Setup(s => s.GetSettingAsync("MaxStreamingBitrateLan", It.IsAny<int>())).ReturnsAsync(0);
+        settings.Setup(s => s.GetSettingAsync("ForceDirectPlayWhenPossible", It.IsAny<bool>())).ReturnsAsync(true);
+        settings.Setup(s => s.GetSettingAsync("DefaultStreamingQuality", It.IsAny<string>())).ReturnsAsync("auto");
+        settings.Setup(s => s.GetSettingAsync("DefaultAudioChannels", It.IsAny<string>())).ReturnsAsync("auto");
+        settings.Setup(s => s.GetSettingAsync("OutputVideoCodec", It.IsAny<string>())).ReturnsAsync("auto");
+        settings.Setup(s => s.GetSettingAsync("PreserveHDR", It.IsAny<bool>())).ReturnsAsync(false);
+        settings.Setup(s => s.GetSettingAsync("EnableAV1Encoding", It.IsAny<bool>())).ReturnsAsync(false);
+        settings.Setup(s => s.GetSettingAsync("MaxTranscodeResolution", It.IsAny<string>())).ReturnsAsync("original");
+        return new StreamPlanService(ffmpeg.Object, settings.Object, NullLogger<StreamPlanService>.Instance);
+    }
+
+    private static MediaItem AudioItem(string audioCodec) => new()
+    {
+        Id = Guid.NewGuid(), Title = "A", Path = "/a.mkv",
+        VideoCodec = "mpeg2", AudioCodec = audioCodec, Container = "mkv", Resolution = "1080p",
+    };
+
+    private static ClientCapabilities SurroundCaps() => new()
+    {
+        VideoCodecs = ["h264"], AudioCodecs = ["aac", "ac3"], SupportedContainers = ["mp4"],
+        MaxBitrate = 0, MaxAudioChannels = 6, MaxResolution = 2160,
+    };
+
+    [Fact]
+    public async Task Audio_Copies_Ac3_5_1_WhenClientSupportsAc3()
+    {
+        // AC3 5.1 source + AC3-capable client → copy (surround preserved with no re-encode).
+        var svc = BuildForcedTranscodeAudioService("ac3", 6);
+        var plan = await svc.ComputeStreamPlanAsync(
+            Guid.NewGuid(), AudioItem("ac3"), SurroundCaps(), "tok", clientIp: IPAddress.Parse("10.0.0.1"));
+
+        Assert.Equal(PlaybackMethod.Transcode, plan.Method); // video still transcodes (mpeg2)
+        Assert.True(plan.TranscodeAudioCopy);
+        Assert.Equal("ac3", plan.TranscodeAudioCodec);
+        Assert.Equal(6, plan.TranscodeAudioChannels);
+    }
+
+    [Fact]
+    public async Task Audio_EncodesInsteadOfCopy_WhenBitrateCapped()
+    {
+        // AC3 5.1 copyable source, but a bitrate cap is in effect (WAN 8000) → the plan must ENCODE
+        // (bounded ≤448k) rather than copy the source audio at its uncapped original bitrate
+        // (diff-review MEDIUM). Surround is still preserved as AC3 5.1.
+        var svc = BuildForcedTranscodeAudioService("ac3", 6, wanKbps: 8000);
+        var plan = await svc.ComputeStreamPlanAsync(
+            Guid.NewGuid(), AudioItem("ac3"), SurroundCaps(), "tok", clientIp: IPAddress.Parse("203.0.113.9"));
+
+        Assert.False(plan.TranscodeAudioCopy); // capped → encode, not copy
+        Assert.Equal("ac3", plan.TranscodeAudioCodec);
+        Assert.Equal(6, plan.TranscodeAudioChannels);
+    }
+
+    [Fact]
+    public async Task Audio_EncodesAc3_5_1_ForMultichannelSource_ClientCannotCopy()
+    {
+        // DTS 5.1 can't be copied (not fMP4/TS-safe) but the client wants surround + supports AC3
+        // → encode AC3 5.1 rather than downmix to stereo.
+        var svc = BuildForcedTranscodeAudioService("dts", 6);
+        var plan = await svc.ComputeStreamPlanAsync(
+            Guid.NewGuid(), AudioItem("dts"), SurroundCaps(), "tok", clientIp: IPAddress.Parse("10.0.0.1"));
+
+        Assert.False(plan.TranscodeAudioCopy);
+        Assert.Equal("ac3", plan.TranscodeAudioCodec);
+        Assert.Equal(6, plan.TranscodeAudioChannels);
+    }
+
+    [Fact]
+    public async Task Audio_StereoAac_ForStereoSource_NonMuxableCodec()
+    {
+        // Vorbis stereo: can't copy (not TS/fMP4-safe), not multichannel → stereo AAC.
+        var svc = BuildForcedTranscodeAudioService("vorbis", 2);
+        var caps = new ClientCapabilities
+        {
+            VideoCodecs = ["h264"], AudioCodecs = ["aac", "vorbis"], SupportedContainers = ["mp4"],
+            MaxBitrate = 0, MaxAudioChannels = 6, MaxResolution = 2160,
+        };
+        var plan = await svc.ComputeStreamPlanAsync(
+            Guid.NewGuid(), AudioItem("vorbis"), caps, "tok", clientIp: IPAddress.Parse("10.0.0.1"));
+
+        Assert.False(plan.TranscodeAudioCopy);
+        Assert.Equal("aac", plan.TranscodeAudioCodec);
+        Assert.Equal(2, plan.TranscodeAudioChannels);
+    }
+
+    [Fact]
+    public async Task Transcode_NotRemux_WhenAudioCodecNotFmp4Muxable()
+    {
+        // Vorbis direct-plays in webm/mkv, but ffmpeg's fMP4 muxer has no tag for it — a stream-copy
+        // into fMP4-HLS would fail at mux time. The planner must transcode, not remux (R-WI-003 review).
+        var svc = BuildRemuxService(wanKbps: 0, sourceBitrateBps: 3_000_000, audioCodec: "vorbis");
+        var item = RemuxItem();
+        item.AudioCodec = "vorbis";
+        var caps = new ClientCapabilities
+        {
+            VideoCodecs = ["h264"],
+            AudioCodecs = ["vorbis"], // client CAN decode vorbis — but it's still not fMP4-remuxable
+            SupportedContainers = ["mp4"],
+            MaxBitrate = 20000,
+            MaxAudioChannels = 2,
+            MaxResolution = 2160,
+        };
+
+        var plan = await svc.ComputeStreamPlanAsync(
+            Guid.NewGuid(), item, caps, "tok", clientIp: IPAddress.Parse("203.0.113.9"));
+
+        Assert.Equal(PlaybackMethod.Transcode, plan.Method);
+    }
 }

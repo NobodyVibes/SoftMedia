@@ -50,10 +50,15 @@ public static class ApiTokenScopes
     public const string ReadLibrary = "read:library";
     public const string ReadState = "read:state";
     public const string WriteState = "write:state";
+    /// <summary>
+    /// R-WI-019 — library mutation triggers (scan webhook). Deliberately narrow so a
+    /// Sonarr/Radarr config holds a least-privilege credential, not a full-admin one.
+    /// </summary>
+    public const string WriteLibrary = "write:library";
     public const string Admin = "admin";
 
     public static readonly IReadOnlySet<string> All =
-        new HashSet<string> { ReadLibrary, ReadState, WriteState, Admin };
+        new HashSet<string> { ReadLibrary, ReadState, WriteState, WriteLibrary, Admin };
 
     public static bool IsValid(string scope) => All.Contains(scope);
 }

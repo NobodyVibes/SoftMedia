@@ -242,6 +242,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMediaScanner, MovieScanner>();
         services.AddScoped<IMediaScanner, GameScanner>();
         services.AddScoped<IMediaScanner, BookScanner>();
+
+        // R-WI-014 — local artwork sidecar discovery (poster.jpg beside media), used by the
+        // movie/TV scanners and the NFO providers.
+        services.AddScoped<ILocalArtworkService, LocalArtworkService>();
         services.AddSingleton<IBookMetadataExtractor, BookMetadataExtractor>();
 
         services.AddTransient<SoftMediaUserAgentHandler>();
@@ -349,10 +353,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAudioStreamPlanService, AudioStreamPlanService>();
         services.AddSingleton<IProcessController, ProcessController>();
         services.AddSingleton<ITranscodeSessionManager, TranscodeSessionManager>();
+        services.AddSingleton<IStreamPlanStore, StreamPlanStore>(); // R-WI-002: session plan store (lifetime independent of TranscodeSession)
         services.AddSingleton<IHlsService, HlsService>();
         services.AddSingleton<TranscodeService>();
         services.AddSingleton<ITranscodeService>(sp => sp.GetRequiredService<TranscodeService>());
         services.AddScoped<ITranscodeSessionService, TranscodeSessionService>();
+        services.AddSingleton<Services.Sessions.IActiveStreamRegistry, Services.Sessions.ActiveStreamRegistry>(); // R-WI-016: direct-play liveness for the admin dashboard
         services.AddScoped<IStreamResultService, StreamResultService>();
         services.AddSingleton<IBinaryLocationService, BinaryLocationService>();
         services.AddSingleton<IMediaProbeService, MediaProbeService>();
@@ -370,6 +376,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ITranscodeProfileBuilder, TranscodeProfileBuilder>();
         services.AddScoped<IHlsManifestService, HlsManifestService>();
         services.AddScoped<IRecommendationService, RecommendationService>();
+        services.AddScoped<IContinueWatchingService, ContinueWatchingService>();
         services.AddScoped<IMusicImageService, MusicImageService>();
 
         // Database backup / restore (P1-WI-001).
@@ -437,6 +444,10 @@ public static class ServiceCollectionExtensions
     public const string AuthRateLimitPolicy = "auth";
     public const string ImageProxyRateLimitPolicy = "image-proxy";
     public const string TwoFactorRateLimitPolicy = "2fa";
+    /// R-WI-019 — scan-webhook trigger. Generous for real import bursts (an *arr
+    /// season import fires a handful of hooks), tight enough that a hostile or
+    /// misconfigured credential can't keep the scan queue perpetually hot.
+    public const string WebhookRateLimitPolicy = "webhook";
 
     // Policy "auth": per-IP sliding window on /auth/login and /auth/signup to defeat
     // credential stuffing. 15 attempts per minute is comfortable headroom for users
@@ -492,6 +503,23 @@ public static class ServiceCollectionExtensions
                         QueueLimit = 0,
                         AutoReplenishment = true
                     }));
+
+            options.AddPolicy(WebhookRateLimitPolicy, httpContext =>
+            {
+                var key = httpContext.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                          ?? httpContext.Connection.RemoteIpAddress?.ToString()
+                          ?? "unknown";
+                return RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: key,
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 30,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0,
+                        AutoReplenishment = true
+                    });
+            });
 
             options.AddPolicy(ImageProxyRateLimitPolicy, httpContext =>
             {
@@ -560,6 +588,15 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<MetadataRefreshService>();
         services.AddHostedService(sp => sp.GetRequiredService<MetadataRefreshService>());
         services.AddHostedService<HeroCacheWorker>();
+
+        // R-WI-008: interval-scheduled full library scans (LibraryScanIntervalHours, 0 = off).
+        services.AddSingleton<ScheduledScanService>();
+        services.AddHostedService(sp => sp.GetRequiredService<ScheduledScanService>());
+
+        // Tasks the admin Background Tasks page can trigger on demand. The trigger endpoint
+        // resolves this collection and dispatches by task name (R-WI-008 generalisation).
+        services.AddSingleton<IManuallyTriggerableTask>(sp => sp.GetRequiredService<MetadataRefreshService>());
+        services.AddSingleton<IManuallyTriggerableTask>(sp => sp.GetRequiredService<ScheduledScanService>());
 
         // Metadata Queue
         services.AddSingleton<MetadataQueueService>();

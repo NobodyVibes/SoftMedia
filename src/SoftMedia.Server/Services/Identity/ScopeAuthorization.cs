@@ -57,6 +57,16 @@ public static class ScopePolicies
     public const string ReadLibrary = "scope:read:library";
     public const string ReadState = "scope:read:state";
     public const string WriteState = "scope:write:state";
+    /// R-WI-019 — scan-trigger webhook (least-privilege credential for *arr tools).
+    public const string WriteLibrary = "scope:write:library";
+
+    /// Requires a full interactive session (JWT / cookie login) and REJECTS API tokens.
+    /// Gates sensitive account self-management — token mint/revoke, account deletion, 2FA
+    /// enrolment, trusted-device revocation — so a long-lived API token can never escalate
+    /// its own privileges (mint a higher-scoped token), destroy the account, or manipulate
+    /// 2FA. Discriminated by the ApiToken authentication scheme, not by scopes, so it holds
+    /// even for a hypothetical scopeless token (R-WI-006 / diff-review CRITICAL).
+    public const string FullSession = "auth:full-session";
 
     /// Registers a policy per scope. Each REQUIRES an authenticated user (defense in
     /// depth alongside the handler's anonymous guard — a named policy does NOT inherit
@@ -67,5 +77,10 @@ public static class ScopePolicies
         options.AddPolicy(ReadLibrary, p => p.RequireAuthenticatedUser().AddRequirements(new ScopeRequirement(Models.ApiTokenScopes.ReadLibrary)));
         options.AddPolicy(ReadState, p => p.RequireAuthenticatedUser().AddRequirements(new ScopeRequirement(Models.ApiTokenScopes.ReadState)));
         options.AddPolicy(WriteState, p => p.RequireAuthenticatedUser().AddRequirements(new ScopeRequirement(Models.ApiTokenScopes.WriteState)));
+        options.AddPolicy(WriteLibrary, p => p.RequireAuthenticatedUser().AddRequirements(new ScopeRequirement(Models.ApiTokenScopes.WriteLibrary)));
+        options.AddPolicy(FullSession, p => p
+            .RequireAuthenticatedUser()
+            .RequireAssertion(ctx =>
+                ctx.User.Identity?.AuthenticationType != ApiTokenAuthenticationHandler.SchemeName));
     }
 }

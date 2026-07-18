@@ -54,6 +54,9 @@ public class AppDbContext : DbContext
     // Wave E2 — movie collections / franchises.
     public DbSet<Collection> Collections { get; set; }
 
+    // R-WI-013 — per-play history for video/audio (watch history, play counts).
+    public DbSet<PlaybackHistory> PlaybackHistory { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -280,6 +283,30 @@ public class AppDbContext : DbContext
             .HasOne(s => s.MediaItem)
             .WithMany()
             .HasForeignKey(s => s.MediaItemId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // R-WI-013 PlaybackHistory — one row per play. Cascade on both sides: deleting a
+        // user or an item removes its history. (UserId, MediaItemId) serves the dedup lookup
+        // ("latest row for this user+item"); (UserId, LastBeatAt) serves the history page.
+        modelBuilder.Entity<PlaybackHistory>()
+            .HasKey(h => h.Id);
+
+        modelBuilder.Entity<PlaybackHistory>()
+            .HasIndex(h => new { h.UserId, h.MediaItemId });
+
+        modelBuilder.Entity<PlaybackHistory>()
+            .HasIndex(h => new { h.UserId, h.LastBeatAt });
+
+        modelBuilder.Entity<PlaybackHistory>()
+            .HasOne(h => h.User)
+            .WithMany()
+            .HasForeignKey(h => h.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<PlaybackHistory>()
+            .HasOne(h => h.MediaItem)
+            .WithMany()
+            .HasForeignKey(h => h.MediaItemId)
             .OnDelete(DeleteBehavior.Cascade);
 
         // UserPreference Configuration (global user preferences)

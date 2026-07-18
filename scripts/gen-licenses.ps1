@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Regenerate the managed/npm dependency portion of THIRD-PARTY-NOTICES.md.
 
@@ -6,7 +6,7 @@
     Runs license scanners over the server (.NET) and client (npm) projects and writes their
     output to scripts/licenses-server.json and scripts/licenses-client.json for review. These
     feed Part 1 of THIRD-PARTY-NOTICES.md. Part 2 (external binaries / native engines:
-    jellyfin-ffmpeg, native Skia, the SQLite engine) is hand-maintained and NOT covered here —
+    jellyfin-ffmpeg, native Skia, the SQLite engine) is hand-maintained and NOT covered here -
     scanners read package metadata only and cannot see native binaries.
 
     Also runs a compatibility gate: it FAILS if any resolved license is not on the

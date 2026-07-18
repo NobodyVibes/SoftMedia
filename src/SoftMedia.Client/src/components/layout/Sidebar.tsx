@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Film, Tv, Music, Book, LogOut, Gamepad2, Image, Settings, ChevronRight, ChevronDown, Play, Database, Users, ShieldCheck, User } from 'lucide-react';
+import { Home, Film, Tv, Music, Book, LogOut, Gamepad2, Image, Settings, ChevronRight, ChevronDown, Play, Database, Users, ShieldCheck, User, type LucideIcon } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useUIStore } from '../../store/uiStore';
 import { useLibraries } from '../../hooks/useLibrary';
@@ -8,7 +8,7 @@ import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 
-const libraryTypeIcons: Record<string, any> = {
+const libraryTypeIcons: Record<string, LucideIcon> = {
     Movie: Film,
     TV: Tv,
     Music: Music,
@@ -179,9 +179,8 @@ export default function Sidebar() {
                 })}
 
                 {/* Settings Section */}
-                {true && (
-                    <>
-                        {!isSidebarCollapsed && (
+                <>
+                    {!isSidebarCollapsed && (
                             <motion.div
                                 initial={{ opacity: 0 }}
                                 animate={{ opacity: 1 }}
@@ -196,8 +195,10 @@ export default function Sidebar() {
                             initial={{ opacity: 0, x: -10 }}
                             animate={{ opacity: 1, x: 0 }}
                         >
+                            {/* "/settings" redirects to the role-aware default sub-page (App.tsx);
+                                "/settings/server" is not a real section and rendered a blank panel. */}
                             <Link
-                                to="/settings/server"
+                                to="/settings"
                                 className={cn(
                                     "relative flex items-center gap-4 px-4 py-3 rounded-xl transition-all group overflow-hidden",
                                     isOnSettingsPage
@@ -308,8 +309,7 @@ export default function Sidebar() {
                                 </motion.div>
                             )}
                         </AnimatePresence>
-                    </>
-                )}
+                </>
             </nav>
 
             {/* Logout Button */}

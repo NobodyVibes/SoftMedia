@@ -75,6 +75,18 @@ public class UserContentRatingProvider : IUserContentRatingProvider
             return UserRatingCeilings.Unrestricted;
         }
 
+        // Admin bypass must hold even when the role CLAIM is absent. The reduced-privilege
+        // media token and the cast token deliberately omit the role claim (TokenService), so
+        // the principal.IsInRole check above is false for those tokens. Without this
+        // authoritative DB-role bypass, an admin streaming via a media/cast token is subjected
+        // to their own MaxRating ceiling (legacy rows may carry "PG-13"; "" = unrestricted since
+        // R-WI-011), so any higher-rated title 404s on the stream/tracks endpoints while staying
+        // browsable via the full-JWT browse endpoints.
+        if (user.Role == UserRole.Admin)
+        {
+            return UserRatingCeilings.Unrestricted;
+        }
+
         return UserRatingCeilings.From(user);
     }
 }

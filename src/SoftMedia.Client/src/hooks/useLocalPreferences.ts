@@ -15,6 +15,11 @@ export interface LocalPreferences {
     // Skip-segment behavior (Plex-style per-device preference)
     autoSkipIntros: string;  // 'true' | 'false'
     autoSkipCredits: string; // 'true' | 'false'
+    // R-WI-018 — subtitle appearance (device-level, like all caption settings)
+    subtitleFontSize: string;   // percent: '75' | '100' | '125' | '150'
+    subtitleColor: string;      // 'white' | 'yellow' | 'cyan' | 'green'
+    subtitleBgOpacity: string;  // '0' | '0.5' | '0.75' | '1'
+    subtitleEdgeStyle: string;  // 'none' | 'outline' | 'shadow'
 }
 
 const BASE_PREFERENCES_KEY = 'softmedia_preferences';
@@ -30,6 +35,10 @@ const defaultPreferences: LocalPreferences = {
     burnSubtitles: 'auto',
     autoSkipIntros: 'false',
     autoSkipCredits: 'false',
+    subtitleFontSize: '100',
+    subtitleColor: 'white',
+    subtitleBgOpacity: '0.75',
+    subtitleEdgeStyle: 'none',
 };
 
 /**

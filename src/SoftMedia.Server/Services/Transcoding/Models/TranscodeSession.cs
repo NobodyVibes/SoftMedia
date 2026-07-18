@@ -92,4 +92,22 @@ public class TranscodeSession
     /// Whether to force subtitle burn-in (even for text subtitles)
     /// </summary>
     public bool BurnSubtitles { get; set; } = false;
+
+    /// <summary>
+    /// True when the negotiated plan is Remux — the compatible A/V streams are copied into the
+    /// HLS container (<c>-c copy</c>) rather than re-encoded (R-WI-003). Set from the persisted
+    /// stream plan; a switch between remux and transcode counts as a parameter change (restart).
+    /// </summary>
+    public bool IsRemux { get; set; } = false;
+
+    /// <summary>
+    /// R-WI-004 audio decision, resolved from the negotiated plan. When <see cref="AudioCopy"/> is
+    /// true the source audio is stream-copied (<c>-c:a copy</c>, preserving surround); otherwise it
+    /// is encoded to <see cref="AudioCodec"/> at <see cref="AudioChannels"/> channels. Replaces the
+    /// old hard-coded stereo AAC 128k. Default (all unset) reproduces stereo AAC for sid-less
+    /// requests that carry no plan.
+    /// </summary>
+    public bool AudioCopy { get; set; } = false;
+    public string? AudioCodec { get; set; }
+    public int AudioChannels { get; set; }
 }

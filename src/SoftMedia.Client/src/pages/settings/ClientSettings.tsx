@@ -1,6 +1,7 @@
 import { Globe, Music, Volume2, Wifi } from 'lucide-react';
 import { useLocalPreferences } from '../../hooks/useLocalPreferences';
 import { cn } from '../../lib/utils';
+import { SUBTITLE_COLORS } from '../../components/player/subtitleStyle';
 
 interface ClientSettingsProps {
     subsection?: string;
@@ -234,6 +235,82 @@ export default function ClientSettings({ subsection = 'general' }: ClientSetting
                             <option value="tr">Turkish</option>
                             <option value="sv">Swedish</option>
                         </select>
+                    </div>
+
+                    {/* R-WI-018 — caption appearance (applies to the player's text
+                        subtitles; burned-in subtitles are rendered by the server) */}
+                    <div className="flex flex-col gap-2">
+                        <label className="text-sm font-medium text-gray-400">Caption Size</label>
+                        <select
+                            value={localPrefs.subtitleFontSize}
+                            onChange={(e) => updateLocalPref('subtitleFontSize', e.target.value)}
+                            className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary [&>option]:bg-[#1a1a1a] [&>option]:text-white"
+                        >
+                            <option value="75">Small</option>
+                            <option value="100">Normal</option>
+                            <option value="125">Large</option>
+                            <option value="150">Extra Large</option>
+                        </select>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                        <label className="text-sm font-medium text-gray-400">Caption Color</label>
+                        <select
+                            value={localPrefs.subtitleColor}
+                            onChange={(e) => updateLocalPref('subtitleColor', e.target.value)}
+                            className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary [&>option]:bg-[#1a1a1a] [&>option]:text-white"
+                        >
+                            <option value="white">White</option>
+                            <option value="yellow">Yellow</option>
+                            <option value="cyan">Cyan</option>
+                            <option value="green">Green</option>
+                        </select>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                        <label className="text-sm font-medium text-gray-400">Caption Background</label>
+                        <select
+                            value={localPrefs.subtitleBgOpacity}
+                            onChange={(e) => updateLocalPref('subtitleBgOpacity', e.target.value)}
+                            className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary [&>option]:bg-[#1a1a1a] [&>option]:text-white"
+                        >
+                            <option value="0">Transparent</option>
+                            <option value="0.5">Semi-transparent</option>
+                            <option value="0.75">Dark</option>
+                            <option value="1">Solid</option>
+                        </select>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                        <label className="text-sm font-medium text-gray-400">Caption Edge Style</label>
+                        <select
+                            value={localPrefs.subtitleEdgeStyle}
+                            onChange={(e) => updateLocalPref('subtitleEdgeStyle', e.target.value)}
+                            className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary [&>option]:bg-[#1a1a1a] [&>option]:text-white"
+                        >
+                            <option value="none">None</option>
+                            <option value="outline">Outline</option>
+                            <option value="shadow">Drop Shadow</option>
+                        </select>
+                    </div>
+
+                    {/* Live preview of the caption styling */}
+                    <div className="md:col-span-2 rounded-lg bg-black/60 px-4 py-6 flex items-center justify-center">
+                        <span
+                            style={{
+                                color: SUBTITLE_COLORS[localPrefs.subtitleColor] ?? '#ffffff',
+                                backgroundColor: `rgba(0,0,0,${localPrefs.subtitleBgOpacity})`,
+                                fontSize: `${Number(localPrefs.subtitleFontSize) / 100}em`,
+                                textShadow: localPrefs.subtitleEdgeStyle === 'outline'
+                                    ? '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000'
+                                    : localPrefs.subtitleEdgeStyle === 'shadow'
+                                        ? '2px 2px 3px rgba(0,0,0,0.9)'
+                                        : 'none',
+                                padding: '0.1em 0.35em',
+                            }}
+                        >
+                            Caption preview — the quick brown fox
+                        </span>
                     </div>
 
                 </div>

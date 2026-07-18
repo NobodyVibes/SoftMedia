@@ -31,6 +31,15 @@ public class SoftMediaWebApplicationFactory : WebApplicationFactory<Program>
     {
         _sqliteConnection.Open();
 
+        // Background hosted services share this single connection with per-test setup; under parallel
+        // load they can momentarily hold it, surfacing SQLITE_BUSY ("database is locked"). A busy
+        // timeout lets a contended command wait/retry briefly instead of throwing immediately.
+        using (var pragma = _sqliteConnection.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA busy_timeout=15000;";
+            pragma.ExecuteNonQuery();
+        }
+
         builder.UseEnvironment("Testing");
 
         builder.ConfigureAppConfiguration((_, configBuilder) =>

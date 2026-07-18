@@ -1,10 +1,15 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { isAxiosError } from 'axios';
 import Hls from 'hls.js';
+import api from '../../services/api';
 import { type MediaItem } from '../../types';
 import { useTrackSelection } from '../../hooks/useTrackSelection';
-import { useAuthStore } from '../../store/authStore';
+import { useAuthStore, getUrlToken } from '../../store/authStore';
 import { NextEpisodeOverlay, type NextEpisodeInfo } from './NextEpisodeOverlay';
+import { MovieEndOverlay } from './MovieEndOverlay';
+import { postPlayService, type PostPlayInfo } from '../../services/postPlayService';
 import { PlayerDebugPanel } from './PlayerDebugPanel';
 import { TranscodeExplanationModal } from './TranscodeExplanationModal';
 import { ProgressBar } from './ProgressBar';
@@ -13,6 +18,10 @@ import { useMediaCapabilities, createCapabilitiesWithOverrides, type ClientCapab
 import { useLocalPreferences } from '../../hooks/useLocalPreferences';
 import { useTrickplay, type SpriteFrame } from '../../hooks/useTrickplay';
 import { useCast } from '../../hooks/useCast';
+import { useMediaSession } from '../../hooks/useMediaSession';
+import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { computeCueShift, applyCueShift, clampUserOffset } from './subtitleSync';
+import { buildCueCss } from './subtitleStyle';
 import { describeCastReadiness } from '../../hooks/castReadiness';
 import { CastDiagnostics } from './CastDiagnostics';
 
@@ -138,6 +147,12 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const lastThresholdTimeRef = useRef<number>(0); // Last time we triggered the overlay
     const hasShownOverlayRef = useRef(false); // Whether overlay was shown for this threshold crossing
 
+    // Movie End Overlay state (the movie counterpart of the "Play Next" overlay: post-play
+    // recommendations + auto-return to the movie's library)
+    const [showMovieEndOverlay, setShowMovieEndOverlay] = useState(false);
+    const [movieEndInfo, setMovieEndInfo] = useState<PostPlayInfo | null>(null);
+    const hasMarkedWatchedRef = useRef(false); // watched-mark fires once per movie session
+
     // Adjacent episode navigation state (for prev/next buttons)
     const [previousEpisodeId, setPreviousEpisodeId] = useState<string | null>(null);
     const [nextEpisodeId, setNextEpisodeId] = useState<string | null>(null);
@@ -162,9 +177,27 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     // Audit H3: prefer the reduced-privilege media token in stream/transcode URLs; fall
     // back to the access token until it loads. Reactive so URLs update when it arrives.
+    // Reduced-privilege media token for URL-EMBEDDED stream/transcode auth only (?token=…).
+    // JSON API calls (interaction progress/watched/rate, episode nav) go through the shared
+    // axios client instead: its request interceptor reads the CURRENT access token from the
+    // store at call time (no stale closures) and its response interceptor transparently
+    // refreshes + retries on 401 — which raw fetch with a captured token cannot do.
     const token = useAuthStore((state) => state.mediaToken ?? state.token);
     const navigate = useNavigate();
     const location = useLocation();
+    const queryClient = useQueryClient();
+
+    // Playback changes the home page's Continue Watching membership/order (progress advances,
+    // items finish). Invalidate with refetchType 'all' so the inactive home query refetches
+    // instead of serving stale membership. Called after explicit watched-marks and once on
+    // unmount — NEVER inside the periodic progress-save loop (that would refetch every 10s).
+    const invalidateContinueWatching = useCallback(() => {
+        queryClient.invalidateQueries({ queryKey: ['continueWatching'], refetchType: 'all' });
+    }, [queryClient]);
+
+    useEffect(() => {
+        return () => invalidateContinueWatching();
+    }, [invalidateContinueWatching]);
 
     // Check for ?start=0 query param to force starting from beginning
     const forceStartFromBeginning = new URLSearchParams(location.search).get('start') === '0';
@@ -174,6 +207,42 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     // Get user's local preferences (including default streaming quality)
     const { preferences: localPrefs } = useLocalPreferences();
+
+    // R-WI-018 — subtitle appearance (device preference) + per-session sync offset.
+    const cueCss = useMemo(() => buildCueCss({
+        fontSize: localPrefs.subtitleFontSize,
+        color: localPrefs.subtitleColor,
+        bgOpacity: localPrefs.subtitleBgOpacity,
+        edgeStyle: localPrefs.subtitleEdgeStyle,
+    }), [localPrefs.subtitleFontSize, localPrefs.subtitleColor, localPrefs.subtitleBgOpacity, localPrefs.subtitleEdgeStyle]);
+    // The offset is per-playback-session by design (like VLC/Plex): drift is a
+    // property of the FILE's subtitle track, not of the device.
+    const [subtitleOffset, setSubtitleOffset] = useState(0);
+
+    /// Re-apply the user's sync offset to every subtitle track. The server serves
+    /// stream-aligned cues (it offsets the VTT on far-seek restarts), so the ONLY
+    /// client-side shift is the user's nudge. Idempotent via per-cue anchors.
+    const applySubtitleShift = useCallback((userOffset: number) => {
+        const video = videoRef.current;
+        if (!video?.textTracks) return;
+        for (let i = 0; i < video.textTracks.length; i++) {
+            const track = video.textTracks[i];
+            if (track.label === 'Subtitles' && (track.kind === 'subtitles' || track.kind === 'captions')) {
+                applyCueShift(track, computeCueShift(userOffset));
+            }
+        }
+    }, []);
+    // Latest-values wrapper for the track element's onload closure (which outlives
+    // the render that created it).
+    const applyCurrentSubtitleShiftRef = useRef<() => void>(() => { });
+    applyCurrentSubtitleShiftRef.current = () => applySubtitleShift(subtitleOffset);
+
+    // Re-apply when the user nudges sync while a track is loaded (fresh tracks
+    // pick the offset up via their onload hook).
+    useEffect(() => {
+        applySubtitleShift(subtitleOffset);
+    }, [subtitleOffset, applySubtitleShift]);
+
 
     // Pre-baked scrubber sprite sheets (P2-WI-001); falls back to on-demand frames.
     const { frameAt: trickplayFrameAt } = useTrickplay(item.id, token);
@@ -202,6 +271,13 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         token,
         localPrefs
     });
+
+    // Drift belongs to a specific subtitle FILE — switching tracks (EN → FR)
+    // must not carry the previous track's nudge along.
+    useEffect(() => {
+        setSubtitleOffset(0);
+    }, [selectedSubtitleTrack]);
+
 
     // Get actual duration from media item metadata (in seconds)
     const getActualDuration = useCallback((): number => {
@@ -241,9 +317,13 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         fetchDuration();
     }, [actualDuration, token, item.id]);
 
-    // Load saved playback position on mount or when item changes
+    // Load saved playback position on mount or when item changes.
+    // Auth is read at RUN time (not a reactive dep): this effect RESETS all playback state, so
+    // re-running it on the silent ~15-minute token rotation would yank a playing video back to
+    // its last saved position. It must fire only when the ITEM changes. The progress fetch
+    // itself authenticates via the axios client, which always uses the current token.
     useEffect(() => {
-        if (!token || !item.id) return;
+        if (!getUrlToken() || !item.id) return;
 
         // COMPREHENSIVE RESET for new item - this is critical when navigating between episodes
         // Reset all playback-related state and refs to prevent old values bleeding into new video
@@ -257,6 +337,11 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         lastThresholdTimeRef.current = 0;
         setShowNextEpisodeOverlay(false);
         setNextEpisodeInfo(null);
+        hasMarkedWatchedRef.current = false;
+        setShowMovieEndOverlay(false);
+        setMovieEndInfo(null);
+        // R-WI-018: sync drift belongs to the previous item's subtitle file.
+        setSubtitleOffset(0);
         console.log(`[VideoPlayer] Reset all state for new item: ${item.id}, forceStartFromBeginning: ${forceStartFromBeginning}`);
 
         // If ?start=0 query param is present, skip fetching resume position and start from beginning
@@ -268,37 +353,32 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
         const fetchProgress = async () => {
             try {
-                const response = await fetch(`/api/v1/interaction/${item.id}/progress`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data.position > 0) {
-                        // Validate: position must be less than duration (with 5s buffer)
-                        // If position exceeds duration, it's corrupted - reset to beginning
-                        // Duration may be a number (seconds) or a formatted string like "24m 46s" or "1h 30m 15s"
-                        let durationSeconds = 0;
-                        if (typeof item.duration === 'number') {
-                            durationSeconds = item.duration;
-                        } else if (typeof item.duration === 'string') {
-                            // Parse formatted duration like "24m 46s" or "1h 30m 15s"
-                            const hours = item.duration.match(/(\d+)h/);
-                            const minutes = item.duration.match(/(\d+)m/);
-                            const seconds = item.duration.match(/(\d+)s/);
-                            durationSeconds =
-                                (hours ? parseInt(hours[1]) * 3600 : 0) +
-                                (minutes ? parseInt(minutes[1]) * 60 : 0) +
-                                (seconds ? parseInt(seconds[1]) : 0);
-                        }
-                        const maxValidPosition = durationSeconds > 0 ? durationSeconds - 5 : Infinity;
-                        console.log(`Resume validation for ${item.id}: position=${data.position}, duration=${item.duration}(parsed=${durationSeconds}s), maxValid=${maxValidPosition}`);
-                        if (data.position < maxValidPosition) {
-                            console.log(`Resuming from saved position: ${data.position}s`);
-                            setResumePosition(data.position);
-                        } else {
-                            console.log(`Saved position ${data.position}s exceeds duration ${durationSeconds}s - starting from beginning`);
-                            // Don't set resume position - will start from beginning
-                        }
+                const { data } = await api.get(`/interaction/${item.id}/progress`);
+                if (data.position > 0) {
+                    // Validate: position must be less than duration (with 5s buffer)
+                    // If position exceeds duration, it's corrupted - reset to beginning
+                    // Duration may be a number (seconds) or a formatted string like "24m 46s" or "1h 30m 15s"
+                    let durationSeconds = 0;
+                    if (typeof item.duration === 'number') {
+                        durationSeconds = item.duration;
+                    } else if (typeof item.duration === 'string') {
+                        // Parse formatted duration like "24m 46s" or "1h 30m 15s"
+                        const hours = item.duration.match(/(\d+)h/);
+                        const minutes = item.duration.match(/(\d+)m/);
+                        const seconds = item.duration.match(/(\d+)s/);
+                        durationSeconds =
+                            (hours ? parseInt(hours[1]) * 3600 : 0) +
+                            (minutes ? parseInt(minutes[1]) * 60 : 0) +
+                            (seconds ? parseInt(seconds[1]) : 0);
+                    }
+                    const maxValidPosition = durationSeconds > 0 ? durationSeconds - 5 : Infinity;
+                    console.log(`Resume validation for ${item.id}: position=${data.position}, duration=${item.duration}(parsed=${durationSeconds}s), maxValid=${maxValidPosition}`);
+                    if (data.position < maxValidPosition) {
+                        console.log(`Resuming from saved position: ${data.position}s`);
+                        setResumePosition(data.position);
+                    } else {
+                        console.log(`Saved position ${data.position}s exceeds duration ${durationSeconds}s - starting from beginning`);
+                        // Don't set resume position - will start from beginning
                     }
                 }
             } catch {
@@ -309,7 +389,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             }
         };
         fetchProgress();
-    }, [token, item.id, forceStartFromBeginning]);
+    }, [item.id, item.duration, forceStartFromBeginning]);
 
     // Save playback position periodically (every 10 seconds) and on unmount
     useEffect(() => {
@@ -320,14 +400,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             // Only save if position changed significantly (> 5 seconds difference)
             if (Math.abs(effectivePosition - lastSavedPositionRef.current) > 5 && effectivePosition > 0) {
                 try {
-                    await fetch(`/api/v1/interaction/${item.id}/progress`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            Authorization: `Bearer ${token}`
-                        },
-                        body: JSON.stringify({ position: effectivePosition })
-                    });
+                    await api.post(`/interaction/${item.id}/progress`, { position: effectivePosition });
                     lastSavedPositionRef.current = effectivePosition;
                 } catch {
                     // Silently fail - position will be saved next interval
@@ -359,38 +432,22 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             return;
         }
 
-        const fetchAdjacentEpisodes = async () => {
+        // The empty GUID marks "no adjacent episode" (start/end of series). Each direction is
+        // fetched independently and resolves to null on any failure, so a stale id from the
+        // previously-played episode can never survive into the current one.
+        const emptyGuid = '00000000-0000-0000-0000-000000000000';
+        const fetchAdjacentId = async (direction: 'previous' | 'next'): Promise<string | null> => {
             try {
-                // Fetch previous episode
-                const prevResponse = await fetch(`/api/v1/episode/${item.id}/previous`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
-                if (prevResponse.ok) {
-                    const prevData = await prevResponse.json();
-                    // Check if episodeId is not empty GUID
-                    if (prevData.episodeId && prevData.episodeId !== '00000000-0000-0000-0000-000000000000') {
-                        setPreviousEpisodeId(prevData.episodeId);
-                    } else {
-                        setPreviousEpisodeId(null);
-                    }
-                }
-
-                // Fetch next episode
-                const nextResponse = await fetch(`/api/v1/episode/${item.id}/next`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
-                if (nextResponse.ok) {
-                    const nextData = await nextResponse.json();
-                    // Check if episodeId is not empty GUID
-                    if (nextData.episodeId && nextData.episodeId !== '00000000-0000-0000-0000-000000000000') {
-                        setNextEpisodeId(nextData.episodeId);
-                    } else {
-                        setNextEpisodeId(null);
-                    }
-                }
-            } catch (error) {
-                console.error('[EpisodeNav] Error fetching adjacent episodes:', error);
+                const { data } = await api.get(`/episode/${item.id}/${direction}`);
+                return data.episodeId && data.episodeId !== emptyGuid ? data.episodeId : null;
+            } catch {
+                return null;
             }
+        };
+
+        const fetchAdjacentEpisodes = async () => {
+            setPreviousEpisodeId(await fetchAdjacentId('previous'));
+            setNextEpisodeId(await fetchAdjacentId('next'));
         };
 
         fetchAdjacentEpisodes();
@@ -439,6 +496,19 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     // MOVED usage to hook, but we still use LAST USED logic? 
     // Wait, the hook handles saving layout.
     // So saveLastUsedTrack and getLastUsedKey can be removed from here.
+
+    // Consults the element's own paused flag rather than isPlaying state so the callback is
+    // identity-stable and can never act on a stale snapshot — the global keyboard handler
+    // below lists it as a dependency without re-subscribing on every play/pause.
+    const togglePlay = useCallback(() => {
+        const video = videoRef.current;
+        if (!video) return;
+        if (video.paused) {
+            video.play().catch(() => { });
+        } else {
+            video.pause();
+        }
+    }, []);
 
     // Keyboard shortcuts
     useEffect(() => {
@@ -499,14 +569,19 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [resetControlsTimeout]);
+    }, [resetControlsTimeout, togglePlay]);
 
     // Determine playback strategy based on container/codec and detected capabilities
     // Wait for progress, subtitle preference, AND capability detection to be loaded before starting transcode
     // Determine playback strategy based on backend plan
     // Wait for progress, subtitle preference, AND capability detection to be loaded before starting
     useEffect(() => {
-        if (!token || !hasLoadedProgress || isDetectingCapabilities) return;
+        // The auth token is read at RUN time, not subscribed reactively: tokens rotate silently
+        // every ~15 minutes (axios refresh -> App.tsx re-fetches the media token), and a token
+        // dependency here would tear down and restart a healthy stream on every rotation.
+        // Requests issued mid-stream get a fresh token per request via xhrSetup (HLS effect below).
+        const urlToken = getUrlToken();
+        if (!urlToken || !hasLoadedProgress || isDetectingCapabilities) return;
 
         let isMounted = true;
 
@@ -554,7 +629,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
+                        'Authorization': `Bearer ${urlToken}`
                     },
                     body: JSON.stringify(capabilitiesToSend)
                 });
@@ -627,7 +702,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     // Delete previous transcode session to start fresh
                     if (isSubtitleChange && startPosition > 0) {
                         setIsSubtitleChange(false);
-                        fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, { method: 'DELETE' }).catch(() => { });
+                        fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${urlToken}`, { method: 'DELETE' }).catch(() => { });
                     }
                 }
                 // Priority 4: Resume position for fresh loads
@@ -681,7 +756,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 console.error("Error fetching stream plan", err);
                 // Fallback to direct play if plan negotiation fails
                 if (isMounted) {
-                    const directUrl = `${initialSrc}${initialSrc.includes('?') ? '&' : '?'}token=${token}`;
+                    const directUrl = `${initialSrc}${initialSrc.includes('?') ? '&' : '?'}token=${urlToken}`;
                     setSrc(directUrl);
                     setIsTranscoding(false);
                 }
@@ -692,7 +767,14 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
         return () => { isMounted = false; };
 
-    }, [item, token, selectedSubtitleTrack, selectedAudioTrack, resumePosition, hasLoadedProgress, isSubtitleChange, forceStartFromBeginning, isDetectingCapabilities, mediaCapabilities, selectedQuality]);
+    // Deliberately NOT exhaustive: this effect (re)starts the stream, so reacting to seekOffset,
+    // streamId, initialSrc, or localPrefs.* would tear down and reload playback on every seek or
+    // preference change — and reacting to the auth token would do the same on every silent
+    // ~15-minute rotation (the token is read at run time via getUrlToken instead). It must run
+    // only when the item/tracks/quality/capability inputs change; the values above are read
+    // fresh from the closure of the run those inputs trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [item, selectedSubtitleTrack, selectedAudioTrack, resumePosition, hasLoadedProgress, isSubtitleChange, forceStartFromBeginning, isDetectingCapabilities, mediaCapabilities, selectedQuality]);
 
 
 
@@ -740,6 +822,19 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     // Start playback more aggressively
                     startFragPrefetch: true,      // Start prefetching next fragment early
                     testBandwidth: false,         // Don't test bandwidth (we control transcode quality)
+
+                    // Re-stamp the URL-embedded auth token on EVERY manifest/segment request.
+                    // The src URL carries the token that was current at stream start, but tokens
+                    // rotate silently every ~15 minutes; without this, playback longer than the
+                    // starting token's lifetime would begin failing auth mid-stream. Calling
+                    // xhr.open here is the documented hls.js way to rewrite the request URL.
+                    xhrSetup: (xhr, url) => {
+                        const freshToken = getUrlToken();
+                        if (!freshToken) return;
+                        const rewritten = new URL(url, window.location.origin);
+                        rewritten.searchParams.set('token', freshToken);
+                        xhr.open('GET', rewritten.toString(), true);
+                    },
                 });
 
                 hls.loadSource(src);
@@ -751,8 +846,12 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
                     // Add WebVTT subtitle track directly if subtitles are selected
                     // This approach works better than HLS manifest subtitles for single VTT files
-                    if (selectedSubtitleTrack !== null && token) {
-                        const subtitleUrl = `/api/transcode/${item.id}/subtitles.vtt?token=${token}&sub=${selectedSubtitleTrack}&sid=${streamId}`;
+                    const subtitleToken = getUrlToken();
+                    if (selectedSubtitleTrack !== null && subtitleToken) {
+                        // &gen busts caches across far-seek restarts: the URL was
+                        // otherwise identical while the VTT content changes per seek
+                        // offset (stale copy = subs off by the whole seek).
+                        const subtitleUrl = `/api/transcode/${item.id}/subtitles.vtt?token=${subtitleToken}&sub=${selectedSubtitleTrack}&sid=${streamId}&gen=${Math.floor(seekOffset)}`;
                         console.log(`Adding subtitle track: ${subtitleUrl}`);
 
                         // Remove any existing track elements
@@ -780,6 +879,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                     }
                                 }
                             }
+                            // R-WI-018: apply the user's sync offset to the fresh cues
+                            // (the server already served them stream-aligned).
+                            applyCurrentSubtitleShiftRef.current();
                         };
 
                         // Fallback timeout in case onload doesn't fire (cached)
@@ -793,6 +895,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                     }
                                 }
                             }
+                            applyCurrentSubtitleShiftRef.current();
                         }, 500);
                     }
 
@@ -831,7 +934,27 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 setIsLoading(false);
             }
         } else {
+            // Native direct play: the whole file is the source, so resume by seeking the element to
+            // the saved position and then auto-play. The HLS path gets both for free (the server
+            // `&seek=` param starts the stream at the resume point and MANIFEST_PARSED calls play());
+            // native playback has neither, which is why direct-play files (e.g. browser-compatible
+            // .mp4) previously neither auto-played nor resumed. seekOffset is 0 for direct play, so
+            // the displayed time tracks the real currentTime.
             video.src = src;
+            video.addEventListener('loadedmetadata', () => {
+                setIsLoading(false);
+                if (seekAfterLoadRef.current > 0) {
+                    const dur = video.duration;
+                    const target = (isFinite(dur) && dur > 0)
+                        ? Math.min(seekAfterLoadRef.current, dur - 1)
+                        : seekAfterLoadRef.current;
+                    try { video.currentTime = Math.max(0, target); } catch { /* not yet seekable */ }
+                    seekAfterLoadRef.current = 0;
+                }
+                // Autoplay may be blocked without a user gesture; if so the user presses play and the
+                // resume seek above has already applied.
+                video.play().catch(() => { });
+            }, { once: true });
             video.addEventListener('loadeddata', () => setIsLoading(false));
             video.load();
         }
@@ -841,30 +964,28 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 hlsRef.current.destroy();
                 hlsRef.current = null;
             }
-            // Explicitly stop transcode when leaving the player
-            if (isTranscoding && token && item.id) {
-                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, {
+            // Explicitly stop transcode when leaving the player. The token is read fresh at
+            // cleanup time — the one from stream start may have rotated since.
+            const cleanupToken = getUrlToken();
+            if (isTranscoding && cleanupToken && item.id) {
+                fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${cleanupToken}`, {
                     method: 'DELETE'
                 }).catch(() => { /* Ignore cleanup errors */ });
             }
         };
-    }, [src, isTranscoding, token, item.id, selectedSubtitleTrack]);
+    }, [src, isTranscoding, item.id, selectedSubtitleTrack, streamId]);
 
     // Fetch next episode info for "Play Next" overlay
     const fetchNextEpisode = useCallback(async () => {
         if (!token || !item.id) return;
 
         try {
-            const response = await fetch(`/api/v1/episode/${item.id}/next`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-
-            if (response.ok) {
-                const data: NextEpisodeInfo = await response.json();
-                console.log('[PlayNext] Fetched next episode:', data);
-                setNextEpisodeInfo(data);
-                setShowNextEpisodeOverlay(true);
-            } else if (response.status === 404) {
+            const { data } = await api.get<NextEpisodeInfo>(`/episode/${item.id}/next`);
+            console.log('[PlayNext] Fetched next episode:', data);
+            setNextEpisodeInfo(data);
+            setShowNextEpisodeOverlay(true);
+        } catch (error) {
+            if (isAxiosError(error) && error.response?.status === 404) {
                 // No next episode - show series complete overlay
                 setNextEpisodeInfo({
                     episodeId: '',
@@ -876,8 +997,8 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     isSeriesComplete: true
                 });
                 setShowNextEpisodeOverlay(true);
+                return;
             }
-        } catch (error) {
             console.error('[PlayNext] Failed to fetch next episode:', error);
         }
     }, [token, item.id, item.seriesId]);
@@ -889,14 +1010,8 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         // Mark current episode as watched
         if (token && item.id) {
             try {
-                await fetch(`/api/v1/interaction/${item.id}/watched`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Bearer ${token}`
-                    },
-                    body: JSON.stringify({ watched: true })
-                });
+                await api.post(`/interaction/${item.id}/watched`, { watched: true });
+                invalidateContinueWatching();
             } catch {
                 // Silently fail
             }
@@ -912,7 +1027,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         // Navigate to next episode (will resume from saved position)
         setShowNextEpisodeOverlay(false);
         navigate(`/play/${nextEpisodeInfo.episodeId}`);
-    }, [nextEpisodeInfo, token, item.id, isTranscoding, navigate]);
+    }, [nextEpisodeInfo, token, item.id, isTranscoding, streamId, navigate, invalidateContinueWatching]);
 
     // Handle playing the next episode from start
     const handlePlayNextFromStart = useCallback(async () => {
@@ -921,28 +1036,15 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         // Mark current episode as watched
         if (token && item.id) {
             try {
-                await fetch(`/api/v1/interaction/${item.id}/watched`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Bearer ${token}`
-                    },
-                    body: JSON.stringify({ watched: true })
-                });
+                await api.post(`/interaction/${item.id}/watched`, { watched: true });
+                invalidateContinueWatching();
             } catch {
                 // Silently fail
             }
 
             // Reset the next episode's playback position to 0 and WAIT for it to complete
             try {
-                await fetch(`/api/v1/interaction/${nextEpisodeInfo.episodeId}/progress`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Bearer ${token}`
-                    },
-                    body: JSON.stringify({ position: 0 })
-                });
+                await api.post(`/interaction/${nextEpisodeInfo.episodeId}/progress`, { position: 0 });
                 console.log(`[PlayNext] Reset position to 0 for next episode: ${nextEpisodeInfo.episodeId}`);
             } catch {
                 // Silently fail
@@ -959,21 +1061,16 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         // Navigate to next episode with ?start=0 to force starting from beginning
         setShowNextEpisodeOverlay(false);
         navigate(`/play/${nextEpisodeInfo.episodeId}?start=0`);
-    }, [nextEpisodeInfo, token, item.id, isTranscoding, navigate]);
+    }, [nextEpisodeInfo, token, item.id, isTranscoding, streamId, navigate, invalidateContinueWatching]);
 
     // Handle return to library
     const handleReturnToLibrary = useCallback(() => {
         setShowNextEpisodeOverlay(false);
         // Mark current episode as watched
         if (token && item.id) {
-            fetch(`/api/v1/interaction/${item.id}/watched`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`
-                },
-                body: JSON.stringify({ watched: true })
-            }).catch(() => { });
+            api.post(`/interaction/${item.id}/watched`, { watched: true })
+                .then(() => invalidateContinueWatching())
+                .catch(() => { });
 
             // Clean up transcode session
             if (isTranscoding) {
@@ -982,21 +1079,14 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 }).catch(() => { });
             }
         }
-    }, [token, item.id, isTranscoding]);
+    }, [token, item.id, isTranscoding, streamId, invalidateContinueWatching]);
 
     // Handle rating the current episode from the overlay
     const handleRateCurrentEpisode = useCallback(async (rating: number) => {
         if (!token || !item.id) return;
 
         try {
-            await fetch(`/api/v1/interaction/${item.id}/rate`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`
-                },
-                body: JSON.stringify({ rating })
-            });
+            await api.post(`/interaction/${item.id}/rate`, { rating });
             console.log(`[PlayNext] Rated current episode: ${rating}`);
         } catch {
             // Silently fail
@@ -1009,6 +1099,63 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         setShowNextEpisodeOverlay(false);
         // Don't reset hasShownOverlayRef - once dismissed, don't show again this session
     }, []);
+
+    // ---- Movie end-of-playback (the movie counterpart of the episode "Play Next" flow) ----
+
+    // Flag the movie watched the moment the completion detector fires (credits marker or 98%),
+    // once per session — the same rule that decides "finished" server-side, so the Continue
+    // Watching row and the library's watched checkmark agree with what the player did.
+    const markMovieFinished = useCallback(() => {
+        if (hasMarkedWatchedRef.current || !item.id) return;
+        hasMarkedWatchedRef.current = true;
+        api.post(`/interaction/${item.id}/watched`, { watched: true })
+            .then(() => invalidateContinueWatching())
+            .catch((error) => {
+                console.error('[MovieEnd] Failed to mark watched:', error);
+                hasMarkedWatchedRef.current = false; // allow the ended-event retry
+            });
+    }, [item.id, invalidateContinueWatching]);
+
+    // Credits threshold crossed: mark watched and raise the post-play overlay. The overlay shows
+    // immediately; recommendation cards fill in when the fetch lands (and are simply absent if
+    // it fails — rating + Back to Library still work).
+    const handleMovieThresholdReached = useCallback(() => {
+        markMovieFinished();
+        setShowMovieEndOverlay(true);
+        postPlayService.forMovie(item.id)
+            .then(setMovieEndInfo)
+            .catch((error) => console.error('[MovieEnd] Failed to fetch post-play recommendations:', error));
+    }, [item.id, markMovieFinished]);
+
+    // Dismiss to watch the credits; the overlay stays away for this threshold crossing and the
+    // player still navigates home when the video actually ends.
+    const handleWatchCredits = useCallback(() => {
+        setShowMovieEndOverlay(false);
+    }, []);
+
+    // Immersive player's back control: return to wherever playback was launched from when
+    // there's in-app history (react-router stamps history.state.idx), else — a deep link or
+    // fresh tab — fall back to the media's detail page.
+    const handleBack = useCallback(() => {
+        if (typeof window.history.state?.idx === 'number' && window.history.state.idx > 0) {
+            navigate(-1);
+        } else {
+            navigate(`/media/${item.id}`);
+        }
+    }, [navigate, item.id]);
+
+    // Every way OFF the player from the movie overlay (countdown, Back to Library, a
+    // recommendation card): stop the transcode session, then navigate.
+    const handleLeaveMovie = useCallback((path: string) => {
+        setShowMovieEndOverlay(false);
+        const cleanupToken = getUrlToken();
+        if (isTranscoding && cleanupToken && item.id) {
+            fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${cleanupToken}`, {
+                method: 'DELETE'
+            }).catch(() => { });
+        }
+        navigate(path);
+    }, [isTranscoding, item.id, streamId, navigate]);
 
     // Handle pause/unpause video from overlay
     const handlePauseVideo = useCallback((paused: boolean) => {
@@ -1060,10 +1207,29 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             setVolume(video.volume);
             setIsMuted(video.muted);
         };
+        // The load algorithm resets the element's playbackRate to 1 on every src swap
+        // (far-seek restart, quality change, next episode) while the speed state kept
+        // the old value — the speed menu showed 2× at 1× playback and the Media Session
+        // reported the wrong rate, making the OS scrubber extrapolate too fast and
+        // sawtooth. Syncing state to the element fixes both consumers.
+        const handleRateChange = () => setPlaybackSpeed(video.playbackRate);
         const handleEnterPiP = () => setIsPiP(true);
         const handleLeavePiP = () => setIsPiP(false);
         const handleEnded = () => {
             console.log('Video ended event fired');
+            // A finished MOVIE: ensure the watched flag stuck (idempotent, and the threshold
+            // detector below may have been skipped by a seek straight to the end). If the
+            // post-play overlay is up, ITS countdown owns navigation — yanking the user away
+            // while they browse recommendations (or sit with the countdown paused) would be
+            // hostile. Only when the overlay was dismissed (Watch Credits) or never fired does
+            // the true end of the video return to the movie's library.
+            if (item.type === 'Movie' && !item.seriesId) {
+                markMovieFinished();
+                if (!showMovieEndOverlay) {
+                    handleLeaveMovie(`/libraries/${item.libraryId}`);
+                    return;
+                }
+            }
             // Signal backend to clean up transcode session when video ends
             if (isTranscoding && token && item.id) {
                 fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, {
@@ -1119,6 +1285,37 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     fetchNextEpisode();
                 }
             }
+            // Movie completion detection — the same credits-marker/98% rule the episode overlay
+            // uses, but the payoff is the post-play overlay (mark watched + recommendations +
+            // auto-return to the library) instead of "Play Next".
+            else if (item.type === 'Movie' && displayDuration > 0 && !isFreshLoad && video.currentTime > 5) {
+                const threshold98 = displayDuration * 0.98;
+                const creditsStart = item.creditsStart;
+                const firstThreshold = (creditsStart && creditsStart > 0)
+                    ? Math.min(creditsStart, threshold98)
+                    : threshold98;
+
+                const reachedThreshold =
+                    (creditsStart && creditsStart > 0 && effectiveTime >= creditsStart)
+                    || effectiveTime >= threshold98;
+
+                // Seeked backward past the threshold: allow the overlay to fire again later
+                // (the watched flag, once set, intentionally stays).
+                if (effectiveTime < firstThreshold - 5) {
+                    if (hasShownOverlayRef.current && !showMovieEndOverlay) {
+                        console.log('[MovieEnd] User seeked backward, resetting overlay trigger');
+                        hasShownOverlayRef.current = false;
+                        lastThresholdTimeRef.current = 0;
+                    }
+                }
+
+                if (reachedThreshold && !hasShownOverlayRef.current && !showMovieEndOverlay) {
+                    console.log(`[MovieEnd] Completion threshold reached at ${effectiveTime}s`);
+                    hasShownOverlayRef.current = true;
+                    lastThresholdTimeRef.current = effectiveTime;
+                    handleMovieThresholdReached();
+                }
+            }
 
             // Manual end detection for HLS: if effective time is within 1 second of known duration
             if (displayDuration > 0 && effectiveTime >= displayDuration - 1 && !video.paused) {
@@ -1137,6 +1334,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         video.addEventListener('waiting', handleWaiting);
         video.addEventListener('progress', handleProgress);
         video.addEventListener('volumechange', handleVolumeChange);
+        video.addEventListener('ratechange', handleRateChange);
         video.addEventListener('enterpictureinpicture', handleEnterPiP);
         video.addEventListener('leavepictureinpicture', handleLeavePiP);
         video.addEventListener('ended', handleEnded);
@@ -1149,11 +1347,12 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             video.removeEventListener('waiting', handleWaiting);
             video.removeEventListener('progress', handleProgress);
             video.removeEventListener('volumechange', handleVolumeChange);
+            video.removeEventListener('ratechange', handleRateChange);
             video.removeEventListener('enterpictureinpicture', handleEnterPiP);
             video.removeEventListener('leavepictureinpicture', handleLeavePiP);
             video.removeEventListener('ended', handleEnded);
         };
-    }, [src, isTranscoding, token, item.id, selectedSubtitleTrack, displayDuration, seekOffset]);
+    }, [src, isTranscoding, token, item.id, item.seriesId, item.creditsStart, item.type, item.libraryId, selectedSubtitleTrack, displayDuration, seekOffset, streamId, fetchNextEpisode, showNextEpisodeOverlay, showMovieEndOverlay, markMovieFinished, handleMovieThresholdReached, handleLeaveMovie]);
 
     // Fullscreen change handler
     useEffect(() => {
@@ -1184,14 +1383,6 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     // which restarts the transcode with the subtitle burned in
 
     // Control actions
-    const togglePlay = () => {
-        if (!videoRef.current) return;
-        if (isPlaying) {
-            videoRef.current.pause();
-        } else {
-            videoRef.current.play();
-        }
-    };
 
     const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!videoRef.current) return;
@@ -1315,6 +1506,26 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     };
 
     // Helper that performs the actual seek (Restored)
+    // R-WI-005: build the far-seek transcode URL preserving the user-choice params the server
+    // does NOT restore from the persisted plan — subtitle/audio track AND the burn-in preference
+    // (previously dropped on seek, resetting burn-in to off). The quality/security params
+    // (resolution/codec/bitrate/HDR) are intentionally omitted: the server re-applies them from
+    // the negotiated plan keyed by sid (R-WI-002), so a minimal seek URL can no longer drop the
+    // quality decision or bypass the per-user bitrate cap.
+    const buildTranscodeSeekUrl = (seekTime: number) => {
+        let url = `/api/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}&sid=${streamId}`;
+        if (selectedSubtitleTrack !== null) {
+            url += `&sub=${selectedSubtitleTrack}`;
+        }
+        if (selectedAudioTrack !== null && selectedAudioTrack >= 0) {
+            url += `&audio=${selectedAudioTrack}`;
+        }
+        if (localPrefs.burnSubtitles === 'always') {
+            url += `&burnSubtitles=true`;
+        }
+        return url;
+    };
+
     const handleSeekToTime = (seekTime: number) => {
         if (!videoRef.current || displayDuration <= 0) return;
 
@@ -1322,24 +1533,25 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         const currentTranscodedDuration = videoRef.current.duration || 0;
         const effectiveCurrentTime = currentTime + seekOffset;
 
-        if (isTranscoding && token && seekTime > effectiveCurrentTime + currentTranscodedDuration + 5) {
+        // R-WI-015 review: the transcoded window ends at seekOffset + transcoded length —
+        // adding currentTime inflated the bound, so seeks landing just past the window
+        // clamp-stalled at the live edge instead of restarting the transcode.
+        if (isTranscoding && token && seekTime > seekOffset + currentTranscodedDuration + 5) {
             // Seeking beyond transcoded portion - restart transcode at this position
             console.log(`Seeking to ${seekTime}s - beyond transcoded range, restarting transcode`);
 
             seekAfterLoadRef.current = seekTime;
             setSeekOffset(Math.floor(seekTime));
+            // Reset currentTime NOW: displayedTime = currentTime + seekOffset, and the
+            // stale pre-seek currentTime otherwise adds onto the new offset until the
+            // restarted stream's first timeupdate — the same transient the initial-load
+            // path already guards against (and R-WI-015 broadcasts to the OS scrubber).
+            setCurrentTime(0);
 
             fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, { method: 'DELETE' })
                 .catch(() => { });
 
-            let hlsUrl = `/api/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}&sid=${streamId}`;
-            if (selectedSubtitleTrack !== null) {
-                hlsUrl += `&sub=${selectedSubtitleTrack}`;
-            }
-            if (selectedAudioTrack !== null && selectedAudioTrack >= 0) {
-                hlsUrl += `&audio=${selectedAudioTrack}`;
-            }
-            setSrc(hlsUrl);
+            setSrc(buildTranscodeSeekUrl(seekTime));
         } else {
             const targetInStream = seekTime - seekOffset;
             if (targetInStream >= 0 && targetInStream <= currentTranscodedDuration) {
@@ -1348,20 +1560,18 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 console.log(`Seeking to ${seekTime}s - before current offset, restarting transcode`);
                 seekAfterLoadRef.current = seekTime;
                 setSeekOffset(Math.floor(seekTime));
+                setCurrentTime(0); // same transient guard as the forward-restart branch
 
                 fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${token}`, { method: 'DELETE' })
                     .catch(() => { });
 
-                let hlsUrl = `/api/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}&sid=${streamId}`;
-                if (selectedSubtitleTrack !== null) {
-                    hlsUrl += `&sub=${selectedSubtitleTrack}`;
-                }
-                if (selectedAudioTrack !== null && selectedAudioTrack >= 0) {
-                    hlsUrl += `&audio=${selectedAudioTrack}`;
-                }
-                setSrc(hlsUrl);
+                setSrc(buildTranscodeSeekUrl(seekTime));
             } else {
-                videoRef.current.currentTime = Math.min(seekTime, videoRef.current.duration || Infinity);
+                // Element seeks are STREAM-relative. Seeking the absolute time here
+                // double-applied the offset when the element's duration was still
+                // unknown (pending restart: duration NaN → no clamp), landing a
+                // follow-up seek at seekOffset + seekTime.
+                videoRef.current.currentTime = Math.max(0, Math.min(targetInStream, videoRef.current.duration || Infinity));
             }
         }
     };
@@ -1372,6 +1582,43 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     // Progress bar percentages
     // Calculate displayed time including seek offset (for when transcoding starts from non-zero position)
     const displayedTime = currentTime + seekOffset;
+
+    // R-WI-015: OS media controls. seekto MUST go through handleSeekToTime — after a
+    // far seek the element's currentTime is stream-relative (real position is
+    // currentTime + seekOffset), so raw element seeking would land in the wrong place.
+    // seekbackward/seekforward reuse skip(), the same offset-safe relative skip the
+    // keyboard shortcuts use. Position reports displayedTime against the REAL duration.
+    useMediaSession({
+        // A fatal error unmounts the <video> without a pause event, so isPlaying
+        // would stay true — unregister instead of leaving zombie OS controls.
+        enabled: !error,
+        isPlaying,
+        contentId: item.id,
+        metadata: {
+            title: item.title,
+            artist: item.seasonNumber != null && item.episodeNumber != null
+                ? `Season ${item.seasonNumber} · Episode ${item.episodeNumber}`
+                : undefined,
+            // attachAuthToApiUrl is a no-op for /cache/* and external URLs.
+            artworkUrl: item.posterPath ? attachAuthToApiUrl(item.posterPath) : null,
+        },
+        handlers: {
+            onPlay: () => { videoRef.current?.play().catch(() => { }); },
+            onPause: () => { videoRef.current?.pause(); },
+            onSeekBackward: () => skip(-10),
+            onSeekForward: () => skip(10),
+            onSeekTo: handleSeekToTime,
+            // navigateEpisode is the mid-episode-safe primitive: it preserves the
+            // target's resume position and marks nothing watched. (The end-of-episode
+            // overlay's handlePlayNextFromStart would reset the next episode to 0:00
+            // and stamp watched — wrong semantics for an OS button available all
+            // episode long.) Ids are fetched at mount, so the OS buttons exist for
+            // the whole episode, not just during the credits.
+            onNextTrack: nextEpisodeId ? () => { void navigateEpisode('next'); } : undefined,
+            onPreviousTrack: previousEpisodeId ? () => { void navigateEpisode('prev'); } : undefined,
+        },
+        position: { duration: displayDuration, position: displayedTime, playbackRate: playbackSpeed },
+    });
 
 
     // For HLS streams, buffer is relative to current stream position, need to add seekOffset
@@ -1452,7 +1699,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     if (!token || !src) {
         return (
-            <div className="w-full max-w-5xl mx-auto aspect-video bg-black rounded-xl flex items-center justify-center">
+            <div className="w-full h-full bg-black flex items-center justify-center">
                 <div className="text-white/50 animate-pulse">Loading player...</div>
             </div>
         );
@@ -1460,7 +1707,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     if (error) {
         return (
-            <div className="w-full max-w-5xl mx-auto aspect-video bg-black rounded-xl flex items-center justify-center flex-col gap-4">
+            <div className="w-full h-full bg-black flex items-center justify-center flex-col gap-4">
                 <div className="text-red-400">{error}</div>
                 <button
                     onClick={() => window.location.reload()}
@@ -1472,11 +1719,14 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         );
     }
 
+    // The player fills whatever box its parent gives it (PlayerPage: the whole viewport). The
+    // video letterboxes/pillarboxes itself via object-contain, so any source aspect — including
+    // ultra-wide low-res files — renders undistorted at every window size.
     return (
-        <div className="w-full max-w-5xl mx-auto">
+        <div className="w-full h-full">
             <div
                 ref={containerRef}
-                className="relative aspect-video bg-black rounded-xl overflow-hidden shadow-2xl group"
+                className="relative w-full h-full bg-black overflow-hidden group"
                 onMouseMove={resetControlsTimeout}
                 onMouseLeave={() => {
                     if (isPlaying) {
@@ -1496,6 +1746,28 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         </div>
                     </div>
                 )}
+
+                {/* Top overlay bar: back navigation + title/year (the immersive player has no
+                    page chrome above it). Fades with the rest of the controls. */}
+                <div
+                    className={`absolute top-0 left-0 right-0 z-30 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 pt-3 pb-10 flex items-center gap-3 transition-opacity duration-300 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                >
+                    <button
+                        type="button"
+                        onClick={handleBack}
+                        aria-label="Back"
+                        title="Back"
+                        className="text-white/80 hover:text-white focus-visible:text-white transition-colors p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded-lg flex-shrink-0"
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 12H5m0 0l7 7m-7-7l7-7" />
+                        </svg>
+                    </button>
+                    <div className="min-w-0">
+                        <h1 className="text-white text-lg font-semibold leading-tight truncate">{item.title}</h1>
+                        {item.year && <p className="text-white/60 text-xs leading-tight">{item.year}</p>}
+                    </div>
+                </div>
 
                 {/* Player Toast Notification */}
                 {playerToast && (
@@ -1522,6 +1794,18 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 />
 
                 {/* Next Episode Overlay (for TV Episodes only) */}
+                {showMovieEndOverlay && (
+                    <MovieEndOverlay
+                        movieTitle={item.title}
+                        postPlay={movieEndInfo}
+                        currentRating={item.personalRating}
+                        onRateCurrent={handleRateCurrentEpisode}
+                        onWatchCredits={handleWatchCredits}
+                        onLeave={handleLeaveMovie}
+                        onPauseVideo={handlePauseVideo}
+                        libraryId={item.libraryId}
+                    />
+                )}
                 {showNextEpisodeOverlay && nextEpisodeInfo && (
                     <NextEpisodeOverlay
                         currentEpisodeId={item.id}
@@ -1539,9 +1823,12 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 )}
 
                 {/* Video element */}
+                {/* R-WI-018: caption appearance rides ::cue — the native renderer the
+                    sidecar-VTT path uses. Scoped to this video's class. */}
+                <style>{cueCss}</style>
                 <video
                     ref={videoRef}
-                    className="w-full h-full cursor-pointer"
+                    className="sm-player-video w-full h-full object-contain cursor-pointer"
                     playsInline
                     poster={item.posterPath || undefined}
                     onClick={togglePlay}
@@ -2034,6 +2321,49 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                             ))}
                                         </div>
 
+                                        {/* Subtitle sync (R-WI-018) — only when a text track is
+                                            actually ON (-1 is the Off sentinel, not null). */}
+                                        {selectedSubtitleTrack !== null && selectedSubtitleTrack !== -1 && (
+                                            <>
+                                                <div className="px-3 py-1 text-xs text-white/50 uppercase font-semibold border-t border-white/10 mt-1 pt-2">Subtitle Sync</div>
+                                                <div className="flex items-center gap-2 px-3 pb-2 pt-1">
+                                                    <button
+                                                        type="button"
+                                                        aria-label="Subtitles earlier"
+                                                        title="Show subtitles earlier"
+                                                        disabled={subtitleOffset <= -30}
+                                                        onClick={() => setSubtitleOffset(o => clampUserOffset(o - 0.5))}
+                                                        className="px-2.5 py-1 text-xs rounded-md bg-white/10 text-white/80 hover:bg-white/20 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 transition-colors"
+                                                    >
+                                                        −0.5s
+                                                    </button>
+                                                    <span className="text-xs text-white min-w-[3.5rem] text-center tabular-nums">
+                                                        {subtitleOffset > 0 ? '+' : ''}{subtitleOffset.toFixed(1)}s
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        aria-label="Subtitles later"
+                                                        title="Show subtitles later"
+                                                        disabled={subtitleOffset >= 30}
+                                                        onClick={() => setSubtitleOffset(o => clampUserOffset(o + 0.5))}
+                                                        className="px-2.5 py-1 text-xs rounded-md bg-white/10 text-white/80 hover:bg-white/20 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 transition-colors"
+                                                    >
+                                                        +0.5s
+                                                    </button>
+                                                    {subtitleOffset !== 0 && (
+                                                        <button
+                                                            type="button"
+                                                            aria-label="Reset subtitle sync"
+                                                            onClick={() => setSubtitleOffset(0)}
+                                                            className="px-2.5 py-1 text-xs rounded-md text-white/60 hover:bg-white/10 transition-colors"
+                                                        >
+                                                            Reset
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </>
+                                        )}
+
                                         {/* Toggles / actions */}
                                         <div className="border-t border-white/10 mt-1 pt-1">
                                             {/* Picture-in-Picture */}
@@ -2043,7 +2373,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                                     onClick={togglePiP}
                                                     role="menuitem"
                                                     aria-pressed={isPiP}
-                                                    className="w-full flex items-center gap-3 px-4 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+                                                    className="w-full flex items-center gap-3 px-4 py-2 text-sm text-left hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 transition-colors"
                                                     title="Picture-in-Picture (P)"
                                                 >
                                                     <svg className={`w-5 h-5 ${isPiP ? 'text-blue-400' : 'text-white/70'}`} fill="currentColor" viewBox="0 0 24 24">
@@ -2095,15 +2425,16 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                             </button>
                         </div>
                     </div>
-                </div>
 
-                {/* Keyboard shortcuts hint */}
-                <div className="text-xs text-white/40 text-center mt-2 space-x-4">
-                    <span>Space: Play/Pause</span>
-                    <span>←/→: Seek ±10s</span>
-                    <span>↑/↓: Volume</span>
-                    <span>M: Mute</span>
-                    <span>F: Fullscreen</span>
+                    {/* Keyboard shortcuts hint — lives inside the controls gradient now that the
+                        immersive player has no page space below the video */}
+                    <div className="hidden sm:block text-xs text-white/40 text-center mt-1.5 space-x-4">
+                        <span>Space: Play/Pause</span>
+                        <span>←/→: Seek ±10s</span>
+                        <span>↑/↓: Volume</span>
+                        <span>M: Mute</span>
+                        <span>F: Fullscreen</span>
+                    </div>
                 </div>
             </div>
 

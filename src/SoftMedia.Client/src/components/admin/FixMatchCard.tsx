@@ -122,15 +122,19 @@ export function FixMatchCard({ item }: { item: MediaItem }) {
             </button>
 
             {open && (
-                <div
-                    className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4"
-                    role="dialog"
-                    aria-modal="true"
-                    onClick={closeModal}
-                >
+                <div className="fixed inset-0 flex items-center justify-center z-[60] p-4">
+                    {/* Click-outside-to-close backdrop as a real <button> (not a <div onClick>) so it is
+                        keyboard-focusable and screen-reader-announced. Escape also closes (effect above). */}
+                    <button
+                        type="button"
+                        aria-label="Close dialog"
+                        onClick={closeModal}
+                        className="absolute inset-0 bg-black/80 backdrop-blur-sm cursor-default focus-visible:outline-none"
+                    />
                     <div
-                        className="bg-[#1a1a1a] rounded-xl p-7 max-w-2xl w-full border border-white/10 shadow-2xl max-h-[88vh] overflow-y-auto"
-                        onClick={(e) => e.stopPropagation()}
+                        className="relative bg-[#1a1a1a] rounded-xl p-7 max-w-2xl w-full border border-white/10 shadow-2xl max-h-[88vh] overflow-y-auto"
+                        role="dialog"
+                        aria-modal="true"
                     >
                         <div className="flex items-center justify-between mb-5">
                             <div className="flex items-center gap-2.5">
@@ -189,7 +193,6 @@ export function FixMatchCard({ item }: { item: MediaItem }) {
                                         {candidates.map((c) => (
                                             <li key={`${c.providerName}-${c.providerItemId}`} className="flex items-center gap-4 p-3 bg-black/30 rounded-lg">
                                                 {c.posterUrl ? (
-                                                    // eslint-disable-next-line @next/next/no-img-element
                                                     <img src={c.posterUrl} alt="" className="w-16 h-24 object-cover rounded shrink-0 bg-black/40" referrerPolicy="no-referrer" onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden'; }} />
                                                 ) : (
                                                     <div className="w-16 h-24 bg-black/40 rounded shrink-0" />

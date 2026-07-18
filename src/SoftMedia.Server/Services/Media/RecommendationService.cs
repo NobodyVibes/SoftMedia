@@ -5,6 +5,7 @@ using SoftMedia.Server.Helpers;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Security.ContentRating;
 using SoftMedia.Server.Services.Security.LibraryAccess;
 using System.Text.Json;
 
@@ -16,6 +17,7 @@ public class RecommendationService : IRecommendationService
     private readonly IUserMediaInteractionRepository _interactionRepository;
     private readonly AppDbContext _context;
     private readonly IUserLibraryAccessProvider _libraryAccessProvider;
+    private readonly IUserContentRatingProvider _contentRatingProvider;
     private readonly ILogger<RecommendationService> _logger;
 
     public RecommendationService(
@@ -23,23 +25,28 @@ public class RecommendationService : IRecommendationService
         IUserMediaInteractionRepository interactionRepository,
         AppDbContext context,
         IUserLibraryAccessProvider libraryAccessProvider,
+        IUserContentRatingProvider contentRatingProvider,
         ILogger<RecommendationService> logger)
     {
         _mediaRepository = mediaRepository;
         _interactionRepository = interactionRepository;
         _context = context;
         _libraryAccessProvider = libraryAccessProvider;
+        _contentRatingProvider = contentRatingProvider;
         _logger = logger;
     }
 
     public async Task<NextEpisodeResponse?> GetNextEpisodeAsync(Guid userId, Guid seriesId)
     {
-        _logger.LogInformation("[SmartContinue] GetNextEpisode called for series {SeriesId}", seriesId);
+        // Debug, not Information: the Continue Watching row calls this for every candidate series
+        // on each home-page load — at Information the shipped config would record every user's
+        // actively-watched series in the server log on every visit.
+        _logger.LogDebug("[SmartContinue] GetNextEpisode called for series {SeriesId}", seriesId);
 
         // Get all episodes for this series ordered by season/episode
         var episodes = (await _mediaRepository.GetEpisodesAsync(seriesId)).ToList();
 
-        _logger.LogInformation("[SmartContinue] Found {Count} episodes for series {SeriesId}", episodes.Count, seriesId);
+        _logger.LogDebug("[SmartContinue] Found {Count} episodes for series {SeriesId}", episodes.Count, seriesId);
 
         if (episodes.Count == 0)
         {
@@ -50,7 +57,7 @@ public class RecommendationService : IRecommendationService
         var episodeIds = episodes.Select(e => e.Id).ToList();
         var interactionList = (await _interactionRepository.GetManyAsync(userId, episodeIds)).ToList();
 
-        _logger.LogInformation("[SmartContinue] Found {Count} user interactions", interactionList.Count);
+        _logger.LogDebug("[SmartContinue] Found {Count} user interactions", interactionList.Count);
 
         // Find the most recently watched episode (by LastPlayed)
         var lastWatched = interactionList
@@ -83,37 +90,48 @@ public class RecommendationService : IRecommendationService
             }
             else
             {
-                // Find the next episode in sequence
+                // The most recently played episode is finished. Offer the first UNFINISHED
+                // episode: scan forward from it in season/episode order, then wrap to the start.
+                // The wrap matters — a finished EPISODE must never read as a finished SERIES:
+                //   - rewatching a mid-series episode of a completed show must not resurrect the
+                //     show with an already-watched "next" episode (forward scan skips finished);
+                //   - watching only the finale of an otherwise-unwatched show must not mark the
+                //     whole series complete (wrap finds the earliest unfinished episode).
+                // IsSeriesComplete is reported ONLY when every episode is finished, which is what
+                // the Continue Watching row relies on to drop a series.
                 var currentIndex = episodes.FindIndex(e => e.Id == episode.Id);
-                if (currentIndex < episodes.Count - 1)
+                for (var step = 1; step < episodes.Count; step++)
                 {
-                    var nextEp = episodes[currentIndex + 1];
-                    var nextInteraction = interactionList.FirstOrDefault(i => i.MediaItemId == nextEp.Id);
+                    var candidate = episodes[(currentIndex + step) % episodes.Count];
+                    var candidateInteraction = interactionList.FirstOrDefault(i => i.MediaItemId == candidate.Id);
+                    if (candidateInteraction != null && IsEpisodeComplete(candidate, candidateInteraction))
+                    {
+                        continue;
+                    }
                     return new NextEpisodeResponse
                     {
-                        EpisodeId = nextEp.Id,
+                        EpisodeId = candidate.Id,
                         SeriesId = seriesId,
-                        SeasonNumber = nextEp.SeasonNumber ?? 1,
-                        EpisodeNumber = nextEp.EpisodeNumber ?? 1,
-                        Title = nextEp.Title,
-                        ResumePosition = nextInteraction?.PlaybackPosition ?? 0
+                        SeasonNumber = candidate.SeasonNumber ?? 1,
+                        EpisodeNumber = candidate.EpisodeNumber ?? 1,
+                        Title = candidate.Title,
+                        ResumePosition = candidateInteraction?.PlaybackPosition ?? 0
                     };
                 }
-                else
+
+                // Every episode is finished — the series is genuinely complete. Return the
+                // first episode as the rewatch entry point (existing UI contract).
+                var firstEp = episodes[0];
+                return new NextEpisodeResponse
                 {
-                    // Series complete - return first episode for rewatch
-                    var firstEp = episodes[0];
-                    return new NextEpisodeResponse
-                    {
-                        EpisodeId = firstEp.Id,
-                        SeriesId = seriesId,
-                        SeasonNumber = firstEp.SeasonNumber ?? 1,
-                        EpisodeNumber = firstEp.EpisodeNumber ?? 1,
-                        Title = firstEp.Title,
-                        ResumePosition = 0,
-                        IsSeriesComplete = true
-                    };
-                }
+                    EpisodeId = firstEp.Id,
+                    SeriesId = seriesId,
+                    SeasonNumber = firstEp.SeasonNumber ?? 1,
+                    EpisodeNumber = firstEp.EpisodeNumber ?? 1,
+                    Title = firstEp.Title,
+                    ResumePosition = 0,
+                    IsSeriesComplete = true
+                };
             }
         }
         else
@@ -239,31 +257,12 @@ public class RecommendationService : IRecommendationService
         };
     }
 
-    private bool IsEpisodeComplete(MediaItem episode, UserMediaInteraction interaction)
-    {
-        if (interaction.IsWatched)
-        {
-            _logger.LogInformation("[SmartContinue] Episode {Title} marked IsWatched=true", episode.Title);
-            return true;
-        }
-        if (episode.Duration <= 0)
-        {
-            _logger.LogWarning("[SmartContinue] Episode {Title} has no duration (Duration={Duration})", episode.Title, episode.Duration);
-            return false;
-        }
-
-        var position = interaction.PlaybackPosition ?? 0;
-        var threshold = episode.Duration * 0.95;
-        var isComplete = position >= threshold;
-        
-        // Try to use credits timecode from promoted column
-        if (episode.CreditsStart.HasValue && episode.CreditsStart.Value > 0)
-        {
-            return position >= episode.CreditsStart.Value;
-        }
-
-        return isComplete;
-    }
+    // Completion logic lives in MediaCompletionHelper so the next-episode resolver and the
+    // Continue Watching row share one definition of "finished" (IsWatched, else credits timecode,
+    // else 95% of runtime). See Helpers/MediaCompletionHelper.cs.
+    private static bool IsEpisodeComplete(MediaItem episode, UserMediaInteraction interaction)
+        => MediaCompletionHelper.IsComplete(
+            interaction.PlaybackPosition, episode.Duration, episode.CreditsStart, interaction.IsWatched);
 
     private async Task<(string? Poster, string? Backdrop)> ExtractImagesAsync(MediaItem episode, Guid? seriesId)
     {
@@ -362,6 +361,294 @@ public class RecommendationService : IRecommendationService
         await _context.SaveChangesAsync();
         _logger.LogInformation("Hero Section Cache updated with {Count} items.", heroItems.Count);
     }
+
+    public async Task<PostPlayResponse?> GetMoviePostPlayAsync(Guid userId, Guid movieId, int limit = 8)
+    {
+        limit = Math.Clamp(limit, 1, 24);
+
+        // Same visibility gates as the Continue Watching row: candidates are filtered at the
+        // query so a blocked item can never appear, and the SOURCE movie itself must be visible
+        // to the caller — an ACL/rating-blocked id answers exactly like a nonexistent one
+        // (anti-probe, matching CollectionsController.GetByMovie).
+        var access = await _libraryAccessProvider.GetCurrentAsync();
+        var ceilings = await _contentRatingProvider.GetCurrentAsync();
+        var visible = _context.MediaItems.AsNoTracking()
+            .ApplyLibraryAccessFilter(access)
+            .ApplyContentRatingFilter(ceilings);
+
+        var source = await visible
+            .Where(m => m.Id == movieId && m.Type == MediaType.Movie)
+            .Select(m => new { m.CollectionId, m.ReleaseDate, m.Year })
+            .FirstOrDefaultAsync();
+        if (source == null) return null;
+
+        var response = new PostPlayResponse();
+
+        // 1) Collection siblings — the marathon path. Unfinished films from the same collection,
+        //    release order, rotated so the first film released AFTER the finished one leads
+        //    (finish Fellowship -> Two Towers first; earlier unwatched films trail).
+        if (source.CollectionId != null)
+        {
+            var collectionName = await _context.Collections.AsNoTracking()
+                .Where(c => c.Id == source.CollectionId.Value)
+                .Select(c => c.Name)
+                .FirstOrDefaultAsync();
+
+            var siblings = await visible
+                .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
+                .Where(m => m.CollectionId == source.CollectionId.Value
+                            && m.Type == MediaType.Movie && m.Id != movieId)
+                .OrderBy(m => m.ReleaseDate).ThenBy(m => m.Year).ThenBy(m => m.Title)
+                .ToListAsync();
+
+            var unfinished = await DropFinishedAsync(userId, siblings);
+
+            var sourceDate = source.ReleaseDate
+                ?? (source.Year is int y ? new DateTime(y, 1, 1) : (DateTime?)null);
+            if (sourceDate != null)
+            {
+                var later = unfinished.Where(m => YearDate(m) > sourceDate).ToList();
+                var earlier = unfinished.Except(later).ToList();
+                unfinished = later.Concat(earlier).ToList();
+            }
+
+            if (unfinished.Count > 0)
+            {
+                response.CollectionName = collectionName;
+                response.CollectionItems = unfinished
+                    .Take(limit)
+                    .Select(m => MediaItemDto.FromMediaItem(m, Constants.MediaConstants.Routes.ImageProxy))
+                    .ToList();
+            }
+        }
+
+        // 2) Genre-similar movies fill the remaining slots: most shared genres first, then
+        //    community rating; collection members are excluded (they're already section 1).
+        var remaining = limit - response.CollectionItems.Count;
+        if (remaining > 0)
+        {
+            var genreIds = await _context.MediaItemGenres.AsNoTracking()
+                .Where(g => g.MediaItemId == movieId)
+                .Select(g => g.GenreId)
+                .ToListAsync();
+
+            if (genreIds.Count > 0)
+            {
+                var ranked = await visible
+                    .Where(m => m.Type == MediaType.Movie && m.Id != movieId
+                                && (source.CollectionId == null || m.CollectionId != source.CollectionId)
+                                && m.MediaItemGenres.Any(g => genreIds.Contains(g.GenreId)))
+                    .Select(m => new
+                    {
+                        m.Id,
+                        Shared = m.MediaItemGenres.Count(g => genreIds.Contains(g.GenreId)),
+                        m.CommunityRating,
+                    })
+                    .OrderByDescending(x => x.Shared)
+                    .ThenByDescending(x => x.CommunityRating)
+                    .ThenBy(x => x.Id) // deterministic tiebreak
+                    .Take(remaining * 3) // headroom — finished ones are dropped below
+                    .ToListAsync();
+
+                var rankedIds = ranked.Select(r => r.Id).ToList();
+                var items = (await _context.MediaItems.AsNoTracking()
+                        .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
+                        .Where(m => rankedIds.Contains(m.Id))
+                        .ToListAsync())
+                    .ToDictionary(m => m.Id);
+
+                var ordered = rankedIds
+                    .Where(items.ContainsKey)
+                    .Select(id => items[id])
+                    .ToList();
+
+                response.SimilarItems = (await DropFinishedAsync(userId, ordered))
+                    .Take(remaining)
+                    .Select(m => MediaItemDto.FromMediaItem(m, Constants.MediaConstants.Routes.ImageProxy))
+                    .ToList();
+            }
+        }
+
+        return response;
+    }
+
+    /// <summary>
+    /// R-WI-020 — personalized home rows. Ship-simple genre/collection affinity per
+    /// the spec: the play history (R-WI-013; episodes roll up to their series) seeds
+    /// the taste signal, candidate queries carry the same ACL + rating gates as the
+    /// Continue Watching row, watched/seed items are excluded, and thin rows
+    /// (&lt;4 items) self-suppress. Rows never repeat an item.
+    /// </summary>
+    public async Task<IReadOnlyList<HomeRowDto>> GetHomeRowsAsync(Guid userId, int itemsPerRow = 15)
+    {
+        itemsPerRow = Math.Clamp(itemsPerRow, 4, 30);
+        const int MinRowItems = 4;
+
+        var access = await _libraryAccessProvider.GetCurrentAsync();
+        var ceilings = await _contentRatingProvider.GetCurrentAsync();
+        var visible = _context.MediaItems.AsNoTracking()
+            .ApplyLibraryAccessFilter(access)
+            .ApplyContentRatingFilter(ceilings);
+
+        // Taste signal: recent VIDEO plays, newest first; episodes roll up to their
+        // series. Music history is excluded (review MED: a heavy listener's window
+        // filled with tracks — emptying the rows or steering them with music genres
+        // while candidates are movies/series only).
+        var history = await _context.PlaybackHistory.AsNoTracking()
+            .Where(h => h.UserId == userId
+                        && (h.MediaType == MediaType.Movie || h.MediaType == MediaType.Episode))
+            .OrderByDescending(h => h.LastBeatAt)
+            .Take(60)
+            .Select(h => new
+            {
+                h.MediaItemId,
+                h.MediaType,
+                SeriesId = h.MediaItem != null ? h.MediaItem.SeriesId : (Guid?)null,
+            })
+            .ToListAsync();
+        if (history.Count == 0) return Array.Empty<HomeRowDto>();
+
+        var seedIds = history
+            .Select(h => h.MediaType == MediaType.Episode && h.SeriesId != null ? h.SeriesId.Value : h.MediaItemId)
+            .Distinct()
+            .ToList();
+
+        // Only VISIBLE seeds may steer the rows: a lowered ceiling must not keep
+        // pulling recommendations (or row headings) toward content the caller can
+        // no longer see (review).
+        var visibleSeedIds = await visible
+            .Where(m => seedIds.Contains(m.Id))
+            .Select(m => m.Id)
+            .ToListAsync();
+        if (visibleSeedIds.Count == 0) return Array.Empty<HomeRowDto>();
+
+        // Genre affinity: distinct seed count per genre across the history window
+        // (a 40-episode binge counts its series' genres once — breadth over volume).
+        var seedGenres = await _context.MediaItemGenres.AsNoTracking()
+            .Where(mg => visibleSeedIds.Contains(mg.MediaItemId) && mg.Genre != null)
+            .Select(mg => new { mg.MediaItemId, mg.GenreId, GenreName = mg.Genre!.Name })
+            .ToListAsync();
+        if (seedGenres.Count == 0) return Array.Empty<HomeRowDto>();
+
+        var affinity = seedGenres
+            .GroupBy(g => new { g.GenreId, g.GenreName })
+            .Select(g => new { g.Key.GenreId, g.Key.GenreName, Count = g.Count() })
+            .OrderByDescending(g => g.Count)
+            .ThenBy(g => g.GenreName)
+            .Take(3)
+            .ToList();
+
+        var rows = new List<HomeRowDto>();
+        var used = new HashSet<Guid>(seedIds);
+
+        // Shared candidate shape: visible, browsable top-level types, not a seed, not
+        // finished (EXISTS subquery — the watched set can be large), not already used.
+        async Task<List<MediaItem>> CandidatesAsync(List<int> genreIds, int take)
+        {
+            var pool = await visible
+                .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
+                .Where(m => (m.Type == MediaType.Movie || m.Type == MediaType.Series)
+                            && !seedIds.Contains(m.Id)
+                            && m.MediaItemGenres.Any(mg => genreIds.Contains(mg.GenreId))
+                            && !_context.UserMediaInteractions.Any(i =>
+                                i.UserId == userId && i.MediaItemId == m.Id
+                                && (i.IsWatched
+                                    || (m.Duration > 0 && i.PlaybackPosition >= m.Duration * 0.95))))
+                .Select(m => new
+                {
+                    Item = m,
+                    Shared = m.MediaItemGenres.Count(mg => genreIds.Contains(mg.GenreId)),
+                })
+                .OrderByDescending(x => x.Shared)
+                .ThenByDescending(x => x.Item.CommunityRating)
+                .ThenByDescending(x => x.Item.DateAdded)
+                .ThenBy(x => x.Item.Id) // deterministic tiebreak
+                .Take(take * 3) // headroom — the used-filter below thins the pool
+                .ToListAsync();
+
+            return pool.Select(p => p.Item).Where(m => !used.Contains(m.Id)).Take(take).ToList();
+        }
+
+        // Row 1 — "Because you watched {most recent VISIBLE seed that has genres}"
+        // (falls back to the next visible seed instead of dropping the row when the
+        // latest one is ceiling-hidden).
+        var recentSeedId = history
+            .Select(h => h.MediaType == MediaType.Episode && h.SeriesId != null ? h.SeriesId.Value : h.MediaItemId)
+            .FirstOrDefault(id => seedGenres.Any(g => g.MediaItemId == id));
+        if (recentSeedId != Guid.Empty)
+        {
+            var seedTitle = await visible
+                .Where(m => m.Id == recentSeedId)
+                .Select(m => m.Title)
+                .FirstOrDefaultAsync();
+            if (seedTitle != null)
+            {
+                var seedGenreIds = seedGenres.Where(g => g.MediaItemId == recentSeedId).Select(g => g.GenreId).ToList();
+                var items = await CandidatesAsync(seedGenreIds, itemsPerRow);
+                if (items.Count >= MinRowItems)
+                {
+                    foreach (var m in items) used.Add(m.Id);
+                    rows.Add(new HomeRowDto
+                    {
+                        Title = $"Because you watched {seedTitle}",
+                        Items = items.Select(m => MediaItemDto.FromMediaItem(m, Constants.MediaConstants.Routes.ImageProxy)).ToList(),
+                    });
+                }
+            }
+        }
+
+        // Row 2 — "Top picks for you": the caller's top affinity genres together.
+        var topGenreIds = affinity.Select(a => a.GenreId).ToList();
+        var topPicks = await CandidatesAsync(topGenreIds, itemsPerRow);
+        if (topPicks.Count >= MinRowItems)
+        {
+            foreach (var m in topPicks) used.Add(m.Id);
+            rows.Add(new HomeRowDto
+            {
+                Title = "Top picks for you",
+                Items = topPicks.Select(m => MediaItemDto.FromMediaItem(m, Constants.MediaConstants.Routes.ImageProxy)).ToList(),
+            });
+        }
+
+        // Row 3 — "More {top genre}" (skipped when rows 1/2 drained the pool).
+        var topGenre = affinity.FirstOrDefault();
+        if (topGenre != null)
+        {
+            var more = await CandidatesAsync(new List<int> { topGenre.GenreId }, itemsPerRow);
+            if (more.Count >= MinRowItems)
+            {
+                foreach (var m in more) used.Add(m.Id);
+                rows.Add(new HomeRowDto
+                {
+                    Title = $"More {topGenre.GenreName}",
+                    Items = more.Select(m => MediaItemDto.FromMediaItem(m, Constants.MediaConstants.Routes.ImageProxy)).ToList(),
+                });
+            }
+        }
+
+        return rows;
+    }
+
+    /// <summary>
+    /// Removes movies the user has already finished, by the same rule the Continue Watching row
+    /// uses (explicit watched flag > credits timecode > 95%). In-progress movies stay — resuming
+    /// one is a perfectly good post-play choice.
+    /// </summary>
+    private async Task<List<MediaItem>> DropFinishedAsync(Guid userId, List<MediaItem> movies)
+    {
+        if (movies.Count == 0) return movies;
+
+        var interactions = (await _interactionRepository.GetManyAsync(userId, movies.Select(m => m.Id).ToList()))
+            .ToDictionary(i => i.MediaItemId);
+
+        return movies.Where(m =>
+                !interactions.TryGetValue(m.Id, out var i)
+                || !MediaCompletionHelper.IsComplete(i.PlaybackPosition ?? 0, m.Duration, m.CreditsStart, i.IsWatched))
+            .ToList();
+    }
+
+    private static DateTime? YearDate(MediaItem m)
+        => m.ReleaseDate ?? (m.Year is int y ? new DateTime(y, 1, 1) : (DateTime?)null);
 
     public async Task<IEnumerable<MediaItemDto>> GetHeroItemsAsync()
     {

@@ -2,6 +2,28 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Play, Film, Tv, Music, BookOpen, Gamepad2, Image } from 'lucide-react';
 import type { GlobalSearchResult } from '../../services/searchService';
+import { MediaType, type MediaItem } from '../../types';
+import { useAudioStore } from '../../store/audioStore';
+import { resolveCardPosterUrl } from '../../lib/mediaImageUrl';
+
+/** Context line that disambiguates duplicate titles across result types. */
+function subtitleFor(item: MediaItem): string | null {
+    const artist = item.metadata?.artist as string | undefined;
+    const album = item.metadata?.album as string | undefined;
+    const series = item.metadata?.seriesTitle as string | undefined;
+    if (item.type === MediaType.Audio || item.type === MediaType.Track) {
+        const parts = [artist, album].filter(Boolean);
+        return parts.length > 0 ? parts.join(' — ') : null;
+    }
+    if (item.type === MediaType.Episode) {
+        const se = item.seasonNumber != null && item.episodeNumber != null
+            ? `S${item.seasonNumber} · E${item.episodeNumber}`
+            : null;
+        return [series, se].filter(Boolean).join(' — ') || null;
+    }
+    if (item.type === MediaType.Album && artist) return artist;
+    return null;
+}
 
 interface GlobalSearchResultsProps {
     results: GlobalSearchResult[];
@@ -20,17 +42,37 @@ const libraryIcons: Record<string, React.ReactNode> = {
 
 export default function GlobalSearchResults({ results, isLoading, onClose }: GlobalSearchResultsProps) {
     const navigate = useNavigate();
+    const playTrack = useAudioStore((s) => s.playTrack);
 
-    const handlePlay = (e: React.MouseEvent, itemId: string) => {
+    const handlePlay = (e: React.MouseEvent, item: MediaItem) => {
         e.preventDefault();
         e.stopPropagation();
         onClose();
-        navigate(`/player/${itemId}`);
+        // `/player/...` was a dead route (the router only knows /play/:id, and the
+        // catch-all dumped every search-play click on the home page). Only video
+        // items belong in the video player; tracks (searchable since R-WI-017) play
+        // in the audio player; everything else opens its detail page, which owns
+        // the right play/read affordance.
+        if (item.type === MediaType.Movie || item.type === MediaType.Episode) {
+            navigate(`/play/${item.id}`);
+        } else if (item.type === MediaType.Audio || item.type === MediaType.Track) {
+            playTrack(item);
+        } else {
+            navigate(`/media/${item.id}`);
+        }
     };
 
-    const handleItemClick = (itemId: string) => {
+    const handleItemClick = (item: MediaItem) => {
         onClose();
-        navigate(`/media/${itemId}`);
+        // Episodes have no working detail page — MediaDetailPage would render a
+        // series-shaped empty shell for an episode id. Their series page is the
+        // right destination (tracks are fine: /media/{trackId} redirects to the
+        // album with the track highlighted).
+        if (item.type === MediaType.Episode && item.seriesId) {
+            navigate(`/media/${item.seriesId}`);
+        } else {
+            navigate(`/media/${item.id}`);
+        }
     };
 
     if (isLoading) {
@@ -77,14 +119,15 @@ export default function GlobalSearchResults({ results, isLoading, onClose }: Glo
                         {group.items.map((item) => (
                             <button
                                 key={item.id}
-                                onClick={() => handleItemClick(item.id)}
+                                onClick={() => handleItemClick(item)}
                                 className="w-full px-4 py-3 flex items-center gap-3 hover:bg-white/5 transition-colors group text-left"
                             >
-                                {/* Thumbnail */}
+                                {/* Thumbnail — API image routes need the query token
+                                    (an <img> can't send the Authorization header). */}
                                 <div className="w-10 h-14 bg-gradient-to-br from-primary/20 to-secondary/20 rounded overflow-hidden flex-shrink-0">
                                     {item.posterPath ? (
                                         <img
-                                            src={item.posterPath}
+                                            src={resolveCardPosterUrl(item.posterPath)}
                                             alt={item.title}
                                             className="w-full h-full object-cover"
                                         />
@@ -95,21 +138,23 @@ export default function GlobalSearchResults({ results, isLoading, onClose }: Glo
                                     )}
                                 </div>
 
-                                {/* Title & Year */}
+                                {/* Title & context — duplicate track/episode titles are
+                                    indistinguishable without artist/album/series context
+                                    (live data had nine identical "Caught In A Mosh" rows). */}
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium text-white truncate group-hover:text-primary transition-colors">
                                         {item.title}
                                     </p>
-                                    {item.year && (
-                                        <p className="text-xs text-gray-400">{item.year}</p>
-                                    )}
+                                    <p className="text-xs text-gray-400 truncate">
+                                        {subtitleFor(item) ?? (item.year ? String(item.year) : '')}
+                                    </p>
                                 </div>
 
                                 {/* Play Button */}
                                 <motion.button
                                     whileHover={{ scale: 1.1 }}
                                     whileTap={{ scale: 0.9 }}
-                                    onClick={(e) => handlePlay(e, item.id)}
+                                    onClick={(e) => handlePlay(e, item)}
                                     className="p-2 bg-primary/20 hover:bg-primary text-primary hover:text-white rounded-full transition-colors opacity-0 group-hover:opacity-100"
                                 >
                                     <Play size={14} fill="currentColor" />

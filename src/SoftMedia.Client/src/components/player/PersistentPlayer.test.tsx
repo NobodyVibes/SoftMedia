@@ -34,9 +34,10 @@ vi.mock('./QueueList', () => ({
     QueueList: () => <div data-testid="queue-list" />,
 }));
 
-// Mock api service constants
+// Mock api service constants (+ default client for R-WI-013 progress beats)
 vi.mock('../../services/api', () => ({
     API_URL: 'http://localhost:5000/api',
+    default: { post: vi.fn().mockResolvedValue({}) },
 }));
 
 describe('PersistentPlayer', () => {

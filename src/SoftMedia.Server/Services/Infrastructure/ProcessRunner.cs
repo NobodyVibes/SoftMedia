@@ -71,4 +71,46 @@ public class ProcessRunner : IProcessRunner
             return string.Empty;
         }
     }
+
+    public async Task<int> RunProcessForExitCodeAsync(ProcessStartInfo startInfo, TimeSpan timeout)
+    {
+        startInfo.UseShellExecute = false;
+        startInfo.RedirectStandardOutput = true;
+        startInfo.RedirectStandardError = true;
+        startInfo.CreateNoWindow = true;
+
+        using var process = new Process { StartInfo = startInfo };
+        var errorBuilder = new StringBuilder();
+        process.OutputDataReceived += (_, args) => { /* drained to avoid pipe stalls */ };
+        process.ErrorDataReceived += (_, args) => { if (args.Data != null) errorBuilder.AppendLine(args.Data); };
+
+        if (!process.Start())
+        {
+            throw new InvalidOperationException($"Failed to start process: {startInfo.FileName}");
+        }
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        try
+        {
+            using var cts = new CancellationTokenSource(timeout);
+            await process.WaitForExitAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Process timed out after {Timeout}: {FileName} {Arguments}",
+                timeout, startInfo.FileName, startInfo.Arguments);
+            try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+            return -1;
+        }
+
+        if (process.ExitCode != 0)
+        {
+            _logger.LogWarning("Process exited with code {Code}: {FileName}. Error tail: {Error}",
+                process.ExitCode, startInfo.FileName,
+                errorBuilder.Length > 2000 ? errorBuilder.ToString(errorBuilder.Length - 2000, 2000) : errorBuilder.ToString());
+        }
+        return process.ExitCode;
+    }
 }

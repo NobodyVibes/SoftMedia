@@ -37,23 +37,31 @@ public class TranscodeIntegrityTests
     }
 
     [Fact]
-    public async Task TryRemoveSession_EvictsTheSessionLock()
+    public async Task SessionLockTable_IsBounded_ByIdlePruning()
     {
+        // audit wave-2 L-25 (revised, diff-review 2026-07-16): the lock table must stay bounded as
+        // an attacker cycles distinct ?sid= values — but WITHOUT disposing a lock that may still be
+        // held/awaited (that disposal was the root cause of the far-seek ObjectDisposedException and
+        // a lost-mutual-exclusion window). TryRemoveSession no longer evicts immediately; instead
+        // provably-idle locks are pruned once the table exceeds its cap.
         var mgr = new TranscodeSessionManager();
-        var key = new TranscodeSessionKey(Guid.NewGuid(), Guid.NewGuid(), null, "sid1");
-
-        using (await mgr.AcquireLockAsync(key)) { /* create + release the lock entry */ }
 
         var locks = (IDictionary)typeof(TranscodeSessionManager)
             .GetField("_sessionLocks", BindingFlags.NonPublic | BindingFlags.Instance)!
             .GetValue(mgr)!;
-        Assert.True(locks.Count >= 1, "lock entry should exist after AcquireLockAsync");
 
-        mgr.TryRemoveSession(key, out _);
-        Assert.Empty(locks); // audit wave-2 L-25: evicted on session removal
+        for (int i = 0; i < 1000; i++)
+        {
+            var key = new TranscodeSessionKey(Guid.NewGuid(), Guid.NewGuid(), null, "sid" + i);
+            using (await mgr.AcquireLockAsync(key)) { /* create + release the idle lock */ }
+            mgr.TryRemoveSession(key, out _);
+        }
 
-        // Re-acquiring the same key after eviction must still work (no disposed-semaphore deadlock).
-        using (await mgr.AcquireLockAsync(key)) { }
-        Assert.True(locks.Count >= 1);
+        // Bounded despite 1000 distinct sids (cap is 256).
+        Assert.True(locks.Count <= 256, $"lock table not bounded: {locks.Count}");
+
+        // Re-acquiring after pruning must still work (no disposed-semaphore deadlock).
+        var again = new TranscodeSessionKey(Guid.NewGuid(), Guid.NewGuid(), null, "again");
+        using (await mgr.AcquireLockAsync(again)) { }
     }
 }

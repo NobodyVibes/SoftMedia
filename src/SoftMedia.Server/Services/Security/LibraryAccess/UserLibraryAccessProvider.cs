@@ -69,6 +69,21 @@ public class UserLibraryAccessProvider : IUserLibraryAccessProvider
             return LibraryAccess.Unrestricted;
         }
 
+        // Admin bypass must hold even when the role CLAIM is absent. The reduced-privilege
+        // media token and the cast token deliberately omit the role claim (TokenService), so
+        // the principal.IsInRole check above is false for those tokens. Resolve the role from
+        // the DB so an admin streaming via a media/cast token is never wrongly ACL-restricted
+        // (mirrors UserContentRatingProvider's authoritative admin bypass).
+        var role = await _db.Users
+            .AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => (UserRole?)u.Role)
+            .FirstOrDefaultAsync();
+        if (role == UserRole.Admin)
+        {
+            return LibraryAccess.Unrestricted;
+        }
+
         var allowed = await _db.UserLibraryAccess
             .AsNoTracking()
             .Where(a => a.UserId == userId)

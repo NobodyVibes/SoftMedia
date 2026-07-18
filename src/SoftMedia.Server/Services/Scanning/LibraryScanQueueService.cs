@@ -73,6 +73,13 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
     private LibraryScanJob? _currentJob;
     private readonly SemaphoreSlim _processingLock = new(1, 1);
 
+    // Makes each "already queued/running?" check + insert atomic. The concurrent collections
+    // protect the individual operations, but the compound dedup check-then-add raced: two
+    // concurrent enqueuers (e.g. the R-WI-008 scheduled sweep and an admin Run-now, or the
+    // watcher vs a manual scan) could both pass the check and double-enqueue the same library,
+    // causing a full duplicate scan and duplicate completion webhooks.
+    private readonly object _enqueueLock = new();
+
     // Keep completed jobs for 5 minutes so the frontend can retrieve final status
     private readonly TimeSpan _completedJobRetention = TimeSpan.FromMinutes(5);
 
@@ -93,85 +100,98 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
 
     public LibraryScanJob EnqueueScan(Guid libraryId, string libraryName)
     {
-        // Check if already queued or running
-        if (IsLibraryInQueue(libraryId))
+        lock (_enqueueLock)
         {
-            var existingJob = _jobs.Values.FirstOrDefault(j => 
-                j.LibraryId == libraryId && 
+            // Dedup against QUEUED jobs only (atomic with the insert below). A scan
+            // that is already RUNNING may have passed the directory a new request is
+            // about (R-WI-019 review: an *arr import landing mid-scan was silently
+            // coalesced into a scan that had already walked past it, and the file
+            // stayed missing until the next scheduled sweep) — so one follow-up job
+            // is allowed behind a running scan. Repeat requests then dedup against
+            // that queued follow-up, bounding the backlog to one job per library.
+            var existingJob = _jobs.Values.FirstOrDefault(j =>
+                j.LibraryId == libraryId &&
                 j.Type == LibraryScanJobType.LibraryScan &&
-                (j.Status == LibraryScanStatus.Queued || j.Status == LibraryScanStatus.Running));
-            
+                j.Status == LibraryScanStatus.Queued);
+
             if (existingJob != null)
             {
                 _logger.LogInformation("Library {LibraryId} is already in queue, returning existing job", libraryId);
                 return existingJob;
             }
+
+            var job = new LibraryScanJob
+            {
+                Type = LibraryScanJobType.LibraryScan,
+                LibraryId = libraryId,
+                LibraryName = libraryName,
+                Status = LibraryScanStatus.Queued,
+                Stage = LibraryScanStage.Pending,
+                StartedAt = DateTime.UtcNow
+            };
+
+            return EnqueueJob(job);
         }
-
-        var job = new LibraryScanJob
-        {
-            Type = LibraryScanJobType.LibraryScan,
-            LibraryId = libraryId,
-            LibraryName = libraryName,
-            Status = LibraryScanStatus.Queued,
-            Stage = LibraryScanStage.Pending,
-            StartedAt = DateTime.UtcNow
-        };
-
-        return EnqueueJob(job);
     }
 
     public LibraryScanJob EnqueueMetadataRefresh()
     {
-        // Check if Metadata Refresh is already running/queued
-        var existingJob = _jobs.Values.FirstOrDefault(j =>
-            j.Type == LibraryScanJobType.MetadataRefresh &&
-            (j.Status == LibraryScanStatus.Queued || j.Status == LibraryScanStatus.Running));
-
-        if (existingJob != null)
+        lock (_enqueueLock)
         {
-            _logger.LogInformation("Metadata refresh is already in queue/running, returning existing job");
-            return existingJob;
+            // Check if Metadata Refresh is already running/queued (atomic with the insert)
+            var existingJob = _jobs.Values.FirstOrDefault(j =>
+                j.Type == LibraryScanJobType.MetadataRefresh &&
+                (j.Status == LibraryScanStatus.Queued || j.Status == LibraryScanStatus.Running));
+
+            if (existingJob != null)
+            {
+                _logger.LogInformation("Metadata refresh is already in queue/running, returning existing job");
+                return existingJob;
+            }
+
+            var job = new LibraryScanJob
+            {
+                Type = LibraryScanJobType.MetadataRefresh,
+                LibraryId = Guid.Empty, // Global job
+                LibraryName = "Metadata Refresh",
+                Status = LibraryScanStatus.Queued,
+                Stage = LibraryScanStage.Pending,
+                StartedAt = DateTime.UtcNow
+            };
+
+            return EnqueueJob(job);
         }
-
-        var job = new LibraryScanJob
-        {
-            Type = LibraryScanJobType.MetadataRefresh,
-            LibraryId = Guid.Empty, // Global job
-            LibraryName = "Metadata Refresh",
-            Status = LibraryScanStatus.Queued,
-            Stage = LibraryScanStage.Pending,
-            StartedAt = DateTime.UtcNow
-        };
-
-        return EnqueueJob(job);
     }
 
     public LibraryScanJob EnqueueIntroCreditsDetection(Guid seriesId, string seriesName)
     {
-        // Dedup: at most one detection job per series queued or running at a time.
-        var existingJob = _jobs.Values.FirstOrDefault(j =>
-            j.Type == LibraryScanJobType.IntroCreditsDetection &&
-            j.TargetSeriesId == seriesId &&
-            (j.Status == LibraryScanStatus.Queued || j.Status == LibraryScanStatus.Running));
-
-        if (existingJob != null)
+        lock (_enqueueLock)
         {
-            return existingJob;
+            // Dedup: at most one detection job per series queued or running at a time
+            // (atomic with the insert).
+            var existingJob = _jobs.Values.FirstOrDefault(j =>
+                j.Type == LibraryScanJobType.IntroCreditsDetection &&
+                j.TargetSeriesId == seriesId &&
+                (j.Status == LibraryScanStatus.Queued || j.Status == LibraryScanStatus.Running));
+
+            if (existingJob != null)
+            {
+                return existingJob;
+            }
+
+            var job = new LibraryScanJob
+            {
+                Type = LibraryScanJobType.IntroCreditsDetection,
+                LibraryId = Guid.Empty,
+                LibraryName = $"Intro/Credits: {seriesName}",
+                TargetSeriesId = seriesId,
+                Status = LibraryScanStatus.Queued,
+                Stage = LibraryScanStage.Pending,
+                StartedAt = DateTime.UtcNow
+            };
+
+            return EnqueueJob(job);
         }
-
-        var job = new LibraryScanJob
-        {
-            Type = LibraryScanJobType.IntroCreditsDetection,
-            LibraryId = Guid.Empty,
-            LibraryName = $"Intro/Credits: {seriesName}",
-            TargetSeriesId = seriesId,
-            Status = LibraryScanStatus.Queued,
-            Stage = LibraryScanStage.Pending,
-            StartedAt = DateTime.UtcNow
-        };
-
-        return EnqueueJob(job);
     }
 
     private LibraryScanJob EnqueueJob(LibraryScanJob job)

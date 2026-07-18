@@ -97,7 +97,32 @@ public class LibraryService : ILibraryService
         await _libraryRepository.AddAsync(library);
         _scanQueueService.EnqueueScan(library.Id, library.Name);
 
+        // R-WI-007: register real-time watchers for the new library now, rather than only
+        // at the next server restart. Best-effort — the library is already persisted and a
+        // scan enqueued, so a transient failure here (e.g. a momentary SQLite lock while the
+        // watcher re-reads libraries) must not fail the create; the next refresh/restart or
+        // a scheduled scan still covers it.
+        await RefreshWatchersSafeAsync(library.Id);
+
         return library;
+    }
+
+    /// Invokes the watcher refresh without letting its failure surface as a 500 on an
+    /// otherwise-successful create/edit (diff-review MEDIUM). No-ops when the watcher loop
+    /// isn't running.
+    private async Task RefreshWatchersSafeAsync(Guid libraryId)
+    {
+        try
+        {
+            await _libraryWatcher.RefreshWatchersAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "File-watcher refresh failed after change to library {LibraryId}; real-time " +
+                "watching may lag until the next successful refresh, scheduled scan, or restart.",
+                libraryId);
+        }
     }
 
     public async Task UpdateLibraryAsync(Guid id, UpdateLibraryRequest request)
@@ -138,6 +163,11 @@ public class LibraryService : ILibraryService
         library.Paths = canonicalPaths;
 
         await _libraryRepository.UpdateAsync(library);
+
+        // R-WI-007: rebuild watchers so newly-added paths are watched and watchers on
+        // removed paths are torn down (and their stale pending files pruned). Best-effort —
+        // a refresh failure must not fail the persisted edit.
+        await RefreshWatchersSafeAsync(library.Id);
     }
 
     // --- Path safety helpers (Todo 08) -------------------------------------

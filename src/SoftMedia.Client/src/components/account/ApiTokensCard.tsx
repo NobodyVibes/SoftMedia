@@ -8,6 +8,7 @@ const ALL_SCOPES: { value: string; label: string; description: string }[] = [
     { value: 'read:library', label: 'Read library', description: 'Read media metadata and library structure' },
     { value: 'read:state', label: 'Read state', description: 'Read playback state, watchlist, playlists' },
     { value: 'write:state', label: 'Write state', description: 'Modify playback state, watchlist, playlists' },
+    { value: 'write:library', label: 'Trigger scans', description: 'Trigger library scans (for Sonarr/Radarr webhooks)' },
     { value: 'admin', label: 'Admin', description: 'Full admin access (admins only)' },
 ];
 

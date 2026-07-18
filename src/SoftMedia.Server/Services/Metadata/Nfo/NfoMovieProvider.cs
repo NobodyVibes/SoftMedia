@@ -58,6 +58,13 @@ public class NfoMovieProvider : IMetadataProvider
         if (result?.Title is null)
             return Task.FromResult<MetadataResult?>(null);
 
+        // R-WI-014: a local <thumb> reference resolves against — and is jailed to — the
+        // NFO's own folder; the aggregator cache-copies it (never served in place). The jail
+        // root travels with the result so the copy step anchors at the NFO folder, not the
+        // poster file's (possibly symlinked) parent.
+        result.LocalPosterFile = NfoXmlParser.ResolveLocalPoster(_fs, nfoPath, result.LocalPosterFile, _logger);
+        result.LocalPosterJailRoot = result.LocalPosterFile != null ? Path.GetDirectoryName(nfoPath) : null;
+
         _logger.LogInformation("[NfoMovieProvider] Loaded NFO for '{Title}' from {Path}", item.Title, nfoPath);
         return Task.FromResult<MetadataResult?>(result);
     }

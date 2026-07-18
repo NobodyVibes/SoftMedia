@@ -38,7 +38,18 @@ public class LibraryWatcher : BackgroundService, IDisposable
     // Concurrency control for single-file processing (C5 fix)
     // Limits parallel scope/DbContext creation to prevent SQLite write contention
     private readonly SemaphoreSlim _stableFileSemaphore = new(3, 3);
-    
+
+    // R-WI-007: serialises RefreshWatchersAsync so two concurrent library edits can't
+    // race on the watcher collections while tearing down and rebuilding.
+    private readonly SemaphoreSlim _refreshLock = new(1, 1);
+
+    // True only while the processing loop is actually running. When EnableFileWatcher is
+    // off at startup ExecuteAsync returns before setting this, and RefreshWatchersAsync
+    // no-ops — registering watchers with no loop to drain them would silently black-hole
+    // events into _pendingFiles. It is also false in unit tests (which never start the
+    // host), so RefreshWatchersAsync is safe to call there despite a null scope factory.
+    private volatile bool _isRunning;
+
     /// <summary>Gets current file watcher issues for admin dashboard.</summary>
     public IEnumerable<FileWatcherIssue> GetFileIssues() => _fileIssues.Values.ToList();
     
@@ -133,7 +144,12 @@ public class LibraryWatcher : BackgroundService, IDisposable
             }
         }
         
-        await InitializeWatchersAsync();
+        // Set running BEFORE the initial registration and route it through the locked
+        // RefreshWatchersAsync path, so a library created during the startup window (Kestrel
+        // serves requests as soon as ExecuteAsync first awaits) serialises behind this initial
+        // registration instead of no-opping and missing its watcher until restart (diff-review LOW).
+        _isRunning = true;
+        await RefreshWatchersAsync();
 
         // Main loop - periodically check pending files and trigger scans
         try
@@ -164,16 +180,117 @@ public class LibraryWatcher : BackgroundService, IDisposable
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Stopping Library Watcher...");
-        
-        foreach (var watcher in _watchers)
+        _isRunning = false;
+
+        lock (_libraryWatchers)
         {
-            watcher.EnableRaisingEvents = false;
-            watcher.Dispose();
+            foreach (var watcher in _watchers)
+            {
+                watcher.EnableRaisingEvents = false;
+                watcher.Dispose();
+            }
+            _watchers.Clear();
+            _libraryWatchers.Clear();
         }
-        _watchers.Clear();
         _stableFileSemaphore.Dispose();
-        
+
         await base.StopAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Rebuilds the watcher set from the current library configuration. Called by
+    /// <c>LibraryService</c> after a library is created or its paths are edited, so
+    /// real-time detection covers libraries added while the server is running (R-WI-007) —
+    /// previously watchers were registered only once at startup. A full teardown-and-rebuild
+    /// is cheap at home scale and also clears watchers left on paths removed during an edit.
+    /// No-ops when the processing loop is not running (see <see cref="_isRunning"/>).
+    /// </summary>
+    public virtual async Task RefreshWatchersAsync()
+    {
+        if (!_isRunning)
+        {
+            _logger.LogDebug(
+                "RefreshWatchersAsync skipped: the file-watcher loop is not running " +
+                "(EnableFileWatcher was off at startup). A restart is required to enable it.");
+            return;
+        }
+
+        await _refreshLock.WaitAsync();
+        try
+        {
+            lock (_libraryWatchers)
+            {
+                foreach (var watcher in _watchers)
+                {
+                    watcher.EnableRaisingEvents = false;
+                    watcher.Dispose();
+                }
+                _watchers.Clear();
+                _libraryWatchers.Clear();
+            }
+
+            await InitializeWatchersAsync();
+            await PrunePendingFilesAsync();
+            _logger.LogInformation("File watchers refreshed after library change.");
+        }
+        finally
+        {
+            _refreshLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Drops pending files whose path no longer falls under any current library root, so a
+    /// file left pending under a path removed during a library edit is not later scanned in.
+    /// (Library deletion already prunes via <see cref="RemoveWatchersForLibrary"/>; this covers
+    /// the path-edit case.)
+    /// </summary>
+    private async Task PrunePendingFilesAsync()
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var roots = (await context.Libraries.ToListAsync())
+            .SelectMany(l => l.Paths ?? new List<string>())
+            .ToList();
+
+        foreach (var path in _pendingFiles.Keys.ToList())
+        {
+            if (!roots.Any(root => IsPathUnderRoot(path, root)))
+            {
+                _pendingFiles.TryRemove(path, out _);
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="filePath"/> is <paramref name="root"/> itself or lives beneath
+    /// it. Compares canonical absolute forms with a trailing separator so a sibling whose name is
+    /// a prefix (e.g. <c>C:\Media2</c> vs root <c>C:\Media</c>) is not treated as inside. On an
+    /// unparseable path it returns <c>true</c> (keep the entry rather than risk over-pruning).
+    /// </summary>
+    public static bool IsPathUnderRoot(string filePath, string root)
+    {
+        try
+        {
+            var full = Path.GetFullPath(filePath);
+            var fullRoot = Path.GetFullPath(root);
+            var comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+
+            if (string.Equals(full, fullRoot, comparison)) return true;
+
+            if (!fullRoot.EndsWith(Path.DirectorySeparatorChar) &&
+                !fullRoot.EndsWith(Path.AltDirectorySeparatorChar))
+            {
+                fullRoot += Path.DirectorySeparatorChar;
+            }
+            return full.StartsWith(fullRoot, comparison);
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     private async Task InitializeWatchersAsync()
@@ -212,11 +329,13 @@ public class LibraryWatcher : BackgroundService, IDisposable
             watcher.Error += OnError;
 
             watcher.EnableRaisingEvents = true;
-            _watchers.Add(watcher);
 
-            // Track watcher by library ID for cleanup
+            // Track watcher in both collections under one lock. _watchers and
+            // _libraryWatchers must stay consistent — RefreshWatchersAsync/StopAsync
+            // tear both down under this same lock (R-WI-007).
             lock (_libraryWatchers)
             {
+                _watchers.Add(watcher);
                 if (!_libraryWatchers.ContainsKey(libraryId))
                     _libraryWatchers[libraryId] = new List<FileSystemWatcher>();
                 _libraryWatchers[libraryId].Add(watcher);
@@ -543,6 +662,7 @@ public class LibraryWatcher : BackgroundService, IDisposable
         {
             watcher.Dispose();
         }
+        _refreshLock.Dispose();
         base.Dispose();
     }
 }

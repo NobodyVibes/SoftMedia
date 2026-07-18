@@ -118,6 +118,22 @@ public class MediaItem
     public string? BackdropUrl { get; set; }
 
     /// <summary>
+    /// R-WI-014 — PosterUrl currently holds a cached copy of a LOCAL sidecar image
+    /// (poster.jpg / folder.jpg / <stem>-poster.* beside the media, or an NFO local thumb).
+    /// Local art is the user's explicit choice, so while set: (a) providers' poster URLs are
+    /// neither applied nor downloaded (local wins), and (b) the enrichment-completeness check
+    /// treats the item as poster-less until one enrichment pass has stamped MetadataHash —
+    /// otherwise a poster.jpg movie would never receive a remote description (Relaxed mode
+    /// declares any postered item complete).
+    /// </summary>
+    public bool PosterFromLocalFile { get; set; }
+
+    /// <summary>R-WI-014 — BackdropUrl holds a cached local sidecar (fanart.jpg/backdrop.jpg);
+    /// provider backdrops are suppressed while set. No completeness interaction (only posters
+    /// gate enrichment).</summary>
+    public bool BackdropFromLocalFile { get; set; }
+
+    /// <summary>
     /// Indicates that metadata retries have been exhausted for this item.
     /// Replaces the legacy "retryExhausted" flag previously stored in MetadataJson.
     /// </summary>

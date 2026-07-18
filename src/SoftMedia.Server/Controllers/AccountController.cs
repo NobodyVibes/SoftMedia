@@ -39,7 +39,8 @@ public class AccountController : ControllerBase
     /// Soft-deletes the current user's account.
     /// </summary>
     [HttpDelete]
-    public async Task<IActionResult> DeleteAccount()
+    [Authorize(Policy = ScopePolicies.FullSession)] // R-WI-006: sensitive account op — full session only, never an API token
+        public async Task<IActionResult> DeleteAccount()
     {
         var userId = GetCurrentUserId();
         if (userId == null)
@@ -85,6 +86,75 @@ public class AccountController : ControllerBase
         return Ok(new { message = "Account deleted successfully." });
     }
 
+    /// <summary>
+    /// R-WI-011 — the calling user's EFFECTIVE content limits, for display on the account page
+    /// ("Content limit: PG-13 — set by your administrator"). Computed exactly like enforcement
+    /// (<see cref="Services.Security.ContentRating.UserRatingCeilings.From"/>, including the
+    /// legacy MaxRating movie fallback), so what the user reads always matches what the filter
+    /// does. Admins are unrestricted by role.
+    /// </summary>
+    [HttpGet("content-limits")]
+    public async Task<IActionResult> GetContentLimits()
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var user = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId.Value);
+        if (user == null) return NotFound("User not found.");
+
+        if (user.Role == Models.UserRole.Admin)
+        {
+            return Ok(new ContentLimitsDto(null, null, null, true));
+        }
+
+        var ceilings = Services.Security.ContentRating.UserRatingCeilings.From(user);
+        return Ok(new ContentLimitsDto(ceilings.Movie, ceilings.Tv, ceilings.Game, false));
+    }
+
+    /// <summary>Per-type ceiling labels; null = no limit for that type.</summary>
+    public record ContentLimitsDto(string? Movie, string? Tv, string? Game, bool IsAdmin);
+
+    // --- R-WI-013 privacy: history recording toggle + clear (user-owned; see User.RecordPlaybackHistory) ---
+
+    /// <summary>Privacy settings are session-only in BOTH directions — an API token (any scope)
+    /// can neither read nor change them (review finding: bare [Authorize] admits tokens).</summary>
+    [HttpGet("history-preferences")]
+    [Authorize(Policy = ScopePolicies.FullSession)]
+    public async Task<IActionResult> GetHistoryPreferences(
+        [FromServices] Services.Abstractions.IUserMediaInteractionService interactions)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+        return Ok(new HistoryPreferencesDto(await interactions.GetRecordHistoryAsync(userId.Value)));
+    }
+
+    /// <summary>A privacy control must ride a real login session, never an ambient API token.</summary>
+    [HttpPut("history-preferences")]
+    [Authorize(Policy = ScopePolicies.FullSession)]
+    public async Task<IActionResult> SetHistoryPreferences(
+        [FromBody] HistoryPreferencesDto request,
+        [FromServices] Services.Abstractions.IUserMediaInteractionService interactions)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+        await interactions.SetRecordHistoryAsync(userId.Value, request.RecordPlaybackHistory);
+        return Ok();
+    }
+
+    /// <summary>Erases the caller's entire play history (destructive — full session only).</summary>
+    [HttpDelete("history")]
+    [Authorize(Policy = ScopePolicies.FullSession)]
+    public async Task<IActionResult> ClearHistory(
+        [FromServices] Services.Abstractions.IUserMediaInteractionService interactions)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+        var deleted = await interactions.ClearHistoryAsync(userId.Value);
+        return Ok(new { deleted });
+    }
+
+    public record HistoryPreferencesDto(bool RecordPlaybackHistory);
+
     // --- API tokens (P1-WI-002) ---
 
     /// <summary>Lists the calling user's active API tokens (never the raw secret).</summary>
@@ -108,7 +178,8 @@ public class AccountController : ControllerBase
 
     /// <summary>Mints a new API token. The raw token is returned exactly once.</summary>
     [HttpPost("api-tokens")]
-    public async Task<IActionResult> CreateApiToken([FromBody] CreateApiTokenRequest request, CancellationToken ct)
+    [Authorize(Policy = ScopePolicies.FullSession)] // R-WI-006: sensitive account op — full session only, never an API token
+        public async Task<IActionResult> CreateApiToken([FromBody] CreateApiTokenRequest request, CancellationToken ct)
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
@@ -128,7 +199,8 @@ public class AccountController : ControllerBase
 
     /// <summary>Revokes one of the caller's API tokens.</summary>
     [HttpDelete("api-tokens/{id:guid}")]
-    public async Task<IActionResult> RevokeApiToken(Guid id, CancellationToken ct)
+    [Authorize(Policy = ScopePolicies.FullSession)] // R-WI-006: sensitive account op — full session only, never an API token
+        public async Task<IActionResult> RevokeApiToken(Guid id, CancellationToken ct)
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
@@ -156,7 +228,8 @@ public class AccountController : ControllerBase
     /// </summary>
     [EnableRateLimiting(ServiceCollectionExtensions.TwoFactorRateLimitPolicy)] // audit wave-2 I-4
     [HttpPost("totp/enroll")]
-    public async Task<IActionResult> EnrollTotp()
+    [Authorize(Policy = ScopePolicies.FullSession)] // R-WI-006: sensitive account op — full session only, never an API token
+        public async Task<IActionResult> EnrollTotp()
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
@@ -186,7 +259,8 @@ public class AccountController : ControllerBase
     /// <summary>Confirms enrollment with a current code; enables 2FA and returns recovery codes (shown once).</summary>
     [EnableRateLimiting(ServiceCollectionExtensions.TwoFactorRateLimitPolicy)] // audit L12
     [HttpPost("totp/enroll/confirm")]
-    public async Task<IActionResult> ConfirmTotp([FromBody] TotpConfirmRequest request)
+    [Authorize(Policy = ScopePolicies.FullSession)] // R-WI-006: sensitive account op — full session only, never an API token
+        public async Task<IActionResult> ConfirmTotp([FromBody] TotpConfirmRequest request)
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
@@ -210,7 +284,8 @@ public class AccountController : ControllerBase
     /// <summary>Disables 2FA for the caller. Requires the account password plus a current code (or recovery code).</summary>
     [EnableRateLimiting(ServiceCollectionExtensions.TwoFactorRateLimitPolicy)] // audit L12
     [HttpPost("totp/disable")]
-    public async Task<IActionResult> DisableTotp([FromBody] TotpDisableRequest request)
+    [Authorize(Policy = ScopePolicies.FullSession)] // R-WI-006: sensitive account op — full session only, never an API token
+        public async Task<IActionResult> DisableTotp([FromBody] TotpDisableRequest request)
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
@@ -260,7 +335,8 @@ public class AccountController : ControllerBase
 
     /// <summary>Forgets one remembered device, forcing 2FA there on next login.</summary>
     [HttpDelete("trusted-devices/{id:guid}")]
-    public async Task<IActionResult> RevokeTrustedDevice(Guid id)
+    [Authorize(Policy = ScopePolicies.FullSession)] // R-WI-006: sensitive account op — full session only, never an API token
+        public async Task<IActionResult> RevokeTrustedDevice(Guid id)
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
@@ -269,7 +345,8 @@ public class AccountController : ControllerBase
 
     /// <summary>Forgets all remembered devices for the caller.</summary>
     [HttpDelete("trusted-devices")]
-    public async Task<IActionResult> RevokeAllTrustedDevices()
+    [Authorize(Policy = ScopePolicies.FullSession)] // R-WI-006: sensitive account op — full session only, never an API token
+        public async Task<IActionResult> RevokeAllTrustedDevices()
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();

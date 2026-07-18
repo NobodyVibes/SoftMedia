@@ -9,6 +9,7 @@ using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Scanning;
+using SoftMedia.Server.Services.Security.ContentRating;
 using SoftMedia.Server.Services.Transcoding;
 using System.Security.Claims;
 
@@ -73,7 +74,8 @@ public class UsersController : ControllerBase
                 u.CreatedByAdmin,
                 _context.Invites.Where(i => i.UsedById == u.Id).Select(i => i.Code).FirstOrDefault(),
                 u.MustChangePassword,
-                _context.UserTotps.Any(t => t.UserId == u.Id && t.EnabledAt != null)
+                _context.UserTotps.Any(t => t.UserId == u.Id && t.EnabledAt != null),
+                u.MaxStreamBitrateKbps ?? 0 // R-WI-009 (null and 0 both mean unlimited)
             ))
             .ToListAsync();
 
@@ -106,11 +108,18 @@ public class UsersController : ControllerBase
             PasswordHash = _passwordHasher.HashPassword(request.Password),
             Role = role,
             IsApproved = true, // Admin created users are auto-approved
-            ContentRatings = "{}",
             FirstName = request.FirstName,
             LastName = request.LastName,
             CreatedByAdmin = true
         };
+
+        // R-WI-011: the admin may set content ceilings AT creation (visible in the modal).
+        // Omitted/empty = NO restrictions — the maintainer-decided default; the old model
+        // default silently capped every new user at PG-13 movies.
+        if (ApplyContentRatings(user, request.ContentRatings) is { } ratingsError)
+        {
+            return BadRequest(ratingsError);
+        }
 
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
@@ -127,13 +136,15 @@ public class UsersController : ControllerBase
             user.IsBanned,
             user.IsApproved,
             user.IsRejected,
-            new Dictionary<string, string>(),
+            System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(user.ContentRatings)
+                ?? new Dictionary<string, string>(),
             user.FirstName,
             user.LastName,
             user.CreatedByAdmin,
             null,
             user.MustChangePassword,
-            false // newly created account has no 2FA enrollment yet
+            false, // newly created account has no 2FA enrollment yet
+            user.MaxStreamBitrateKbps ?? 0 // R-WI-009 (0 for a new account)
         ));
     }
 
@@ -146,7 +157,77 @@ public class UsersController : ControllerBase
             return NotFound("User not found.");
         }
 
-        user.ContentRatings = System.Text.Json.JsonSerializer.Serialize(request.ContentRatings);
+        if (ApplyContentRatings(user, request.ContentRatings) is { } ratingsError)
+        {
+            return BadRequest(ratingsError);
+        }
+        await _context.SaveChangesAsync();
+
+        return Ok();
+    }
+
+    /// <summary>
+    /// R-WI-011 — single write path for a user's content ceilings. Strips empty entries
+    /// (the ratings modal posts "" for "None (Unrestricted)"), validates labels against
+    /// <see cref="RatingTables"/> (unknown labels FAIL OPEN downstream, so a typo'd cap
+    /// would silently unrestrict — reject it here instead), and keeps the legacy
+    /// <see cref="User.MaxRating"/> in sync with the map's Movie entry. Without that sync,
+    /// choosing "None (Unrestricted)" for movies was a lie: the empty map entry fell back
+    /// to the old invisible MaxRating="PG-13". Returns an error message, or null on success.
+    /// Public so tests can drive it directly (project convention; no InternalsVisibleTo).
+    /// </summary>
+    public static string? ApplyContentRatings(User user, Dictionary<string, string>? contentRatings)
+    {
+        var tables = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["Movie"] = RatingTables.Movie,
+            ["TV"] = RatingTables.Tv,
+            ["Game"] = RatingTables.Game,
+        };
+
+        var cleaned = new Dictionary<string, string>();
+        foreach (var (type, label) in contentRatings ?? new Dictionary<string, string>())
+        {
+            if (string.IsNullOrWhiteSpace(label)) continue; // "" = unrestricted for that type
+            if (!tables.TryGetValue(type, out var table))
+            {
+                return $"Unknown content-rating type '{type}'. Valid types: Movie, TV, Game.";
+            }
+            var canonical = table.FirstOrDefault(t => string.Equals(t, label, StringComparison.OrdinalIgnoreCase));
+            if (canonical == null)
+            {
+                return $"Unknown {type} rating '{label}'. Valid: {string.Join(", ", table)}.";
+            }
+            cleaned[type] = canonical; // store canonical casing so displays are consistent
+        }
+
+        user.ContentRatings = System.Text.Json.JsonSerializer.Serialize(cleaned);
+        user.MaxRating = cleaned.GetValueOrDefault("Movie") ?? "";
+        return null;
+    }
+
+    /// <summary>
+    /// R-WI-009 — set a user's streaming bitrate cap (kbps; 0 = unlimited). Admin-only (the whole
+    /// controller is <c>[Authorize(Roles="Admin")]</c>). Enforced at plan time by
+    /// <see cref="Services.Media.StreamPlanService"/> / TranscodeController since P1-WI-003.
+    /// </summary>
+    [HttpPut("{id}/streaming")]
+    public async Task<IActionResult> UpdateUserStreaming(Guid id, UpdateUserStreamingRequest request)
+    {
+        if (request.MaxStreamBitrateKbps < 0)
+        {
+            return BadRequest("Bitrate cap cannot be negative (use 0 for unlimited).");
+        }
+
+        var user = await _context.Users.FindAsync(id);
+        if (user == null)
+        {
+            return NotFound("User not found.");
+        }
+
+        // Clamp the upper bound to the server's absolute streaming ceiling so a typo can't store an
+        // absurd value; the plan computation clamps again at request time.
+        user.MaxStreamBitrateKbps = Math.Min(request.MaxStreamBitrateKbps, 100_000);
         await _context.SaveChangesAsync();
 
         return Ok();

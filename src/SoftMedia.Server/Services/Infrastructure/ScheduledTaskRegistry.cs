@@ -110,4 +110,22 @@ public static class ScheduledTaskNames
     public const string ImageDownloadQueue = "Image Download Queue";
     public const string ThrottleMonitor = "Transcode Throttle Monitor";
     public const string Trickplay = "Trickplay Generation";
+    public const string ScheduledLibraryScan = "Scheduled Library Scan";
+}
+
+/// <summary>
+/// A background task the admin can trigger from the Background Tasks page (R-WI-008 generalised
+/// this — POST /api/v1/admin/tasks/{name}/trigger previously hardcoded the metadata refresh).
+/// Implementations register themselves in DI as <c>IManuallyTriggerableTask</c>; the controller
+/// resolves the collection and dispatches by <see cref="TaskName"/>. Keep <see cref="TriggerNow"/>
+/// fast and fire-and-forget (enqueue work, don't do it inline) — the endpoint returns 202.
+/// </summary>
+public interface IManuallyTriggerableTask
+{
+    /// <summary>Must match the name the task registered with (<see cref="ScheduledTaskNames"/>).</summary>
+    string TaskName { get; }
+
+    /// <summary>Kick off one run immediately. Must not throw for routine failures — report them
+    /// to the registry so the tasks page reflects the result.</summary>
+    void TriggerNow();
 }

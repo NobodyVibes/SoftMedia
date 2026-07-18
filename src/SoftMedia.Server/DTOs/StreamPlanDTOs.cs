@@ -157,6 +157,37 @@ public class StreamPlan
     /// no English parsing is needed client-side.
     /// </summary>
     public List<StreamReasonCode> ReasonCodes { get; set; } = new();
+
+    // --- Resolved transcode parameters (R-WI-002) ---
+    // The authoritative quality/security params the server negotiated for a Transcode plan.
+    // Persisted per session (mediaId+userId+sid) in the stream-plan store so a later
+    // master.m3u8 request — notably a far-seek that rebuilds the URL with minimal params —
+    // cannot silently drop the resolution/codec/HDR decision or bypass the per-user bitrate
+    // cap. Null for DirectPlay/Remux (no transcode encode). Not serialized to the client.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TranscodeResolution { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TranscodeCodec { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public int? TranscodeMaxBitrate { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool TranscodePreserveHdr { get; set; }
+
+    // Resolved audio decision (R-WI-004). The transcode path used to force stereo AAC 128k on every
+    // branch; these carry the negotiated ladder — copy the source audio when the client can decode
+    // it, else encode to the target codec/channels (AC3 5.1 for a surround-capable client), else
+    // stereo AAC. Persisted alongside the video params so a far-seek re-request keeps them.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool TranscodeAudioCopy { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TranscodeAudioCodec { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public int TranscodeAudioChannels { get; set; }
 }
 
 /// <summary>

@@ -143,9 +143,10 @@ public static class NfoXmlParser
             hasData = true;
         }
 
-        // Poster: <thumb> bare or <art><poster>. Only accept when the value
-        // looks like an http(s) URL — local-file paths are out of scope for
-        // the v1 NFO provider (covered in plan §"Out of scope").
+        // Poster: <thumb> bare or <art><poster>. http(s) URLs flow into PosterUrl as before.
+        // R-WI-014: a SAFE relative file name (no root, no drive, no traversal, no separators
+        // beyond a single optional subfolder level) is surfaced as LocalPosterFile — the
+        // PROVIDER (which knows the NFO's folder) resolves and jails it; the parser stays pure.
         var poster = ReadString(root, "thumb")
             ?? root.Element("art")?.Element("poster")?.Value;
         if (poster is not null)
@@ -156,6 +157,11 @@ public static class NfoXmlParser
                  || poster.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
             {
                 result.PosterUrl = poster;
+                hasData = true;
+            }
+            else if (poster is not null && IsSafeRelativeImagePath(poster))
+            {
+                result.LocalPosterFile = poster;
                 hasData = true;
             }
         }
@@ -193,5 +199,46 @@ public static class NfoXmlParser
         // "N/A" sentinels appear in some legacy NFO files — treat as absent.
         if (string.Equals(trimmed, "N/A", StringComparison.OrdinalIgnoreCase)) return null;
         return trimmed;
+    }
+
+    // R-WI-014 — an NFO-supplied local poster reference may only be a simple relative image
+    // path (e.g. "poster.jpg" or "extras/poster.png"): never rooted, never a drive/UNC path,
+    // never containing traversal segments, and it must carry an image extension. The provider
+    // additionally jails the RESOLVED path under the NFO's own folder before any file access.
+    private static readonly string[] SafeImageExtensions = { ".jpg", ".jpeg", ".png", ".webp", ".gif" };
+
+    public static bool IsSafeRelativeImagePath(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 256) return false;
+        if (Path.IsPathRooted(value)) return false;                       // rejects "/x", "C:\x", "\\unc\x"
+        if (value.Contains("..")) return false;                           // traversal
+        if (value.Contains(':')) return false;                            // drive/ADS tricks
+        if (value.IndexOfAny(Path.GetInvalidPathChars()) >= 0) return false;
+        var ext = Path.GetExtension(value);
+        return SafeImageExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// R-WI-014 — resolve a parser-approved relative poster reference against the NFO's own
+    /// folder and JAIL the result there (belt to the parser's braces: even a value that slipped
+    /// the relative-path check cannot escape the folder after canonicalisation). Returns the
+    /// absolute path of an existing file, else null.
+    /// </summary>
+    public static string? ResolveLocalPoster(
+        Abstractions.IFileSystem fs, string nfoPath, string? relativePoster, ILogger logger)
+    {
+        if (string.IsNullOrEmpty(relativePoster)) return null;
+        var dir = Path.GetDirectoryName(nfoPath);
+        if (string.IsNullOrEmpty(dir)) return null;
+
+        var resolved = Path.GetFullPath(Path.Combine(dir, relativePoster));
+        var jail = Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                   + Path.DirectorySeparatorChar;
+        if (!resolved.StartsWith(jail, StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogWarning("NFO local poster escaped its folder and was rejected: {Value} (nfo: {Nfo})", relativePoster, nfoPath);
+            return null;
+        }
+        return fs.FileExists(resolved) ? resolved : null;
     }
 }

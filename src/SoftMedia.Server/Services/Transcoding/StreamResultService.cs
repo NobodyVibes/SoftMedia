@@ -73,13 +73,13 @@ public class StreamResultService : IStreamResultService
     public IActionResult GetSubtitleResult(Guid mediaId, Guid userId, int? sub, string? sid = null)
     {
         var stream = _transcodeService.GetSubtitlesVtt(mediaId, userId, sub, sid);
-        
+
         if (stream == null)
         {
             _logger.LogWarning("Subtitle file not found for {Id}", mediaId);
             return new NotFoundObjectResult("Subtitle file not available");
         }
-        
+
         return new FileStreamResult(stream, "text/vtt");
     }
 }

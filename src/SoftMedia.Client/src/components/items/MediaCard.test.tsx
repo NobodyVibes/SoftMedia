@@ -25,6 +25,14 @@ vi.mock('../../store/audioStore', () => ({
     useAudioStore: vi.fn(),
 }));
 
+// Album cards fetch their track list on play/queue
+vi.mock('../../services/api', () => ({
+    default: { get: vi.fn(), post: vi.fn() },
+}));
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+import api from '../../services/api';
+import { toast } from 'sonner';
+
 describe('MediaCard', () => {
     const mockItem: MediaItem = {
         id: '1',
@@ -40,12 +48,14 @@ describe('MediaCard', () => {
 
     const mockPlayTrack = vi.fn();
     const mockAddToQueue = vi.fn();
+    const mockPlayPlaylist = vi.fn();
 
     beforeEach(() => {
         vi.clearAllMocks();
         (audioStore.useAudioStore as any).mockReturnValue({
             playTrack: mockPlayTrack,
             addToQueue: mockAddToQueue,
+            playPlaylist: mockPlayPlaylist,
         });
     });
 
@@ -170,6 +180,118 @@ describe('MediaCard', () => {
             // the key assertion for the regression guard is that the element IS a
             // <button>, which this test enforces above.
             expect(play.tagName).toBe('BUTTON');
+        });
+    });
+
+    describe('album/artist cards (streamability regression)', () => {
+        // Albums/artists are NOT streamable: playTrack(album) requested
+        // /stream/{albumId} → 404 → permanent silent "playing" zombie bar.
+        const albumItem: MediaItem = {
+            ...mockItem,
+            id: 'album-1',
+            title: 'Test Album',
+            type: MediaType.Album,
+        };
+        const trackA: MediaItem = { ...mockItem, id: 't1', title: 'Track A', type: MediaType.Audio };
+        const trackB: MediaItem = { ...mockItem, id: 't2', title: 'Track B', type: MediaType.Audio };
+
+        it('album play fetches the track list and starts the playlist — never playTrack(album)', async () => {
+            (api.get as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [trackA, trackB] });
+            render(
+                <MemoryRouter>
+                    <MediaCard item={albumItem} libraryType="Music" />
+                </MemoryRouter>
+            );
+
+            fireEvent.click(screen.getByRole('button', { name: /play test album/i }));
+            await vi.waitFor(() => expect(mockPlayPlaylist).toHaveBeenCalledWith([trackA, trackB]));
+            expect(api.get).toHaveBeenCalledWith('/libraries/albums/album-1/tracks');
+            expect(mockPlayTrack).not.toHaveBeenCalled();
+        });
+
+        it('album play falls back to the album page when the track fetch fails', async () => {
+            (api.get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('down'));
+            render(
+                <MemoryRouter>
+                    <MediaCard item={albumItem} libraryType="Music" />
+                </MemoryRouter>
+            );
+
+            fireEvent.click(screen.getByRole('button', { name: /play test album/i }));
+            await vi.waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/media/album-1'));
+            expect(mockPlayTrack).not.toHaveBeenCalled();
+            expect(mockPlayPlaylist).not.toHaveBeenCalled();
+        });
+
+        it('album add-to-queue enqueues each TRACK in order and confirms with a toast', async () => {
+            (api.get as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [trackA, trackB] });
+            render(
+                <MemoryRouter>
+                    <MediaCard item={albumItem} libraryType="Music" />
+                </MemoryRouter>
+            );
+
+            fireEvent.click(screen.getByRole('button', { name: /add test album to queue/i }));
+            await vi.waitFor(() => expect(mockAddToQueue).toHaveBeenCalledTimes(2));
+            expect(mockAddToQueue).toHaveBeenNthCalledWith(1, trackA);
+            expect(mockAddToQueue).toHaveBeenNthCalledWith(2, trackB);
+            expect(toast.success).toHaveBeenCalledWith('Added 2 tracks to queue');
+        });
+
+        it('album add-to-queue failure surfaces a toast instead of silence', async () => {
+            (api.get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('down'));
+            render(
+                <MemoryRouter>
+                    <MediaCard item={albumItem} libraryType="Music" />
+                </MemoryRouter>
+            );
+
+            fireEvent.click(screen.getByRole('button', { name: /add test album to queue/i }));
+            await vi.waitFor(() => expect(toast.error).toHaveBeenCalled());
+            expect(mockAddToQueue).not.toHaveBeenCalled();
+        });
+
+        it('album play with an EMPTY track list falls back to the album page', async () => {
+            (api.get as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [] });
+            render(
+                <MemoryRouter>
+                    <MediaCard item={albumItem} libraryType="Music" />
+                </MemoryRouter>
+            );
+
+            fireEvent.click(screen.getByRole('button', { name: /play test album/i }));
+            await vi.waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/media/album-1'));
+            expect(mockPlayPlaylist).not.toHaveBeenCalled();
+        });
+
+        it('track cards still play directly via playTrack', () => {
+            render(
+                <MemoryRouter>
+                    <MediaCard item={trackA} libraryType="Music" />
+                </MemoryRouter>
+            );
+
+            // Track cards expose BOTH the whole-card role=button wrapper and the
+            // inner play <button> under the same label — click the real button.
+            const play = screen.getAllByRole('button', { name: /play track a/i })
+                .find(el => el.tagName === 'BUTTON')!;
+            fireEvent.click(play);
+            expect(mockPlayTrack).toHaveBeenCalledWith(trackA);
+            expect(api.get).not.toHaveBeenCalled();
+        });
+
+        it('artist play navigates to the artist page and shows no queue button', () => {
+            const artist: MediaItem = { ...mockItem, id: 'artist-1', title: 'Test Artist', type: MediaType.Artist };
+            render(
+                <MemoryRouter>
+                    <MediaCard item={artist} libraryType="Music" />
+                </MemoryRouter>
+            );
+
+            fireEvent.click(screen.getByRole('button', { name: /play test artist/i }));
+            expect(mockNavigate).toHaveBeenCalledWith('/media/artist-1');
+            expect(mockPlayTrack).not.toHaveBeenCalled();
+            expect(screen.queryByRole('button', { name: /to queue/i })).toBeNull();
         });
     });
 });

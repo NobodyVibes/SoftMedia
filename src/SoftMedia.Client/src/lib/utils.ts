@@ -35,3 +35,16 @@ export function formatDuration(seconds: number): string {
     const remainingSeconds = Math.floor(seconds % 60);
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
+
+/**
+ * Whether an interval-hours settings value will actually ENABLE the schedule on the server.
+ * The server parses these with int.TryParse and treats anything unparsable (empty string,
+ * "2.5", "2e5") or <= 0 as disabled — so the UI hint next to the input must apply the exact
+ * same rule, or an admin could save "2.5", see "hours", and believe a schedule is running
+ * when it silently never fires (R-WI-008 review finding).
+ */
+export function isIntervalHoursEnabled(value: string): boolean {
+    if (!/^-?\d+$/.test(value.trim())) return false; // int.TryParse semantics: integers only
+    const n = Number(value);
+    return Number.isSafeInteger(n) && n > 0;
+}

@@ -24,7 +24,39 @@ export interface CreateApiTokenResponse {
     label: string;
 }
 
+/** R-WI-011: the caller's effective content ceilings; null = no limit for that type. */
+export interface ContentLimitsDto {
+    movie: string | null;
+    tv: string | null;
+    game: string | null;
+    isAdmin: boolean;
+}
+
 export const accountService = {
+    /**
+     * R-WI-011: fetch the current user's EFFECTIVE content limits (computed server-side with
+     * the same logic enforcement uses, so the display can never drift from reality).
+     */
+    getContentLimits: async (): Promise<ContentLimitsDto> => {
+        const response = await api.get<ContentLimitsDto>('/account/content-limits');
+        return response.data;
+    },
+
+    // R-WI-013 privacy — user-owned history recording toggle + clear-my-history.
+    getHistoryPreferences: async (): Promise<{ recordPlaybackHistory: boolean }> => {
+        const response = await api.get<{ recordPlaybackHistory: boolean }>('/account/history-preferences');
+        return response.data;
+    },
+
+    setHistoryPreferences: async (recordPlaybackHistory: boolean): Promise<void> => {
+        await api.put('/account/history-preferences', { recordPlaybackHistory });
+    },
+
+    clearHistory: async (): Promise<{ deleted: number }> => {
+        const response = await api.delete<{ deleted: number }>('/account/history');
+        return response.data;
+    },
+
     /**
      * Change the current user's password
      * Uses the existing /auth/change-password endpoint

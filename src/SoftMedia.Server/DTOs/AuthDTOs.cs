@@ -33,16 +33,23 @@ public record TotpConfirmResponse(List<string> RecoveryCodes);
 public record TotpStatusResponse(bool Enabled);
 public record TotpDisableRequest(string Password, string Code);
 
-public record UserDto(Guid Id, string Username, UserRole Role, string MaxRating, DateTime CreatedAt, bool IsBanned, bool IsApproved, bool IsRejected, Dictionary<string, string> ContentRatings, string FirstName, string LastName, bool CreatedByAdmin, string? UsedInviteCode, bool MustChangePassword, bool TwoFactorEnabled);
+public record UserDto(Guid Id, string Username, UserRole Role, string MaxRating, DateTime CreatedAt, bool IsBanned, bool IsApproved, bool IsRejected, Dictionary<string, string> ContentRatings, string FirstName, string LastName, bool CreatedByAdmin, string? UsedInviteCode, bool MustChangePassword, bool TwoFactorEnabled, int MaxStreamBitrateKbps);
 
 // User Management DTOs
 public record UpdateUserRoleRequest(string Role);
+
+// R-WI-009: admin-only per-user streaming bitrate cap (kbps; 0 = unlimited). Enforced since
+// P1-WI-003 but previously settable only by direct DB edit.
+public record UpdateUserStreamingRequest(int MaxStreamBitrateKbps);
 
 public record ApproveUserRequest(bool IsApproved);
 
 public record BanUserRequest(bool IsBanned);
 
-public record CreateUserRequest(string Username, string Password, string Role, string FirstName, string LastName);
+// R-WI-011: ContentRatings lets the admin set the ceiling AT creation (visible in the modal,
+// default = no restrictions per the maintainer decision). Optional for API back-compat.
+public record CreateUserRequest(string Username, string Password, string Role, string FirstName, string LastName,
+    Dictionary<string, string>? ContentRatings = null);
 
 public record UpdateUserRatingsRequest(Dictionary<string, string> ContentRatings);
 

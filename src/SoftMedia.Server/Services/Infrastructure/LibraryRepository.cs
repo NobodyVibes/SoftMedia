@@ -176,7 +176,18 @@ public class LibraryRepository : ILibraryRepository
         // Filtering
         if (!string.IsNullOrWhiteSpace(filter.Search))
         {
-            joinedQuery = joinedQuery.Where(x => x.Media.Title.ToLower().Contains(filter.Search.ToLower()));
+            // R-WI-017 multi-field: title, description, genre, cast, and (for music)
+            // the artist/album names. LIKE-over-joins per the plan; the rating ceiling
+            // and library ACL were already applied to the base query above, so the
+            // wider match surface cannot leak blocked titles.
+            var s = filter.Search.ToLower();
+            joinedQuery = joinedQuery.Where(x =>
+                x.Media.Title.ToLower().Contains(s)
+                || (x.Media.Overview != null && x.Media.Overview.ToLower().Contains(s))
+                || x.Media.MediaItemGenres.Any(mg => mg.Genre != null && mg.Genre.Name.ToLower().Contains(s))
+                || x.Media.MediaItemCasts.Any(mc => mc.Person != null && mc.Person.Name.ToLower().Contains(s))
+                || (x.Media.Artist != null && x.Media.Artist.Title.ToLower().Contains(s))
+                || (x.Media.Album != null && x.Media.Album.Title.ToLower().Contains(s)));
         }
 
         if (filter.Year.HasValue)

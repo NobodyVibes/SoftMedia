@@ -45,6 +45,7 @@ public class UserPreferencesController : ControllerBase
     /// Updates the current user's preferences.
     /// </summary>
     [HttpPut]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006: read-only API tokens must not mutate
     public async Task<IActionResult> UpdateMyPreferences([FromBody] UpdatePreferencesRequest request)
     {
         var userId = GetCurrentUserId();

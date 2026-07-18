@@ -22,10 +22,24 @@ public class User
 
     public Guid? ParentId { get; set; }
 
-    public string MaxRating { get; set; } = "PG-13";
-    
+    // R-WI-011 (maintainer decision 2026-07-17): new users are NEVER content-rating restricted by
+    // default — the admin sets ceilings per user explicitly. "" = unrestricted (legacy Movie
+    // fallback in UserRatingCeilings.From). The old silent "PG-13" default made higher-rated
+    // titles 404 with no explanation. Kept in sync with ContentRatings["Movie"] on every write
+    // via UsersController.ApplyContentRatings.
+    public string MaxRating { get; set; } = "";
+
     // JSON string storing ratings per type: { "Movie": "PG-13", "TV": "TV-14", "Game": "T" }
     public string ContentRatings { get; set; } = "{}";
+
+    // R-WI-013 follow-up (maintainer decision 2026-07-17): USER-owned history-privacy toggle.
+    // false = this user's plays are never written to PlaybackHistory and never bump the
+    // aggregate PlayCount — invisible everywhere, full stop (no "anonymous logging" middle
+    // mode: in a small household it de-anonymizes trivially, and the play-dedup mechanism
+    // needs the user key to work). Resume positions / watched flags (UserMediaInteraction)
+    // are unaffected — this only stops the diary. Default true; existing rows are defaulted
+    // true by the AddRecordPlaybackHistoryFlag migration.
+    public bool RecordPlaybackHistory { get; set; } = true;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

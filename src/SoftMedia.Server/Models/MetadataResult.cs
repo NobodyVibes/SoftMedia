@@ -41,7 +41,26 @@ public class MetadataResult
     
     [JsonPropertyName("poster")]
     public string? PosterUrl { get; set; }
-    
+
+    /// <summary>
+    /// R-WI-014 — ABSOLUTE path of a local poster file referenced by an NFO's &lt;thumb&gt;,
+    /// resolved and jailed to the NFO's folder by the NFO provider. Consumed by
+    /// MetadataAggregator, which copies it into the image cache (never served in place).
+    /// Ignored by JSON caching (provider payload caches must not persist machine paths).
+    /// </summary>
+    [JsonIgnore]
+    public string? LocalPosterFile { get; set; }
+
+    /// <summary>
+    /// R-WI-014 — the NFO's OWN directory, set by the NFO provider alongside
+    /// <see cref="LocalPosterFile"/>. The cache-copy jail must anchor HERE, not at the poster
+    /// file's parent (verifier finding: for &lt;thumb&gt;sub/poster.jpg&lt;/thumb&gt; where "sub" is a
+    /// symlinked directory, a jail derived from the file's own parent canonicalises to the same
+    /// outside location and becomes self-satisfying).
+    /// </summary>
+    [JsonIgnore]
+    public string? LocalPosterJailRoot { get; set; }
+
     [JsonPropertyName("still")]
     public string? StillUrl { get; set; }
     

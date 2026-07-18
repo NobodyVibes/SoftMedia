@@ -29,8 +29,12 @@ public interface ITranscodeService
         int? audioTrack = null,
         int? maxBitrate = null,
         bool? burnSubtitles = null,
-        string? sid = null);
-        
+        string? sid = null,
+        bool remux = false,
+        bool audioCopy = false,
+        string? audioCodec = null,
+        int audioChannels = 0);
+
     bool SuspendSession(TranscodeSessionKey key);
     bool ResumeSession(TranscodeSessionKey key);
     

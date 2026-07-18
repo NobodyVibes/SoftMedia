@@ -26,13 +26,11 @@ export default function PlayerPage() {
 
     const streamUrl = `/api/v1/stream/${id}`;
 
+    // Immersive playback: the player owns the whole window (fixed inset-0 tracks the viewport
+    // through resizes without viewport-unit quirks). The title/year live in the player's own
+    // top overlay bar, fading with the controls, so nothing competes with the video.
     return (
-        <div className="min-h-screen bg-black flex flex-col items-center justify-center p-4">
-            <div className="w-full mb-4">
-                <h1 className="text-2xl font-bold text-white">{item.title}</h1>
-                {item.year && <p className="text-gray-400">{item.year}</p>}
-            </div>
-
+        <div className="fixed inset-0 bg-black">
             <VideoPlayer item={item} src={streamUrl} />
         </div>
     );

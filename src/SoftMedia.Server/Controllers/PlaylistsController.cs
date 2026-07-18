@@ -5,6 +5,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Security.LibraryAccess;
 
 namespace SoftMedia.Server.Controllers;
@@ -126,6 +127,7 @@ public class PlaylistsController : ControllerBase
     // ── Create / update / delete ─────────────────────────────────────────────
 
     [HttpPost]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006: read-only API tokens must not mutate
     public async Task<ActionResult<PlaylistSummaryDto>> Create(CreatePlaylistRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
@@ -152,6 +154,7 @@ public class PlaylistsController : ControllerBase
     }
 
     [HttpPatch("{id:guid}")]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006
     public async Task<IActionResult> Update(Guid id, UpdatePlaylistRequest request)
     {
         var userId = User.GetUserId();
@@ -182,6 +185,7 @@ public class PlaylistsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006
     public async Task<IActionResult> Delete(Guid id)
     {
         var userId = User.GetUserId();
@@ -197,6 +201,7 @@ public class PlaylistsController : ControllerBase
     // ── Items: append, remove, reorder ───────────────────────────────────────
 
     [HttpPost("{id:guid}/items")]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006
     public async Task<IActionResult> AddItems(Guid id, AddPlaylistItemsRequest request)
     {
         var userId = User.GetUserId();
@@ -249,6 +254,7 @@ public class PlaylistsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}/items/{itemId:guid}")]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006
     public async Task<IActionResult> RemoveItem(Guid id, Guid itemId)
     {
         var userId = User.GetUserId();
@@ -277,6 +283,7 @@ public class PlaylistsController : ControllerBase
     }
 
     [HttpPut("{id:guid}/order")]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006
     public async Task<IActionResult> Reorder(Guid id, ReorderPlaylistRequest request)
     {
         var userId = User.GetUserId();

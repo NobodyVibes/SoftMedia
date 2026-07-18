@@ -65,6 +65,7 @@ public class MetadataAggregatorTests : IDisposable
             _mockTvEnricher.Object,
             collectionEnrichment.Object,
             _dbContext,
+            Moq.Mock.Of<SoftMedia.Server.Services.Abstractions.IImageCacheService>(),
             _mockLogger.Object);
     }
 

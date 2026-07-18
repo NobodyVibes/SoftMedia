@@ -28,7 +28,7 @@ public class AdminController : ControllerBase
     private readonly IRecommendationService _recommendationService;
     private readonly IBackupService _backupService;
     private readonly IScheduledTaskRegistry _taskRegistry;
-    private readonly MetadataRefreshService _metadataRefreshService;
+    private readonly IEnumerable<IManuallyTriggerableTask> _triggerableTasks;
 
     public AdminController(
         LibraryWatcher libraryWatcher,
@@ -37,7 +37,7 @@ public class AdminController : ControllerBase
         IRecommendationService recommendationService,
         IBackupService backupService,
         IScheduledTaskRegistry taskRegistry,
-        MetadataRefreshService metadataRefreshService)
+        IEnumerable<IManuallyTriggerableTask> triggerableTasks)
     {
         _libraryWatcher = libraryWatcher;
         _logger = logger;
@@ -45,7 +45,7 @@ public class AdminController : ControllerBase
         _recommendationService = recommendationService;
         _backupService = backupService;
         _taskRegistry = taskRegistry;
-        _metadataRefreshService = metadataRefreshService;
+        _triggerableTasks = triggerableTasks;
     }
 
     /// <summary>
@@ -275,19 +275,23 @@ public class AdminController : ControllerBase
     public IActionResult GetTasks() => Ok(_taskRegistry.GetAll());
 
     /// <summary>
-    /// Manually triggers a task that supports it. v1 supports the metadata refresh;
-    /// other tasks return 400. Result is reflected on the next GET /tasks.
+    /// Manually triggers a task that supports it (any service registered as
+    /// <see cref="IManuallyTriggerableTask"/> — R-WI-008 generalised the previously
+    /// metadata-refresh-only dispatch). Unknown/unsupported task names return 400.
+    /// Triggering is fire-and-forget; the result is reflected on the next GET /tasks.
     /// </summary>
     [HttpPost("tasks/{name}/trigger")]
     public IActionResult TriggerTask(string name)
     {
-        if (name == ScheduledTaskNames.MetadataRefresh)
+        var task = _triggerableTasks.FirstOrDefault(t => string.Equals(t.TaskName, name, StringComparison.Ordinal));
+        if (task == null)
         {
-            _metadataRefreshService.TriggerRefreshNow();
-            _logger.LogInformation("Admin {User} manually triggered {Task}", User.Identity?.Name, name);
-            return Accepted(new { message = $"{name} triggered." });
+            return BadRequest($"Task '{name}' does not support manual triggering.");
         }
-        return BadRequest($"Task '{name}' does not support manual triggering.");
+
+        task.TriggerNow();
+        _logger.LogInformation("Admin {User} manually triggered {Task}", User.Identity?.Name, name);
+        return Accepted(new { message = $"{name} triggered." });
     }
 
     /// <summary>
@@ -385,7 +389,13 @@ public class AdminController : ControllerBase
         if (!string.IsNullOrEmpty(result.Title)) item.Title = result.Title!;
         if (!string.IsNullOrEmpty(result.Description)) item.Overview = result.Description;
         if (result.Year.HasValue) item.Year = result.Year;
-        if (!string.IsNullOrEmpty(result.PosterUrl)) item.PosterUrl = result.PosterUrl;
+        if (!string.IsNullOrEmpty(result.PosterUrl))
+        {
+            item.PosterUrl = result.PosterUrl;
+            // R-WI-014: an explicit admin fix-match replaces local art — clear the local claim
+            // or, after unlock, the stale flag would suppress provider posters forever.
+            item.PosterFromLocalFile = false;
+        }
         if (!string.IsNullOrEmpty(result.Director)) item.Director = result.Director;
         if (!string.IsNullOrEmpty(result.ContentRating)) item.ContentRating = result.ContentRating;
 
@@ -420,7 +430,11 @@ public class AdminController : ControllerBase
         if (request.Title != null) item.Title = request.Title;
         if (request.Overview != null) item.Overview = request.Overview;
         if (request.Year.HasValue) item.Year = request.Year;
-        if (request.PosterUrl != null) item.PosterUrl = request.PosterUrl;
+        if (request.PosterUrl != null)
+        {
+            item.PosterUrl = request.PosterUrl;
+            item.PosterFromLocalFile = false; // explicit admin poster replaces local art (R-WI-014)
+        }
         if (request.ContentRating != null) item.ContentRating = request.ContentRating;
 
         item.MetadataLocked = true;

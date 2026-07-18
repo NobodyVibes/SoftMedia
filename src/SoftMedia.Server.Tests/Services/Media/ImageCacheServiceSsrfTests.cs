@@ -43,7 +43,8 @@ public class ImageCacheServiceSsrfTests : IDisposable
     {
         var env = new Mock<IWebHostEnvironment>();
         env.Setup(e => e.WebRootPath).Returns(_webRoot);
-        return new ImageCacheService(new HttpClient(handler), NullLogger<ImageCacheService>.Instance, env.Object);
+        return new ImageCacheService(new HttpClient(handler), NullLogger<ImageCacheService>.Instance, env.Object,
+            Moq.Mock.Of<SoftMedia.Server.Services.Abstractions.IStreamSecurityService>());
     }
 
     [Fact]

@@ -46,9 +46,9 @@ public readonly struct UserRatingCeilings
     {
         var perType = ParseContentRatings(user.ContentRatings);
 
-        // MaxRating is conventionally an MPAA label (default "PG-13" in the
-        // model). Use it as the Movie fallback only — TV/Game stay unrestricted
-        // unless the per-type map names them explicitly.
+        // MaxRating is conventionally an MPAA label ("" = unrestricted — the model default
+        // since R-WI-011; legacy rows may still carry "PG-13"). Use it as the Movie fallback
+        // only — TV/Game stay unrestricted unless the per-type map names them explicitly.
         var movie = perType.GetValueOrDefault("Movie");
         if (string.IsNullOrWhiteSpace(movie))
         {

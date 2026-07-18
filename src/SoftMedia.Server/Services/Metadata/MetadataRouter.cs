@@ -146,6 +146,10 @@ public class MetadataRouter : IMetadataRouter
                 if (string.IsNullOrEmpty(merged.Title)) merged.Title = fallbackData.Title;
                 if (string.IsNullOrEmpty(merged.Description)) merged.Description = fallbackData.Description;
                 if (string.IsNullOrEmpty(merged.PosterUrl)) merged.PosterUrl = fallbackData.PosterUrl;
+                // R-WI-014: an NFO fallback's local <thumb> reference must survive the merge
+                // (review: dropping it left items poster-less with a stamped hash, re-enqueued
+                // every scan until retry exhaustion).
+                if (string.IsNullOrEmpty(merged.LocalPosterFile)) merged.LocalPosterFile = fallbackData.LocalPosterFile;
                 if (string.IsNullOrEmpty(merged.Director)) merged.Director = fallbackData.Director;
                 if (string.IsNullOrEmpty(merged.Studio)) merged.Studio = fallbackData.Studio;
                 if (string.IsNullOrEmpty(merged.ContentRating)) merged.ContentRating = fallbackData.ContentRating;
@@ -352,6 +356,10 @@ public class MetadataRouter : IMetadataRouter
                 if (string.IsNullOrEmpty(merged.Title)) merged.Title = fallbackData.Title;
                 if (string.IsNullOrEmpty(merged.Description)) merged.Description = fallbackData.Description;
                 if (string.IsNullOrEmpty(merged.PosterUrl)) merged.PosterUrl = fallbackData.PosterUrl;
+                // R-WI-014: an NFO fallback's local <thumb> reference must survive the merge
+                // (review: dropping it left items poster-less with a stamped hash, re-enqueued
+                // every scan until retry exhaustion).
+                if (string.IsNullOrEmpty(merged.LocalPosterFile)) merged.LocalPosterFile = fallbackData.LocalPosterFile;
                 if (string.IsNullOrEmpty(merged.Publisher)) merged.Publisher = fallbackData.Publisher;
                 if (string.IsNullOrEmpty(merged.Studio)) merged.Studio = fallbackData.Studio;
                 if (string.IsNullOrEmpty(merged.Director)) merged.Director = fallbackData.Director;

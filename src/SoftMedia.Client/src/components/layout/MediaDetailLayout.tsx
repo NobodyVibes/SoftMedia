@@ -48,6 +48,10 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
         mutationFn: (watched: boolean) => api.post(`/interaction/${item.id}/watched`, { watched }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['media', item.id] });
+            // Watched-state changes row membership on the home page's Continue Watching rail.
+            // refetchType 'all' so the (inactive) home query refetches now rather than serving
+            // stale cached membership when the user navigates back.
+            queryClient.invalidateQueries({ queryKey: ['continueWatching'], refetchType: 'all' });
         }
     });
 

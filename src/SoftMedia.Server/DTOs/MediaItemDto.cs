@@ -157,6 +157,11 @@ public class MediaItemDto
             DiscNumber = item.DiscNumber,
             DurationSeconds = item.Duration > 0 ? item.Duration : null,
 
+            // R-WI-017: name context for search results (and the audio player bar,
+            // which reads metadata.artist). Populated ONLY when the caller Included
+            // the navigations — endpoints that don't load them are unaffected.
+            Metadata = BuildNameContext(item),
+
             // Wave E2 — collection link.
             CollectionId = item.CollectionId,
 
@@ -286,6 +291,27 @@ public class MediaItemDto
             dto.BackdropPath = ResolveBackdropPath(item, imageProxyBaseUrl);
 
         return dto;
+    }
+
+    /// <summary>
+    /// R-WI-017 — artist/album/series names for consumers that can't join them
+    /// (search dropdown subtitles, the audio player bar's metadata.artist).
+    /// Null when none of the navigations were loaded, keeping the wire shape
+    /// unchanged for endpoints that don't Include them.
+    /// </summary>
+    private static Dictionary<string, object>? BuildNameContext(MediaItem item)
+    {
+        Dictionary<string, object>? meta = null;
+        void Add(string key, string value)
+        {
+            meta ??= new Dictionary<string, object>();
+            meta[key] = value;
+        }
+
+        if (item.Artist != null && !string.IsNullOrEmpty(item.Artist.Title)) Add("artist", item.Artist.Title);
+        if (item.Album != null && !string.IsNullOrEmpty(item.Album.Title)) Add("album", item.Album.Title);
+        if (item.Series != null && !string.IsNullOrEmpty(item.Series.Title)) Add("seriesTitle", item.Series.Title);
+        return meta;
     }
 
     private static string? ResolvePosterPath(MediaItem item, string? imageProxyBaseUrl)

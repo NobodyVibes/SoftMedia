@@ -71,4 +71,57 @@ public class ScheduledTasksIntegrationTests : IntegrationTestBase
         var resp = await client.PostAsync($"/api/v1/admin/tasks/{Uri.EscapeDataString(ScheduledTaskNames.LibraryWatcher)}/trigger", null);
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
+
+    // --- R-WI-008: scheduled library scans ---
+
+    [Fact]
+    public async Task ScheduledLibraryScan_IsRegistered_WithManualTrigger_AndIntervalSeeded()
+    {
+        var client = AdminClient(out _);
+
+        var tasks = await client.GetFromJsonAsync<List<TaskStatusDto>>("/api/v1/admin/tasks");
+        var scan = tasks!.SingleOrDefault(t => t.Name == ScheduledTaskNames.ScheduledLibraryScan);
+        Assert.NotNull(scan);
+        Assert.True(scan!.SupportsManualTrigger);
+        Assert.Equal("Scheduled", scan.Schedule);
+
+        // The interval setting must be seeded (off by default) so the UI can edit it.
+        var settings = await client.GetFromJsonAsync<List<AppSetting>>("/api/v1/settings");
+        var interval = settings!.SingleOrDefault(s => s.Key == "LibraryScanIntervalHours");
+        Assert.NotNull(interval);
+        Assert.Equal("0", interval!.Value);
+    }
+
+    [Fact]
+    public async Task TriggerScheduledLibraryScan_EnqueuesJobForEveryLibrary_AndReportsSuccess()
+    {
+        var client = AdminClient(out _);
+
+        // Seed two libraries directly (the test host has none by default).
+        Guid moviesId, tvId;
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<SoftMedia.Server.Data.AppDbContext>();
+            var movies = new Library { Name = "IT Movies", Type = LibraryType.Movie };
+            var tv = new Library { Name = "IT Shows", Type = LibraryType.TV };
+            db.Libraries.AddRange(movies, tv);
+            await db.SaveChangesAsync();
+            (moviesId, tvId) = (movies.Id, tv.Id);
+        }
+
+        var resp = await client.PostAsync($"/api/v1/admin/tasks/{Uri.EscapeDataString(ScheduledTaskNames.ScheduledLibraryScan)}/trigger", null);
+        Assert.Equal(HttpStatusCode.Accepted, resp.StatusCode);
+
+        // The generalised trigger dispatched to ScheduledScanService, which enqueued one
+        // LibraryScan job per library (jobs stay visible even after fast completion/failure).
+        var queue = Factory.Services.GetRequiredService<SoftMedia.Server.Services.Scanning.ILibraryScanQueueService>();
+        var jobs = queue.GetAllJobs().Where(j => j.Type == LibraryScanJobType.LibraryScan).ToList();
+        Assert.Contains(jobs, j => j.LibraryId == moviesId);
+        Assert.Contains(jobs, j => j.LibraryId == tvId);
+
+        var tasks = await client.GetFromJsonAsync<List<TaskStatusDto>>("/api/v1/admin/tasks");
+        var scan = tasks!.Single(t => t.Name == ScheduledTaskNames.ScheduledLibraryScan);
+        Assert.Equal("Success", scan.LastResult);
+        Assert.NotNull(scan.LastRunUtc);
+    }
 }

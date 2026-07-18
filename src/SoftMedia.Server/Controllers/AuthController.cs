@@ -487,7 +487,8 @@ public class AuthController : ControllerBase
             user.IsBanned, user.IsApproved, user.IsRejected,
             ratings,
             user.FirstName, user.LastName, user.CreatedByAdmin,
-            usedInviteCode, mustChangePassword, twoFactorEnabled);
+            usedInviteCode, mustChangePassword, twoFactorEnabled,
+            user.MaxStreamBitrateKbps ?? 0); // R-WI-009
     }
 
     private string? ClientIp() => HttpContext.Connection.RemoteIpAddress?.ToString();

@@ -5,6 +5,9 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Identity;
+using SoftMedia.Server.Services.Security.ContentRating;
+using SoftMedia.Server.Services.Security.LibraryAccess;
+using SoftMedia.Server.Services.Sessions;
 using SoftMedia.Server.DTOs;
 using System.Security.Claims;
 
@@ -22,17 +25,29 @@ public class InteractionController : ControllerBase
     private readonly ILogger<InteractionController> _logger;
     private readonly IRecommendationService _recommendationService;
     private readonly IUserMediaInteractionService _interactionService;
+    private readonly IUserLibraryAccessProvider _libraryAccess;
+    private readonly IUserContentRatingProvider _ratings;
+    private readonly IActiveStreamRegistry _streamRegistry;
+    private readonly SoftMedia.Server.Services.Transcoding.ITranscodeService _transcodeService;
 
     public InteractionController(
-        AppDbContext context, 
-        ILogger<InteractionController> logger, 
+        AppDbContext context,
+        ILogger<InteractionController> logger,
         IRecommendationService recommendationService,
-        IUserMediaInteractionService interactionService)
+        IUserMediaInteractionService interactionService,
+        IUserLibraryAccessProvider libraryAccess,
+        IUserContentRatingProvider ratings,
+        IActiveStreamRegistry streamRegistry,
+        SoftMedia.Server.Services.Transcoding.ITranscodeService transcodeService)
     {
         _context = context;
         _logger = logger;
         _recommendationService = recommendationService;
         _interactionService = interactionService;
+        _libraryAccess = libraryAccess;
+        _ratings = ratings;
+        _streamRegistry = streamRegistry;
+        _transcodeService = transcodeService;
     }
 
     private Guid GetUserId()
@@ -105,7 +120,49 @@ public class InteractionController : ControllerBase
     {
         var userId = GetUserId();
         await _interactionService.UpdateProgressAsync(userId, mediaId, request.Position, request.BookLocation);
+
+        // R-WI-016: beats double as the direct-play liveness heartbeat (and can create
+        // the entry — needed for fully browser-cached plays and post-restart recovery,
+        // since the in-memory registry only otherwise learns of plays via /stream).
+        // Guards: (1) a LIVE transcode for this user+media means the beat belongs to
+        // the transcode, not a direct play — creating would double-list it. The state
+        // filter is load-bearing: closing the player parks the session DORMANT for the
+        // segment-retention window (up to 24h) — an unfiltered check suppressed
+        // direct-play tracking of that media all day (review HIGH). (2) Only streamable
+        // types, and only media the user can actually access — beats are writable for
+        // arbitrary ids, and unchecked creation lets a user fabricate dashboard rows
+        // for content outside their libraries/rating ceiling (review MED).
+        var hasLiveTranscode = _transcodeService.GetAllSessions()
+            .Any(s => s.UserId == userId && s.Key.MediaId == mediaId
+                      && s.State != Services.Transcoding.Models.TranscodeState.Dormant
+                      && s.State != Services.Transcoding.Models.TranscodeState.Completed);
+        if (!hasLiveTranscode && await IsStreamableAndAccessibleAsync(userId, mediaId))
+        {
+            _streamRegistry.TouchOrCreate(userId, mediaId, request.Position);
+        }
         return Ok();
+    }
+
+    /// <summary>
+    /// R-WI-016 beat-creation gate: streamable type AND within the caller's library
+    /// access + rating ceiling — progress beats accept arbitrary ids, and an
+    /// unchecked TouchOrCreate would let a user paint the admin dashboard with
+    /// content they cannot access. One PK-indexed query per ~10s beat; the ACL
+    /// providers cache per scope. Deliberately NOT cached across beats: access and
+    /// ceilings are admin-editable and a stale allow would defeat the gate.
+    /// </summary>
+    private async Task<bool> IsStreamableAndAccessibleAsync(Guid userId, Guid mediaId)
+    {
+        _ = userId; // scoping is via the caller-derived access/ceiling providers
+        var access = await _libraryAccess.GetCurrentAsync();
+        var ceilings = await _ratings.GetCurrentAsync();
+        var mediaType = await _context.MediaItems.AsNoTracking()
+            .Where(m => m.Id == mediaId)
+            .ApplyLibraryAccessFilter(access)
+            .ApplyContentRatingFilter(ceilings)
+            .Select(m => (MediaType?)m.Type)
+            .FirstOrDefaultAsync();
+        return mediaType is MediaType.Movie or MediaType.Episode or MediaType.Audio;
     }
 
     [HttpGet("{mediaId}/progress")]
@@ -121,6 +178,30 @@ public class InteractionController : ControllerBase
             LastPlayed = interaction?.LastPlayed,
             IsWatched = interaction?.IsWatched ?? false
         });
+    }
+
+    /// <summary>
+    /// R-WI-013 — the calling user's play history (video + music), newest first. SELF-scoped:
+    /// a user only ever sees their own rows; there is deliberately no browse-others admin
+    /// endpoint (privacy-first charter — maintainer can revisit).
+    /// </summary>
+    [HttpGet("history")]
+    public async Task<ActionResult<IEnumerable<PlaybackHistoryEntryDto>>> GetHistory(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    {
+        var userId = GetUserId();
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        // Gate by the caller's current access so history can't leak titles of media they've
+        // lost library access to or that a lowered rating ceiling now hides.
+        var access = await _libraryAccess.GetCurrentAsync();
+        var ceilings = await _ratings.GetCurrentAsync();
+
+        var rows = await _interactionService.GetHistoryAsync(userId, page, pageSize, access, ceilings);
+        return Ok(rows.Select(h => new PlaybackHistoryEntryDto(
+            h.Id, h.MediaItemId, h.MediaItem.Title, h.MediaType.ToString(),
+            h.StartedAt, h.LastBeatAt, h.MaxPosition, h.MediaItem.Duration, h.Completed)));
     }
 
     // ── ER-012: per-book reader preference overrides ──────────────────────────
@@ -454,12 +535,31 @@ public class InteractionController : ControllerBase
     {
         var userId = GetUserId();
         var result = await _recommendationService.GetPreviousEpisodeFromCurrentAsync(userId, episodeId);
-        
+
         if (result == null)
         {
              return NotFound(new { message = "Episode not found or no previous episode" });
         }
-        
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Recommendations for the player's end-of-movie overlay: unfinished movies from the same
+    /// collection first (marathon-friendly), then genre-similar movies. 404 covers both a
+    /// nonexistent movie and one the caller can't see (anti-probe).
+    /// </summary>
+    [HttpGet("/api/v1/movie/{movieId}/post-play")]
+    public async Task<ActionResult<PostPlayResponse>> GetMoviePostPlay(Guid movieId)
+    {
+        var userId = GetUserId();
+        var result = await _recommendationService.GetMoviePostPlayAsync(userId, movieId);
+
+        if (result == null)
+        {
+            return NotFound(new { message = "Movie not found" });
+        }
+
         return Ok(result);
     }
 }
@@ -483,6 +583,11 @@ public class WatchlistRequest
 {
     public bool IsWatchlisted { get; set; }
 }
+
+/// <summary>R-WI-013 — one play in the self-scoped history feed.</summary>
+public record PlaybackHistoryEntryDto(
+    Guid Id, Guid MediaItemId, string Title, string MediaType,
+    DateTime StartedAt, DateTime LastBeatAt, double MaxPosition, double Duration, bool Completed);
 
 public class ProgressRequest
 {

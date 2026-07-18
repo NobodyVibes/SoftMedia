@@ -24,6 +24,7 @@ public class MetadataAggregator : IMetadataAggregator
     private readonly ITvMetadataEnricher _tvMetadataEnricher;
     private readonly ICollectionEnrichmentService _collectionEnrichment;
     private readonly AppDbContext _dbContext;
+    private readonly IImageCacheService _imageCache;
     private readonly ILogger<MetadataAggregator> _logger;
 
     public MetadataAggregator(
@@ -34,6 +35,7 @@ public class MetadataAggregator : IMetadataAggregator
         ITvMetadataEnricher tvMetadataEnricher,
         ICollectionEnrichmentService collectionEnrichment,
         AppDbContext dbContext,
+        IImageCacheService imageCache,
         ILogger<MetadataAggregator> logger)
     {
         _providers = providers;
@@ -43,6 +45,7 @@ public class MetadataAggregator : IMetadataAggregator
         _tvMetadataEnricher = tvMetadataEnricher;
         _collectionEnrichment = collectionEnrichment;
         _dbContext = dbContext;
+        _imageCache = imageCache;
         _logger = logger;
     }
 
@@ -136,6 +139,49 @@ public class MetadataAggregator : IMetadataAggregator
         {
             return;
         }
+
+        // R-WI-014: an NFO-referenced local poster (already resolved + jailed to the NFO's
+        // folder by the NFO provider) is ingested through the cache-copy path under the
+        // NFO-distinct key. A scanner-applied SIDECAR (poster.jpg → "…_poster_local") outranks
+        // an NFO reference; anything else (provider art, a missing cache file after a DB-only
+        // restore, a changed thumb) re-ingests — the exact-freshness check makes the repeat a
+        // cheap no-op. This also heals NFO-sourced art after restores (review finding).
+        var nfoOwnsPoster = item.PosterFromLocalFile
+            && item.PosterUrl != null
+            && item.PosterUrl.Contains("_poster_nfo.", StringComparison.OrdinalIgnoreCase);
+        var sidecarOwnsPoster = item.PosterFromLocalFile
+            && item.PosterUrl != null
+            && item.PosterUrl.Contains(Services.Media.LocalArtworkService.SidecarKeySuffix + ".", StringComparison.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(metadata.LocalPosterFile) && !sidecarOwnsPoster)
+        {
+            var cacheKey = item.Type == MediaType.Series ? $"tv/{item.Id}_poster_nfo" : $"movies/{item.Id}_poster_nfo";
+            // Jail at the NFO's own folder (travels with the result) — never at the poster
+            // file's parent, which a symlinked subdirectory could relocate outside the library.
+            var localWebPath = metadata.LocalPosterJailRoot == null ? null
+                : await _imageCache.CacheLocalImageAsync(metadata.LocalPosterFile, cacheKey, metadata.LocalPosterJailRoot);
+            if (localWebPath != null)
+            {
+                item.PosterUrl = localWebPath;
+                item.PosterFromLocalFile = true;
+                _logger.LogInformation("Applied NFO-referenced local poster to {Title}", item.Title);
+            }
+        }
+        else if (string.IsNullOrEmpty(metadata.LocalPosterFile) && nfoOwnsPoster)
+        {
+            // The NFO no longer references a local poster (thumb removed, NFO deleted, or the
+            // provider chain changed): release the local claim so provider art can apply below
+            // — without this, the stale flag suppressed provider posters forever and a
+            // DB-restore repair looped without healing (verifier finding).
+            item.PosterFromLocalFile = false;
+            _logger.LogInformation("NFO local poster reference gone for {Title}; provider art re-enabled.", item.Title);
+        }
+
+        // R-WI-014: local sidecar art WINS over provider art — while the local-poster flag is
+        // set, the provider's poster is neither applied to the item nor queued for download
+        // (nulling here suppresses both, since the extractor reads this field). Descriptions,
+        // genres, cast etc. above are unaffected — that's the whole point of the local-art flag.
+        // (No backdrop equivalent needed: MetadataResult carries no movie/series backdrop.)
+        if (item.PosterFromLocalFile) metadata.PosterUrl = null;
 
         // Capture remote URLs to promoted columns BEFORE image extraction strips them.
         // These columns store the original remote URLs as the source of truth.

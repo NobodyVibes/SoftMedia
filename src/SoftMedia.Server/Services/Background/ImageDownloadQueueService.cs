@@ -213,7 +213,9 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
                 }
                 else if (!request.SeasonNumber.HasValue) // Top level item
                 {
-                    if (request.ImageType == ImageType.Poster)
+                    // R-WI-014: local art wins — a provider download that was queued BEFORE
+                    // local art got applied (delayed/retried request) must not overwrite it.
+                    if (request.ImageType == ImageType.Poster && !item.PosterFromLocalFile)
                     {
                         if (item.PosterUrl != localPath)
                         {
@@ -221,7 +223,7 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
                             updated = true;
                         }
                     }
-                    else if (request.ImageType == ImageType.Backdrop)
+                    else if (request.ImageType == ImageType.Backdrop && !item.BackdropFromLocalFile)
                     {
                         if (item.BackdropUrl != localPath)
                         {

@@ -17,8 +17,13 @@ public interface IFFmpegService
     /// <summary>
     /// Get transcode arguments with subtitle, seek, read rate, target resolution, codec, HDR, and audio track settings.
     /// </summary>
-    Task<ProcessStartInfo> GetTranscodeArgumentsAsync(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false, int? audioTrackIndex = null, int? maxBitrate = null);
-    
+    Task<ProcessStartInfo> GetTranscodeArgumentsAsync(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false, int? audioTrackIndex = null, int? maxBitrate = null, bool audioCopy = false, string? audioCodec = null, int audioChannels = 0);
+
+    /// <summary>
+    /// Get REMUX (stream-copy) arguments — copy compatible A/V into fMP4 HLS, no re-encode (R-WI-003).
+    /// </summary>
+    ProcessStartInfo GetRemuxArguments(string inputPath, string outputDir, string segmentPrefix, double? seekPosition = null, int? audioTrackIndex = null);
+
     Task<bool> ExtractSubtitleToVttAsync(string inputPath, int subtitleStreamIndex, string outputPath);
     
     /// <summary>
@@ -26,7 +31,7 @@ public interface IFFmpegService
     /// </summary>
     Task<int> GetSubtitleStreamIndexAsync(string inputPath, int absoluteStreamIndex);
     
-    void OffsetWebVttTimestamps(string vttPath, double offsetSeconds);
+    bool OffsetWebVttTimestamps(string vttPath, double offsetSeconds);
     
     Task<string?> ProbeSubtitleCodecAsync(string inputPath, int subtitleTrackIndex);
     
@@ -74,10 +79,13 @@ public class FFmpegService : IFFmpegService
         return await _transcodeProfileBuilder.BuildTranscodeArgumentsAsync(inputPath, outputDir, segmentPrefix, settings, subtitleTrackIndex, seekPosition);
     }
 
-    public async Task<ProcessStartInfo> GetTranscodeArgumentsAsync(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false, int? audioTrackIndex = null, int? maxBitrate = null)
+    public ProcessStartInfo GetRemuxArguments(string inputPath, string outputDir, string segmentPrefix, double? seekPosition = null, int? audioTrackIndex = null)
+        => _transcodeProfileBuilder.BuildRemuxArguments(inputPath, outputDir, segmentPrefix, seekPosition, audioTrackIndex);
+
+    public async Task<ProcessStartInfo> GetTranscodeArgumentsAsync(string inputPath, string outputDir, string segmentPrefix, int? subtitleTrackIndex, double? seekPosition, double? readRate, string? targetResolution = null, string? targetCodec = null, bool preserveHdr = false, int? audioTrackIndex = null, int? maxBitrate = null, bool audioCopy = false, string? audioCodec = null, int audioChannels = 0)
     {
         var settings = await LoadSettingsAsync();
-        
+
         // Override settings with URL parameters if explicitly specified
         if (!string.IsNullOrEmpty(targetResolution))
         {
@@ -90,7 +98,7 @@ public class FFmpegService : IFFmpegService
         }
         settings.PreserveHDR = preserveHdr;
 
-        return await _transcodeProfileBuilder.BuildTranscodeArgumentsAsync(inputPath, outputDir, segmentPrefix, settings, subtitleTrackIndex, seekPosition, readRate, audioTrackIndex, maxBitrate);
+        return await _transcodeProfileBuilder.BuildTranscodeArgumentsAsync(inputPath, outputDir, segmentPrefix, settings, subtitleTrackIndex, seekPosition, readRate, audioTrackIndex, maxBitrate, audioCopy, audioCodec, audioChannels);
     }
 
     public async Task<bool> ExtractSubtitleToVttAsync(string inputPath, int subtitleStreamIndex, string outputPath)
@@ -103,9 +111,9 @@ public class FFmpegService : IFFmpegService
         return await _subtitleService.GetSubtitleStreamIndexAsync(inputPath, absoluteStreamIndex);
     }
 
-    public void OffsetWebVttTimestamps(string vttPath, double offsetSeconds)
+    public bool OffsetWebVttTimestamps(string vttPath, double offsetSeconds)
     {
-        _subtitleService.OffsetWebVttTimestamps(vttPath, offsetSeconds);
+        return _subtitleService.OffsetWebVttTimestamps(vttPath, offsetSeconds);
     }
 
     public async Task<string?> ProbeSubtitleCodecAsync(string inputPath, int subtitleTrackIndex)

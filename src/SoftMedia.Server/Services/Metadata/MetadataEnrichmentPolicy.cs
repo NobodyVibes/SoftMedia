@@ -48,6 +48,14 @@ public static class MetadataEnrichmentPolicy
         bool hasPoster = !string.IsNullOrEmpty(item.PosterUrl)
                       || !string.IsNullOrEmpty(item.CoverArtPath);
 
+        // R-WI-014: a poster sourced from a LOCAL sidecar (poster.jpg beside the media) must
+        // not count as provider completeness — otherwise a poster.jpg movie would be declared
+        // complete on sight and never receive a remote description. Like the comics rule
+        // below, such items are complete once ONE enrichment pass has stamped MetadataHash
+        // (failed passes retry via MetadataRetryService until IsRetryExhausted, same as any
+        // poster-less item).
+        bool posterIsLocalOnly = item.PosterFromLocalFile && !string.IsNullOrEmpty(item.PosterUrl);
+
         // Comics have no external PosterUrl by design (covers live as page-1 images
         // inside the archive). Using `!hasPoster` as the relaxed-mode signal would
         // cause them to retry forever. Instead, treat comics as enriched once we've
@@ -59,12 +67,13 @@ public static class MetadataEnrichmentPolicy
         }
 
         // No metadata hash means metadata has never been fetched (except for sparse types like Artists)
-        if (string.IsNullOrEmpty(item.MetadataHash) && !hasPoster && item.Type != MediaType.Artist)
+        if (string.IsNullOrEmpty(item.MetadataHash) && (!hasPoster || posterIsLocalOnly) && item.Type != MediaType.Artist)
             return true;
 
         if (!strictMode)
         {
-            // Relaxed: poster alone is sufficient (current behavior)
+            // Relaxed: a PROVIDER poster alone is sufficient (current behavior); a local-only
+            // poster is sufficient once an enrichment pass has run (hash present — checked above).
             return !hasPoster;
         }
 

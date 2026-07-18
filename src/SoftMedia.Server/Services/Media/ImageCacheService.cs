@@ -57,11 +57,15 @@ public class ImageCacheService : IImageCacheService
         || host.EndsWith(".us.archive.org", StringComparison.OrdinalIgnoreCase)
         || host.EndsWith(".ca.archive.org", StringComparison.OrdinalIgnoreCase);
 
-    public ImageCacheService(HttpClient httpClient, ILogger<ImageCacheService> logger, IWebHostEnvironment env)
+    private readonly Abstractions.IStreamSecurityService _streamSecurity;
+
+    public ImageCacheService(HttpClient httpClient, ILogger<ImageCacheService> logger, IWebHostEnvironment env,
+        Abstractions.IStreamSecurityService streamSecurity)
     {
         _httpClient = httpClient;
         _logger = logger;
         _env = env;
+        _streamSecurity = streamSecurity;
         _basePath = Path.Combine(_env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"), "cache", "images");
         
         // Ensure base directories exist
@@ -137,6 +141,115 @@ public class ImageCacheService : IImageCacheService
         return await CacheImageAsync($"books/{bookId}_poster", remoteUrl);
     }
     
+    // R-WI-014 — file extensions a local sidecar may carry (mirrors AllowedContentTypes).
+    private static readonly HashSet<string> AllowedLocalExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg", ".jpeg", ".png", ".gif", ".webp"
+    };
+
+    /// <inheritdoc />
+    public async Task<string?> CacheLocalImageAsync(string sourceFilePath, string cacheKey, string jailRoot)
+    {
+        try
+        {
+            // Review HIGH: a symlinked poster.jpg (or an NFO thumb pointing at a link) must not
+            // exfiltrate arbitrary readable files into the publicly served /cache. IsPathAuthorized
+            // canonicalises with per-component symlink resolution (audit M-7) before the prefix
+            // check — the same jail the streaming path uses.
+            if (string.IsNullOrEmpty(jailRoot) ||
+                !_streamSecurity.IsPathAuthorized(sourceFilePath, new[] { jailRoot }))
+            {
+                _logger.LogWarning("Local artwork {Path} failed the jail check against {Root}; skipping.", sourceFilePath, jailRoot);
+                return null;
+            }
+
+            var source = new FileInfo(sourceFilePath);
+            if (!source.Exists) return null;
+            var extension = source.Extension;
+            if (!AllowedLocalExtensions.Contains(extension))
+            {
+                _logger.LogWarning("Local artwork {Path} has disallowed extension; skipping.", sourceFilePath);
+                return null;
+            }
+            if (source.Length == 0 || source.Length > MaxFileSizeBytes)
+            {
+                _logger.LogWarning("Local artwork {Path} is empty or exceeds {Max} bytes; skipping.", sourceFilePath, MaxFileSizeBytes);
+                return null;
+            }
+
+            // Same traversal jail as the download path: sanitize + prefix-check under _basePath.
+            var sanitizedPath = SanitizePath(cacheKey);
+            var fullPath = Path.GetFullPath(Path.Combine(_basePath, sanitizedPath));
+            var normalizedBasePath = Path.GetFullPath(_basePath).Replace('\\', '/');
+            if (!fullPath.Replace('\\', '/').StartsWith(normalizedBasePath))
+            {
+                _logger.LogWarning("Path traversal attempt blocked for local artwork key: {Key}", cacheKey);
+                return null;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+
+            // EXACT freshness: the copy carries the SOURCE's mtime, so "cached (mtime,size)
+            // equals source (mtime,size)" means "this exact file is already ingested" — a
+            // swapped sidecar (even with an older preserved mtime) re-copies. Local keys are
+            // distinct from provider keys, so no foreign file can ever satisfy this check.
+            var existing = Directory.GetFiles(Path.GetDirectoryName(fullPath)!, $"{Path.GetFileName(fullPath)}.*");
+            var target = fullPath + extension;
+            // ±2s tolerance: filesystems with coarse timestamp resolution (FAT/exFAT 2s, some
+            // SMB mounts) can't store the source's exact mtime — strict equality would re-copy
+            // on every scan forever. 2s is far below any human-swaps-the-poster interval.
+            var upToDate = existing.FirstOrDefault(f =>
+                string.Equals(f, target, StringComparison.OrdinalIgnoreCase)
+                && Math.Abs((File.GetLastWriteTimeUtc(f) - source.LastWriteTimeUtc).TotalSeconds) <= 2
+                && new FileInfo(f).Length == source.Length);
+            if (upToDate != null)
+            {
+                return $"/cache/images/{sanitizedPath}{Path.GetExtension(upToDate)}";
+            }
+            foreach (var stale in existing)
+            {
+                try { File.Delete(stale); } catch { /* best effort; copy below overwrites the same name */ }
+            }
+
+            // Async copy so a large file on slow storage doesn't block the scan thread pool.
+            await using (var src = new FileStream(sourceFilePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            await using (var dst = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                await src.CopyToAsync(dst);
+            }
+            File.SetLastWriteTimeUtc(target, source.LastWriteTimeUtc); // the freshness stamp
+
+            _logger.LogInformation("Cached local artwork {Source} as {Key}{Ext}", sourceFilePath, sanitizedPath, extension);
+            return $"/cache/images/{sanitizedPath}{extension}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to cache local artwork {Path}", sourceFilePath);
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    public void DeleteCachedLocalImage(string cacheKey)
+    {
+        try
+        {
+            var sanitizedPath = SanitizePath(cacheKey);
+            var fullPath = Path.GetFullPath(Path.Combine(_basePath, sanitizedPath));
+            if (!fullPath.Replace('\\', '/').StartsWith(Path.GetFullPath(_basePath).Replace('\\', '/'))) return;
+            var dir = Path.GetDirectoryName(fullPath);
+            if (dir == null || !Directory.Exists(dir)) return;
+            foreach (var f in Directory.GetFiles(dir, $"{Path.GetFileName(fullPath)}.*"))
+            {
+                try { File.Delete(f); } catch { /* best effort */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete cached local artwork {Key}", cacheKey);
+        }
+    }
+
     /// <summary>
     /// Delete cached image for a media item (used when item is deleted).
     /// </summary>

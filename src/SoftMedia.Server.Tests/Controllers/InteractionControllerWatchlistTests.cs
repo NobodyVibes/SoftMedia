@@ -56,7 +56,12 @@ public class InteractionControllerWatchlistTests : IDisposable
             _context,
             NullLogger<InteractionController>.Instance,
             Mock.Of<IRecommendationService>(),
-            _interactionService.Object);
+            _interactionService.Object,
+            Mock.Of<SoftMedia.Server.Services.Security.LibraryAccess.IUserLibraryAccessProvider>(),
+            Mock.Of<SoftMedia.Server.Services.Security.ContentRating.IUserContentRatingProvider>(),
+            new SoftMedia.Server.Services.Sessions.ActiveStreamRegistry(),
+            Mock.Of<SoftMedia.Server.Services.Transcoding.ITranscodeService>(s =>
+                s.GetAllSessions() == Enumerable.Empty<SoftMedia.Server.Services.Transcoding.Models.TranscodeSession>()));
 
         var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, _userId.ToString()) });
         controller.ControllerContext = new ControllerContext

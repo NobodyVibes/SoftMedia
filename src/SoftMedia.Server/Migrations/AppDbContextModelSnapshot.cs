@@ -15,7 +15,7 @@ namespace SoftMedia.Server.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "8.0.2");
+            modelBuilder.HasAnnotation("ProductVersion", "8.0.13");
 
             modelBuilder.Entity("SoftMedia.Server.Models.ApiToken", b =>
                 {
@@ -438,6 +438,9 @@ namespace SoftMedia.Server.Migrations
                     b.Property<string>("AudioCodec")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("BackdropFromLocalFile")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("BackdropUrl")
                         .HasColumnType("TEXT");
 
@@ -557,6 +560,9 @@ namespace SoftMedia.Server.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<int>("PlayCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("PosterFromLocalFile")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("PosterUrl")
@@ -722,6 +728,44 @@ namespace SoftMedia.Server.Migrations
                     b.HasIndex("Name");
 
                     b.ToTable("Persons");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.PlaybackHistory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Completed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("LastBeatAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double>("MaxPosition")
+                        .HasColumnType("REAL");
+
+                    b.Property<Guid>("MediaItemId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MediaType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaItemId");
+
+                    b.HasIndex("UserId", "LastBeatAt");
+
+                    b.HasIndex("UserId", "MediaItemId");
+
+                    b.ToTable("PlaybackHistory");
                 });
 
             modelBuilder.Entity("SoftMedia.Server.Models.Playlist", b =>
@@ -1058,6 +1102,9 @@ namespace SoftMedia.Server.Migrations
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("RecordPlaybackHistory")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("RefreshToken")
                         .HasColumnType("TEXT");
@@ -1477,6 +1524,25 @@ namespace SoftMedia.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("MediaItem");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.PlaybackHistory", b =>
+                {
+                    b.HasOne("SoftMedia.Server.Models.MediaItem", "MediaItem")
+                        .WithMany()
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SoftMedia.Server.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaItem");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("SoftMedia.Server.Models.Playlist", b =>

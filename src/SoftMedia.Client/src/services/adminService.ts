@@ -42,6 +42,25 @@ export interface MetadataSearchCandidate {
     subtitle: string | null;
 }
 
+/** R-WI-016 — one row of the admin Now-Playing dashboard. */
+export interface ActiveSession {
+    type: 'Transcode' | 'Remux' | 'DirectPlay';
+    state: string;
+    userId: string;
+    userName: string;
+    mediaId: string;
+    mediaTitle: string;
+    positionSeconds: number;
+    durationSeconds: number;
+    startedAt: string;
+    resolution: string | null;
+    codec: string | null;
+    maxBitrateKbps: number | null;
+    canTerminate: boolean;
+    subtitleTrackIndex: number | null;
+    streamId: string | null;
+}
+
 export const adminService = {
     /**
      * Gets all current file watcher issues.
@@ -164,6 +183,29 @@ export const adminService = {
      */
     async triggerTask(name: string): Promise<void> {
         await api.post(`/admin/tasks/${encodeURIComponent(name)}/trigger`);
+    },
+
+    // --- Now Playing (R-WI-016) ---
+
+    /** Active playback sessions: transcodes/remuxes + direct plays. */
+    async getActiveSessions(): Promise<ActiveSession[]> {
+        const response = await api.get<ActiveSession[]>('/admin/sessions');
+        return response.data;
+    },
+
+    /**
+     * Terminate a TRANSCODE session by its full session key (kills ffmpeg and frees
+     * the user's concurrency-cap slot). Direct plays are read-only in v1.
+     */
+    async terminateSession(session: ActiveSession): Promise<void> {
+        await api.delete('/admin/sessions', {
+            params: {
+                mediaId: session.mediaId,
+                userId: session.userId,
+                sub: session.subtitleTrackIndex ?? undefined,
+                sid: session.streamId ?? undefined,
+            },
+        });
     },
 
     // --- Manual metadata fix (P3-WI-003) ---

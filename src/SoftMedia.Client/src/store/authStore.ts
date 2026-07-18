@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { queryClient } from '../lib/queryClient';
 
 export interface AuthUser {
     id: string;
@@ -28,7 +29,13 @@ export const useAuthStore = create<AuthState>()(
             mediaToken: null,
             isAuthenticated: false,
             login: (user, token) => set({ user, token, isAuthenticated: true }),
-            logout: () => set({ user: null, token: null, mediaToken: null, isAuthenticated: false }),
+            logout: () => {
+                set({ user: null, token: null, mediaToken: null, isAuthenticated: false });
+                // Account-scoped queries (['contentLimits'], ['apiTokens'], …) are keyed without
+                // a user id — clear the cache so the next login can't briefly see the previous
+                // user's data (R-WI-011 review).
+                queryClient.clear();
+            },
             setMediaToken: (mediaToken) => set({ mediaToken }),
         }),
         {

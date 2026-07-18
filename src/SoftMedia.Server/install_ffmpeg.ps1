@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Fetch the official jellyfin-ffmpeg portable build (Windows) into ./ffmpeg-bin.
 
@@ -12,7 +12,7 @@
     obtaining it directly from upstream keeps SoftMedia clear of redistribution obligations.
 
 .PARAMETER Version
-    Pinned jellyfin-ffmpeg version (default 7.1.4-3). Stay on the 7.x line — 8.x is pre-release.
+    Pinned jellyfin-ffmpeg version (default 7.1.4-3). Stay on the 7.x line - 8.x is pre-release.
 
 .PARAMETER TrackLatest
     Ignore -Version and resolve the current filename from the channel pointer file
@@ -93,6 +93,6 @@ Remove-Item $zip -Force -ErrorAction SilentlyContinue
 Get-ChildItem -Path $TargetDir -Directory | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
 if (-not (Test-Chromaprint $ffmpegExe)) {
-    throw "Downloaded ffmpeg lacks the chromaprint muxer — wrong build. SoftMedia requires jellyfin-ffmpeg."
+    throw "Downloaded ffmpeg lacks the chromaprint muxer - wrong build. SoftMedia requires jellyfin-ffmpeg."
 }
 Write-Host "[OK] jellyfin-ffmpeg installed at $TargetDir (chromaprint verified)" -ForegroundColor Green

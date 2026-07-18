@@ -90,6 +90,8 @@ public class MediaProbeService : IMediaProbeService
                             result.PixelFormat = pixFmt.GetString();
                         if (stream.TryGetProperty("color_transfer", out var transfer))
                             result.ColorTransfer = transfer.GetString();
+                        if (stream.TryGetProperty("field_order", out var fieldOrder))
+                            result.FieldOrder = fieldOrder.GetString();
 
                         // Extract bit depth from bits_per_raw_sample or pix_fmt
                         if (stream.TryGetProperty("bits_per_raw_sample", out var bitsRaw))
@@ -392,6 +394,16 @@ public class MediaProbeResult
     public double? CreditsStart { get; set; }  // Start time of credits chapter (if found)
     public string? PixelFormat { get; set; }
     public string? ColorTransfer { get; set; }
+
+    /// <summary>ffprobe <c>field_order</c>: "progressive", or "tt"/"bb"/"tb"/"bt" for interlaced.</summary>
+    public string? FieldOrder { get; set; }
+
+    /// <summary>
+    /// True when the video stream is interlaced (DVD-era rips, broadcast captures). Browsers do
+    /// not deinterlace, so the transcode pipeline must — see TranscodeProfileBuilder.
+    /// </summary>
+    public bool IsInterlaced => FieldOrder is "tt" or "bb" or "tb" or "bt";
+
     public double FrameRate { get; set; }
     public List<(double StartTime, string Title)>? Chapters { get; set; }  // All chapters
 

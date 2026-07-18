@@ -28,11 +28,36 @@ public interface ITranscodeProfileBuilder
         double? seekPosition = null,
         double? readRate = null,
         int? audioTrackIndex = null,
-        int? maxBitrate = null);
+        int? maxBitrate = null,
+        bool audioCopy = false,
+        string? audioCodec = null,
+        int audioChannels = 0);
+
+    /// <summary>
+    /// Builds a REMUX (stream-copy) HLS command: the already-compatible video + audio streams are
+    /// copied (<c>-c copy</c>) into fMP4 segments with no decode/encode (R-WI-003). Used when the
+    /// negotiated plan is <see cref="DTOs.PlaybackMethod.Remux"/>, replacing the old behaviour
+    /// where "remux" silently re-encoded through the full transcode path.
+    /// </summary>
+    ProcessStartInfo BuildRemuxArguments(
+        string inputPath,
+        string outputDir,
+        string segmentPrefix,
+        double? seekPosition = null,
+        int? audioTrackIndex = null);
 }
 
 public class TranscodeProfileBuilder : ITranscodeProfileBuilder
 {
+    /// <summary>
+    /// R-WI-012 — fixed name of the pre-extracted burn-in subtitle file inside the session
+    /// directory. Referenced in the subtitles= filter as a bare relative filename (the ffmpeg
+    /// process's WorkingDirectory is the session dir), so user media paths — apostrophes,
+    /// brackets, colons and all — never enter a filter string. Cleaned up with the session
+    /// directory (StopSession / TranscodeSegmentCleanupService).
+    /// </summary>
+    public const string BurnInSubtitleFileName = "burnin.ass";
+
     private readonly ILogger<TranscodeProfileBuilder> _logger;
     private readonly IBinaryLocationService _binaryLocationService;
     private readonly IMediaProbeService _mediaProbeService;
@@ -59,7 +84,10 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
         double? seekPosition = null,
         double? readRate = null,
         int? audioTrackIndex = null,
-        int? maxBitrate = null)
+        int? maxBitrate = null,
+        bool audioCopy = false,
+        string? audioCodec = null,
+        int audioChannels = 0)
     {
         Directory.CreateDirectory(outputDir);
 
@@ -73,6 +101,17 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             _logger.LogInformation("Detected 10-bit/HDR content (PixelFormat: {Fmt}). Using tone mapping pipeline.", probe?.PixelFormat ?? "unknown");
         }
 
+        // Interlaced sources (DVD-era rips, broadcast captures) MUST be deinterlaced here:
+        // browsers do not deinterlace, so combing would reach the screen otherwise. Software
+        // paths use bwdif (better edges than yadif); CUDA-frame paths use yadif_cuda (available
+        // on every ffmpeg build with CUDA, unlike bwdif_cuda which needs 6.0+). mode=send_frame
+        // keeps the original frame rate.
+        bool isInterlaced = probe?.IsInterlaced == true;
+        if (isInterlaced)
+        {
+            _logger.LogInformation("Detected interlaced content (field_order: {FieldOrder}). Deinterlacing.", probe!.FieldOrder);
+        }
+
         // Determine subtitle codec type FIRST (needed to decide seek strategy)
         bool hasSubtitleOverlay = subtitleTrackIndex.HasValue;
         string? subtitleCodec = null;
@@ -83,13 +122,40 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             subtitleCodec = await _mediaProbeService.ProbeSubtitleCodecAsync(inputPath, subtitleTrackIndex!.Value);
             _logger.LogInformation("Subtitle track {Index} codec: {Codec}", subtitleTrackIndex, subtitleCodec ?? "unknown");
             useTextSubtitles = !IsBitmapSubtitleCodec(subtitleCodec);
-            
-            // WORKAROUND: FFmpeg's subtitles filter on Windows cannot handle apostrophes in paths
-            if (useTextSubtitles && inputPath.Contains("'"))
+
+            // R-WI-012: text burn-in no longer feeds the media path into the subtitles= filter
+            // (ffmpeg's two-level filter quoting broke on apostrophes; the old workaround just
+            // skipped burn-in for such paths). Instead, pre-extract the track to a fixed-name
+            // .ass file in the session dir — the filter then references a bare relative filename
+            // (WorkingDirectory is the session dir), so the media path never needs escaping.
+            if (useTextSubtitles)
             {
-                _logger.LogWarning("Skipping text subtitle burn-in for file with apostrophe in path: {Path}", inputPath);
-                hasSubtitleOverlay = false;
-                useTextSubtitles = false;
+                // Reuse a previously-extracted file in this session dir (ffmpeg restarts within a
+                // session re-enter here; extraction is exit-code-strict and deletes partial output
+                // on failure, so an existing non-empty file always means a prior clean extraction).
+                var burnInPath = Path.Combine(outputDir, BurnInSubtitleFileName);
+                var extracted = File.Exists(burnInPath) && new FileInfo(burnInPath).Length > 0;
+                if (!extracted)
+                {
+                    var subtitleRelativeIndex = await _subtitleService.GetSubtitleStreamIndexAsync(inputPath, subtitleTrackIndex.Value);
+                    extracted = await _subtitleService.ExtractSubtitleToAssAsync(inputPath, subtitleRelativeIndex, burnInPath);
+                    if (extracted)
+                    {
+                        // Typeset ASS subs depend on the source's embedded fonts; the extracted
+                        // .ass alone would render with fallback fonts. Best-effort, sanitized dump
+                        // for the filter's :fontsdir=. to pick up.
+                        await _subtitleService.DumpFontAttachmentsAsync(inputPath, outputDir);
+                    }
+                }
+
+                if (!extracted)
+                {
+                    // Same graceful degradation the old guard had, but only on REAL failure:
+                    // stream without subtitles rather than failing the whole transcode.
+                    _logger.LogWarning("Burn-in subtitle extraction failed for {Path}; streaming without burned subtitles.", inputPath);
+                    hasSubtitleOverlay = false;
+                    useTextSubtitles = false;
+                }
             }
         }
 
@@ -175,15 +241,22 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
         
         if (useToneMappingPipeline)
         {
+             // min(W,iw) never upscales past the source (fake pixels waste CPU and bitrate —
+             // the display's own upscaler does a better job); lanczos beats the default
+             // bilinear/bicubic for the downscales that do happen.
              var scale = settings.MaxResolution.ToLower() switch
             {
-                "720p" => "scale_cuda=1280:-2:format=p010", 
-                "1080p" => "scale_cuda=1920:-2:format=p010",
-                "4k" => "scale_cuda=3840:-2:format=p010",
-                _ => "scale_cuda=format=p010" 
+                "720p" => "scale_cuda=w='min(1280,iw)':h=-2:format=p010:interp_algo=lanczos",
+                "1080p" => "scale_cuda=w='min(1920,iw)':h=-2:format=p010:interp_algo=lanczos",
+                "4k" => "scale_cuda=w='min(3840,iw)':h=-2:format=p010:interp_algo=lanczos",
+                _ => "scale_cuda=format=p010"
             };
-            
+
             var chain = new List<string>();
+            if (isInterlaced)
+            {
+                chain.Add("yadif_cuda=mode=send_frame"); // frames are in CUDA memory here
+            }
             chain.Add(scale);
             
             var toneAlgo = settings.ToneMappingAlgorithm.ToLower();
@@ -215,7 +288,10 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             bool codecSupports10Bit = c.Contains("av1") || c.Contains("hevc") || c == "libx265";
             bool shouldPreserve10Bit = is10Bit && codecSupports10Bit;
 
-             scaleFilter = GetScaleFilter(settings.MaxResolution, hasSubtitleOverlay, settings.HardwareAcceleration, shouldPreserve10Bit);
+             // Subtitle branches deinterlace explicitly BEFORE the subtitles are drawn (below),
+             // so only the no-subtitle path folds the deinterlacer into this filter.
+             scaleFilter = GetScaleFilter(settings.MaxResolution, hasSubtitleOverlay, settings.HardwareAcceleration, shouldPreserve10Bit,
+                 deinterlace: isInterlaced && !hasSubtitleOverlay);
              
              if (shouldPreserve10Bit && !string.IsNullOrEmpty(scaleFilter) && scaleFilter.Contains("p010"))
              {
@@ -231,12 +307,19 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             {
                 // [0:s] is subtitles, [0:v] is video
                 string videoInput = "[0:v]";
-                
+
                 if (useToneMappingPipeline)
                 {
                     // Apply tone mapping to video first: [0:v]toneMapFilter[tm];
+                    // (the tone-map chain already starts with yadif_cuda for interlaced sources)
                     filterChain.Append($"[0:v]{toneMapFilter}[tm];");
                     videoInput = "[tm]";
+                }
+                else if (isInterlaced)
+                {
+                    // Deinterlace before scale2ref/overlay so subtitles land on progressive frames
+                    filterChain.Append("[0:v]bwdif=mode=send_frame[dei];");
+                    videoInput = "[dei]";
                 }
                 
                 // Use scale2ref to ensure subtitles are scaled to match video
@@ -278,27 +361,30 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             }
             else
             {
-                // Text subtitles
-                var escapedPath = inputPath
-                    .Replace("\\", "/")
-                    .Replace(":", "\\:")
-                    .Replace("'", @"\\'");
-                
-                var si = await _subtitleService.GetSubtitleStreamIndexAsync(inputPath, subtitleTrackIndex ?? 0);
-                
-                // Prepend tone mapping if active
+                // Text subtitles — burned from the pre-extracted session-local file (R-WI-012).
+                // A bare relative filename resolves against ProcessStartInfo.WorkingDirectory
+                // (= the session dir), so no path ever needs filter-level escaping, and the
+                // extracted file has exactly one stream so no :si selector is needed.
+
+                // Prepend tone mapping if active (its chain already deinterlaces when needed)
                 if (useToneMappingPipeline)
                 {
                     filterChain.Append($"{toneMapFilter},");
                 }
-                
-                filterChain.Append($"subtitles='{escapedPath}':si={si}");
-                
+                else if (isInterlaced)
+                {
+                    // Deinterlace before burning subtitles so they land on progressive frames
+                    filterChain.Append("bwdif=mode=send_frame,");
+                }
+
+                // fontsdir=. lets libass find the dumped embedded fonts (harmless when none exist).
+                filterChain.Append($"subtitles={BurnInSubtitleFileName}:fontsdir=.");
+
                 if (!useToneMappingPipeline && !string.IsNullOrEmpty(scaleFilter))
                 {
                     filterChain.Append(scaleFilter);
                 }
-                
+
                 argumentBuilder.Append($"-vf \"{filterChain}\" ");
             }
             
@@ -322,15 +408,23 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
         // Standard mapping for non-bitmap scenarios
         // (Bitmap scenarios handle mapping internally to preserve overlay)
         bool isBitmap = hasSubtitleOverlay && IsBitmapSubtitleCodec(subtitleCodec);
-        
-        if (audioTrackIndex.HasValue && !isBitmap)
+
+        // R-WI-004 (diff-review HIGH): PIN the audio stream, don't leave it to ffmpeg's implicit
+        // selection. ffmpeg's default audio selection picks the stream with the MOST channels, but
+        // the plan's copy/encode decision was made from the FIRST audio track (probe basis). On a
+        // multi-track file (e.g. AC3 5.1 default + DTS-HD 7.1 alternate) implicit selection would
+        // copy the undecodable alternate track — no audio, or a mux abort. Explicitly map 0:a:0
+        // (first track) for the default case so `-c:a copy` copies exactly what the plan validated.
+        bool hasAudio = !string.IsNullOrEmpty(probe?.AudioCodec) || (probe?.AudioChannels ?? 0) > 0;
+        if (!isBitmap && (audioTrackIndex.HasValue || hasAudio))
         {
             argumentBuilder.Append("-map 0:v:0 ");
-            argumentBuilder.Append($"-map 0:{audioTrackIndex.Value} ");
-            _logger.LogInformation("Mapping video stream 0:v:0 and audio stream 0:{Index}", audioTrackIndex.Value);
+            argumentBuilder.Append(audioTrackIndex.HasValue ? $"-map 0:{audioTrackIndex.Value} " : "-map 0:a:0 ");
+            _logger.LogInformation("Mapping video 0:v:0 and audio {Audio}",
+                audioTrackIndex.HasValue ? $"0:{audioTrackIndex.Value}" : "0:a:0");
         }
-        
-        argumentBuilder.Append("-c:a aac -ac 2 -b:a 128k ");
+
+        argumentBuilder.Append(BuildAudioArgs(audioCopy, audioCodec, audioChannels, audioTrackIndex));
         argumentBuilder.Append("-start_at_zero ");
         
         var codecLower = settings.OutputVideoCodec.ToLower();
@@ -374,6 +468,91 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             RedirectStandardError = true,
             WorkingDirectory = outputDir
         };
+    }
+
+    /// <summary>
+    /// REMUX path (R-WI-003): stream-copy the compatible video + audio into fMP4 HLS segments.
+    /// fMP4 (not the default MPEG-TS) is required because the prime remux case is HEVC-in-MKV for
+    /// an HEVC-capable client, and copied HEVC does not play in TS on the Safari/hls.js clients
+    /// that advertise it; the fMP4 path already emits an init.mp4 the client fetches. No decode,
+    /// no encode, no filters — CPU stays near idle. Subtitles ride as sidecar VTT (delivered by the
+    /// separate subtitles.vtt endpoint), exactly as on the transcode path.
+    /// </summary>
+    public ProcessStartInfo BuildRemuxArguments(
+        string inputPath,
+        string outputDir,
+        string segmentPrefix,
+        double? seekPosition = null,
+        int? audioTrackIndex = null)
+    {
+        Directory.CreateDirectory(outputDir);
+        var playlistPath = Path.Combine(outputDir, "master.m3u8");
+        var sb = new StringBuilder();
+
+        // Fast (keyframe) seek before -i is correct and cheap for stream copy.
+        if (seekPosition is > 0)
+            sb.Append($"-ss {seekPosition.Value:F2} ");
+
+        sb.Append($"-i \"{inputPath}\" ");
+
+        if (seekPosition is > 0)
+            sb.Append("-copyts -start_at_zero ");
+
+        // Map the video + the selected (or default) audio track and copy both — no re-encode.
+        sb.Append("-map 0:v:0 ");
+        sb.Append(audioTrackIndex.HasValue ? $"-map 0:{audioTrackIndex.Value} " : "-map 0:a:0 ");
+        sb.Append("-c copy ");
+
+        // fMP4 segments (see summary). Mirrors the transcode builder's fMP4 branch.
+        var segmentPath = Path.Combine(outputDir, $"{segmentPrefix}_%03d.m4s");
+        sb.Append("-f hls -hls_time 6 -hls_list_size 0 -hls_playlist_type event ");
+        sb.Append("-hls_segment_type fmp4 -hls_fmp4_init_filename init.mp4 -hls_flags independent_segments ");
+        sb.Append($"-start_number 0 -hls_segment_filename \"{segmentPath}\" ");
+        sb.Append($"\"{playlistPath}\"");
+
+        var arguments = sb.ToString();
+        var ffmpegPath = _binaryLocationService.ResolveFFmpegPath();
+        _logger.LogInformation("FFmpeg REMUX (stream-copy) command: {Path} {Args}", ffmpegPath, arguments);
+
+        return new ProcessStartInfo
+        {
+            FileName = ffmpegPath,
+            Arguments = arguments,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardError = true,
+            WorkingDirectory = outputDir
+        };
+    }
+
+    /// <summary>
+    /// R-WI-004 audio emission for the transcode path (replaces the old forced <c>-c:a aac -ac 2
+    /// -b:a 128k</c>). The plan decided the ladder — copy the source audio (preserving surround),
+    /// else encode to the target codec/channels. Copy is applied only to the DEFAULT audio track:
+    /// the plan's copy decision was made from the source's PRIMARY audio codec, which may differ
+    /// from an explicitly selected non-default track, so a selected track always encodes (which is
+    /// container-safe) rather than risk copying an incompatible codec.
+    /// </summary>
+    private static string BuildAudioArgs(bool audioCopy, string? audioCodec, int audioChannels, int? audioTrackIndex)
+    {
+        if (audioCopy && audioTrackIndex == null)
+            return "-c:a copy ";
+
+        // An explicitly selected non-default track: the plan's codec/channels were negotiated for
+        // the DEFAULT track and may not match this one, so don't impose them (that would up/downmix
+        // the selected track's audio to the wrong layout — diff-review LOW). Encode to AAC without
+        // forcing a channel count, preserving the selected track's native layout.
+        if (audioTrackIndex != null)
+            return "-c:a aac -b:a 256k ";
+
+        var codec = audioCodec is "aac" or "ac3" or "eac3" ? audioCodec : "aac";
+        var channels = audioChannels > 0 ? audioChannels : 2;
+
+        // Bitrate scaled to channel count; AC3/EAC3 need more headroom than AAC.
+        var bitrateK = codec == "aac"
+            ? (channels >= 6 ? 384 : 128)
+            : (channels >= 6 ? 448 : 192); // ac3 / eac3
+        return $"-c:a {codec} -ac {channels} -b:a {bitrateK}k ";
     }
 
     // --- Helpers ---
@@ -491,37 +670,50 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
         return $"-c:v libx264 -preset {settings.Preset} -crf {settings.CRF} -pix_fmt yuv420p {bitrateArgs}{keyframeFlags}";
     }
 
-    private string GetScaleFilter(string maxResolution, bool hasSubtitleOverlay, string hwAccel, bool preserve10Bit = false)
+    /// <summary>
+    /// Scale (and optionally deinterlace) filter. `min(W,iw)` clamps every target to the source
+    /// width so the transcoder NEVER upscales (fake pixels waste CPU/bitrate and look worse than
+    /// the display's own upscaler); lanczos sharpens the real downscales. `deinterlace` is only
+    /// honored on the no-subtitle paths — subtitle branches insert their own deinterlacer ahead
+    /// of the subtitle draw.
+    /// </summary>
+    private string GetScaleFilter(string maxResolution, bool hasSubtitleOverlay, string hwAccel, bool preserve10Bit = false, bool deinterlace = false)
     {
         if (hwAccel.ToLower() == "nvidia" && !hasSubtitleOverlay)
         {
             string format = preserve10Bit ? "p010" : "nv12";
             var scaleCuda = maxResolution.ToLower() switch
             {
-                "720p" => $"scale_cuda=1280:-2:format={format}",
-                "1080p" => $"scale_cuda=1920:-2:format={format}",
-                "4k" => $"scale_cuda=3840:-2:format={format}",
-                _ => $"scale_cuda=format={format}" 
+                "720p" => $"scale_cuda=w='min(1280,iw)':h=-2:format={format}:interp_algo=lanczos",
+                "1080p" => $"scale_cuda=w='min(1920,iw)':h=-2:format={format}:interp_algo=lanczos",
+                "4k" => $"scale_cuda=w='min(3840,iw)':h=-2:format={format}:interp_algo=lanczos",
+                _ => $"scale_cuda=format={format}"
             };
-            
-            return $"-vf \"{scaleCuda}\" ";
+
+            // Frames are in CUDA memory on this path (see GetHardwareDecodeOptions)
+            var cudaChain = deinterlace ? $"yadif_cuda=mode=send_frame,{scaleCuda}" : scaleCuda;
+            return $"-vf \"{cudaChain}\" ";
         }
 
         var scale = maxResolution.ToLower() switch
         {
-            "720p" => "scale=1280:-2",
-            "1080p" => "scale=1920:-2",
-            "4k" => "scale=3840:-2",
-            _ => "" 
+            "720p" => "scale='min(1280,iw)':-2:flags=lanczos",
+            "1080p" => "scale='min(1920,iw)':-2:flags=lanczos",
+            "4k" => "scale='min(3840,iw)':-2:flags=lanczos",
+            _ => ""
         };
-        
-        if (string.IsNullOrEmpty(scale)) return "";
-        
+
+        var parts = new List<string>();
+        if (deinterlace) parts.Add("bwdif=mode=send_frame");
+        if (!string.IsNullOrEmpty(scale)) parts.Add(scale);
+        if (parts.Count == 0) return "";
+        var chain = string.Join(",", parts);
+
         if (hasSubtitleOverlay)
         {
-            return $",{scale}";
+            return $",{chain}";
         }
-        return $"-vf \"{scale}\" ";
+        return $"-vf \"{chain}\" ";
     }
 
     private bool IsBitmapSubtitleCodec(string? codec)

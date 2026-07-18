@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { User, Key, Trash2, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
-import { accountService } from '../services/accountService';
+import { User, Key, Trash2, Loader2, CheckCircle, AlertCircle, Shield } from 'lucide-react';
+import { accountService, type ContentLimitsDto } from '../services/accountService';
 import { useAuthStore } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { ApiTokensCard } from '../components/account/ApiTokensCard';
+import { HistoryPrivacyCard } from '../components/account/HistoryPrivacyCard';
 import { TotpCard } from '../components/account/TotpCard';
 import { WebhooksCard } from '../components/account/WebhooksCard';
 
@@ -13,6 +14,13 @@ export default function MyAccountPage() {
     const navigate = useNavigate();
     const logout = useAuthStore((state) => state.logout);
     const user = useAuthStore((state) => state.user);
+
+    // R-WI-011: effective content limits, fetched fresh (computed server-side with the same
+    // logic enforcement uses) so an admin edit shows here without re-login.
+    const { data: contentLimits } = useQuery<ContentLimitsDto>({
+        queryKey: ['contentLimits'],
+        queryFn: accountService.getContentLimits,
+    });
 
     // Local state for forms
     const [passwordForm, setPasswordForm] = useState({ oldPassword: '', newPassword: '', confirmPassword: '' });
@@ -96,7 +104,36 @@ export default function MyAccountPage() {
                             <p className="text-gray-400">Username: <span className="text-white">{user?.username}</span></p>
                             <p className="text-gray-400">Role: <span className="text-white capitalize">{user?.role}</span></p>
                         </div>
+
+                        {/* R-WI-011: make the (previously invisible) content ceiling visible to its user. */}
+                        {contentLimits && (
+                            <div className="mt-4 pt-4 border-t border-white/5">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <Shield className="w-4 h-4 text-gray-400" />
+                                    <span className="text-sm font-medium text-gray-300">Content limits</span>
+                                </div>
+                                {contentLimits.isAdmin || (!contentLimits.movie && !contentLimits.tv && !contentLimits.game) ? (
+                                    <p className="text-sm text-gray-400">
+                                        None — you have full access to the library.
+                                    </p>
+                                ) : (
+                                    <p className="text-sm text-gray-400">
+                                        {[
+                                            contentLimits.movie && `Movies: up to ${contentLimits.movie}`,
+                                            contentLimits.tv && `TV: up to ${contentLimits.tv}`,
+                                            contentLimits.game && `Games: up to ${contentLimits.game}`,
+                                        ].filter(Boolean).join(' · ')}
+                                        <span className="block text-xs text-gray-500 mt-0.5">
+                                            Set by your administrator. Titles above these ratings are hidden.
+                                        </span>
+                                    </p>
+                                )}
+                            </div>
+                        )}
                     </div>
+
+                    {/* R-WI-013 privacy: history recording toggle + clear */}
+                    <HistoryPrivacyCard />
 
                     {/* Password Change */}
                     <div className="bg-white/5 rounded-xl p-6 border border-white/10">

@@ -101,7 +101,7 @@ export function NextEpisodeOverlay({
     const handleReturnToLibrary = useCallback(() => {
         onReturnToLibrary();
         if (libraryId) {
-            navigate(`/library/${libraryId}`);
+            navigate(`/libraries/${libraryId}`);
         } else {
             navigate('/');
         }

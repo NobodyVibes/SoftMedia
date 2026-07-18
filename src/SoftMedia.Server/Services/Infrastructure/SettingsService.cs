@@ -118,9 +118,14 @@ public class SettingsService : ISettingsService
             // here are browsable/streamable over DLNA. Empty = none (nothing is exposed even when
             // EnableDlna is on). Expose only libraries appropriate for unauthenticated LAN access.
             new() { Key = "DlnaExposedLibraries", Value = "", Group = "DLNA", Description = "Comma-separated list of library IDs to expose over DLNA. Empty = none. Only audio/video libraries can be exposed; pick libraries suitable for any device on your LAN (DLNA has no login or parental controls)." },
+            // R-WI-010: seed the DLNA content-rating ceiling (audit wave-2 M-6). Previously read with
+            // a default of "" but never seeded, so it was invisible/uneditable. Default "" = no extra
+            // cap (preserves prior behaviour). Per-type JSON, e.g. {"Movie":"PG-13","TV":"TV-PG"}.
+            new() { Key = "DlnaMaxContentRatings", Value = "", Group = "DLNA", Description = "Maximum content rating shown over DLNA (per media type). DLNA is unauthenticated, so this is the only parental cap for that surface. Empty = no cap. Stored as per-type JSON, e.g. {\"Movie\":\"PG-13\",\"TV\":\"TV-PG\"}." },
 
             // Scanning
             new() { Key = "EnableFileWatcher", Value = "true", Group = "Scanning", Description = "Automatically detect new files and update library. Disable for manual scanning only." },
+            new() { Key = "LibraryScanIntervalHours", Value = "0", Group = "Scanning", Description = "Hours between automatic scans of ALL libraries. 0 = disabled. A backstop for changes the realtime file watcher can miss (network shares, removable drives). The first scan runs shortly after enabling; changes take effect within a few minutes without a restart. Libraries already being scanned are skipped, not double-scanned." },
             new() { Key = "MetadataRefreshIntervalDays", Value = "30", Group = "Scanning", Description = "Days between automatic refresh of metadata. 0 = disabled." },
             new() { Key = "MetadataRefreshMode", Value = "Running", Group = "Scanning", Description = "Running (active shows only), Variable (all metadata except images), or All (everything)." },
             new() { Key = "MetadataRefreshOnStartup", Value = "false", Group = "Scanning", Description = "Run metadata refresh when server starts." },

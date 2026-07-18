@@ -6,6 +6,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Identity;
 
 namespace SoftMedia.Server.Controllers;
 
@@ -201,6 +202,7 @@ public class BookController : ControllerBase
     /// one of the two must be supplied.
     /// </summary>
     [HttpPost("{id}/bookmarks")]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006: read-only API tokens must not mutate
     public async Task<ActionResult<BookmarkDto>> CreateBookmark(Guid id, [FromBody] CreateBookmarkRequest request)
     {
         var userId = GetUserId();
@@ -237,6 +239,7 @@ public class BookController : ControllerBase
 
     /// <summary>Rename or relabel a bookmark. Only the label is mutable.</summary>
     [HttpPatch("{id}/bookmarks/{bookmarkId}")]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006
     public async Task<IActionResult> UpdateBookmark(Guid id, Guid bookmarkId, [FromBody] UpdateBookmarkRequest request)
     {
         var userId = GetUserId();
@@ -253,6 +256,7 @@ public class BookController : ControllerBase
     }
 
     [HttpDelete("{id}/bookmarks/{bookmarkId}")]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006
     public async Task<IActionResult> DeleteBookmark(Guid id, Guid bookmarkId)
     {
         var userId = GetUserId();
@@ -294,6 +298,7 @@ public class BookController : ControllerBase
     }
 
     [HttpPost("{id}/highlights")]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006
     public async Task<ActionResult<HighlightDto>> CreateHighlight(Guid id, [FromBody] CreateHighlightRequest request)
     {
         var userId = GetUserId();
@@ -334,6 +339,7 @@ public class BookController : ControllerBase
     }
 
     [HttpPatch("{id}/highlights/{highlightId}")]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006
     public async Task<IActionResult> UpdateHighlight(Guid id, Guid highlightId, [FromBody] UpdateHighlightRequest request)
     {
         var userId = GetUserId();
@@ -360,6 +366,7 @@ public class BookController : ControllerBase
     }
 
     [HttpDelete("{id}/highlights/{highlightId}")]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006
     public async Task<IActionResult> DeleteHighlight(Guid id, Guid highlightId)
     {
         var userId = GetUserId();

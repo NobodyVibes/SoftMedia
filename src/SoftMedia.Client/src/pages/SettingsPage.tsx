@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Settings, Users, Library as LibraryIcon, Save, RefreshCw, Database, Play, Plus, AlertTriangle, RotateCcw, X } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, isIntervalHoursEnabled } from '../lib/utils';
 import { Combobox } from '../components/ui/Combobox';
-import { settingsService, type AppSetting } from '../services/settingsService';
+import { settingsService, mergeSettingsPreservingEdits, type AppSetting } from '../services/settingsService';
 import { libraryService } from '../services/libraryService';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -15,6 +15,8 @@ import { UserListTable } from '../components/admin/UserListTable';
 import { InviteManager } from '../components/admin/InviteManager';
 import { BackupCard } from '../components/admin/BackupCard';
 import { ScheduledTasksCard } from '../components/admin/ScheduledTasksCard';
+import { ActiveSessionsCard } from '../components/admin/ActiveSessionsCard';
+import { DlnaSettingsCard } from '../components/admin/DlnaSettingsCard';
 import { LibraryListTable } from '../components/library/LibraryListTable';
 import { LibraryForm } from '../components/library/LibraryForm';
 import { ConfirmationModal } from '../components/modals/ConfirmationModal';
@@ -80,11 +82,17 @@ function AdminDashboard() {
 
     return (
         <div className="space-y-8">
+            {/* Now Playing (R-WI-016) */}
+            <ActiveSessionsCard />
+
             {/* Database Backups */}
             <BackupCard />
 
             {/* Background Tasks */}
             <ScheduledTasksCard />
+
+            {/* DLNA / UPnP media server (R-WI-010) */}
+            <DlnaSettingsCard />
 
             {/* API Usage Warnings */}
             {omdbUsage && omdbUsage.used > 0 && (
@@ -208,6 +216,9 @@ export default function SettingsPage() {
 
     const queryClient = useQueryClient();
     const [localSettings, setLocalSettings] = useState<AppSetting[]>([]);
+    // Last server snapshot we synced from, so a refetch can merge in only the keys that actually
+    // changed server-side without clobbering the admin's unsaved edits (see mergeSettingsPreservingEdits).
+    const lastServerRef = useRef<AppSetting[] | null>(null);
     const { t, i18n } = useTranslation();
 
     // Library State
@@ -253,11 +264,15 @@ export default function SettingsPage() {
         refetchInterval: 30000, // Refresh every 30 seconds
     });
 
-    // Update local state when data is fetched
+    // Re-sync local draft when the settings query resolves/refetches. A self-contained admin card
+    // (e.g. DlnaSettingsCard) saving and invalidating ['settings'] triggers a refetch WITHOUT
+    // remounting this page, so we must merge in only the server-changed keys and preserve any
+    // in-progress edits in other groups rather than blindly overwriting the whole draft.
     useEffect(() => {
-        if (settings) {
-            setLocalSettings(settings);
-        }
+        if (!settings) return;
+        const prevServer = lastServerRef.current;
+        lastServerRef.current = settings;
+        setLocalSettings(prev => mergeSettingsPreservingEdits(prevServer, settings, prev));
     }, [settings]);
 
     // Update Mutation
@@ -488,6 +503,7 @@ export default function SettingsPage() {
         // Dedicated layout for Scanning group
         if (groupName === 'Scanning') {
             const fileWatcher = groupSettings.find(s => s.key === 'EnableFileWatcher');
+            const scanInterval = groupSettings.find(s => s.key === 'LibraryScanIntervalHours');
             const interval = groupSettings.find(s => s.key === 'MetadataRefreshIntervalDays');
             const mode = groupSettings.find(s => s.key === 'MetadataRefreshMode');
             const startup = groupSettings.find(s => s.key === 'MetadataRefreshOnStartup');
@@ -527,6 +543,34 @@ export default function SettingsPage() {
                                 <p className="text-[10px] text-gray-500 mt-2">
                                     {t('Forces the hero section on the home page to update immediately.')}
                                 </p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Scheduled Library Scans (R-WI-008) — interval backstop for watcher-missed changes */}
+                    {scanInterval && (
+                        <div className="bg-white/5 p-5 rounded-xl border border-white/10 space-y-5">
+                            <div className="flex items-center gap-2 border-b border-white/5 pb-3">
+                                <RefreshCw className="w-4 h-4 text-blue-400" />
+                                <h3 className="text-sm font-semibold text-white/90">Scheduled Library Scans</h3>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                                <label className="text-sm font-medium text-gray-300">Scan Interval</label>
+                                <div className="flex items-center gap-3">
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        max="8760"
+                                        value={scanInterval.value}
+                                        onChange={(e) => handleChange(scanInterval.key, e.target.value)}
+                                        className="w-24 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-[#007AFF]/50 focus:outline-none transition-colors"
+                                    />
+                                    <span className="text-sm text-gray-400">
+                                        {/* Mirror the server's int.TryParse semantics: "2.5"/""/non-integers disable the schedule, so say so. */}
+                                        {isIntervalHoursEnabled(scanInterval.value) ? 'hours' : '(Disabled)'}
+                                    </span>
+                                </div>
+                                {scanInterval.description && <p className="text-xs text-gray-500">{t(scanInterval.description)}</p>}
                             </div>
                         </div>
                     )}

@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Infrastructure;
 
 namespace SoftMedia.Server.Controllers;
@@ -44,6 +45,7 @@ public class WebhooksController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006: read-only tokens must not register outbound webhooks (exfil/SSRF surface)
     public async Task<IActionResult> Create([FromBody] CreateWebhookRequest request)
     {
         var userId = User.GetUserId();
@@ -74,6 +76,7 @@ public class WebhooksController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006
     public async Task<IActionResult> Delete(Guid id)
     {
         var userId = User.GetUserId();
@@ -85,6 +88,7 @@ public class WebhooksController : ControllerBase
     }
 
     [HttpPost("{id:guid}/test")]
+    [Authorize(Policy = ScopePolicies.WriteState)] // R-WI-006: the test action drives outbound HTTP — gate it too
     public async Task<IActionResult> Test(Guid id)
     {
         var userId = User.GetUserId();

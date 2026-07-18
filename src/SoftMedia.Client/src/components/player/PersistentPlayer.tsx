@@ -9,7 +9,7 @@ import {
     Maximize2, Minimize2, ListPlus
 } from 'lucide-react';
 import { AddToPlaylistMenu } from '../playlists/AddToPlaylistMenu';
-import { API_URL } from '../../services/api';
+import api, { API_URL } from '../../services/api';
 import { getUrlToken } from '../../store/authStore';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 import { cn } from '../../lib/utils';
@@ -18,6 +18,7 @@ import { ScrollingText } from '../ui/ScrollingText';
 import { AudioVisualizer, VisualizerSelector } from './visualizers';
 import { useVisualizerStore } from '../../store/visualizerStore';
 import { useAudioAnalyser } from '../../hooks/useAudioAnalyser';
+import { useMediaSession } from '../../hooks/useMediaSession';
 
 // Preload threshold in seconds before track ends
 const PRELOAD_THRESHOLD = 15;
@@ -72,6 +73,24 @@ export const PersistentPlayer: React.FC = () => {
     useEffect(() => {
         setShowPlaylistMenu(false);
     }, [currentTrackId]);
+
+    // R-WI-013: listen-history beats. Mirrors VideoPlayer's ~10s progress cadence so music
+    // plays are recorded server-side (the server applies the play threshold + dedup window).
+    // Beats are fire-and-forget — reporting must never break playback.
+    const lastBeatRef = useRef<{ trackId: string | null; at: number }>({ trackId: null, at: 0 });
+
+    const reportProgress = useCallback((trackId: string | undefined, position: number) => {
+        if (!trackId || !(position > 0)) return;
+        api.post(`/interaction/${trackId}/progress`, { position }).catch(() => { /* best effort */ });
+    }, []);
+
+    /// Final beat for a finishing/leaving track: report the element's actual position (an
+    /// auto-advance sits at ~duration so the server marks the play complete; a manual skip
+    /// reports the real partial position — never credit an unfinished listen as full).
+    const reportFinalBeat = useCallback((el: HTMLAudioElement | null, trackId: string | undefined) => {
+        if (!el) return;
+        reportProgress(trackId, el.currentTime || el.duration || 0);
+    }, [reportProgress]);
 
     // Visualizer state
     const { isEnabled: visualizerEnabled, toggle: toggleVisualizer } = useVisualizerStore();
@@ -169,6 +188,10 @@ export const PersistentPlayer: React.FC = () => {
         const preloadEl = preloadAudioRef.current;
         const currentEl = activeAudioRef.current;
 
+        // R-WI-013: credit the leaving track before the store advances (auto-advance is at
+        // ~duration → server completes the play; a manual skip reports the partial position).
+        reportFinalBeat(currentEl, currentTrackId);
+
         if (!preloadEl || !isPreloaded) {
             isTransitioningRef.current = false;
             crossfadeTriggeredRef.current = false;
@@ -225,7 +248,7 @@ export const PersistentPlayer: React.FC = () => {
             }
         }, fadeInterval);
 
-    }, [isPreloaded, preloadAudioRef, activeAudioRef, next, volume, isMuted]);
+    }, [isPreloaded, preloadAudioRef, activeAudioRef, next, volume, isMuted, currentTrackId, reportFinalBeat]);
 
     // Manual skip with gapless
     const handleSkipNext = useCallback(() => {
@@ -315,6 +338,16 @@ export const PersistentPlayer: React.FC = () => {
         setProgress(currentTime);
         setDuration(audioDuration);
 
+        // R-WI-013: throttled listen beat. A track change re-stamps without posting, so the
+        // first beat lands after ~10s of actual listening (rapid skips post nothing).
+        const nowMs = Date.now();
+        if (lastBeatRef.current.trackId !== (currentTrackId ?? null)) {
+            lastBeatRef.current = { trackId: currentTrackId ?? null, at: nowMs };
+        } else if (isPlaying && currentTime > 0 && nowMs - lastBeatRef.current.at >= 10_000) {
+            lastBeatRef.current = { trackId: currentTrackId ?? null, at: nowMs };
+            reportProgress(currentTrackId, currentTime);
+        }
+
         // Trigger preload when approaching end
         if (audioDuration > 0 &&
             audioDuration - currentTime < PRELOAD_THRESHOLD &&
@@ -337,11 +370,10 @@ export const PersistentPlayer: React.FC = () => {
             console.log('[Gapless] Auto-triggering crossfade at', currentTime.toFixed(2), 'of', audioDuration.toFixed(2));
             performCrossfadeTransition();
         }
-    }, [activeAudioRef, queue, repeatMode, preloadNextTrack, isPreloaded, performCrossfadeTransition]);
+    }, [activeAudioRef, queue, repeatMode, preloadNextTrack, isPreloaded, performCrossfadeTransition, currentTrackId, isPlaying, reportProgress]);
 
     // Seek handler
-    const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        const time = parseFloat(e.target.value);
+    const seekToTime = useCallback((time: number) => {
         const activeEl = activeAudioRef.current;
         if (activeEl) {
             activeEl.currentTime = time;
@@ -353,10 +385,16 @@ export const PersistentPlayer: React.FC = () => {
         }
     }, [activeAudioRef, duration]);
 
+    const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        seekToTime(parseFloat(e.target.value));
+    }, [seekToTime]);
+
     // Track ended handler (fallback if crossfade didn't trigger)
     const handleEnded = useCallback(() => {
         if (repeatMode === 'one') {
             const activeEl = activeAudioRef.current;
+            // R-WI-013: a full loop is a full listen — credit it before restarting.
+            reportFinalBeat(activeEl, currentTrackId);
             if (activeEl) {
                 activeEl.currentTime = 0;
                 activeEl.play();
@@ -367,9 +405,10 @@ export const PersistentPlayer: React.FC = () => {
         // Fallback if crossfade didn't happen
         if (!isTransitioningRef.current) {
             console.log('[Gapless] Fallback: track ended without crossfade');
+            reportFinalBeat(activeAudioRef.current, currentTrackId); // R-WI-013: at 'ended', position == duration
             next();
         }
-    }, [repeatMode, next, activeAudioRef]);
+    }, [repeatMode, next, activeAudioRef, currentTrackId, reportFinalBeat]);
 
     // Previous track handler
     const handlePrevious = useCallback(() => {
@@ -493,6 +532,31 @@ export const PersistentPlayer: React.FC = () => {
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [isPlaying, pause, resume, handleSkipNext, handlePrevious, handleSeekBackward, handleSeekForward, toggleMute, toggleShuffle, cycleRepeatMode, isExpanded, toggleVisualizer, isFullScreen]);
+
+    // R-WI-015: OS media controls (lock screen / media keys). The shared hook
+    // arbitrates with VideoPlayer — whichever most recently started playing owns
+    // the session. Must run BEFORE the early return below (hooks are unconditional).
+    useMediaSession({
+        enabled: !!currentTrack,
+        isPlaying,
+        contentId: currentTrack?.id ?? null,
+        metadata: currentTrack ? {
+            title: currentTrack.title,
+            artist: (currentTrack.metadata?.artist as string) || (currentTrack.metadata?.albumArtist as string) || 'Unknown Artist',
+            album: (currentTrack.metadata?.album as string) || undefined,
+            artworkUrl: getImageUrl(currentTrack.posterPath),
+        } : null,
+        handlers: {
+            onPlay: resume,
+            onPause: pause,
+            onPreviousTrack: handlePrevious,
+            onNextTrack: handleSkipNext,
+            onSeekBackward: handleSeekBackward,
+            onSeekForward: handleSeekForward,
+            onSeekTo: seekToTime,
+        },
+        position: { duration, position: progress },
+    });
 
     if (!currentTrack) return null;
 

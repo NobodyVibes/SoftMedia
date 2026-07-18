@@ -255,8 +255,13 @@ export default function Sidebar() {
                                                             onClick={() => toggleCategory(item.id)}
                                                             className={cn(
                                                                 "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all text-left",
+                                                                // A category header is a container, not a destination — when one of its
+                                                                // children is the current page, indicate the active section with a
+                                                                // subtle white (matching the top-level nav's active state) rather than
+                                                                // the blue selected-pill, so ONLY the selected leaf below carries the
+                                                                // blue highlight (consistent with leaf items like Account Management).
                                                                 isActive
-                                                                    ? "bg-primary/10 text-primary"
+                                                                    ? "text-white hover:bg-white/5"
                                                                     : "text-gray-500 hover:bg-white/5 hover:text-white"
                                                             )}
                                                         >

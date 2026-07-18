@@ -3,13 +3,14 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Security.LibraryAccess;
 using System.IO;
 
 namespace SoftMedia.Server.Controllers;
 
 [ApiController]
-[Authorize]
+[Authorize(Policy = ScopePolicies.ReadLibrary)] // B-18: cover art = catalog data
 [Route("api/v1/[controller]")]
 public class AudioController : ControllerBase
 {

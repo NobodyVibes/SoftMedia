@@ -4,6 +4,7 @@ import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
+import { SOURCE_CODE_URL } from '../constants/source';
 import axios from 'axios';
 
 /** Translate an axios error from /auth/* into a user-actionable message. */
@@ -294,6 +295,20 @@ export default function LoginPage() {
                         </Button>
                     </form>
                 )}
+
+                {/* AGPL §13: the source offer must reach every remote user, so it
+                    lives on the pre-auth login screen. Fork operators serving a
+                    modified instance repoint SOURCE_CODE_URL at their fork. */}
+                <p className="mt-6 text-center text-xs text-gray-500">
+                    <a
+                        href={SOURCE_CODE_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hover:text-gray-300 underline underline-offset-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded"
+                    >
+                        Source code (AGPL-3.0)
+                    </a>
+                </p>
             </div>
         </div>
     );

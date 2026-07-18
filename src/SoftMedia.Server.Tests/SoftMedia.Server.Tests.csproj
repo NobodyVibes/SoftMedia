@@ -27,4 +27,9 @@
     <ProjectReference Include="..\SoftMedia.Server\SoftMedia.Server.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Real-format fixtures (e.g. sample.cbr — RAR cannot be synthesised in code). -->
+    <None Include="TestData\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

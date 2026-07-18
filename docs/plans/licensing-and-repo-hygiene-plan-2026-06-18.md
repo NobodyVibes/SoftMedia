@@ -110,7 +110,7 @@ The charter review flagged four "must-fix" items. Verified against the codebase,
 - [ ] **C3** Wire CLA Assistant; test PR. _AC: PR blocks until signed._
 
 ### Group R — §13 offer + README/charter housekeeping
-- [ ] **R1** In-app AGPL §13 source link (`/about` or `/api/source-offer`) + fork-operator note. _AC: running app exposes a source link._
+- [x] **R1** ✅ DONE 2026-07-18 — "Source code (AGPL-3.0)" link on the LOGIN page (pre-auth, so the offer reaches every remote user — stronger than the `/about` option). URL lives in `src/SoftMedia.Client/src/constants/source.ts` (`SOURCE_CODE_URL`) with the fork-operator repoint note in its doc comment. _AC met: running app exposes a source link._
 - [ ] **R2** README egress note with the corrected host list. _AC: present + accurate._
 - [ ] **R3** `.docs/project_checklist.md` entry; root `CHANGELOG.md` (relicense first); banner the May-2026 report superseded. _AC: all three updated._
 

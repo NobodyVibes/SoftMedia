@@ -57,6 +57,7 @@ public class BookController : ControllerBase
     /// Returns the book's format and (for comics) total page count.
     /// </summary>
     [HttpGet("{id}/info")]
+    [Authorize(Policy = ScopePolicies.ReadLibrary)] // B-18: book content = catalog data
     public async Task<ActionResult<BookInfoDto>> GetInfo(Guid id, CancellationToken cancellationToken)
     {
         var item = await _mediaRepository.GetByIdWithLibraryAsync(id);
@@ -93,6 +94,7 @@ public class BookController : ControllerBase
     /// Returns a single page image (1-based) from a comic archive.
     /// </summary>
     [HttpGet("{id}/page/{pageNumber:int}")]
+    [Authorize(Policy = ScopePolicies.ReadLibrary)] // B-18: book content = catalog data
     public async Task<IActionResult> GetPage(Guid id, int pageNumber, CancellationToken cancellationToken)
     {
         if (pageNumber < 1) return BadRequest("pageNumber must be >= 1");
@@ -129,6 +131,7 @@ public class BookController : ControllerBase
     // images at all. Caching lives in the service; the controller is a thin
     // wrapper that enforces access and validates the query shape.
     [HttpGet("{id}/thumbnail/{pageNumber:int}")]
+    [Authorize(Policy = ScopePolicies.ReadLibrary)] // B-18: book content = catalog data
     public async Task<IActionResult> GetThumbnail(
         Guid id,
         int pageNumber,
@@ -185,6 +188,7 @@ public class BookController : ControllerBase
 
     /// <summary>List this user's bookmarks for a single book, oldest first.</summary>
     [HttpGet("{id}/bookmarks")]
+    [Authorize(Policy = ScopePolicies.ReadState)] // B-18: bookmarks = user state
     public async Task<ActionResult<List<BookmarkDto>>> ListBookmarks(Guid id)
     {
         var userId = GetUserId();
@@ -286,6 +290,7 @@ public class BookController : ControllerBase
     // the client a clean 400 instead of a provider exception.
 
     [HttpGet("{id}/highlights")]
+    [Authorize(Policy = ScopePolicies.ReadState)] // B-18: highlights = user state
     public async Task<ActionResult<List<HighlightDto>>> ListHighlights(Guid id)
     {
         var userId = GetUserId();

@@ -6,13 +6,27 @@ Per maintainer instruction (2026-07-17): track here, fix **after** Phase C
 (R-WI-016…020) is finished and properly tested. Each entry names where it was found
 so the original review context is recoverable from the plan's §9 checkpoint notes.
 
-**Status (2026-07-18): bug-fix wave complete.** Every engineering item below is
-✅ FIXED except B-18 (parked — blocked on the maintainer's §7 Q1 scope-model
-decision; enforcing would break existing tokens). Fix details in
-[§ Fix wave summary](#fix-wave-summary-2026-07-18). Verification: full server
-suite 1067/1067 green (twice, including a parallel run that exercised the T-01
-fix), client 237/237 green, `tsc --noEmit` clean, production CSS build verified
-for B-12.
+**Status (2026-07-18): bug-fix wave complete — ALL items fixed, including B-18.**
+Fix details in [§ Fix wave summary](#fix-wave-summary-2026-07-18). Verification:
+full server suite green (repeatedly, including parallel runs that exercised the
+T-01 fix), client 237/237 green, `tsc --noEmit` clean, production CSS build
+verified for B-12.
+
+**B-18 unparked 2026-07-18:** the maintainer answered §7 Q1 — SoftMedia is
+pre-release with a single user and no external token holders, so STRICT
+ENFORCEMENT was chosen (no grandfathering migration; any old token missing a
+scope is simply re-minted in Settings → API tokens). `read:library` now gates
+every catalog/content surface (Media, Libraries, Music, Audio, Collections,
+MediaTracks, Image proxy, Trickplay, Stream, AudioStream, Transcode, book
+content) and `read:state` gates the user-state reads (Playlists GETs,
+UserPreferences GET, Watchlist, ContinueWatching, book bookmarks/highlights
+GETs). Scopes constrain API TOKENS only — browser/JWT sessions and media/cast
+query tokens pass every scope policy by design, so the web app is unaffected.
+Deliberately left as-is: `InteractionController` stays class-gated on
+`write:state` (its GETs under the write scope predate this and are strictly
+tighter); `DictionaryController` (external word lookup, not library data);
+`WebhooksController`/`AccountController` reads (config/identity surfaces,
+already token-reachable by design, mutations gated). +6 integration tests.
 
 Severity: **B-HIGH** = user-facing broken behavior or security hardening gap;
 **B-MED** = wrong/confusing behavior with a workaround; **B-LOW** = cosmetic/latent.
@@ -108,7 +122,15 @@ B-03/05/07/12/13/14 and the far-seek VTT offset path end-to-end.
   `Mode=Memory;Cache=Shared` SQLite DB, per-scope connections, keep-alive
   connection pins the DB, pool cleared on dispose.
 
-**Parked.** B-18 — see below; unchanged.
+**B-18 (follow-up, same day).** Initially parked on §7 Q1; the maintainer chose
+strict enforcement (sole pre-release user; broken tokens are simply re-minted).
+Enforced `read:library` across 13 catalog/content controllers (class-level) +
+book content GETs, and `read:state` on the state-read surfaces (Playlists GETs,
+UserPreferences GET, Watchlist, ContinueWatching, bookmarks/highlights GETs).
+Media/cast query tokens and JWT sessions are structurally unaffected (scope
+policies constrain only API-token principals). +6 tests in
+`ApiTokenIntegrationTests` (403 for missing scope on catalog/content/state
+reads, 200 with the right scope, admin-scope grants all, JWT unaffected).
 
 ## Accepted-by-design (no fix without maintainer decision — listed for completeness)
 
@@ -141,7 +163,7 @@ B-03/05/07/12/13/14 and the far-seek VTT offset path end-to-end.
 
 | # | Sev | Status | Bug |
 |---|-----|--------|-----|
-| B-18 | B-MED | ⏸ PARKED | **The `read:library` scope is decorative** — `ScopePolicies.ReadLibrary` is defined but applied to ZERO endpoints; `MediaController` (search/recent/hero/home-rows) is plain `[Authorize]`, so any API token (e.g. `write:state`-only) reads all media metadata. Pre-existing model-wide gap from R-WI-006's partial rollout. **Blocked on §7 Q1** (enforce scopes vs collapse the scope model) — enforcing now would break existing tokens; needs the maintainer's call. |
+| B-18 | B-MED | ✅ fixed | **The `read:library` scope is decorative** — `ScopePolicies.ReadLibrary` was defined but applied to ZERO endpoints; `MediaController` (search/recent/hero/home-rows) was plain `[Authorize]`, so any API token (e.g. `write:state`-only) read all media metadata. Pre-existing model-wide gap from R-WI-006's partial rollout. **§7 Q1 answered by maintainer (2026-07-18): strict enforcement** — see the status note at the top for the full endpoint mapping. |
 | B-19 | B-MED | ✅ fixed | **The hero rotation never applies the content-rating ceiling** — the cache was built unfiltered and read-time applied only the library ACL; a ceiling-restricted user got over-ceiling titles in the hero. |
 | B-20 | B-LOW | ✅ fixed | `MediaController.GetRecentMedia` wrapped its interaction fetch in a bare `catch {}`. |
 | B-21 | B-LOW | ✅ fixed | Duplicated comment line in `LibraryScanQueueService.ProcessScanJobAsync`. |

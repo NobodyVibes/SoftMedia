@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Extensions;
+using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Media;
 
 namespace SoftMedia.Server.Controllers;
@@ -12,10 +13,10 @@ namespace SoftMedia.Server.Controllers;
 /// shared next-episode resolver); finished movies and fully-watched series are excluded. The list
 /// is per-user and honours the per-library ACL + content-rating ceiling.
 ///
-/// Read-only, so this is plain [Authorize] (not the write:state scope the mutating interaction
-/// endpoints require) — mirroring WatchlistController.
+/// Read-only, so API tokens need read:state (B-18) rather than the write:state scope the
+/// mutating interaction endpoints require — mirroring WatchlistController.
 /// </summary>
-[Authorize]
+[Authorize(Policy = ScopePolicies.ReadState)]
 [ApiController]
 [Route("api/v1/continue-watching")]
 public class ContinueWatchingController : ControllerBase

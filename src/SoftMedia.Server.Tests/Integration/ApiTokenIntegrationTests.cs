@@ -208,6 +208,97 @@ public class ApiTokenIntegrationTests : IntegrationTestBase
         Assert.Equal(HttpStatusCode.Forbidden, resp.StatusCode);
     }
 
+    // ── B-18: the read scopes are ENFORCED, not decorative ───────────────────
+    // Before B-18, catalog and state reads were plain [Authorize], so ANY token
+    // could read all media metadata / user state regardless of its scopes.
+
+    [Fact]
+    public async Task WriteStateOnlyToken_Is403_OnCatalogReads()
+    {
+        var user = await Factory.SeedUserAsync("tokuser-b18a");
+        var mint = await MintAsync(JwtClient(user), ApiTokenScopes.WriteState);
+        var tokenClient = ApiTokenClient(Factory, mint.token);
+
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await tokenClient.GetAsync("/api/v1/media/search?query=anything")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await tokenClient.GetAsync("/api/v1/libraries")).StatusCode);
+        // Content too — gating search while leaving /stream open would be backwards.
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await tokenClient.GetAsync($"/api/v1/stream/{Guid.NewGuid()}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task ReadLibraryToken_PassesCatalogReads()
+    {
+        var user = await Factory.SeedUserAsync("tokuser-b18b");
+        var mint = await MintAsync(JwtClient(user), ApiTokenScopes.ReadLibrary);
+        var tokenClient = ApiTokenClient(Factory, mint.token);
+
+        Assert.Equal(HttpStatusCode.OK,
+            (await tokenClient.GetAsync("/api/v1/media/search?query=anything")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,
+            (await tokenClient.GetAsync("/api/v1/libraries")).StatusCode);
+    }
+
+    [Fact]
+    public async Task ReadLibraryToken_Is403_OnStateReads()
+    {
+        var user = await Factory.SeedUserAsync("tokuser-b18c");
+        var mint = await MintAsync(JwtClient(user), ApiTokenScopes.ReadLibrary);
+        var tokenClient = ApiTokenClient(Factory, mint.token);
+
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await tokenClient.GetAsync("/api/v1/playlists")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await tokenClient.GetAsync("/api/v1/watchlist")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await tokenClient.GetAsync("/api/v1/continue-watching")).StatusCode);
+    }
+
+    [Fact]
+    public async Task ReadStateToken_PassesStateReads()
+    {
+        var user = await Factory.SeedUserAsync("tokuser-b18d");
+        var mint = await MintAsync(JwtClient(user), ApiTokenScopes.ReadState);
+        var tokenClient = ApiTokenClient(Factory, mint.token);
+
+        Assert.Equal(HttpStatusCode.OK,
+            (await tokenClient.GetAsync("/api/v1/playlists")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,
+            (await tokenClient.GetAsync("/api/v1/watchlist")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,
+            (await tokenClient.GetAsync("/api/v1/continue-watching")).StatusCode);
+    }
+
+    [Fact]
+    public async Task AdminScopeToken_GrantsEveryScope()
+    {
+        var admin = await Factory.SeedUserAsync("tokadmin-b18", role: UserRole.Admin);
+        var mint = await MintAsync(JwtClient(admin), ApiTokenScopes.Admin);
+        var tokenClient = ApiTokenClient(Factory, mint.token);
+
+        Assert.Equal(HttpStatusCode.OK,
+            (await tokenClient.GetAsync("/api/v1/media/search?query=anything")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,
+            (await tokenClient.GetAsync("/api/v1/playlists")).StatusCode);
+    }
+
+    [Fact]
+    public async Task JwtSession_IsUnaffected_ByScopeEnforcement()
+    {
+        // Scopes only constrain API tokens — a full session passes every scope policy.
+        var user = await Factory.SeedUserAsync("tokuser-b18e");
+        var jwt = JwtClient(user);
+
+        Assert.Equal(HttpStatusCode.OK,
+            (await jwt.GetAsync("/api/v1/media/search?query=anything")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,
+            (await jwt.GetAsync("/api/v1/playlists")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,
+            (await jwt.GetAsync("/api/v1/watchlist")).StatusCode);
+    }
+
     [Fact]
     public async Task RawToken_IsNeverPersisted_OnlyHash()
     {

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Transcoding;
 
@@ -10,7 +11,7 @@ namespace SoftMedia.Server.Controllers;
 /// <summary>
 /// Controller for audio streaming with direct play and transcoding support.
 /// </summary>
-[Authorize]
+[Authorize(Policy = ScopePolicies.ReadLibrary)] // B-18: content = read:library for tokens
 [ApiController]
 [Route("api/v1/audio")]
 public class AudioStreamController : ControllerBase

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Sessions;
 
 namespace SoftMedia.Server.Controllers;
@@ -16,7 +17,10 @@ namespace SoftMedia.Server.Controllers;
 /// satisfy the class-level <see cref="AuthorizeAttribute"/>.
 /// </summary>
 [ApiController]
-[Authorize]
+// B-18: media CONTENT requires the read:library scope for API tokens — gating
+// search while leaving /stream open would be backwards. Media/cast query tokens
+// authenticate under JwtBearer without scope claims, so they are unaffected.
+[Authorize(Policy = ScopePolicies.ReadLibrary)]
 [Route("api/v1/[controller]")]
 public class StreamController : ControllerBase
 {

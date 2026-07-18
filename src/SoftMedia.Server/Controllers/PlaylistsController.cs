@@ -45,6 +45,7 @@ public class PlaylistsController : ControllerBase
     // ── List / read ──────────────────────────────────────────────────────────
 
     [HttpGet]
+    [Authorize(Policy = ScopePolicies.ReadState)] // B-18: playlists = user state
     public async Task<ActionResult<List<PlaylistSummaryDto>>> List()
     {
         var userId = User.GetUserId();
@@ -75,6 +76,7 @@ public class PlaylistsController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [Authorize(Policy = ScopePolicies.ReadState)] // B-18: playlists = user state
     public async Task<ActionResult<PlaylistDetailDto>> Get(Guid id)
     {
         var userId = User.GetUserId();

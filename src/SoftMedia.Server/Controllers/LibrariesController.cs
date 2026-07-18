@@ -14,7 +14,9 @@ using SoftMedia.Server.Services.Transcoding;
 
 namespace SoftMedia.Server.Controllers;
 
-[Authorize]
+// B-18: library browse/metadata requires the read:library scope for API tokens;
+// admin-only endpoints additionally stack their Roles=Admin gate.
+[Authorize(Policy = ScopePolicies.ReadLibrary)]
 [ApiController]
 [Route("api/v1/[controller]")]
 public class LibrariesController : ControllerBase

@@ -5,6 +5,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Security.ContentRating;
 using SoftMedia.Server.Services.Security.LibraryAccess;
 
@@ -20,7 +21,7 @@ namespace SoftMedia.Server.Controllers;
 /// `UserMediaInteraction` row is left in place — re-granting access restores
 /// the item to their watchlist without the user having to re-add it.
 /// </summary>
-[Authorize]
+[Authorize(Policy = ScopePolicies.ReadState)] // B-18: watchlist = user state
 [ApiController]
 [Route("api/v1/watchlist")]
 public class WatchlistController : ControllerBase

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Media;
 
 namespace SoftMedia.Server.Controllers;
@@ -10,7 +11,7 @@ namespace SoftMedia.Server.Controllers;
 /// (P2-WI-001). Auth: class-level [Authorize] plus JwtBearerEvents lifts ?token= for
 /// /api/v1/... media paths, so the player's plain &lt;img&gt;/fetch with a query token works.
 /// </summary>
-[Authorize]
+[Authorize(Policy = ScopePolicies.ReadLibrary)] // B-18: preview sheets = content
 [ApiController]
 [Route("api/v1/trickplay")]
 public class TrickplayController : ControllerBase

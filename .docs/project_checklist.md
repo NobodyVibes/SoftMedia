@@ -40,7 +40,7 @@ _Plan: `docs/plans/licensing-and-repo-hygiene-plan-2026-06-18.md` (rev. 3)._
 - [x] Harden BinaryLocationService (assembly-relative + jellyfin-ffmpeg candidates; warn on bare-PATH)
 - [x] CONTRIBUTING.md + CLA.md + CLA-assistant workflow + SECURITY.md
 - [x] README: License, Privacy/egress, AGPL §13 (repo-level) sections; CHANGELOG.md
-- [ ] In-app (UI) AGPL §13 source link (repo-level offer done; UI link pending)
+- [x] In-app (UI) AGPL §13 source link ✅ 2026-07-18 — "Source code (AGPL-3.0)" on the pre-auth LOGIN page (visible to every remote user); URL in `constants/source.ts` with the fork-operator repoint note
 - [ ] Git-history purge of the old binaries (deferred pending repo public/private status)
 - [ ] Wire CLA-assistant PAT secret + a CI license-compatibility gate (maintainer action)
 
@@ -110,5 +110,5 @@ _Report: `docs/reports/feature-gap-analysis-2026-07-15.md` (8-domain audit, 103 
 - [x] Wave 3 client polish ✅ — B-03 (album tracks carry artist/album name context — Include survives the join projection, **live-verified**), B-04 (detail-page Play enqueues album/artist TRACKS, never `/stream/{albumId}`), B-07 (search dropdown "No results found" + valid row markup — **live-verified**, no validateDOMNesting), B-08 (playTrack replaces the stale queue; repeat-all loops the track), B-09 (tokenized image fallback), B-10 (media-session artwork `sizes`), B-11 (interpolated i18n + `t()` on state strings) (+1 test)
 - [x] Wave 4 search/theme/tests ✅ — B-05 (TV-library search finds episodes by TITLE only; browse stays series-only — **live-verified**), B-06 (comic issues title-only in global search + routed to the reader), B-12 (palette + brand-gradient moved to Tailwind v4 `@theme`; dead v3 `tailwind.config.js` deleted; **live-verified** + production CSS emits the utilities), T-01 (test factory → per-scope named shared-cache SQLite; the CPU-contention flakes' root cause was same-connection transaction collisions; two consecutive clean full parallel runs) (+2 tests)
 - [x] Adversarial review of the whole diff ✅ — 1 HIGH found + fixed (B-15 guard skipped old-`<track>` cleanup when switching to Off → cleanup hoisted, re-verified green); all other fixes verified clean
-- [ ] ⏸ B-18 PARKED — `read:library` scope enforcement blocked on §7 Q1 (enforce vs collapse; enforcing breaks existing tokens)
+- [x] B-18 ✅ — §7 Q1 DECIDED (maintainer 2026-07-18): strict scope enforcement, no grandfathering (pre-release, sole user; old tokens re-mint in Settings → API tokens). `read:library` gates 13 catalog/content controllers + book content GETs; `read:state` gates Playlists/UserPreferences/Watchlist/ContinueWatching/bookmark+highlight reads; JWT sessions + media/cast query tokens structurally unaffected (+6 token integration tests)
 

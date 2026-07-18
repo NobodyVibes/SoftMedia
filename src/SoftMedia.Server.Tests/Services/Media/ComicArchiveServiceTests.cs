@@ -179,9 +179,10 @@ public class ComicArchiveServiceTests : IDisposable
         Assert.True(svc.IsSupportedArchive("/lib/comics/issue1.CBR"));
     }
 
-    [Fact(Skip = "Requires a real .cbr fixture in TestData/. RAR archives cannot be "
-                 + "synthesised from code; drop a tiny 2-image .cbr at "
-                 + "src/SoftMedia.Server.Tests/TestData/sample.cbr and enable this test.")]
+    // Fixture provenance: TestData/sample.cbr is a genuine RAR archive (built
+    // with WinRAR's CLI) containing two 4x4 PNGs — page01.png red, page02.png
+    // blue — copied to the output directory by the csproj TestData glob.
+    [Fact]
     public async Task GetPageAsync_RealCbrFixtureReturnsPagesInOrder()
     {
         var fixturePath = Path.Combine(AppContext.BaseDirectory, "TestData", "sample.cbr");

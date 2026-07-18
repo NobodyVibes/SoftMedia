@@ -35,7 +35,7 @@ public class MediaTracksResponse
 /// <summary>
 /// Controller for media track information and subtitle extraction.
 /// </summary>
-[Authorize]
+[Authorize(Policy = ScopePolicies.ReadLibrary)] // B-18: track/subtitle metadata = catalog data
 [ApiController]
 [Route("api/media")]
 public class MediaTracksController : ControllerBase

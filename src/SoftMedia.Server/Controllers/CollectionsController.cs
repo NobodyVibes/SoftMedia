@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Security.ContentRating;
 using SoftMedia.Server.Services.Security.LibraryAccess;
 
@@ -22,7 +23,7 @@ namespace SoftMedia.Server.Controllers;
 ///   - Movie detail view shows "More from this collection" via the
 ///     by-movie endpoint.
 /// </summary>
-[Authorize]
+[Authorize(Policy = ScopePolicies.ReadLibrary)] // B-18: collection metadata = catalog data
 [ApiController]
 [Route("api/v1/[controller]")]
 public class CollectionsController : ControllerBase

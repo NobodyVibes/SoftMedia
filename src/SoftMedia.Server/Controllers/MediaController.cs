@@ -7,12 +7,15 @@ using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Security.ContentRating;
 using SoftMedia.Server.Services.Security.LibraryAccess;
 
 namespace SoftMedia.Server.Controllers;
 
-[Authorize]
+// B-18: catalog metadata requires the read:library scope for API tokens
+// (full sessions are unaffected — scopes only constrain tokens).
+[Authorize(Policy = ScopePolicies.ReadLibrary)]
 [ApiController]
 [Route("api/v1/[controller]")]
 public class MediaController : ControllerBase

@@ -474,7 +474,7 @@ The remaining report-§3 gaps were triaged, not forgotten (this note exists so f
 
 ## 7. Open Questions (maintainer sign-off)
 
-1. **R-WI-006 scope granularity** (roadmap Q2): keep the scopes and enforce them, or collapse to one clearly-labeled full-access token? Either is charter-valid; unenforced-but-advertised is not. Note: the single-token option forecloses the least-privilege *arr key R-WI-019 needs.
+1. **R-WI-006 scope granularity** (roadmap Q2): ✅ **DECIDED (maintainer, 2026-07-18): keep the scopes and ENFORCE them strictly, no grandfathering** — SoftMedia is pre-release with a single user, so there are no third-party token holders to break; an old token missing a scope is simply re-minted. Implemented same day as backlog item B-18: `read:library` gates all catalog/content surfaces, `read:state` gates user-state reads; JWT sessions and media/cast query tokens structurally unaffected. See `post-phase-c-bug-backlog.md` for the endpoint mapping.
 2. **R-WI-011 default ceiling**: ✅ **DECIDED (maintainer, 2026-07-17): new users are NEVER content-rating restricted by default — the admin must manually set a ceiling per user.** Default = Unrestricted everywhere a user is created (admin create-user, invite signup, public signup); the create-user UI shows the rating selector defaulting to "No limit". Existing users keep their current values.
 3. **R-WI-009 bitrate cap** (roadmap Q3): admin-only for v1 (recommended), or also a self-service user toggle?
 4. **R-WI-001 history rewrite timing**: bundle with the ffmpeg-binary purge now, or defer until the public/private repo decision? Force-push invalidates clones.

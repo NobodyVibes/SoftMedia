@@ -29,6 +29,7 @@ public class UserPreferencesController : ControllerBase
     /// Gets the current user's preferences.
     /// </summary>
     [HttpGet]
+    [Authorize(Policy = ScopePolicies.ReadState)] // B-18: preferences = user state
     public async Task<ActionResult<Dictionary<string, string>>> GetMyPreferences()
     {
         var userId = GetCurrentUserId();

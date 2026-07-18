@@ -19,7 +19,7 @@ namespace SoftMedia.Server.Controllers;
 /// Controller for HLS transcoding endpoints with throttling support.
 /// Refactored to delegate logic to specialized services.
 /// </summary>
-[Authorize]
+[Authorize(Policy = ScopePolicies.ReadLibrary)] // B-18: content = read:library for tokens
 [ApiController]
 [Route("api/transcode")]
 public class TranscodeController : ControllerBase

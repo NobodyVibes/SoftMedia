@@ -14,7 +14,7 @@ namespace SoftMedia.Server.Controllers;
 /// API endpoints for music-related resources (album covers, artist images).
 /// </summary>
 [ApiController]
-[Authorize]
+[Authorize(Policy = ScopePolicies.ReadLibrary)] // B-18: cover art = catalog data
 [Route("api/v1/music")]
 public class MusicController : ControllerBase
 {

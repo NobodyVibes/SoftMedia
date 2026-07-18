@@ -65,6 +65,70 @@ public class StreamPlanServiceBitrateTests
         MaxResolution = 2160,
     };
 
+    /// A fully browser-compatible source (mp4/h264/aac) that would normally direct-play.
+    private static MediaItem DirectPlayableItem() => new()
+    {
+        Id = Guid.NewGuid(),
+        Title = "DP",
+        Path = "/dp.mp4",
+        VideoCodec = "h264",
+        AudioCodec = "aac",
+        Container = "mp4",
+        Resolution = "1080p",
+    };
+
+    private static StreamPlanService BuildServiceWithProbeBitrate(long bitrateBps)
+    {
+        var ffmpeg = new Mock<IFFmpegService>();
+        ffmpeg.Setup(f => f.ProbeMediaAsync(It.IsAny<string>())).ReturnsAsync(new MediaProbeResult
+        {
+            VideoCodec = "h264",
+            AudioCodec = "aac",
+            Resolution = "1080p",
+            PixelFormat = "yuv420p",
+            Duration = 100,
+            Bitrate = bitrateBps,
+        });
+
+        var settings = new Mock<ISettingsService>();
+        settings.Setup(s => s.GetSettingAsync("MaxStreamingBitrate", It.IsAny<int>())).ReturnsAsync(0);
+        settings.Setup(s => s.GetSettingAsync("MaxStreamingBitrateLan", It.IsAny<int>())).ReturnsAsync(0);
+        settings.Setup(s => s.GetSettingAsync("ForceDirectPlayWhenPossible", It.IsAny<bool>())).ReturnsAsync(true);
+        settings.Setup(s => s.GetSettingAsync("DefaultStreamingQuality", It.IsAny<string>())).ReturnsAsync("auto");
+        settings.Setup(s => s.GetSettingAsync("DefaultAudioChannels", It.IsAny<string>())).ReturnsAsync("auto");
+        settings.Setup(s => s.GetSettingAsync("OutputVideoCodec", It.IsAny<string>())).ReturnsAsync("auto");
+        settings.Setup(s => s.GetSettingAsync("PreserveHDR", It.IsAny<bool>())).ReturnsAsync(false);
+        settings.Setup(s => s.GetSettingAsync("EnableAV1Encoding", It.IsAny<bool>())).ReturnsAsync(false);
+        settings.Setup(s => s.GetSettingAsync("MaxTranscodeResolution", It.IsAny<string>())).ReturnsAsync("original");
+
+        return new StreamPlanService(ffmpeg.Object, settings.Object, NullLogger<StreamPlanService>.Instance);
+    }
+
+    [Fact]
+    public async Task DirectPlayableSource_AboveTheUserCap_IsForcedToTranscode()
+    {
+        // B-01: direct play serves the ORIGINAL bitrate — the last uncapped path.
+        // A 20 Mbps source under a 3000 kbps user cap must transcode (with -maxrate).
+        var svc = BuildServiceWithProbeBitrate(bitrateBps: 20_000_000);
+        var plan = await svc.ComputeStreamPlanAsync(
+            Guid.NewGuid(), DirectPlayableItem(), Caps(0), "tok",
+            clientIp: IPAddress.Parse("192.168.1.50"), userMaxBitrateKbps: 3000);
+
+        Assert.Equal(PlaybackMethod.Transcode, plan.Method);
+        Assert.Contains(plan.ReasonCodes, c => c.Code == StreamReasonCodes.BitrateCapForcesTranscode);
+    }
+
+    [Fact]
+    public async Task DirectPlayableSource_WithinTheUserCap_StillDirectPlays()
+    {
+        var svc = BuildServiceWithProbeBitrate(bitrateBps: 2_000_000); // 2 Mbps < 3000 kbps cap
+        var plan = await svc.ComputeStreamPlanAsync(
+            Guid.NewGuid(), DirectPlayableItem(), Caps(0), "tok",
+            clientIp: IPAddress.Parse("192.168.1.50"), userMaxBitrateKbps: 3000);
+
+        Assert.Equal(PlaybackMethod.DirectPlay, plan.Method);
+    }
+
     [Fact]
     public async Task WanClient_RequestExceedsWanCap_IsClamped_AndReasonAnnotated()
     {

@@ -164,7 +164,12 @@ function applyMetadata(meta: MediaSessionTrackMetadata | null): void {
             title: meta.title,
             artist: meta.artist ?? '',
             album: meta.album ?? '',
-            artwork: meta.artworkUrl ? [{ src: meta.artworkUrl }] : [],
+            // B-10: without a `sizes` hint Android/ChromeOS may scale the art badly
+            // or fall back to a default icon. The server serves the original cover
+            // (typically ≥500px); 512x512 is the standard lock-screen target. `type`
+            // is deliberately omitted — covers can be jpg OR png and a wrong hint
+            // can get the candidate filtered, while UAs sniff untyped entries fine.
+            artwork: meta.artworkUrl ? [{ src: meta.artworkUrl, sizes: '512x512' }] : [],
         });
     } catch { /* progressive enhancement — never break playback over metadata */ }
 }

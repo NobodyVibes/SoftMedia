@@ -65,7 +65,19 @@ export const useAudioStore = create<AudioState>()(
                 const newHistory = currentTrack
                     ? [currentTrack, ...history].slice(0, 50)  // Keep last 50 tracks
                     : history;
-                set({ currentTrack: track, isPlaying: true, history: newHistory });
+                // B-08: playing a single track REPLACES the playback context.
+                // Leaving the old queue in place meant a search-played track that
+                // ended silently resumed a stale album from earlier in the session
+                // (and repeat-all restarted it). originalQueue becomes just this
+                // track so repeat-all loops it, not the old album. Queue building
+                // stays the job of addToQueue/playPlaylist.
+                set({
+                    currentTrack: track,
+                    isPlaying: true,
+                    history: newHistory,
+                    queue: [],
+                    originalQueue: [track]
+                });
             },
 
             pause: () => set({ isPlaying: false }),

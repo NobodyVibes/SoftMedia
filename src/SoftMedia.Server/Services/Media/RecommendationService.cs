@@ -689,16 +689,24 @@ public class RecommendationService : IRecommendationService
             items = items.Where(i => allowed.Contains(i.LibraryId)).ToList();
         }
 
-        // Re-hydrate live average ratings from DB
+        // Re-hydrate live average ratings from DB — and apply the CONTENT-RATING
+        // ceiling in the same round trip (backlog B-19: the shared cache is built
+        // unfiltered and only the ACL was applied at read time, so a ceiling-
+        // restricted user got over-ceiling titles in the hero rotation, unlike
+        // every browse path). Items filtered out by the ceiling drop from the
+        // dictionary and are removed below.
         if (items.Any())
         {
+            var ceilings = await _contentRatingProvider.GetCurrentAsync();
             var itemIds = items.Select(i => i.Id).ToList();
             var liveRatings = await _context.MediaItems
                 .AsNoTracking()
+                .ApplyContentRatingFilter(ceilings)
                 .Where(m => itemIds.Contains(m.Id))
                 .Select(m => new { m.Id, m.InternalRating })
                 .ToDictionaryAsync(x => x.Id, x => x.InternalRating);
 
+            items = items.Where(i => liveRatings.ContainsKey(i.Id)).ToList();
             foreach (var item in items)
             {
                 if (liveRatings.TryGetValue(item.Id, out var rating))

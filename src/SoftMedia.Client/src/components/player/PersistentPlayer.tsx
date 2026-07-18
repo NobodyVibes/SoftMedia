@@ -147,7 +147,10 @@ export const PersistentPlayer: React.FC = () => {
         if (!path) return '/placeholder-music.png';
         if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
         if (path.startsWith('http')) return path;
-        return `${API_URL}${path}`;
+        // B-09: this fallback lands on an /api/v1 route too, so it needs the
+        // query token just like the branch above (an <img> can't send the
+        // Authorization header).
+        return attachAuthToApiUrl(`${API_URL}${path}`);
     }, []);
 
     // Memoized stream URL for current track

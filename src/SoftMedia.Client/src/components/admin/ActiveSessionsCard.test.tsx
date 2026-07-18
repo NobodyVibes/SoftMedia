@@ -12,7 +12,12 @@ vi.mock('../../services/adminService', () => ({
 }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 vi.mock('react-i18next', () => ({
-    useTranslation: () => ({ t: (key: string) => key }),
+    // Natural-key t() with the interpolation the real i18n config performs —
+    // the aria-label under test embeds {{name}}.
+    useTranslation: () => ({
+        t: (key: string, vars?: Record<string, unknown>) =>
+            key.replace(/\{\{(\w+)\}\}/g, (_, v: string) => String(vars?.[v] ?? '')),
+    }),
 }));
 
 const mocked = vi.mocked(adminService);
@@ -84,8 +89,8 @@ describe('ActiveSessionsCard', () => {
         renderCard();
 
         // Exactly one Stop button (the direct-play row is read-only).
-        const stop = await screen.findByRole('button', { name: /stop stream for alice/i });
-        expect(screen.getAllByRole('button', { name: /stop stream for/i })).toHaveLength(1);
+        const stop = await screen.findByRole('button', { name: /stop the stream for alice/i });
+        expect(screen.getAllByRole('button', { name: /stop the stream for/i })).toHaveLength(1);
 
         fireEvent.click(stop);
         expect(mocked.terminateSession).not.toHaveBeenCalled(); // not yet — confirm first
@@ -97,11 +102,11 @@ describe('ActiveSessionsCard', () => {
     it('confirm can be cancelled without terminating', async () => {
         renderCard();
 
-        fireEvent.click(await screen.findByRole('button', { name: /stop stream for alice/i }));
+        fireEvent.click(await screen.findByRole('button', { name: /stop the stream for alice/i }));
         fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
 
         expect(mocked.terminateSession).not.toHaveBeenCalled();
-        expect(screen.getByRole('button', { name: /stop stream for alice/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /stop the stream for alice/i })).toBeInTheDocument();
     });
 
     it('shows the empty state when nothing is playing', async () => {
@@ -128,7 +133,7 @@ describe('ActiveSessionsCard', () => {
         const { toast } = await import('sonner');
         renderCard();
 
-        fireEvent.click(await screen.findByRole('button', { name: /stop stream for alice/i }));
+        fireEvent.click(await screen.findByRole('button', { name: /stop the stream for alice/i }));
         fireEvent.click(screen.getByRole('button', { name: /yes, stop it/i }));
 
         await waitFor(() => expect(toast.info).toHaveBeenCalled());

@@ -345,4 +345,86 @@ public class GlobalSearchIntegrationTests : IntegrationTestBase
             Assert.Contains("Edge of Tomorrow", titles);
         }
     }
+
+    private async Task<List<string?>> LibraryTitlesAsync(HttpClient client, Guid libraryId, string? search = null)
+    {
+        var url = $"/api/v1/libraries/{libraryId}/items" + (search != null ? $"?search={Uri.EscapeDataString(search)}" : "");
+        var json = await client.GetStringAsync(url);
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.GetProperty("items").EnumerateArray()
+            .Select(i => i.GetProperty("title").GetString()).ToList();
+    }
+
+    [Fact]
+    public async Task B05_PerLibraryTvSearch_FindsEpisodesByTitleOnly_BrowseStaysSeriesOnly()
+    {
+        await SeedCatalogAsync();
+        var tvLibId = await Factory.WithDbAsync(db =>
+            Task.FromResult(db.Libraries.First(l => l.Name == "Search-TV").Id));
+        await Factory.WithDbAsync(async db =>
+        {
+            // A distinctive episode overview to prove overview does NOT qualify.
+            db.MediaItems.First(m => m.Title == "The Quantum Gambit").Overview = "A daring wormhole heist.";
+            await db.SaveChangesAsync();
+        });
+        var user = await Factory.SeedUserAsync("search-b05");
+        var client = ClientFor(user);
+
+        // The bug: Type==Series narrowing ran before the search predicate, so an
+        // episode-title search in the library grid returned nothing.
+        Assert.Contains("The Quantum Gambit", await LibraryTitlesAsync(client, tvLibId, "Quantum Gambit"));
+
+        // Episodes qualify on TITLE only — inherited/derived text must not flood.
+        Assert.DoesNotContain("The Quantum Gambit", await LibraryTitlesAsync(client, tvLibId, "wormhole"));
+
+        // Unsearched browse is unchanged: series only.
+        var browse = await LibraryTitlesAsync(client, tvLibId);
+        Assert.Contains("Some Show", browse);
+        Assert.DoesNotContain("The Quantum Gambit", browse);
+    }
+
+    [Fact]
+    public async Task B06_ComicIssues_MatchGlobalSearchByTitleOnly()
+    {
+        await SeedCatalogAsync();
+        await Factory.WithDbAsync(async db =>
+        {
+            var comicLib = new Library { Id = Guid.NewGuid(), Name = "Search-Comics", Type = LibraryType.Book, Paths = new() { "/sc" } };
+            db.Libraries.Add(comicLib);
+            var fantasy = new Genre { Name = "Fantasy" };
+            db.Genres.Add(fantasy);
+
+            var comicSeries = new MediaItem
+            {
+                Id = Guid.NewGuid(), LibraryId = comicLib.Id, Title = "Saga of Testing",
+                SortTitle = "Saga of Testing", Path = "/sc/saga", Type = MediaType.ComicSeries,
+                Overview = "An epic about assertions.",
+            };
+            var issue = new MediaItem
+            {
+                Id = Guid.NewGuid(), LibraryId = comicLib.Id, Title = "Impossible Ink",
+                SortTitle = "Impossible Ink", Path = "/sc/saga/003.cbz", Type = MediaType.ComicIssue,
+                SeriesId = comicSeries.Id,
+                Overview = "The heroes battle the dreaded flakiness dragon.",
+            };
+            db.MediaItems.AddRange(comicSeries, issue);
+            await db.SaveChangesAsync();
+            db.MediaItemGenres.AddRange(
+                new MediaItemGenre { MediaItemId = comicSeries.Id, GenreId = fantasy.Id },
+                new MediaItemGenre { MediaItemId = issue.Id, GenreId = fantasy.Id });
+            await db.SaveChangesAsync();
+        });
+        var user = await Factory.SeedUserAsync("search-b06");
+        var client = ClientFor(user);
+
+        // Issues stay findable by their own title…
+        Assert.Contains("Impossible Ink", await SearchTitlesAsync(client, "Impossible Ink"));
+
+        // …but genre and description queries surface only the SERIES — issues
+        // inherit that text, and matching it flooded results with every issue.
+        var byGenre = await SearchTitlesAsync(client, "Fantasy");
+        Assert.Contains("Saga of Testing", byGenre);
+        Assert.DoesNotContain("Impossible Ink", byGenre);
+        Assert.DoesNotContain("Impossible Ink", await SearchTitlesAsync(client, "flakiness dragon"));
+    }
 }

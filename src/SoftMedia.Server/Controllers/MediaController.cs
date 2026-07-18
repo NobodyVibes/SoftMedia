@@ -22,19 +22,22 @@ public class MediaController : ControllerBase
     private readonly IRecommendationService _recommendationService;
     private readonly IUserLibraryAccessProvider _libraryAccessProvider;
     private readonly IUserContentRatingProvider _ratingProvider;
+    private readonly ILogger<MediaController> _logger;
 
     public MediaController(
         AppDbContext context,
         IMediaRetrievalService mediaRetrievalService,
         IRecommendationService recommendationService,
         IUserLibraryAccessProvider libraryAccessProvider,
-        IUserContentRatingProvider ratingProvider)
+        IUserContentRatingProvider ratingProvider,
+        ILogger<MediaController> logger)
     {
         _context = context;
         _mediaRetrievalService = mediaRetrievalService;
         _recommendationService = recommendationService;
         _libraryAccessProvider = libraryAccessProvider;
         _ratingProvider = ratingProvider;
+        _logger = logger;
     }
 
 
@@ -142,7 +145,13 @@ public class MediaController : ControllerBase
                  interactions[i.MediaItemId] = i;
              }
         }
-        catch {}
+        catch (Exception ex)
+        {
+            // B-20: degraded-but-usable is intended (recent rows render without
+            // watched/progress badges), but the failure must be visible in logs —
+            // a silent swallow here hid real DB errors.
+            _logger.LogWarning(ex, "Failed to load user interactions for the recent-media row");
+        }
 
         return distinctItems.Select(i => {
             interactions.TryGetValue(i.Id, out var interaction);
@@ -229,12 +238,17 @@ public class MediaController : ControllerBase
             .Include(m => m.Album)  // track subtitle context (metadata.album)
             .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
             .Where(m =>
-                (m.Type != MediaType.Episode && m.Type != MediaType.Audio && m.Type != MediaType.Season && (
+                (m.Type != MediaType.Episode && m.Type != MediaType.Audio && m.Type != MediaType.Season && m.Type != MediaType.ComicIssue && (
                     EF.Functions.Like(m.Title, searchPattern, Esc)
                     || (m.Overview != null && EF.Functions.Like(m.Overview, searchPattern, Esc))
                     || m.MediaItemGenres.Any(mg => mg.Genre != null && EF.Functions.Like(mg.Genre.Name, searchPattern, Esc))
                     || m.MediaItemCasts.Any(mc => mc.Person != null && EF.Functions.Like(mc.Person.Name, searchPattern, Esc))
                     || (m.Artist != null && EF.Functions.Like(m.Artist.Title, searchPattern, Esc))))
+                // B-06: comic issues match on TITLE only, like episodes — issues
+                // inherit their series' genre/description, so a genre query would
+                // flood with every individual issue (they're hidden from library
+                // browse for the same reason; the series hit is the right result).
+                || (m.Type == MediaType.ComicIssue && EF.Functions.Like(m.Title, searchPattern, Esc))
                 || (m.Type == MediaType.Audio && (
                     EF.Functions.Like(m.Title, searchPattern, Esc)
                     || (m.Artist != null && EF.Functions.Like(m.Artist.Title, searchPattern, Esc))

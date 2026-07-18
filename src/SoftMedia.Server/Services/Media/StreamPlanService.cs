@@ -235,22 +235,24 @@ public class StreamPlanService : IStreamPlanService
 
         // ========== 5. Decision Logic ==========
 
+        // Original-bitrate paths (direct play AND remux) serve the source uncapped —
+        // both must be refused when the source exceeds the effective bitrate ceiling
+        // so playback falls through to Transcode (which applies `-maxrate`).
+        // Direct play was the last uncapped path (backlog B-01, flagged as the
+        // follow-up when the remux gate landed in R-WI-003).
+        var fitsCeiling = SourceFitsBitrateCeiling(probe, sanitizedCaps.MaxBitrate);
+
         // Check 1: Direct Play
-        if (forceDirectPlay && CanDirectPlay(sourceContainer, sourceVideoCodec, sourceAudioCodec, sourceIsHdr, sourceResolution, sanitizedCaps))
+        if (forceDirectPlay && fitsCeiling
+            && CanDirectPlay(sourceContainer, sourceVideoCodec, sourceAudioCodec, sourceIsHdr, sourceResolution, sanitizedCaps))
         {
             var direct = CreateDirectPlayPlan(mediaId, mediaItem, sourceVideoCodec, sourceAudioCodec, sourceContainer, sourceIsHdr, sourceResolution, token);
             direct.ReasonCodes.Add(new StreamReasonCode(StreamReasonCodes.DirectPlaySupported));
             return AppendNote(direct, bitrateNote, bitrateCode);
         }
 
-        // Check 2: Remux — only when a stream-copy would stay within the effective bitrate ceiling.
-        // A remux copies the source at its ORIGINAL bitrate (no `-maxrate`), so choosing it for a
-        // source above the cap would let a bitrate-capped user pull it uncapped. When it would
-        // exceed the cap, fall through to Transcode (which applies `-maxrate`). Before R-WI-003 the
-        // "remux" path re-encoded, so it respected the cap incidentally; a true stream-copy must be
-        // gated explicitly. (DirectPlay has the same original-bitrate property but is pre-existing
-        // and out of scope here — noted as a follow-up.)
-        if (RemuxFitsBitrateCeiling(probe, sanitizedCaps.MaxBitrate) &&
+        // Check 2: Remux — same ceiling rule (a stream-copy has no `-maxrate` either).
+        if (fitsCeiling &&
             CanRemux(sourceVideoCodec, sourceAudioCodec, sourceIsHdr, sourceResolution, sanitizedCaps))
         {
             var remux = CreateRemuxPlan(mediaId, mediaItem, sourceVideoCodec, sourceAudioCodec, sourceIsHdr, sourceResolution, sanitizedCaps, token);
@@ -266,6 +268,12 @@ public class StreamPlanService : IStreamPlanService
             sourceAudioCodec, probe.AudioChannels ?? 0, bitrateCapped: maxServerBitrate > 0);
         transcode.ReasonCodes.AddRange(
             DetermineTranscodeReasonCodes(sourceVideoCodec, sourceAudioCodec, sourceIsHdr, sourceResolution, sanitizedCaps));
+        if (!fitsCeiling)
+        {
+            // B-01: the debug panel should say WHY a direct-playable source transcodes.
+            transcode.ReasonCodes.Add(new StreamReasonCode(StreamReasonCodes.BitrateCapForcesTranscode,
+                new Dictionary<string, string> { ["capKbps"] = sanitizedCaps.MaxBitrate.ToString() }));
+        }
         return AppendNote(transcode, bitrateNote, bitrateCode);
     }
 
@@ -357,7 +365,7 @@ public class StreamPlanService : IStreamPlanService
     /// True when a stream-copy of the source would stay within <paramref name="effectiveMaxBitrateKbps"/>
     /// (the ceiling a transcode would enforce). Returns true when the source bitrate is unknown or
     /// there is effectively no cap, so we don't force a needless transcode on missing probe data.
-    private static bool RemuxFitsBitrateCeiling(MediaProbeResult probe, int effectiveMaxBitrateKbps)
+    private static bool SourceFitsBitrateCeiling(MediaProbeResult probe, int effectiveMaxBitrateKbps)
     {
         if (probe.Bitrate is not > 0 || effectiveMaxBitrateKbps <= 0) return true;
         var sourceKbps = probe.Bitrate.Value / 1000;
@@ -500,7 +508,7 @@ public class StreamPlanService : IStreamPlanService
         // a stream-copy preserves the source's original (uncapped) audio bitrate — a copied E-AC3
         // Atmos track can run ~1.5 Mbps — which would blow a capped user's budget on top of the
         // video -maxrate. Encoding caps audio at ≤448k while still preserving surround as AC3 5.1
-        // (diff-review MEDIUM; mirrors the remux RemuxFitsBitrateCeiling gate).
+        // (diff-review MEDIUM; mirrors the SourceFitsBitrateCeiling gate).
         if (clientPlaysSourceAudio && !bitrateCapped)
         {
             audioCopy = true;

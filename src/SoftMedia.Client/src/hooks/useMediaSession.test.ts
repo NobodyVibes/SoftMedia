@@ -92,7 +92,7 @@ describe('useMediaSession', () => {
         const meta = stub.metadata as FakeMediaMetadata;
         expect(meta.title).toBe('Track');
         expect(meta.artist).toBe('Artist');
-        expect(meta.artwork).toEqual([{ src: '/art.jpg' }]);
+        expect(meta.artwork).toEqual([{ src: '/art.jpg', sizes: '512x512' }]);
         expect(stub.playbackState).toBe('playing');
 
         stub.handlers.get('play')!!();

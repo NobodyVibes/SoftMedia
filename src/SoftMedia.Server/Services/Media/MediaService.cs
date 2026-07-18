@@ -46,7 +46,9 @@ public class MediaService : IMediaService
         return new StreamInfoDto
         {
             Path = item.Path,
-            ContentType = MimeTypeResolver.GetMimeType(item.Path)
+            ContentType = MimeTypeResolver.GetMimeType(item.Path),
+            Type = item.Type,
+            Bitrate = item.Bitrate,
         };
     }
 }

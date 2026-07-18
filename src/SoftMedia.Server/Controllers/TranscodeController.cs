@@ -38,6 +38,7 @@ public class TranscodeController : ControllerBase
     private readonly ITranscodeSessionService _sessionService;
     private readonly IStreamResultService _streamResultService;
     private readonly IStreamPlanStore _planStore;
+    private readonly ISettingsService _settingsService;
 
     public TranscodeController(
         ITranscodeService transcodeService,
@@ -51,6 +52,7 @@ public class TranscodeController : ControllerBase
         IStreamPlanStore planStore,
         AppDbContext dbContext,
         ITokenService tokenService,
+        ISettingsService settingsService,
         ILogger<TranscodeController> logger)
     {
         _transcodeService = transcodeService;
@@ -62,10 +64,24 @@ public class TranscodeController : ControllerBase
         _sessionService = sessionService;
         _streamResultService = streamResultService;
         _planStore = planStore;
+        _settingsService = settingsService;
         _dbContext = dbContext;
         _tokenService = tokenService;
         _logger = logger;
     }
+
+    /// B-02 — quality-label ordering for the server-wide resolution clamp. Null or
+    /// "original" ranks highest (they mean source quality, which must also clamp).
+    public static int ResolutionRank(string? quality) => quality?.ToLowerInvariant() switch
+    {
+        "480p" => 480,
+        "720p" => 720,
+        "1080p" => 1080,
+        "1440p" => 1440,
+        "4k" or "2160p" => 2160,
+        "8k" or "4320p" => 4320,
+        _ => int.MaxValue, // null / "original" / unknown = uncapped request
+    };
 
     /// Resolves the per-user streaming bitrate override (P1-WI-003), if any.
     private async Task<int?> GetUserMaxBitrateAsync(Guid userId)
@@ -197,6 +213,36 @@ public class TranscodeController : ControllerBase
                 bitrate = userBitrateCap;
             }
 
+            // B-02: the SERVER-WIDE quality settings must hold on the null-plan path
+            // too. A fabricated sid with ?resolution=4k&codec=av1 previously flowed
+            // straight to ffmpeg even when the admin set MaxTranscodeResolution=720p /
+            // OutputVideoCodec=h264 — only the per-user bitrate was re-clamped above.
+            // The stored plan already honoured these at negotiation, so like the
+            // bitrate clamp this is redundant-but-safe there and the sole guard here.
+            if (storedPlan == null)
+            {
+                var maxResSetting = await _settingsService.GetSettingAsync("MaxTranscodeResolution", "original");
+                if (!string.Equals(maxResSetting, "original", StringComparison.OrdinalIgnoreCase)
+                    && ResolutionRank(resolution) > ResolutionRank(maxResSetting))
+                {
+                    _logger.LogWarning(
+                        "Clamping fabricated-sid resolution {Requested} to server max {Max} for {MediaId}",
+                        resolution, maxResSetting, id);
+                    resolution = maxResSetting;
+                }
+
+                var codecSetting = await _settingsService.GetSettingAsync("OutputVideoCodec", "auto");
+                if (!string.Equals(codecSetting, "auto", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrEmpty(codec)
+                    && !string.Equals(codec, codecSetting, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning(
+                        "Overriding fabricated-sid codec {Requested} with server setting {Setting} for {MediaId}",
+                        codec, codecSetting, id);
+                    codec = codecSetting;
+                }
+            }
+
             // R-WI-003: honour the negotiated Remux method (stream-copy) when the plan says so.
             // Only trust the persisted plan for this — a client cannot force a copy of an
             // incompatible source by fiddling the URL (there is no remux query param).
@@ -258,6 +304,28 @@ public class TranscodeController : ControllerBase
         {
             _logger.LogError(ex, "Error serving init segment for {Id}", id);
             return StatusCode(500, "Error reading initialization segment");
+        }
+    }
+
+    /// B-13/B-14 — the master's subtitle rendition points here: a compliant WebVTT
+    /// media playlist wrapping the session VTT (native HLS players require a
+    /// playlist URI; the raw .vtt broke hls.js parsing and iOS entirely).
+    [HttpGet("{id}/subtitles.m3u8")]
+    public async Task<IActionResult> GetSubtitlesPlaylist(Guid id, [FromQuery] int? sub = null, [FromQuery] string? sid = null)
+    {
+        if (sub.HasValue && sub.Value < 0) sub = null;
+        try
+        {
+            var userId = GetUserId();
+            var item = await _mediaRepository.GetByIdAsync(id);
+            Response.Headers.CacheControl = "no-store"; // same staleness rules as the VTT itself
+            return _streamResultService.GetSubtitlePlaylistResult(id, userId, sub, sid, Request.GetToken(), item?.Duration ?? 0);
+        }
+        catch (UnauthorizedAccessException) { return Unauthorized(); }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error serving subtitle playlist for {Id}", id);
+            return StatusCode(500, "Error building subtitle playlist");
         }
     }
 

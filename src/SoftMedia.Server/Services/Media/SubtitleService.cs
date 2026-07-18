@@ -243,38 +243,48 @@ public class SubtitleService : ISubtitleService
             var offsetTimeSpan = TimeSpan.FromSeconds(offsetSeconds);
             var result = new List<string>();
             var skipCue = false;
-            
+            // B-17: a cue's identifier line precedes its timestamp line, and the
+            // keep/drop decision only lands AT the timestamp — buffer the pending
+            // identifier so dropped cues don't leave orphan identifiers behind.
+            string? pendingIdentifier = null;
+
             for (int i = 0; i < lines.Length; i++)
             {
                 var line = lines[i];
-                
+
                 if (line.Contains(" --> "))
                 {
                     var parts = line.Split(new[] { " --> " }, StringSplitOptions.None);
                     if (parts.Length == 2)
                     {
-                        if (TryParseVttTimestamp(parts[0].Trim(), out var startTime) && 
+                        if (TryParseVttTimestamp(parts[0].Trim(), out var startTime) &&
                             TryParseVttTimestamp(parts[1].Trim(), out var endTime))
                         {
                             var newStart = startTime - offsetTimeSpan;
                             var newEnd = endTime - offsetTimeSpan;
-                            
+
                             if (newEnd < TimeSpan.Zero)
                             {
+                                pendingIdentifier = null; // the whole cue is dropped
                                 skipCue = true;
                                 continue;
                             }
-                            
+
                             if (newStart < TimeSpan.Zero)
                                 newStart = TimeSpan.Zero;
-                            
+
+                            if (pendingIdentifier != null)
+                            {
+                                result.Add(pendingIdentifier);
+                                pendingIdentifier = null;
+                            }
                             result.Add($"{FormatVttTimestamp(newStart)} --> {FormatVttTimestamp(newEnd)}");
                             skipCue = false;
                             continue;
                         }
                     }
                 }
-                
+
                 if (skipCue)
                 {
                     if (string.IsNullOrWhiteSpace(line))
@@ -284,9 +294,27 @@ public class SubtitleService : ISubtitleService
                     }
                     continue;
                 }
-                
+
+                // A non-blank, non-timestamp line directly before a timestamp is a cue
+                // identifier — hold it until the cue's fate is known. Header/comment
+                // lines never precede a timestamp line, so they flush immediately.
+                var isIdentifierCandidate = !string.IsNullOrWhiteSpace(line)
+                    && i + 1 < lines.Length && lines[i + 1].Contains(" --> ");
+                if (isIdentifierCandidate)
+                {
+                    if (pendingIdentifier != null) result.Add(pendingIdentifier);
+                    pendingIdentifier = line;
+                    continue;
+                }
+
+                if (pendingIdentifier != null)
+                {
+                    result.Add(pendingIdentifier);
+                    pendingIdentifier = null;
+                }
                 result.Add(line);
             }
+            if (pendingIdentifier != null) result.Add(pendingIdentifier);
             
             File.WriteAllLines(vttPath, result);
             _logger.LogInformation("Offset WebVTT timestamps by {Offset}s: {Path}", offsetSeconds, vttPath);

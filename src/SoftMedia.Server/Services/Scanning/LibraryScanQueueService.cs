@@ -395,8 +395,6 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
                 await orchestrator.ExecuteScanAsync(job.LibraryId, progress, stoppingToken);
 
                 // Mark as complete using the LAST captured progress (guaranteed synchronous)
-
-                // Mark as complete using the LAST captured progress (guaranteed synchronous)
                 CompleteJob(job.Id, lastProgress.NewCount, lastProgress.UpdatedCount, lastProgress.SkippedCount, job.ErrorCount);
 
                 // Update Currently Added Cache

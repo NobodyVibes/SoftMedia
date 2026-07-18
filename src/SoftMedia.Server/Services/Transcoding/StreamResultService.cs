@@ -82,4 +82,42 @@ public class StreamResultService : IStreamResultService
 
         return new FileStreamResult(stream, "text/vtt");
     }
+
+    public IActionResult GetSubtitlePlaylistResult(Guid mediaId, Guid userId, int? sub, string? sid, string? token, double durationSeconds)
+    {
+        // Session must actually have a servable VTT (same rule as the raw endpoint).
+        var probeStream = _transcodeService.GetSubtitlesVtt(mediaId, userId, sub, sid);
+        if (probeStream == null)
+        {
+            return new NotFoundObjectResult("Subtitle file not available");
+        }
+        probeStream.Dispose();
+
+        var queryParts = new List<string>();
+        if (!string.IsNullOrEmpty(token)) queryParts.Add($"token={token}");
+        if (sub.HasValue) queryParts.Add($"sub={sub.Value}");
+        if (!string.IsNullOrEmpty(sid)) queryParts.Add($"sid={sid}");
+        var query = string.Join("&", queryParts);
+
+        // One segment spanning the whole stream; an over-estimated EXTINF is harmless
+        // for a VOD subtitle playlist (players fetch the single VTT regardless).
+        var duration = Math.Max(1, (int)Math.Ceiling(durationSeconds <= 0 ? 3600 : durationSeconds));
+        var playlist = new System.Text.StringBuilder()
+            .AppendLine("#EXTM3U")
+            .AppendLine("#EXT-X-VERSION:3")
+            .AppendLine($"#EXT-X-TARGETDURATION:{duration}")
+            .AppendLine("#EXT-X-MEDIA-SEQUENCE:0")
+            .AppendLine("#EXT-X-PLAYLIST-TYPE:VOD")
+            .AppendLine($"#EXTINF:{duration}.0,")
+            .AppendLine($"subtitles.vtt?{query}")
+            .AppendLine("#EXT-X-ENDLIST")
+            .ToString();
+
+        return new ContentResult
+        {
+            Content = playlist,
+            ContentType = "application/vnd.apple.mpegurl",
+            StatusCode = 200,
+        };
+    }
 }

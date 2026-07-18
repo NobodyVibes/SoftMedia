@@ -23,4 +23,11 @@ public interface IStreamResultService
     /// Serves the WebVTT subtitle file.
     /// </summary>
     IActionResult GetSubtitleResult(Guid mediaId, Guid userId, int? sub, string? sid = null);
+
+    /// <summary>
+    /// B-13/B-14 — a compliant single-segment WebVTT MEDIA PLAYLIST wrapping the
+    /// session's VTT, referenced by the master's subtitle rendition (native HLS
+    /// players need a playlist, not a raw .vtt).
+    /// </summary>
+    IActionResult GetSubtitlePlaylistResult(Guid mediaId, Guid userId, int? sub, string? sid, string? token, double durationSeconds);
 }

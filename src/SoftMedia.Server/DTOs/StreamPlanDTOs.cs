@@ -217,4 +217,8 @@ public static class StreamReasonCodes
     public const string ResolutionExceedsMax = "resolution.exceeds-max";
     public const string TranscodeRequired = "transcode.required";
     public const string BitrateClamped = "bitrate.clamped";
+    /// B-01 — the source's original bitrate exceeds the effective cap, so the
+    /// original-bitrate paths (direct play / remux) are refused and playback
+    /// transcodes with `-maxrate` instead.
+    public const string BitrateCapForcesTranscode = "bitrate.cap-forces-transcode";
 }

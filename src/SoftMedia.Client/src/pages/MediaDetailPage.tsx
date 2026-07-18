@@ -50,7 +50,7 @@ export default function MediaDetailPage() {
 
 function MediaDetailPageContent({ item }: { item: MediaItem }) {
     const navigate = useNavigate();
-    const { playTrack } = useAudioStore();
+    const { playTrack, playPlaylist } = useAudioStore();
     const isAdmin = useAuthStore((s) => s.user?.role === 'Admin');
 
     // Fetch library to get type
@@ -175,7 +175,18 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
 
     const handlePlay = async () => {
         if (type === 'Music') {
-            playTrack(item);
+            // Albums/Artists are NOT streamable themselves — playTrack(album)
+            // requested /stream/{albumId}, which 404s and leaves the player bar
+            // as a silent zombie (same class MediaCard.handlePlay already fixed).
+            // The layout hides Play for these types today; this guard keeps the
+            // handler correct if that ever changes.
+            if (item.type === MediaType.Album) {
+                if (albumTracks && albumTracks.length > 0) playPlaylist(albumTracks);
+            } else if (item.type === MediaType.Artist) {
+                if (artistTracks && artistTracks.length > 0) playPlaylist(artistTracks);
+            } else {
+                playTrack(item);
+            }
         } else if (item.type === MediaType.ComicSeries) {
             // Open the first issue in the reader (chronological by issue number).
             try {

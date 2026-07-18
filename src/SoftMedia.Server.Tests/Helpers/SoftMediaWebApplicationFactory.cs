@@ -25,20 +25,27 @@ public class SoftMediaWebApplicationFactory : WebApplicationFactory<Program>
 {
     public string JwtSecret { get; } = JwtSecretGenerator.Generate();
 
-    private readonly DbConnection _sqliteConnection = new SqliteConnection("DataSource=:memory:");
+    // T-01 (flaky-test stabilization): a single shared OPEN connection handed to
+    // every EF scope AND every background hosted service meant concurrent
+    // commands/transactions collided ON THE SAME CONNECTION under parallel-run
+    // CPU contention ("database is locked" 500s in unrelated requests) — a class
+    // of failure busy_timeout cannot fix, since that only mediates BETWEEN
+    // connections. A uniquely-named shared-cache in-memory DB lets every scope
+    // open its OWN connection (Microsoft.Data.Sqlite waits on shared-cache locks
+    // via unlock-notify, honoring Default Timeout); this keep-alive connection
+    // pins the database for the factory's lifetime.
+    private readonly string _dbConnectionString =
+        $"Data Source=softmedia-it-{Guid.NewGuid():N};Mode=Memory;Cache=Shared;Default Timeout=30";
+    private readonly DbConnection _keepAliveConnection;
+
+    public SoftMediaWebApplicationFactory()
+    {
+        _keepAliveConnection = new SqliteConnection(_dbConnectionString);
+    }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        _sqliteConnection.Open();
-
-        // Background hosted services share this single connection with per-test setup; under parallel
-        // load they can momentarily hold it, surfacing SQLITE_BUSY ("database is locked"). A busy
-        // timeout lets a contended command wait/retry briefly instead of throwing immediately.
-        using (var pragma = _sqliteConnection.CreateCommand())
-        {
-            pragma.CommandText = "PRAGMA busy_timeout=15000;";
-            pragma.ExecuteNonQuery();
-        }
+        _keepAliveConnection.Open();
 
         builder.UseEnvironment("Testing");
 
@@ -56,12 +63,13 @@ public class SoftMediaWebApplicationFactory : WebApplicationFactory<Program>
 
         builder.ConfigureServices(services =>
         {
-            // Replace the SQLite file-based registration with a shared in-memory
-            // connection scoped to this factory instance.
+            // Replace the SQLite file-based registration with this factory's
+            // named in-memory database. Registering the CONNECTION STRING (not a
+            // connection object) is what gives each scope its own connection.
             var dbDescriptor = services.Single(d => d.ServiceType == typeof(DbContextOptions<AppDbContext>));
             services.Remove(dbDescriptor);
             services.AddDbContext<AppDbContext>(options =>
-                options.UseSqlite(_sqliteConnection));
+                options.UseSqlite(_dbConnectionString));
         });
     }
 
@@ -126,7 +134,10 @@ public class SoftMediaWebApplicationFactory : WebApplicationFactory<Program>
         base.Dispose(disposing);
         if (disposing)
         {
-            _sqliteConnection.Dispose();
+            _keepAliveConnection.Dispose();
+            // Pooled connections would otherwise keep the named in-memory DB
+            // alive (and its memory allocated) across the whole test run.
+            SqliteConnection.ClearPool(new SqliteConnection(_dbConnectionString));
         }
     }
 }

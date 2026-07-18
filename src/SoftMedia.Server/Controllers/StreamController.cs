@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using SoftMedia.Server.Data;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Sessions;
 
@@ -20,15 +22,18 @@ public class StreamController : ControllerBase
 {
     private readonly IMediaService _mediaService;
     private readonly IActiveStreamRegistry _streamRegistry;
+    private readonly AppDbContext _context;
     private readonly ILogger<StreamController> _logger;
 
     public StreamController(
         IMediaService mediaService,
         IActiveStreamRegistry streamRegistry,
+        AppDbContext context,
         ILogger<StreamController> logger)
     {
         _mediaService = mediaService;
         _streamRegistry = streamRegistry;
+        _context = context;
         _logger = logger;
     }
 
@@ -46,6 +51,30 @@ public class StreamController : ControllerBase
             if (streamInfo == null)
             {
                 return NotFound();
+            }
+
+            // B-01: direct play serves the ORIGINAL file — the last uncapped path.
+            // A bitrate-capped user's VIDEO must transcode (where `-maxrate` applies);
+            // the plan endpoint already refuses direct play over the cap, and this
+            // gate closes the "hit /stream directly, ignore the plan" bypass.
+            // Music is exempt: the cap is a video-streaming control, and audio
+            // bitrates would otherwise make small caps silently kill all music.
+            if (streamInfo.Type is Models.MediaType.Movie or Models.MediaType.Episode
+                && streamInfo.Bitrate is > 0
+                && Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var capUserId))
+            {
+                var capKbps = await _context.Users
+                    .Where(u => u.Id == capUserId)
+                    .Select(u => u.MaxStreamBitrateKbps)
+                    .FirstOrDefaultAsync();
+                if (capKbps is > 0 && streamInfo.Bitrate.Value / 1000 > capKbps.Value)
+                {
+                    _logger.LogWarning(
+                        "Direct play refused for {MediaId}: source {SourceKbps} kbps exceeds user cap {CapKbps} kbps",
+                        id, streamInfo.Bitrate.Value / 1000, capKbps.Value);
+                    return StatusCode(StatusCodes.Status403Forbidden,
+                        new { error = "This item exceeds your streaming bitrate limit — use the transcoded stream." });
+                }
             }
 
             // R-WI-016: register direct-play liveness by RESPONSE LIFETIME (a range

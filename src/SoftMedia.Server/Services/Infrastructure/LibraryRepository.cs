@@ -134,7 +134,21 @@ public class LibraryRepository : ILibraryRepository
         // TV Library: Show only Series
         if (library.Type == LibraryType.TV)
         {
-            query = query.Where(m => m.Type == MediaType.Series);
+            if (!string.IsNullOrWhiteSpace(filter.Search))
+            {
+                // B-05: a searched TV grid also surfaces matching EPISODES —
+                // narrowing to Series first made episode titles unfindable in
+                // per-library search. Episodes qualify on TITLE only (same rule
+                // as global search): matching their overview/genre would flood
+                // results with inherited series text.
+                var episodeSearch = filter.Search.ToLower();
+                query = query.Where(m => m.Type == MediaType.Series
+                    || (m.Type == MediaType.Episode && m.Title.ToLower().Contains(episodeSearch)));
+            }
+            else
+            {
+                query = query.Where(m => m.Type == MediaType.Series);
+            }
         }
         // Book Library: Hide comic issues — they're reached via their ComicSeries parent
         else if (library.Type == LibraryType.Book)

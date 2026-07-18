@@ -46,10 +46,17 @@ public class HlsManifestService : IHlsManifestService
             if (subTrackIndex.HasValue) subtitleQueryParts.Add($"sub={subTrackIndex.Value}");
             if (!string.IsNullOrEmpty(sid)) subtitleQueryParts.Add($"sid={sid}");
             
-            var subtitleUrl = $"/api/transcode/{mediaId}/subtitles.vtt?{string.Join("&", subtitleQueryParts)}";
-            
+            // B-13: the rendition URI must be a WebVTT MEDIA PLAYLIST, not the raw
+            // .vtt (hls.js tried to parse the vtt as m3u8 — wasted retries + console
+            // errors — and native HLS players couldn't use it at all). B-14: a
+            // compliant rendition is what gives iOS/native-HLS playback subtitles.
+            // DEFAULT/AUTOSELECT are NO because the web client renders its own
+            // <track> — an auto-selected rendition would double-render there; native
+            // players still offer it in their subtitle UI.
+            var subtitleUrl = $"/api/transcode/{mediaId}/subtitles.m3u8?{string.Join("&", subtitleQueryParts)}";
+
             rewrittenContent.AppendLine("#EXTM3U");
-            rewrittenContent.AppendLine($"#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Subtitles\",DEFAULT=YES,AUTOSELECT=YES,URI=\"{subtitleUrl}\"");
+            rewrittenContent.AppendLine($"#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Subtitles\",DEFAULT=NO,AUTOSELECT=NO,URI=\"{subtitleUrl}\"");
             
             // Process the rest of the lines to inject SUBTITLES attribute into stream info
             using var lineReader = new StringReader(content.Replace("#EXTM3U", "").TrimStart());

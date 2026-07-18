@@ -84,7 +84,9 @@ export function ActiveSessionsCard() {
                 <MonitorPlay className="h-5 w-5 text-blue-400" />
                 <h3 className="text-lg font-semibold text-white">{t('Now Playing')}</h3>
                 {sessions.length > 0 && (
-                    <span className="text-xs text-gray-400">{sessions.length} {t('active')}</span>
+                    // B-11: interpolated, not concatenated — languages that put the
+                    // count elsewhere in the phrase can reorder it.
+                    <span className="text-xs text-gray-400">{t('{{count}} active', { count: sessions.length })}</span>
                 )}
                 {isError && sessions.length > 0 && (
                     <span title={t('Live data unavailable — showing the last known state')}>
@@ -130,7 +132,9 @@ export function ActiveSessionsCard() {
                                         <td className="py-2">
                                             <TypeBadge session={s} />
                                             {s.state !== 'Playing' && s.state !== 'Transcoding' && (
-                                                <div className="text-xs text-gray-500 mt-0.5">{s.state}</div>
+                                                // B-11: server state values ("Serving"/"Streaming"/
+                                                // "Paused") go through t() like every other label.
+                                                <div className="text-xs text-gray-500 mt-0.5">{t(s.state)}</div>
                                             )}
                                         </td>
                                         <td className="py-2 text-xs text-gray-400">
@@ -173,7 +177,7 @@ export function ActiveSessionsCard() {
                                                 <button
                                                     type="button"
                                                     onClick={() => setConfirmKey(key)}
-                                                    aria-label={`${t('Stop stream for')} ${s.userName}`}
+                                                    aria-label={t('Stop the stream for {{name}}', { name: s.userName })}
                                                     className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs rounded text-red-300 hover:bg-red-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
                                                 >
                                                     <Square size={12} /> {t('Stop')}

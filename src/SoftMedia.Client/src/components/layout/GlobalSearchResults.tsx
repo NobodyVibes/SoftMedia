@@ -57,6 +57,10 @@ export default function GlobalSearchResults({ results, isLoading, onClose }: Glo
             navigate(`/play/${item.id}`);
         } else if (item.type === MediaType.Audio || item.type === MediaType.Track) {
             playTrack(item);
+        } else if (item.type === MediaType.ComicIssue) {
+            // B-06: an issue's "detail page" is the reader — /media/{issueId}
+            // renders an empty series-shaped shell.
+            navigate(`/read/${item.id}`);
         } else {
             navigate(`/media/${item.id}`);
         }
@@ -70,6 +74,8 @@ export default function GlobalSearchResults({ results, isLoading, onClose }: Glo
         // album with the track highlighted).
         if (item.type === MediaType.Episode && item.seriesId) {
             navigate(`/media/${item.seriesId}`);
+        } else if (item.type === MediaType.ComicIssue) {
+            navigate(`/read/${item.id}`); // B-06: issues open in the reader
         } else {
             navigate(`/media/${item.id}`);
         }
@@ -90,8 +96,20 @@ export default function GlobalSearchResults({ results, isLoading, onClose }: Glo
         );
     }
 
+    // B-07: a zero-hit query used to render nothing at all — the dropdown just
+    // vanished, indistinguishable from "search is broken". TopBar only mounts
+    // this component for a ≥2-char query, so an explicit empty state is safe.
     if (results.length === 0) {
-        return null;
+        return (
+            <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="absolute top-full left-0 right-0 mt-2 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50"
+            >
+                <div className="p-4 text-center text-gray-400 text-sm">No results found</div>
+            </motion.div>
+        );
     }
 
     return (
@@ -116,11 +134,23 @@ export default function GlobalSearchResults({ results, isLoading, onClose }: Glo
 
                     {/* Library Items */}
                     <div className="divide-y divide-white/5">
+                        {/* B-07: the row was a <button> wrapping the play <button> —
+                            invalid HTML (validateDOMNesting warning, unpredictable
+                            click/focus behavior). The row is now a div with button
+                            semantics; the play control stays the real button. */}
                         {group.items.map((item) => (
-                            <button
+                            <div
                                 key={item.id}
+                                role="button"
+                                tabIndex={0}
                                 onClick={() => handleItemClick(item)}
-                                className="w-full px-4 py-3 flex items-center gap-3 hover:bg-white/5 transition-colors group text-left"
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        handleItemClick(item);
+                                    }
+                                }}
+                                className="w-full px-4 py-3 flex items-center gap-3 hover:bg-white/5 transition-colors group text-left cursor-pointer"
                             >
                                 {/* Thumbnail — API image routes need the query token
                                     (an <img> can't send the Authorization header). */}
@@ -159,7 +189,7 @@ export default function GlobalSearchResults({ results, isLoading, onClose }: Glo
                                 >
                                     <Play size={14} fill="currentColor" />
                                 </motion.button>
-                            </button>
+                            </div>
                         ))}
                     </div>
                 </div>

@@ -166,6 +166,11 @@ public class MediaRepository : IMediaRepository
         var query = _context.MediaItems.AsNoTracking()
             .ApplyLibraryAccessFilter(access)
             .Where(m => m.AlbumId == albumId && m.Type == MediaType.Audio)
+            // B-03: the audio player bar reads metadata.artist/album (BuildNameContext),
+            // which is only populated when these navigations are loaded — without them
+            // album-page playback shows "Unknown Artist".
+            .Include(m => m.Artist)
+            .Include(m => m.Album)
             .OrderBy(m => m.DiscNumber)
             .ThenBy(m => m.TrackNumber);
 

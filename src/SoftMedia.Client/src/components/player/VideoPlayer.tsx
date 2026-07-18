@@ -699,8 +699,11 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         console.log(`Continuing from fallback position: ${startPosition}s`);
                     }
 
-                    // Delete previous transcode session to start fresh
-                    if (isSubtitleChange && startPosition > 0) {
+                    // Delete previous transcode session to start fresh. Unconditional
+                    // on position (B-16): the sub index is part of the session KEY, so
+                    // without this the old sub's ffmpeg kept transcoding alongside the
+                    // new one when the change happened in the first second of playback.
+                    if (isSubtitleChange) {
                         setIsSubtitleChange(false);
                         fetch(`/api/transcode/${item.id}?sid=${streamId}&token=${urlToken}`, { method: 'DELETE' }).catch(() => { });
                     }
@@ -847,16 +850,19 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     // Add WebVTT subtitle track directly if subtitles are selected
                     // This approach works better than HLS manifest subtitles for single VTT files
                     const subtitleToken = getUrlToken();
-                    if (selectedSubtitleTrack !== null && subtitleToken) {
+                    // Remove any existing track elements UNCONDITIONALLY — the <video>
+                    // element survives HLS re-setup, so a track left behind after
+                    // switching to Off (-1) would keep rendering its loaded cues
+                    // (review finding on the B-15 guard).
+                    const existingTracks = video.querySelectorAll('track');
+                    existingTracks.forEach(t => t.remove());
+
+                    if (selectedSubtitleTrack !== null && selectedSubtitleTrack !== -1 && subtitleToken) {
                         // &gen busts caches across far-seek restarts: the URL was
                         // otherwise identical while the VTT content changes per seek
                         // offset (stale copy = subs off by the whole seek).
                         const subtitleUrl = `/api/transcode/${item.id}/subtitles.vtt?token=${subtitleToken}&sub=${selectedSubtitleTrack}&sid=${streamId}&gen=${Math.floor(seekOffset)}`;
                         console.log(`Adding subtitle track: ${subtitleUrl}`);
-
-                        // Remove any existing track elements
-                        const existingTracks = video.querySelectorAll('track');
-                        existingTracks.forEach(t => t.remove());
 
                         // Create and add new track element
                         const trackElement = document.createElement('track');

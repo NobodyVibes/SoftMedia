@@ -1,12 +1,28 @@
 @import "tailwindcss";
 
+/* B-12: the brand palette must live in @theme, not :root — Tailwind v4 ignores
+ * tailwind.config.js (v3 leftover) AND plain :root variables when generating
+ * utilities, so bg-primary/text-primary/bg-background etc. silently produced
+ * no CSS. @theme is what makes those classes exist; the variables it declares
+ * are also emitted on :root, so var(--color-primary) keeps working. */
+@theme {
+  /* SDD: "Bright Blue (#007AFF) to Violet (#8A2BE2)" */
+  --color-primary: #007AFF;
+  --color-primary-dark: #005BB5;
+  --color-secondary: #8A2BE2;
+  --color-secondary-dark: #4B0082;
+  --color-background: #0f172a; /* Slate-900 dark base */
+  --color-surface: #1e293b;    /* Slate-800 cards */
+
+  /* bg-brand-gradient (was theme.extend.backgroundImage) */
+  --background-image-brand-gradient: linear-gradient(to right, #007AFF, #8A2BE2);
+}
+
 :root {
   --font-sans: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
 
-  --color-primary: #007AFF;
-  --color-secondary: #8A2BE2;
-  --color-bg: #0f172a;
-  --color-surface: #1e293b;
+  /* Legacy alias — non-Tailwind rules below still read it. */
+  --color-bg: var(--color-background);
 }
 
 body {

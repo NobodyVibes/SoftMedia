@@ -208,7 +208,7 @@ public static class ServiceCollectionExtensions
                         // carries in the stream URL. It is hard-scoped to ONE media item's
                         // stream routes: reject it on every other path so a leaked cast URL
                         // can never act as the user elsewhere — even if the user is an admin.
-                        if (tokenUse != CastTokenClaims.CastUse)
+                        if (principal is null || tokenUse != CastTokenClaims.CastUse)
                             return; // normal access tokens are unaffected
 
                         var mediaId = principal.FindFirst(CastTokenClaims.CastMedia)?.Value;

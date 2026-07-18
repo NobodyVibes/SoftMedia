@@ -78,7 +78,7 @@ public class LibraryRepositoryPosterTests : IDisposable
     }
 
     [Fact]
-    public async Task FromMediaItem_ProducesProxyPosterPath()
+    public void FromMediaItem_ProducesProxyPosterPath()
     {
         // Direct unit test of the DTO mapper to confirm the URL construction.
         var dto = MediaItemDto.FromMediaItem(_movie, "/api/v1/image/proxy");

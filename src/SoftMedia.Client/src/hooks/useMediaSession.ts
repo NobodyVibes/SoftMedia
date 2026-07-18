@@ -216,7 +216,12 @@ function bindActions(inst: Instance): void {
                     if (fn && typeof details.seekTime === 'number') fn(details.seekTime);
                 });
             } else {
-                ms.setActionHandler(action, () => { inst.current.handlers[key]?.(); });
+                // 'seekto' (the only parameterized action) is handled in the branch
+                // above, so `key` here always names a parameterless handler — the
+                // cast tells TS what the ACTIONS table already guarantees.
+                ms.setActionHandler(action, () => {
+                    (inst.current.handlers[key] as (() => void) | undefined)?.();
+                });
             }
         } catch { /* this browser doesn't recognize the action name — skip it */ }
     }

@@ -1560,7 +1560,6 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
         // For transcoding: check if seeking beyond the current video duration (transcoded portion)
         const currentTranscodedDuration = videoRef.current.duration || 0;
-        const effectiveCurrentTime = currentTime + seekOffset;
 
         // R-WI-015 review: the transcoded window ends at seekOffset + transcoded length —
         // adding currentTime inflated the bound, so seeks landing just past the window

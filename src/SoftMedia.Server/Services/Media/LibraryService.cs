@@ -549,7 +549,7 @@ public class LibraryService : ILibraryService
         }
 
         // Inject personalized interactions and live ratings if we have items
-    if (items.Any())
+    if (items is { Count: > 0 })
     {
         var itemIds = items.Select(i => i.Id).ToList();
         
@@ -592,6 +592,8 @@ public class LibraryService : ILibraryService
         }
     }
 
-    return items;
+    // items is always assigned by the cache/fallback paths above; the coalesce is
+    // for the compiler's flow analysis (and safety if that invariant ever breaks).
+    return items ?? Enumerable.Empty<MediaItemDto>();
 }
 }

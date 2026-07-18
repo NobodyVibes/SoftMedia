@@ -157,7 +157,7 @@ export default function GlobalSearchResults({ results, isLoading, onClose }: Glo
                                 <div className="w-10 h-14 bg-gradient-to-br from-primary/20 to-secondary/20 rounded overflow-hidden flex-shrink-0">
                                     {item.posterPath ? (
                                         <img
-                                            src={resolveCardPosterUrl(item.posterPath)}
+                                            src={resolveCardPosterUrl(item.posterPath) ?? undefined}
                                             alt={item.title}
                                             className="w-full h-full object-cover"
                                         />

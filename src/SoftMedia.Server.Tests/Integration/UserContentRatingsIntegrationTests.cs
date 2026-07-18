@@ -43,7 +43,7 @@ public class UserContentRatingsIntegrationTests : IntegrationTestBase
 
         var body = await resp.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
         Assert.Equal("", body.GetProperty("maxRating").GetString()); // never capped by default
-        Assert.Equal(0, body.GetProperty("contentRatings").EnumerateObject().Count());
+        Assert.Empty(body.GetProperty("contentRatings").EnumerateObject());
     }
 
     [Fact]

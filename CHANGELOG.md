@@ -6,6 +6,14 @@ from 1.0 onward.
 
 ## [Unreleased]
 
+### Added
+- **"Your most watched" home row** — ranks your full play history by play count (ties broken by
+  recency), with binged episodes rolled up to one series card. Honors the library ACL and
+  content-rating ceiling like every other row, and self-suppresses below four titles (or when
+  history recording is off).
+- **"Most Played" and "Recently Played" library sorts** for Movie and TV grids. TV grids
+  aggregate episode plays up to the series; never-played items sort last.
+
 ### Security
 - **The main login token no longer travels in URLs** (WS-6). Query-string authentication on
   media routes now accepts only the reduced-privilege media/cast tokens — a full access token

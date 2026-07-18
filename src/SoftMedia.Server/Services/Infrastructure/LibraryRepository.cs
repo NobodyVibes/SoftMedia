@@ -249,7 +249,25 @@ public class LibraryRepository : ILibraryRepository
             "title" => joinedQuery.OrderBy(x => x.Media.Title),
             "dateadded" => joinedQuery.OrderByDescending(x => x.Media.DateAdded),
             "year" => joinedQuery.OrderByDescending(x => x.Media.Year),
-            "rating" => joinedQuery.OrderByDescending(x => x.Interaction.Rating), 
+            "rating" => joinedQuery.OrderByDescending(x => x.Interaction.Rating),
+            // R-WI-013 aggregates put to work: PlayCount/LastPlayed are maintained by
+            // the play-history flow (and recomputed on history clears). All-user
+            // aggregates by design. Plays land on MOVIES and EPISODES — a TV grid
+            // shows SERIES rows, so its sort aggregates the episodes' counts up to
+            // the series (correlated subquery; empty → 0/null). SQLite sorts NULLs
+            // last under DESC, so never-played items trail either way.
+            "playcount" => library.Type == LibraryType.TV
+                ? joinedQuery.OrderByDescending(x => _context.MediaItems
+                        .Where(e => e.SeriesId == x.Media.Id)
+                        .Sum(e => (int?)e.PlayCount) ?? 0)
+                    .ThenByDescending(x => x.Media.Title)
+                : joinedQuery.OrderByDescending(x => x.Media.PlayCount)
+                    .ThenByDescending(x => x.Media.LastPlayed),
+            "lastplayed" => library.Type == LibraryType.TV
+                ? joinedQuery.OrderByDescending(x => _context.MediaItems
+                        .Where(e => e.SeriesId == x.Media.Id)
+                        .Max(e => (DateTime?)e.LastPlayed))
+                : joinedQuery.OrderByDescending(x => x.Media.LastPlayed),
             _ => joinedQuery.OrderBy(x => x.Media.Title)
         };
 

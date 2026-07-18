@@ -506,12 +506,65 @@ public class RecommendationService : IRecommendationService
                 SeriesId = h.MediaItem != null ? h.MediaItem.SeriesId : (Guid?)null,
             })
             .ToListAsync();
-        if (history.Count == 0) return Array.Empty<HomeRowDto>();
+        // NOTE: no early-return on empty history — "Your most watched" below counts
+        // the FULL history independently of this recent-window taste signal, and the
+        // visibleSeedIds guard already ends the genre rows when there are no seeds.
 
         var seedIds = history
             .Select(h => h.MediaType == MediaType.Episode && h.SeriesId != null ? h.SeriesId.Value : h.MediaItemId)
             .Distinct()
             .ToList();
+
+        var rows = new List<HomeRowDto>();
+        var used = new HashSet<Guid>(seedIds);
+
+        // Row 0 — "Your most watched": FULL-history play counts (not the recent-60
+        // taste window), episodes rolled up to their series so a binged show is one
+        // card rather than twenty. Watched items belong here by definition, so unlike
+        // the recommendation rows there is no watched-exclusion — but the ACL +
+        // rating-ceiling gate applies unchanged, and the row self-suppresses below
+        // MinRowItems (a "most watched" of one or two titles is noise, and users who
+        // disabled history recording simply have no rows to count).
+        var playCounts = await _context.PlaybackHistory.AsNoTracking()
+            .Where(h => h.UserId == userId
+                        && (h.MediaType == MediaType.Movie || h.MediaType == MediaType.Episode))
+            .Select(h => new
+            {
+                // LEFT-JOIN semantics: a deleted item's SeriesId is null → falls back
+                // to the (dangling) media id, which the visibility filter then drops.
+                RolledId = (Guid?)h.MediaItem!.SeriesId ?? h.MediaItemId,
+                h.LastBeatAt,
+            })
+            .GroupBy(x => x.RolledId)
+            .Select(g => new { Id = g.Key, Plays = g.Count(), Last = g.Max(x => x.LastBeatAt) })
+            .OrderByDescending(x => x.Plays)
+            .ThenByDescending(x => x.Last)
+            .Take(itemsPerRow * 2) // headroom — visibility filtering thins the list
+            .ToListAsync();
+        if (playCounts.Count >= MinRowItems)
+        {
+            var mostWatchedIds = playCounts.Select(p => p.Id).ToList();
+            var mostWatchedItems = await visible
+                .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
+                .Where(m => mostWatchedIds.Contains(m.Id)
+                            && (m.Type == MediaType.Movie || m.Type == MediaType.Series))
+                .ToListAsync();
+            var byId = mostWatchedItems.ToDictionary(m => m.Id);
+            var ordered = playCounts
+                .Where(p => byId.ContainsKey(p.Id))
+                .Select(p => byId[p.Id])
+                .Take(itemsPerRow)
+                .ToList();
+            if (ordered.Count >= MinRowItems)
+            {
+                foreach (var m in ordered) used.Add(m.Id); // rows never repeat an item
+                rows.Add(new HomeRowDto
+                {
+                    Title = "Your most watched",
+                    Items = ordered.Select(m => MediaItemDto.FromMediaItem(m, Constants.MediaConstants.Routes.ImageProxy)).ToList(),
+                });
+            }
+        }
 
         // Only VISIBLE seeds may steer the rows: a lowered ceiling must not keep
         // pulling recommendations (or row headings) toward content the caller can
@@ -520,7 +573,7 @@ public class RecommendationService : IRecommendationService
             .Where(m => seedIds.Contains(m.Id))
             .Select(m => m.Id)
             .ToListAsync();
-        if (visibleSeedIds.Count == 0) return Array.Empty<HomeRowDto>();
+        if (visibleSeedIds.Count == 0) return rows;
 
         // Genre affinity: distinct seed count per genre across the history window
         // (a 40-episode binge counts its series' genres once — breadth over volume).
@@ -528,7 +581,7 @@ public class RecommendationService : IRecommendationService
             .Where(mg => visibleSeedIds.Contains(mg.MediaItemId) && mg.Genre != null)
             .Select(mg => new { mg.MediaItemId, mg.GenreId, GenreName = mg.Genre!.Name })
             .ToListAsync();
-        if (seedGenres.Count == 0) return Array.Empty<HomeRowDto>();
+        if (seedGenres.Count == 0) return rows;
 
         var affinity = seedGenres
             .GroupBy(g => new { g.GenreId, g.GenreName })
@@ -537,9 +590,6 @@ public class RecommendationService : IRecommendationService
             .ThenBy(g => g.GenreName)
             .Take(3)
             .ToList();
-
-        var rows = new List<HomeRowDto>();
-        var used = new HashSet<Guid>(seedIds);
 
         // Shared candidate shape: visible, browsable top-level types, not a seed, not
         // finished (EXISTS subquery — the watched set can be large), not already used.

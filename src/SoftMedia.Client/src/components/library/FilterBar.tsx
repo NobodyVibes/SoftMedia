@@ -97,8 +97,17 @@ export function FilterBar({
         return [
             ...common,
             { value: 'year', label: 'Year' },
+            // Play-history aggregates (R-WI-013): plays land on movies/episodes, so
+            // these rank Movie grids directly and TV grids via the series rollup the
+            // server performs. Book/music/photo grids have no play data → omitted.
+            ...(libraryType === 'Movie' || libraryType === 'TV'
+                ? [
+                    { value: 'playcount', label: 'Most Played' },
+                    { value: 'lastplayed', label: 'Recently Played' },
+                ]
+                : []),
         ];
-    }, [isMusicLibrary, isPhotoLibrary]);
+    }, [isMusicLibrary, isPhotoLibrary, libraryType]);
 
     return (
         <div className="sticky top-0 z-30 bg-black/40 border-b border-white/10 px-8 py-4 backdrop-blur-md">

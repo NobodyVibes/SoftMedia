@@ -124,6 +124,106 @@ public class HomeRowsIntegrationTests : IntegrationTestBase
         Assert.DoesNotContain("Seed Movie", itemTitles);      // the seed itself never recommends itself
         Assert.DoesNotContain("Watched Action", itemTitles);  // finished items excluded
         Assert.DoesNotContain("Unrelated Drama", itemTitles); // no shared genres → not recommended
+
+        // A single played title is far below MinRowItems — "Your most watched"
+        // must self-suppress rather than render a one-card row.
+        Assert.DoesNotContain(rowTitles, t => t == "Your most watched");
+    }
+
+    [Fact]
+    public async Task MostWatched_RanksByPlays_RollsEpisodesToSeries_AndHonorsCeiling()
+    {
+        var user = await Factory.SeedUserAsync($"mw-{Guid.NewGuid():N}"[..20]);
+        await Factory.WithDbAsync(async db =>
+        {
+            var movieLib = new Library { Id = Guid.NewGuid(), Name = $"MWm-{Guid.NewGuid():N}"[..12], Type = LibraryType.Movie, Paths = new() { "/mwm" } };
+            var tvLib = new Library { Id = Guid.NewGuid(), Name = $"MWt-{Guid.NewGuid():N}"[..12], Type = LibraryType.TV, Paths = new() { "/mwt" } };
+            db.Libraries.AddRange(movieLib, tvLib);
+
+            MediaItem Item(string title, MediaType type, Library lib, string rating, Guid? seriesId = null) => new()
+            {
+                Id = Guid.NewGuid(),
+                LibraryId = lib.Id,
+                Title = title,
+                SortTitle = title,
+                Path = $"/{lib.Name}/{title}",
+                Type = type,
+                ContentRating = rating,
+                SeriesId = seriesId,
+            };
+
+            var blockedR = Item("MW Blocked R", MediaType.Movie, movieLib, "R");   // 5 plays — most played overall
+            var movieA = Item("MW Movie A", MediaType.Movie, movieLib, "PG");      // 4 plays
+            var series = Item("MW Series", MediaType.Series, tvLib, "PG");         // 3 plays via episodes
+            var movieB = Item("MW Movie B", MediaType.Movie, movieLib, "PG");      // 2 plays
+            var movieC = Item("MW Movie C", MediaType.Movie, movieLib, "PG");      // 1 play
+            db.MediaItems.AddRange(blockedR, movieA, series, movieB, movieC);
+            await db.SaveChangesAsync();
+
+            var ep1 = Item("MW S01E01", MediaType.Episode, tvLib, "PG", series.Id);
+            var ep2 = Item("MW S01E02", MediaType.Episode, tvLib, "PG", series.Id);
+            db.MediaItems.AddRange(ep1, ep2);
+            await db.SaveChangesAsync();
+
+            void Plays(MediaItem m, MediaType type, int count)
+            {
+                for (var i = 0; i < count; i++)
+                {
+                    db.PlaybackHistory.Add(new PlaybackHistory
+                    {
+                        Id = Guid.NewGuid(),
+                        UserId = user.Id,
+                        MediaItemId = m.Id,
+                        MediaType = type,
+                        StartedAt = DateTime.UtcNow.AddDays(-i - 1),
+                        LastBeatAt = DateTime.UtcNow.AddDays(-i - 1).AddMinutes(30),
+                        MaxPosition = 1000,
+                        Completed = true,
+                    });
+                }
+            }
+            Plays(blockedR, MediaType.Movie, 5);
+            Plays(movieA, MediaType.Movie, 4);
+            Plays(ep1, MediaType.Episode, 2); // series total = 3
+            Plays(ep2, MediaType.Episode, 1);
+            Plays(movieB, MediaType.Movie, 2);
+            Plays(movieC, MediaType.Movie, 1);
+            await db.SaveChangesAsync();
+        });
+
+        // Unrestricted: strict play-count order, episodes rolled up to ONE series card.
+        var json = await ClientFor(user).GetStringAsync("/api/v1/media/home-rows");
+        using (var doc = JsonDocument.Parse(json))
+        {
+            var row = doc.RootElement.EnumerateArray()
+                .FirstOrDefault(r => r.GetProperty("title").GetString() == "Your most watched");
+            Assert.NotEqual(JsonValueKind.Undefined, row.ValueKind);
+            var titles = row.GetProperty("items").EnumerateArray()
+                .Select(i => i.GetProperty("title").GetString()!)
+                .ToList();
+            Assert.Equal(new[] { "MW Blocked R", "MW Movie A", "MW Series", "MW Movie B", "MW Movie C" }, titles);
+            Assert.DoesNotContain("MW S01E01", titles); // episode cards never appear raw
+        }
+
+        // Ceiling: the most-played title is R-rated — a PG-capped caller must not
+        // see it, and the row survives on the remaining four visible titles.
+        await Factory.WithDbAsync(async db =>
+        {
+            (await db.Users.FindAsync(user.Id))!.MaxRating = "PG";
+            await db.SaveChangesAsync();
+        });
+        user.MaxRating = "PG"; // the ceiling rides the JWT claim
+        var jsonCapped = await ClientFor(user).GetStringAsync("/api/v1/media/home-rows");
+        using (var doc = JsonDocument.Parse(jsonCapped))
+        {
+            var row = doc.RootElement.EnumerateArray()
+                .FirstOrDefault(r => r.GetProperty("title").GetString() == "Your most watched");
+            Assert.NotEqual(JsonValueKind.Undefined, row.ValueKind);
+            var titles = row.GetProperty("items").EnumerateArray()
+                .Select(i => i.GetProperty("title").GetString()!)
+                .ToList();
+            Assert.Equal(new[] { "MW Movie A", "MW Series", "MW Movie B", "MW Movie C" }, titles);
+        }
     }
 
     [Fact]

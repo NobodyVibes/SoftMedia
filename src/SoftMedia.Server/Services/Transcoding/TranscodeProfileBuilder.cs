@@ -424,7 +424,7 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
                 audioTrackIndex.HasValue ? $"0:{audioTrackIndex.Value}" : "0:a:0");
         }
 
-        argumentBuilder.Append(BuildAudioArgs(audioCopy, audioCodec, audioChannels, audioTrackIndex));
+        argumentBuilder.Append(BuildAudioArgs(audioCopy, audioCodec, audioChannels, audioTrackIndex, probe));
         argumentBuilder.Append("-start_at_zero ");
         
         var codecLower = settings.OutputVideoCodec.ToLower();
@@ -533,17 +533,40 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
     /// from an explicitly selected non-default track, so a selected track always encodes (which is
     /// container-safe) rather than risk copying an incompatible codec.
     /// </summary>
-    private static string BuildAudioArgs(bool audioCopy, string? audioCodec, int audioChannels, int? audioTrackIndex)
+    private static string BuildAudioArgs(bool audioCopy, string? audioCodec, int audioChannels, int? audioTrackIndex,
+        MediaProbeResult? probe = null)
     {
         if (audioCopy && audioTrackIndex == null)
             return "-c:a copy ";
 
         // An explicitly selected non-default track: the plan's codec/channels were negotiated for
-        // the DEFAULT track and may not match this one, so don't impose them (that would up/downmix
-        // the selected track's audio to the wrong layout — diff-review LOW). Encode to AAC without
-        // forcing a channel count, preserving the selected track's native layout.
+        // the DEFAULT track, so don't impose that exact layout (it could UPMIX this track —
+        // diff-review LOW). But the client's channel CEILING still applies: this branch used to
+        // omit -ac entirely, so a 6-channel TrueHD track selected by a stereo-only browser was
+        // encoded as 6-channel AAC with an unknown channel layout. Chrome cannot initialise a
+        // decoder for it — every SourceBuffer append raised an error and hls.js recreated the
+        // buffer forever, so the movie fetched segments but NEVER played (live-diagnosed:
+        // 3215 SourceBuffer recreations, buffered=[], readyState=0).
+        // Cap at the ceiling, never upmix: min(source channels, client ceiling).
         if (audioTrackIndex != null)
-            return "-c:a aac -b:a 256k ";
+        {
+            // Resolve THIS track's channel count. `audioTrackIndex` is the ABSOLUTE stream index
+            // (what the tracks endpoint hands the client and what `-map 0:N` consumes), so match
+            // StreamIndex first; the audio-relative Index is only a fallback for probes predating
+            // StreamIndex. Falling back to the PRIMARY track's count would be wrong on a
+            // multi-track file (a stereo alternate beside a 5.1 default would get upmixed), so
+            // when the track can't be resolved, cap at the ceiling without claiming to know better.
+            var track = probe?.AudioTracks?.FirstOrDefault(t => t.StreamIndex == audioTrackIndex.Value)
+                        ?? probe?.AudioTracks?.FirstOrDefault(t => t.Index == audioTrackIndex.Value);
+            // Unresolvable track (probe without a track list): fall back to the PRIMARY track's
+            // count. Erring low is safe — too few channels is a quality nit, too many is an
+            // undecodable stream. The multi-track mis-resolution this fallback used to cause is
+            // now prevented by the StreamIndex match above.
+            var sourceChannels = track?.Channels ?? probe?.AudioChannels ?? 0;
+            var ceiling = audioChannels > 0 ? audioChannels : 2;
+            var selectedChannels = sourceChannels > 0 ? Math.Min(sourceChannels, ceiling) : ceiling;
+            return $"-c:a aac -ac {selectedChannels} -b:a {(selectedChannels >= 6 ? 384 : 256)}k ";
+        }
 
         var codec = audioCodec is "aac" or "ac3" or "eac3" ? audioCodec : "aac";
         var channels = audioChannels > 0 ? audioChannels : 2;

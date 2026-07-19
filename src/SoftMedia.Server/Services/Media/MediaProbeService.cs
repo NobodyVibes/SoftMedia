@@ -132,7 +132,9 @@ public class MediaProbeService : IMediaProbeService
                     else if (type == "audio")
                     {
                         var audioTrack = new AudioTrackInfo { Index = audioIndex++ };
-                        
+                        if (stream.TryGetProperty("index", out var absIdx) && absIdx.TryGetInt32(out var absIdxVal))
+                            audioTrack.StreamIndex = absIdxVal;
+
                         if (stream.TryGetProperty("codec_name", out var codec))
                             audioTrack.Codec = codec.GetString();
                         if (stream.TryGetProperty("channels", out var channels))
@@ -425,7 +427,16 @@ public class MediaProbeResult
 /// </summary>
 public class AudioTrackInfo
 {
+    /// <summary>Audio-RELATIVE index (0,1,2… among audio streams only).</summary>
     public int Index { get; set; }
+
+    /// <summary>
+    /// ABSOLUTE ffprobe stream index (the "index" field), i.e. what `-map 0:N` and the client's
+    /// `?audio=N` refer to — the tracks endpoint hands the client this number. Kept alongside the
+    /// audio-relative <see cref="Index"/> because the two disagree on any file with a video stream,
+    /// and matching the wrong one silently resolves the wrong track's channel layout.
+    /// </summary>
+    public int StreamIndex { get; set; }
     public string? Codec { get; set; }
     public string? Language { get; set; }
     public int Channels { get; set; }

@@ -418,4 +418,91 @@ public class TranscodeProfileBuilderTests : IDisposable
         Assert.DoesNotContain("-ac 6", args); // selected track's own layout preserved
         Assert.Contains("-map 0:1", args);     // maps the selected track
     }
+
+    [Fact]
+    public async Task Explicitly_selected_track_still_respects_the_client_channel_ceiling()
+    {
+        // LIVE BUG: a 6-channel TrueHD track selected by a stereo-only browser was encoded as
+        // 6-channel AAC (this branch omitted -ac entirely). Chrome cannot initialise a decoder for
+        // 6ch AAC with an unknown layout: every SourceBuffer append errored and hls.js recreated the
+        // buffer forever, so the movie fetched segments but never played. The ceiling must survive
+        // explicit track selection.
+        _probe.Setup(p => p.ProbeMediaAsync(It.IsAny<string>())).ReturnsAsync(new MediaProbeResult
+        {
+            PixelFormat = "yuv420p",
+            FrameRate = 24,
+            AudioCodec = "truehd",
+            AudioChannels = 6, // source is 5.1
+        });
+
+        var psi = await Build().BuildTranscodeArgumentsAsync(
+            @"C:\media\movie.mkv", _outputDir, "seg",
+            new TranscodeSettings { HardwareAcceleration = "none", MaxResolution = "original" },
+            subtitleTrackIndex: null, seekPosition: null, readRate: null,
+            audioTrackIndex: 1, maxBitrate: null,
+            audioCopy: false, audioCodec: "aac", audioChannels: 2); // client ceiling = stereo
+        var args = psi.Arguments;
+
+        Assert.Contains("-c:a aac -ac 2", args);
+        Assert.DoesNotContain("-ac 6", args);
+    }
+
+    [Fact]
+    public async Task Explicitly_selected_track_is_never_upmixed_above_the_source()
+    {
+        // The ceiling is a CAP, not a target: a stereo track on a surround-capable client must
+        // stay stereo rather than being upmixed to 5.1.
+        _probe.Setup(p => p.ProbeMediaAsync(It.IsAny<string>())).ReturnsAsync(new MediaProbeResult
+        {
+            PixelFormat = "yuv420p",
+            FrameRate = 24,
+            AudioCodec = "aac",
+            AudioChannels = 2, // source is stereo
+            AudioTracks = new List<AudioTrackInfo>
+            {
+                new() { Index = 0, StreamIndex = 1, Codec = "aac", Channels = 2 },
+            },
+        });
+
+        var psi = await Build().BuildTranscodeArgumentsAsync(
+            @"C:\media\movie.mkv", _outputDir, "seg",
+            new TranscodeSettings { HardwareAcceleration = "none", MaxResolution = "original" },
+            subtitleTrackIndex: null, seekPosition: null, readRate: null,
+            audioTrackIndex: 1, maxBitrate: null,
+            audioCopy: false, audioCodec: "aac", audioChannels: 6); // client could take 5.1
+
+        Assert.Contains("-c:a aac -ac 2", psi.Arguments);
+    }
+
+    [Fact]
+    public async Task Selected_track_channels_resolve_by_ABSOLUTE_stream_index_not_the_primary_track()
+    {
+        // Review catch: matching the audio-RELATIVE index (or falling back to the PRIMARY track's
+        // channel count) silently resolves the wrong track on a multi-track file. Here the default
+        // track is 5.1 and the user picked the stereo commentary; a surround-capable client must
+        // still get STEREO, not an upmix of the commentary to 5.1.
+        _probe.Setup(p => p.ProbeMediaAsync(It.IsAny<string>())).ReturnsAsync(new MediaProbeResult
+        {
+            PixelFormat = "yuv420p",
+            FrameRate = 24,
+            AudioCodec = "ac3",
+            AudioChannels = 6, // PRIMARY track is 5.1 — the misleading fallback
+            AudioTracks = new List<AudioTrackInfo>
+            {
+                new() { Index = 0, StreamIndex = 1, Codec = "ac3", Channels = 6, IsDefault = true },
+                new() { Index = 1, StreamIndex = 2, Codec = "aac", Channels = 2, Title = "Commentary" },
+            },
+        });
+
+        var psi = await Build().BuildTranscodeArgumentsAsync(
+            @"C:\media\movie.mkv", _outputDir, "seg",
+            new TranscodeSettings { HardwareAcceleration = "none", MaxResolution = "original" },
+            subtitleTrackIndex: null, seekPosition: null, readRate: null,
+            audioTrackIndex: 2, maxBitrate: null, // absolute stream index of the stereo commentary
+            audioCopy: false, audioCodec: "ac3", audioChannels: 6);
+
+        Assert.Contains("-c:a aac -ac 2", psi.Arguments);
+        Assert.DoesNotContain("-ac 6", psi.Arguments);
+        Assert.Contains("-map 0:2", psi.Arguments);
+    }
 }

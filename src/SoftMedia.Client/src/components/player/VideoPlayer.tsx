@@ -386,13 +386,21 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                             (minutes ? parseInt(minutes[1]) * 60 : 0) +
                             (seconds ? parseInt(seconds[1]) : 0);
                     }
-                    const maxValidPosition = durationSeconds > 0 ? durationSeconds - 5 : Infinity;
+                    // A position past the COMPLETION threshold means the item was finished, not
+                    // paused: resuming there drops the viewer into the last few seconds (and, on a
+                    // transcode, spins up a session for a sliver of video). Mirror the server's
+                    // completion rule (MediaCompletionHelper: >=95%) and restart from the top —
+                    // the old bound only rejected positions past the END, so a 99% position
+                    // "resumed" at the closing credits.
+                    const maxValidPosition = durationSeconds > 0
+                        ? Math.min(durationSeconds - 5, durationSeconds * 0.95)
+                        : Infinity;
                     console.log(`Resume validation for ${item.id}: position=${data.position}, duration=${item.duration}(parsed=${durationSeconds}s), maxValid=${maxValidPosition}`);
                     if (data.position < maxValidPosition) {
                         console.log(`Resuming from saved position: ${data.position}s`);
                         setResumePosition(data.position);
                     } else {
-                        console.log(`Saved position ${data.position}s exceeds duration ${durationSeconds}s - starting from beginning`);
+                        console.log(`Saved position ${data.position}s is at/past the completion threshold (${maxValidPosition}s) - starting from beginning`);
                         // Don't set resume position - will start from beginning
                     }
                 }
@@ -1201,7 +1209,10 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             setIsPlaying(true);
             // Signal backend to resume transcoding (throttle control)
             if (isTranscoding && token && item.id) {
-                fetch(`/api/transcode/${item.id}/resume${selectedSubtitleTrack !== null ? `?sub=${selectedSubtitleTrack}` : ''}`, {
+                // sid identifies THIS playback session — without it the lookup misses and the
+                // endpoint 404s on every play event (which hls.js emits repeatedly while it
+                // retries, flooding the console).
+                fetch(`/api/transcode/${item.id}/resume?sid=${streamId}${selectedSubtitleTrack !== null ? `&sub=${selectedSubtitleTrack}` : ''}`, {
                     method: 'POST',
                     headers: transcodeAuthHeaders()
                 }).catch(() => { });
@@ -1211,7 +1222,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             setIsPlaying(false);
             // Signal backend to pause transcoding (throttle control)
             if (isTranscoding && token && item.id) {
-                fetch(`/api/transcode/${item.id}/pause${selectedSubtitleTrack !== null ? `?sub=${selectedSubtitleTrack}` : ''}`, {
+                fetch(`/api/transcode/${item.id}/pause?sid=${streamId}${selectedSubtitleTrack !== null ? `&sub=${selectedSubtitleTrack}` : ''}`, {
                     method: 'POST',
                     headers: transcodeAuthHeaders()
                 }).catch(() => { });

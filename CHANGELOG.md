@@ -33,6 +33,15 @@ from 1.0 onward.
   the server-wide resolution/codec ceilings; the hero rotation now honours content-rating ceilings.
 
 ### Fixed
+- **Movies with a non-default audio track selected could never play.** Choosing a specific audio
+  track dropped the client's channel limit, so a 5.1/TrueHD track was re-encoded as 6-channel AAC
+  even for a stereo-only browser. Chrome cannot decode that, so the player downloaded video
+  segments forever without ever starting (and flooded the console with `resume` 404s while it
+  retried). The selected track is now capped at what the client can actually play — and never
+  upmixed above what the track really contains.
+- The player's `pause`/`resume` calls now identify their own session, so they stop 404-ing.
+- A movie you had already finished no longer "resumes" in its closing seconds: any position past
+  the completion threshold (95%, matching the server) restarts from the beginning.
 - The HLS master playlist's subtitle rendition now points at a spec-compliant WebVTT media playlist
   (`subtitles.m3u8`), giving native/iOS HLS players working text subtitles and stopping hls.js from
   mis-parsing the raw `.vtt`; far-seek subtitle alignment no longer emits orphan cue identifiers,

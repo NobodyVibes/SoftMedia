@@ -23,10 +23,15 @@ export default function MovieDetailView({ item }: MovieDetailViewProps) {
 
     return (
         <>
-            {/* Full-page background poster overlay */}
+            {/* Full-page background poster: decorative, must stay BEHIND the page content.
+                It renders inside the layout's `relative z-10` container, and a POSITIONED
+                element with z-index:0 paints above its STATIC siblings — so at z-0 this
+                "background" (and its two gradients) was painted over the hero poster and
+                text, visibly washing them out. A negative z-index puts it back behind the
+                in-flow content while staying above the page background. */}
             {backgroundPoster && (
                 <div
-                    className={`fixed top-16 right-0 bottom-0 z-0 pointer-events-none transition-all duration-300 ${isSidebarCollapsed ? 'left-20' : 'left-64'
+                    className={`fixed top-16 right-0 bottom-0 z-[-1] pointer-events-none transition-all duration-300 ${isSidebarCollapsed ? 'left-20' : 'left-64'
                         }`}
                 >
                     <img

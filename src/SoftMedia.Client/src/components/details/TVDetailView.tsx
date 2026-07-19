@@ -498,10 +498,11 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
 
     return (
         <>
-            {/* Full-page background poster overlay */}
+            {/* Decorative page background — must stay BEHIND the content. See MovieDetailView:
+                at z-0 this positioned layer painted OVER its static siblings (poster + text). */}
             {currentBackgroundPoster && (
                 <div
-                    className={`fixed top-16 right-0 bottom-0 z-0 pointer-events-none transition-all duration-300 ${isSidebarCollapsed ? 'left-20' : 'left-64'
+                    className={`fixed top-16 right-0 bottom-0 z-[-1] pointer-events-none transition-all duration-300 ${isSidebarCollapsed ? 'left-20' : 'left-64'
                         }`}
                 >
                     <img

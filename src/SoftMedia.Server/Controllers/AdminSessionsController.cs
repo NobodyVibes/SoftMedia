@@ -27,17 +27,20 @@ public class AdminSessionsController : ControllerBase
 
     private readonly ITranscodeService _transcodeService;
     private readonly IActiveStreamRegistry _streamRegistry;
+    private readonly ITerminatedSessionRegistry _terminatedSessions;
     private readonly AppDbContext _context;
     private readonly ILogger<AdminSessionsController> _logger;
 
     public AdminSessionsController(
         ITranscodeService transcodeService,
         IActiveStreamRegistry streamRegistry,
+        ITerminatedSessionRegistry terminatedSessions,
         AppDbContext context,
         ILogger<AdminSessionsController> logger)
     {
         _transcodeService = transcodeService;
         _streamRegistry = streamRegistry;
+        _terminatedSessions = terminatedSessions;
         _context = context;
         _logger = logger;
     }
@@ -170,6 +173,11 @@ public class AdminSessionsController : ControllerBase
         _logger.LogInformation(
             "Admin {Admin} terminated transcode session media={MediaId} user={UserId} sub={Sub} sid={Sid}",
             User.Identity?.Name, mediaId, userId, sub, sid);
+
+        // Tombstone BEFORE killing the session: the client reacts to its segments failing
+        // within milliseconds, and without this its recovery reload restarts the transcode
+        // (verified live — ffmpeg respawned and playback continued, so Stop looked broken).
+        _terminatedSessions.MarkTerminated(mediaId, userId, sid);
         _transcodeService.StopTranscode(mediaId, userId, sub, deleteFiles: true, sid);
         return NoContent();
     }

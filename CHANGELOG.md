@@ -37,6 +37,12 @@ from 1.0 onward.
   the server-wide resolution/codec ceilings; the hero rotation now honours content-rating ceilings.
 
 ### Fixed
+- **"Stop" in the admin dashboard now actually stops the stream.** Killing the session was not
+  enough: the player reacted to its segments failing by reloading the playlist, which started a
+  brand-new transcode under the same session id — so ffmpeg respawned and playback carried on.
+  A stopped session is now refused for a couple of minutes (HTTP 410) and the player halts with
+  "Playback was stopped by an administrator" instead of retrying. Pressing Play again still
+  works immediately — it is not a lockout.
 - **Movies with a non-default audio track selected could never play.** Choosing a specific audio
   track dropped the client's channel limit, so a 5.1/TrueHD track was re-encoded as 6-channel AAC
   even for a stereo-only browser. Chrome cannot decode that, so the player downloaded video

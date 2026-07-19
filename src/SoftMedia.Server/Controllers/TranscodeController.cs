@@ -39,6 +39,18 @@ public class TranscodeController : ControllerBase
     private readonly IStreamResultService _streamResultService;
     private readonly IStreamPlanStore _planStore;
     private readonly ISettingsService _settingsService;
+    private readonly Services.Sessions.ITerminatedSessionRegistry _terminatedSessions;
+
+    /// <summary>
+    /// 410 Gone: an admin stopped this session and it must not be resurrected by the
+    /// client's automatic recovery. The player treats this code as terminal (stops and
+    /// reports it) rather than retrying, which is what kept the old kill from sticking.
+    /// </summary>
+    private IActionResult? TerminatedResult(Guid mediaId, Guid userId, string? sid)
+    {
+        if (!_terminatedSessions.IsTerminated(mediaId, userId, sid)) return null;
+        return StatusCode(StatusCodes.Status410Gone, "Playback was stopped by an administrator.");
+    }
 
     public TranscodeController(
         ITranscodeService transcodeService,
@@ -53,8 +65,10 @@ public class TranscodeController : ControllerBase
         AppDbContext dbContext,
         ITokenService tokenService,
         ISettingsService settingsService,
+        Services.Sessions.ITerminatedSessionRegistry terminatedSessions,
         ILogger<TranscodeController> logger)
     {
+        _terminatedSessions = terminatedSessions;
         _transcodeService = transcodeService;
         _streamPlanService = streamPlanService;
         _mediaRepository = mediaRepository;
@@ -112,6 +126,12 @@ public class TranscodeController : ControllerBase
             // ?cast=true to self-renew indefinitely. Reject before doing any work.
             if (cast && User.FindFirst(CastTokenClaims.TokenUse)?.Value == CastTokenClaims.CastUse)
                 return StatusCode(StatusCodes.Status403Forbidden, "A cast token cannot mint another cast token.");
+
+            // An admin-stopped session must not be re-planned back to life either. Uses the
+            // capabilities' StreamId (this endpoint's sid); StatusCode is inlined because the
+            // helper's IActionResult doesn't fit this action's ActionResult<StreamPlan>.
+            if (_terminatedSessions.IsTerminated(id, userId, capabilities.StreamId))
+                return StatusCode(StatusCodes.Status410Gone, "Playback was stopped by an administrator.");
 
             var mediaItem = await _mediaRepository.GetByIdWithLibraryAsync(id);
 
@@ -188,8 +208,13 @@ public class TranscodeController : ControllerBase
         try
         {
             var userId = GetUserId();
+            // THE resurrection path: the client reloads the playlist when its segments start
+            // failing, and this handler would otherwise start a brand-new ffmpeg for the
+            // session an admin just stopped.
+            if (TerminatedResult(id, userId, sid) is { } stopped) return stopped;
+
             var mediaItem = await _mediaRepository.GetByIdWithLibraryAsync(id);
-            
+
             if (mediaItem?.Library == null) return NotFound("Media item not found");
 
             var accessResult = await _streamSecurityService.ValidateMediaAccessAsync(mediaItem);
@@ -296,6 +321,7 @@ public class TranscodeController : ControllerBase
         try
         {
             var userId = GetUserId();
+            if (TerminatedResult(id, userId, sid) is { } stopped) return stopped;
             // Throttling Logic delegated to service
             _sessionService.UpdateClientPosition(id, userId, sub, segment, sid);
             // Keep the dashboard's device/IP tracking the client actually pulling segments.
@@ -312,6 +338,7 @@ public class TranscodeController : ControllerBase
         try
         {
             var userId = GetUserId();
+            if (TerminatedResult(id, userId, sid) is { } stopped) return stopped;
             return _streamResultService.GetInitSegmentResult(id, userId, sub, sid);
         }
         catch (UnauthorizedAccessException) { return Unauthorized(); }

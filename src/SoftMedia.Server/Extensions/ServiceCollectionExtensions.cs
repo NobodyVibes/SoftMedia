@@ -410,6 +410,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITranscodeService>(sp => sp.GetRequiredService<TranscodeService>());
         services.AddScoped<ITranscodeSessionService, TranscodeSessionService>();
         services.AddSingleton<Services.Sessions.IActiveStreamRegistry, Services.Sessions.ActiveStreamRegistry>(); // R-WI-016: direct-play liveness for the admin dashboard
+        services.AddSingleton<Services.Sessions.ITerminatedSessionRegistry, Services.Sessions.TerminatedSessionRegistry>(); // admin Stop must stay stopped (client auto-recovery restarts it otherwise)
         services.AddScoped<IStreamResultService, StreamResultService>();
         services.AddSingleton<IBinaryLocationService, BinaryLocationService>();
         services.AddSingleton<IMediaProbeService, MediaProbeService>();

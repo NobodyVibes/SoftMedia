@@ -313,6 +313,57 @@ public class AdminSessionsIntegrationTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task Terminate_StaysStopped_WhenTheClientTriesToResumeTheSameSession()
+    {
+        // LIVE BUG: Stop killed ffmpeg and removed the session, but the player reacts to its
+        // segments failing by reloading the playlist — and master.m3u8 started a BRAND-NEW
+        // transcode under the same sid, so playback carried on and Stop looked broken.
+        var (admin, viewer, mediaId) = await SeedAsync();
+        var key = AddTranscodeSession(mediaId, viewer.Id);
+
+        var stop = await ClientFor(admin).DeleteAsync(
+            $"/api/v1/admin/sessions?mediaId={key.MediaId}&userId={key.UserId}&sid={key.StreamId}");
+        Assert.Equal(HttpStatusCode.NoContent, stop.StatusCode);
+
+        // Everything the player would hit while "recovering" must refuse to bring it back.
+        var viewerClient = ClientFor(viewer);
+        foreach (var url in new[]
+                 {
+                     $"/api/transcode/{mediaId}/master.m3u8?sid={key.StreamId}",
+                     $"/api/transcode/{mediaId}/seg_000.ts?sid={key.StreamId}",
+                     $"/api/transcode/{mediaId}/init.mp4?sid={key.StreamId}",
+                 })
+        {
+            var resp = await viewerClient.GetAsync(url);
+            Assert.Equal(HttpStatusCode.Gone, resp.StatusCode);
+        }
+
+        // …and no session was recreated behind them.
+        var manager = Factory.Services.GetRequiredService<ITranscodeSessionManager>();
+        Assert.Null(manager.GetSession(key));
+        var rows = await ClientFor(admin).GetFromJsonAsync<List<SessionRow>>("/api/v1/admin/sessions");
+        Assert.Empty(rows!);
+    }
+
+    [Fact]
+    public async Task Terminate_IsNotALockout_ADeliberateNewPlaybackStillWorks()
+    {
+        // The tombstone is keyed by sid, which is minted per playback instance: the client's
+        // automatic recovery reuses it (blocked above), but pressing Play again does not.
+        var (admin, viewer, mediaId) = await SeedAsync();
+        var key = AddTranscodeSession(mediaId, viewer.Id);
+
+        await ClientFor(admin).DeleteAsync(
+            $"/api/v1/admin/sessions?mediaId={key.MediaId}&userId={key.UserId}&sid={key.StreamId}");
+
+        // A fresh sid is NOT tombstoned — the request gets past the gate (whatever it then
+        // does with the fake on-disk path, it is not 410).
+        var resumed = await ClientFor(viewer).GetAsync(
+            $"/api/transcode/{mediaId}/master.m3u8?sid=freshplayback1");
+        Assert.NotEqual(HttpStatusCode.Gone, resumed.StatusCode);
+    }
+
+    [Fact]
     public async Task Terminate_UnknownKey_Is404_AndNonAdmin_Is403()
     {
         var (admin, viewer, mediaId) = await SeedAsync();

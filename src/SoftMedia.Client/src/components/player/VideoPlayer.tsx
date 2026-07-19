@@ -935,6 +935,17 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 });
 
                 hls.on(Hls.Events.ERROR, (_, data) => {
+                    // 410 Gone = an admin stopped this session server-side. It is TERMINAL:
+                    // retrying is exactly what used to resurrect it (the playlist reload
+                    // started a fresh ffmpeg), so stop and say why instead of recovering.
+                    // Checked before `fatal` because hls.js reports a 410 on a segment as a
+                    // non-fatal network error it intends to retry.
+                    if (data.response?.code === 410) {
+                        setError('Playback was stopped by an administrator.');
+                        videoRef.current?.pause();
+                        hls.destroy();
+                        return;
+                    }
                     if (data.fatal) {
                         switch (data.type) {
                             case Hls.ErrorTypes.NETWORK_ERROR:

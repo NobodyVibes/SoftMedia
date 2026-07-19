@@ -269,6 +269,10 @@ public class TranscodeController : ControllerBase
 
             await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr, audioTrack: audio, maxBitrate: bitrate, burnSubtitles: burnSubtitles, sid: sid, remux: remux, audioCopy: audioCopy, audioCodec: audioCodec, audioChannels: audioChannels);
 
+            // Stamp the playing client on the freshly-started session so the admin dashboard has
+            // a device/IP from the first row it renders (segments keep it refreshed thereafter).
+            _sessionService.SetClientDevice(id, userId, sub, sid, Request.GetClientDevice());
+
             var token = Request.GetToken();
             return await _streamResultService.GenerateMasterPlaylistResultAsync(id, userId, sub, token, sid);
         }
@@ -294,6 +298,8 @@ public class TranscodeController : ControllerBase
             var userId = GetUserId();
             // Throttling Logic delegated to service
             _sessionService.UpdateClientPosition(id, userId, sub, segment, sid);
+            // Keep the dashboard's device/IP tracking the client actually pulling segments.
+            _sessionService.SetClientDevice(id, userId, sub, sid, Request.GetClientDevice());
             return _streamResultService.GetSegmentResult(id, userId, sub, segment, sid);
         }
         catch (UnauthorizedAccessException) { return Unauthorized(); }

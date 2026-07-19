@@ -114,7 +114,9 @@ public class AdminSessionsController : ControllerBase
                 MaxBitrateKbps: s.MaxBitrate,
                 CanTerminate: true,
                 SubtitleTrackIndex: s.Key.SubtitleTrackIndex,
-                StreamId: s.Key.StreamId));
+                StreamId: s.Key.StreamId,
+                DeviceType: s.ClientDevice?.DeviceType,
+                IpAddress: s.ClientDevice?.IpAddress));
         }
 
         foreach (var d in directPlays)
@@ -138,7 +140,9 @@ public class AdminSessionsController : ControllerBase
                 MaxBitrateKbps: null,
                 CanTerminate: false,
                 SubtitleTrackIndex: null,
-                StreamId: null));
+                StreamId: null,
+                DeviceType: d.Device?.DeviceType,
+                IpAddress: d.Device?.IpAddress));
         }
 
         return Ok(rows.OrderByDescending(r => r.StartedAt));
@@ -189,4 +193,9 @@ public record ActiveSessionDto(
     int? MaxBitrateKbps,
     bool CanTerminate,
     int? SubtitleTrackIndex,
-    string? StreamId);
+    string? StreamId,
+    /// Coarse client form factor ("Mobile"/"Tablet"/"Tv"/"Cast"/"Desktop"/"Unknown") derived
+    /// from the User-Agent, and the client address. Null when the session predates any request
+    /// that carried them (e.g. an entry restored without an HttpContext).
+    string? DeviceType,
+    string? IpAddress);

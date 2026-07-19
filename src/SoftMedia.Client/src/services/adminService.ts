@@ -59,6 +59,10 @@ export interface ActiveSession {
     canTerminate: boolean;
     subtitleTrackIndex: number | null;
     streamId: string | null;
+    /** Coarse client form factor from the User-Agent; null for sessions captured without one. */
+    deviceType: 'Mobile' | 'Tablet' | 'Tv' | 'Cast' | 'Desktop' | 'Unknown' | null;
+    /** Client address as the server saw it (IPv4-mapped IPv6 already unwrapped). */
+    ipAddress: string | null;
 }
 
 export const adminService = {

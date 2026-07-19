@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
+using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Identity;
@@ -138,7 +139,7 @@ public class InteractionController : ControllerBase
                       && s.State != Services.Transcoding.Models.TranscodeState.Completed);
         if (!hasLiveTranscode && await IsStreamableAndAccessibleAsync(userId, mediaId))
         {
-            _streamRegistry.TouchOrCreate(userId, mediaId, request.Position);
+            _streamRegistry.TouchOrCreate(userId, mediaId, request.Position, Request.GetClientDevice());
         }
         return Ok();
     }

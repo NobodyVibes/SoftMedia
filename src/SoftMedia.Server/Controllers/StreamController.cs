@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
+using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Sessions;
@@ -91,7 +92,7 @@ public class StreamController : ControllerBase
                 // The entry HANDLE is captured so the completion callback releases the
                 // exact generation it incremented (key-based release could hit a
                 // recreated entry after a prune race).
-                var entry = _streamRegistry.OnResponseStarted(streamUserId, id);
+                var entry = _streamRegistry.OnResponseStarted(streamUserId, id, Request.GetClientDevice());
                 Response.OnCompleted(() =>
                 {
                     _streamRegistry.OnResponseEnded(entry);

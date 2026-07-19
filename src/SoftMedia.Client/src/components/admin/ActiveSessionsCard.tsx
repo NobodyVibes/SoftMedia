@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { MonitorPlay, RefreshCw, Square, WifiOff } from 'lucide-react';
+import { Cast, HelpCircle, Monitor, MonitorPlay, RefreshCw, Smartphone, Square, Tablet, Tv, WifiOff } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { toast } from 'sonner';
@@ -27,6 +27,33 @@ function TypeBadge({ session }: { session: ActiveSession }) {
     return (
         <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${styles[session.type]}`}>
             {label}
+        </span>
+    );
+}
+
+/**
+ * Device column: an icon for the client's form factor plus the address it is streaming from.
+ * Keep the keys in sync with ClientDeviceClassifier's wire constants (server side).
+ */
+const deviceIcons: Record<string, { Icon: typeof Monitor; label: string }> = {
+    Mobile: { Icon: Smartphone, label: 'Phone' },
+    Tablet: { Icon: Tablet, label: 'Tablet' },
+    Tv: { Icon: Tv, label: 'TV' },
+    Cast: { Icon: Cast, label: 'Cast device' },
+    Desktop: { Icon: Monitor, label: 'Browser' },
+};
+
+function DeviceCell({ session }: { session: ActiveSession }) {
+    const { t } = useTranslation();
+    // An unrecognised or absent User-Agent is reported honestly rather than guessed at.
+    const { Icon, label } = deviceIcons[session.deviceType ?? ''] ?? { Icon: HelpCircle, label: 'Unknown device' };
+    return (
+        <span className="inline-flex items-center gap-2">
+            <Icon size={16} className="text-gray-400 flex-shrink-0" aria-hidden="true" />
+            <span className="sr-only">{t(label)}</span>
+            <span className="text-xs text-gray-400 font-mono" title={t(label)}>
+                {session.ipAddress ?? '—'}
+            </span>
         </span>
     );
 }
@@ -113,6 +140,7 @@ export function ActiveSessionsCard() {
                             <tr className="text-left text-gray-400 border-b border-white/10">
                                 <th className="pb-2 font-medium">{t('User')}</th>
                                 <th className="pb-2 font-medium">{t('Title')}</th>
+                                <th className="pb-2 font-medium">{t('Device')}</th>
                                 <th className="pb-2 font-medium">{t('Method')}</th>
                                 <th className="pb-2 font-medium">{t('Quality')}</th>
                                 <th className="pb-2 font-medium w-48">{t('Progress')}</th>
@@ -129,6 +157,7 @@ export function ActiveSessionsCard() {
                                     <tr key={key} className="text-gray-300">
                                         <td className="py-2 font-medium text-white">{s.userName}</td>
                                         <td className="py-2">{s.mediaTitle}</td>
+                                        <td className="py-2"><DeviceCell session={s} /></td>
                                         <td className="py-2">
                                             <TypeBadge session={s} />
                                             {s.state !== 'Playing' && s.state !== 'Transcoding' && (

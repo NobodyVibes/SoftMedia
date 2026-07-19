@@ -3,6 +3,14 @@ using System.Collections.Concurrent;
 namespace SoftMedia.Server.Services.Sessions;
 
 /// <summary>
+/// Which client is playing, for the admin Now-Playing dashboard: a coarse form factor
+/// (see <see cref="Infrastructure.ClientDeviceClassifier"/>) plus the client address.
+/// Captured per request and refreshed as the session continues, so a resumed play shows
+/// the device that is playing NOW rather than whichever one started it.
+/// </summary>
+public sealed record ClientDevice(string DeviceType, string? IpAddress);
+
+/// <summary>
 /// R-WI-016 — tracks DIRECT-PLAY streams (video direct play + all music) for the
 /// admin Now-Playing dashboard. Transcodes are already tracked by
 /// <see cref="Transcoding.TranscodeSessionManager"/>; this registry covers the
@@ -27,7 +35,7 @@ public interface IActiveStreamRegistry
     /// generation of the entry after a prune/evict recreated it (review MED), silently
     /// unbalancing a live play's refcount.
     /// </summary>
-    DirectPlayEntry OnResponseStarted(Guid userId, Guid mediaId);
+    DirectPlayEntry OnResponseStarted(Guid userId, Guid mediaId, ClientDevice? device = null);
 
     /// <summary>The /stream response completed (including client aborts).</summary>
     void OnResponseEnded(DirectPlayEntry entry);
@@ -42,7 +50,7 @@ public interface IActiveStreamRegistry
     /// transcodes too, and would double-list them as phantom direct plays (that guard
     /// lives in InteractionController, where the transcode registry is visible).
     /// </summary>
-    void TouchOrCreate(Guid userId, Guid mediaId, double positionSeconds);
+    void TouchOrCreate(Guid userId, Guid mediaId, double positionSeconds, ClientDevice? device = null);
 
     /// <summary>Live entries; expired ones are pruned as a side effect.</summary>
     IReadOnlyList<DirectPlayEntry> GetActiveEntries();
@@ -82,6 +90,19 @@ public sealed class DirectPlayEntry
     /// </summary>
     public bool HasHeartbeat => Volatile.Read(ref _hasHeartbeat) == 1;
     private int _hasHeartbeat;
+
+    /// <summary>
+    /// The most recent client seen on this entry. Reference-swapped (never mutated in
+    /// place) so dashboard reads on another thread always observe a consistent pair
+    /// rather than a half-updated device/IP.
+    /// </summary>
+    public ClientDevice? Device => Volatile.Read(ref _device);
+    private ClientDevice? _device;
+
+    internal void SetDevice(ClientDevice? device)
+    {
+        if (device is not null) Volatile.Write(ref _device, device);
+    }
 
     internal void ResponseStarted()
     {
@@ -133,7 +154,7 @@ public sealed class ActiveStreamRegistry : IActiveStreamRegistry
     /// <summary>Test seam — production uses the UTC wall clock.</summary>
     public ActiveStreamRegistry(Func<DateTime> clock) => _clock = clock;
 
-    public DirectPlayEntry OnResponseStarted(Guid userId, Guid mediaId)
+    public DirectPlayEntry OnResponseStarted(Guid userId, Guid mediaId, ClientDevice? device = null)
     {
         var added = false;
         var entry = _entries.GetOrAdd((userId, mediaId), key =>
@@ -141,6 +162,7 @@ public sealed class ActiveStreamRegistry : IActiveStreamRegistry
             added = true;
             return new DirectPlayEntry(key.UserId, key.MediaId, _clock);
         });
+        entry.SetDevice(device);
         entry.ResponseStarted();
 
         // ConcurrentDictionary.Count takes every bucket lock — only pay it when this
@@ -151,7 +173,7 @@ public sealed class ActiveStreamRegistry : IActiveStreamRegistry
 
     public void OnResponseEnded(DirectPlayEntry entry) => entry.ResponseEnded();
 
-    public void TouchOrCreate(Guid userId, Guid mediaId, double positionSeconds)
+    public void TouchOrCreate(Guid userId, Guid mediaId, double positionSeconds, ClientDevice? device = null)
     {
         var added = false;
         var entry = _entries.GetOrAdd((userId, mediaId), key =>
@@ -159,6 +181,7 @@ public sealed class ActiveStreamRegistry : IActiveStreamRegistry
             added = true;
             return new DirectPlayEntry(key.UserId, key.MediaId, _clock);
         });
+        entry.SetDevice(device);
         entry.Touch(positionSeconds);
 
         if (added && _entries.Count > HardEntryCap) EvictStalest();

@@ -7,6 +7,10 @@ from 1.0 onward.
 ## [Unreleased]
 
 ### Added
+- **Device column in the admin "Now Playing" card** — each session shows an icon for the client's
+  form factor (phone, tablet, TV, cast device, or browser) alongside the address it is streaming
+  from. Derived from the User-Agent the client already sends; nothing is stored and no lookup
+  leaves your server.
 - **"Your most watched" home row** — ranks your full play history by play count (ties broken by
   recency), with binged episodes rolled up to one series card. Honors the library ACL and
   content-rating ceiling like every other row, and self-suppresses below four titles (or when

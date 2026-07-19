@@ -38,6 +38,8 @@ const transcodeRow: ActiveSession = {
     canTerminate: true,
     subtitleTrackIndex: null,
     streamId: 'sid-1',
+    deviceType: 'Tv',
+    ipAddress: '192.168.1.42',
 };
 
 const directPlayRow: ActiveSession = {
@@ -56,6 +58,8 @@ const directPlayRow: ActiveSession = {
     canTerminate: false,
     subtitleTrackIndex: null,
     streamId: null,
+    deviceType: 'Mobile',
+    ipAddress: '10.0.0.7',
 };
 
 function renderCard() {
@@ -138,5 +142,25 @@ describe('ActiveSessionsCard', () => {
 
         await waitFor(() => expect(toast.info).toHaveBeenCalled());
         expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it('shows each session device: its address plus a form-factor label', async () => {
+        renderCard();
+
+        expect(await screen.findByText('192.168.1.42')).toBeInTheDocument(); // TV row
+        expect(screen.getByText('10.0.0.7')).toBeInTheDocument();            // phone row
+        // The icon is decorative, so the form factor is exposed to assistive tech as text.
+        expect(screen.getByText('TV')).toBeInTheDocument();
+        expect(screen.getByText('Phone')).toBeInTheDocument();
+    });
+
+    it('reports an unknown device honestly instead of guessing a form factor', async () => {
+        mocked.getActiveSessions.mockResolvedValue([
+            { ...directPlayRow, deviceType: null, ipAddress: null },
+        ]);
+        renderCard();
+
+        expect(await screen.findByText('Unknown device')).toBeInTheDocument();
+        expect(screen.getByText('—')).toBeInTheDocument(); // no address to show
     });
 });

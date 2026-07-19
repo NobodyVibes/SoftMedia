@@ -1,10 +1,21 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
+using SoftMedia.Server.Services.Infrastructure;
+using SoftMedia.Server.Services.Sessions;
 
 namespace SoftMedia.Server.Extensions;
 
 public static class RequestExtensions
 {
+    /// <summary>
+    /// The playing client's form factor + address, for the admin Now-Playing dashboard.
+    /// Derived from data the request already carries (User-Agent + connection address) —
+    /// nothing is stored and no lookup leaves the server.
+    /// </summary>
+    public static ClientDevice GetClientDevice(this HttpRequest request) => new(
+        ClientDeviceClassifier.Classify(request.Headers.UserAgent.ToString()),
+        ClientDeviceClassifier.NormalizeIp(request.HttpContext.Connection.RemoteIpAddress));
+
     /// <summary>
     /// Retrieves the authentication token from the query string ("token") or Authorization header ("Bearer").
     /// Query string takes precedence for stream/transcode compatibility.

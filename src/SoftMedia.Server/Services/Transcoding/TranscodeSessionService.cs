@@ -30,6 +30,12 @@ public class TranscodeSessionService : ITranscodeSessionService
         }
     }
 
+    public void SetClientDevice(Guid mediaId, Guid userId, int? sub, string? sid, Sessions.ClientDevice device)
+    {
+        var session = _transcodeService.GetSession(new TranscodeSessionKey(mediaId, userId, sub, sid));
+        if (session != null) session.ClientDevice = device;
+    }
+
     public TranscodeSessionResult PauseSession(Guid mediaId, Guid userId, int? sub, string? sid = null)
     {
         return SetPaused(mediaId, userId, sub, true, sid);

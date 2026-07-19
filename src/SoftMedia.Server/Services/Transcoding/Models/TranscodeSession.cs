@@ -110,4 +110,13 @@ public class TranscodeSession
     public bool AudioCopy { get; set; } = false;
     public string? AudioCodec { get; set; }
     public int AudioChannels { get; set; }
+
+    /// <summary>
+    /// Which client is playing this session, for the admin Now-Playing dashboard: a coarse
+    /// form factor from the User-Agent plus the client address. Refreshed on each playlist /
+    /// segment request rather than only at creation, so a session resumed from a different
+    /// device shows the one playing NOW. Null until the first request that carries a
+    /// HttpContext (e.g. a session restored without one).
+    /// </summary>
+    public Sessions.ClientDevice? ClientDevice { get; set; }
 }

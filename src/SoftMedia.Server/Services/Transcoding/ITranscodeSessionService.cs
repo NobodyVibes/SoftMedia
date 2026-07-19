@@ -10,6 +10,13 @@ public interface ITranscodeSessionService
     void UpdateClientPosition(Guid mediaId, Guid userId, int? sub, string segment, string? sid = null);
 
     /// <summary>
+    /// Records which client is driving this transcode (form factor + address) for the admin
+    /// Now-Playing dashboard. Called per playlist/segment request so the value tracks the
+    /// device playing NOW; a no-op when the session isn't live.
+    /// </summary>
+    void SetClientDevice(Guid mediaId, Guid userId, int? sub, string? sid, Sessions.ClientDevice device);
+
+    /// <summary>
     /// Pauses the transcode session.
     /// </summary>
     /// <returns>True if successful, false if session not found or unauthorized.</returns>

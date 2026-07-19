@@ -49,11 +49,29 @@ public interface IActiveStreamRegistry
     /// user has an active transcode session for the media — beats fire during
     /// transcodes too, and would double-list them as phantom direct plays (that guard
     /// lives in InteractionController, where the transcode registry is visible).
+    ///
+    /// <paramref name="createIfMissing"/> false makes this touch-only. Callers use it to
+    /// bar a beat from CONJURING a row without also going blind to a real one: an entry a
+    /// /stream response already created still gets its heartbeat and playhead, so it stays
+    /// labelled "Playing" at the right position rather than frozen at 0:00 as "Streaming".
     /// </summary>
-    void TouchOrCreate(Guid userId, Guid mediaId, double positionSeconds, ClientDevice? device = null);
+    void TouchOrCreate(Guid userId, Guid mediaId, double positionSeconds, ClientDevice? device = null,
+        bool createIfMissing = true);
 
     /// <summary>Live entries; expired ones are pruned as a side effect.</summary>
     IReadOnlyList<DirectPlayEntry> GetActiveEntries();
+
+    /// <summary>
+    /// Drops this user's entry for the media, if any. Used when an admin stops a stream: a
+    /// direct-play row created by the stopped player's beats would otherwise linger for the
+    /// idle window and read as a second, still-playing copy of the same title.
+    ///
+    /// Entries with an OPEN /stream response are left alone, matching the eviction rule the
+    /// cap path already follows: those are a real transfer in flight (the same user can be
+    /// direct-playing a title on one device while transcoding it on another), and dropping
+    /// one would erase a genuinely-playing row that no later beat can bring back.
+    /// </summary>
+    void Remove(Guid userId, Guid mediaId);
 }
 
 public sealed class DirectPlayEntry
@@ -173,18 +191,36 @@ public sealed class ActiveStreamRegistry : IActiveStreamRegistry
 
     public void OnResponseEnded(DirectPlayEntry entry) => entry.ResponseEnded();
 
-    public void TouchOrCreate(Guid userId, Guid mediaId, double positionSeconds, ClientDevice? device = null)
+    public void TouchOrCreate(Guid userId, Guid mediaId, double positionSeconds, ClientDevice? device = null,
+        bool createIfMissing = true)
     {
         var added = false;
-        var entry = _entries.GetOrAdd((userId, mediaId), key =>
+        DirectPlayEntry entry;
+        if (createIfMissing)
         {
-            added = true;
-            return new DirectPlayEntry(key.UserId, key.MediaId, _clock);
-        });
+            entry = _entries.GetOrAdd((userId, mediaId), key =>
+            {
+                added = true;
+                return new DirectPlayEntry(key.UserId, key.MediaId, _clock);
+            });
+        }
+        else if (!_entries.TryGetValue((userId, mediaId), out entry!))
+        {
+            return;
+        }
+
         entry.SetDevice(device);
         entry.Touch(positionSeconds);
 
         if (added && _entries.Count > HardEntryCap) EvictStalest();
+    }
+
+    public void Remove(Guid userId, Guid mediaId)
+    {
+        if (_entries.TryGetValue((userId, mediaId), out var entry) && entry.ActiveResponses <= 0)
+        {
+            _entries.TryRemove((userId, mediaId), out _);
+        }
     }
 
     public IReadOnlyList<DirectPlayEntry> GetActiveEntries()

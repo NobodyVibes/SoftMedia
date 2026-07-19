@@ -346,6 +346,76 @@ public class AdminSessionsIntegrationTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task Terminate_DoesNotLeaveAPhantomDirectPlayRowForTheSameTitle()
+    {
+        // LIVE BUG: after a Stop, the player keeps beating while it drains its buffer and
+        // retries. The beat guard only suppresses direct-play creation while a transcode is
+        // LIVE — and the admin just removed it — so the beats registered the movie as a
+        // DIRECT PLAY. Pressing play again then produced TWO rows for one file: a phantom
+        // "Direct Play" beside the real new transcode.
+        var (admin, viewer, mediaId) = await SeedAsync();
+        var key = AddTranscodeSession(mediaId, viewer.Id);
+
+        await ClientFor(admin).DeleteAsync(
+            $"/api/v1/admin/sessions?mediaId={key.MediaId}&userId={key.UserId}&sid={key.StreamId}");
+
+        // The stopped player's next beat must NOT resurrect the title as a direct play.
+        var beat = await ClientFor(viewer).PostAsJsonAsync(
+            $"/api/v1/interaction/{mediaId}/progress", new { position = 42.0 });
+        beat.EnsureSuccessStatusCode();
+
+        var rows = await ClientFor(admin).GetFromJsonAsync<List<SessionRow>>("/api/v1/admin/sessions");
+        Assert.Empty(rows!);
+    }
+
+    [Fact]
+    public async Task Terminate_DoesNotBlindTheDashboardToARealDirectPlayOfTheSameTitle()
+    {
+        // The phantom guard bars a beat from CREATING a row. It must not also swallow the
+        // beat for a row a genuine /stream response created: the first cut suppressed the
+        // whole beat, which left a real direct play listed as "Streaming" (the label meaning
+        // "open stream, maybe a preload") frozen at 0:00 for the whole window.
+        var (admin, viewer, mediaId) = await SeedAsync();
+        var key = AddTranscodeSession(mediaId, viewer.Id);
+        await ClientFor(admin).DeleteAsync(
+            $"/api/v1/admin/sessions?mediaId={key.MediaId}&userId={key.UserId}&sid={key.StreamId}");
+
+        // The viewer starts a real direct play of the same title while the window is open.
+        var registry = Factory.Services.GetRequiredService<IActiveStreamRegistry>();
+        registry.OnResponseStarted(viewer.Id, mediaId);
+        var beat = await ClientFor(viewer).PostAsJsonAsync(
+            $"/api/v1/interaction/{mediaId}/progress", new { position = 321.5 });
+        beat.EnsureSuccessStatusCode();
+
+        var rows = await ClientFor(admin).GetFromJsonAsync<List<SessionRow>>("/api/v1/admin/sessions");
+        var row = Assert.Single(rows!);
+        Assert.Equal("DirectPlay", row.Type);
+        Assert.Equal("Playing", row.State);          // not "Streaming" — the beat landed
+        Assert.Equal(321.5, row.PositionSeconds);    // and carried the playhead
+    }
+
+    [Fact]
+    public async Task Terminate_LeavesAnInFlightDirectPlayOfTheSameTitleAlone()
+    {
+        // Stop clears a stale direct-play row, but an entry with an OPEN /stream response is
+        // a transfer actually in progress — the same user can direct-play a title on one
+        // device while transcoding it on another. Evicting that one erased a genuinely
+        // playing row that no later beat could bring back (beats can only touch, not create,
+        // inside the window).
+        var (admin, viewer, mediaId) = await SeedAsync();
+        var key = AddTranscodeSession(mediaId, viewer.Id);
+        var registry = Factory.Services.GetRequiredService<IActiveStreamRegistry>();
+        registry.OnResponseStarted(viewer.Id, mediaId);
+
+        await ClientFor(admin).DeleteAsync(
+            $"/api/v1/admin/sessions?mediaId={key.MediaId}&userId={key.UserId}&sid={key.StreamId}");
+
+        var rows = await ClientFor(admin).GetFromJsonAsync<List<SessionRow>>("/api/v1/admin/sessions");
+        var row = Assert.Single(rows!);
+        Assert.Equal("DirectPlay", row.Type);
+    }
+
+    [Fact]
     public async Task Terminate_IsNotALockout_ADeliberateNewPlaybackStillWorks()
     {
         // The tombstone is keyed by sid, which is minted per playback instance: the client's

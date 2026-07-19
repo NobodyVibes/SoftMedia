@@ -52,6 +52,7 @@ public class InteractionControllerSessionsTests : IDisposable
             Mock.Of<SoftMedia.Server.Services.Security.LibraryAccess.IUserLibraryAccessProvider>(),
             Mock.Of<SoftMedia.Server.Services.Security.ContentRating.IUserContentRatingProvider>(),
             new SoftMedia.Server.Services.Sessions.ActiveStreamRegistry(),
+            new SoftMedia.Server.Services.Sessions.TerminatedSessionRegistry(),
             Mock.Of<SoftMedia.Server.Services.Transcoding.ITranscodeService>(s =>
                 s.GetAllSessions() == Enumerable.Empty<SoftMedia.Server.Services.Transcoding.Models.TranscodeSession>()));
         var identity = new ClaimsIdentity(new[]

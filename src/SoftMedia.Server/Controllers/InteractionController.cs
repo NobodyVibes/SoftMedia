@@ -29,6 +29,7 @@ public class InteractionController : ControllerBase
     private readonly IUserLibraryAccessProvider _libraryAccess;
     private readonly IUserContentRatingProvider _ratings;
     private readonly IActiveStreamRegistry _streamRegistry;
+    private readonly ITerminatedSessionRegistry _terminatedSessions;
     private readonly SoftMedia.Server.Services.Transcoding.ITranscodeService _transcodeService;
 
     public InteractionController(
@@ -39,6 +40,7 @@ public class InteractionController : ControllerBase
         IUserLibraryAccessProvider libraryAccess,
         IUserContentRatingProvider ratings,
         IActiveStreamRegistry streamRegistry,
+        ITerminatedSessionRegistry terminatedSessions,
         SoftMedia.Server.Services.Transcoding.ITranscodeService transcodeService)
     {
         _context = context;
@@ -48,6 +50,7 @@ public class InteractionController : ControllerBase
         _libraryAccess = libraryAccess;
         _ratings = ratings;
         _streamRegistry = streamRegistry;
+        _terminatedSessions = terminatedSessions;
         _transcodeService = transcodeService;
     }
 
@@ -137,9 +140,19 @@ public class InteractionController : ControllerBase
             .Any(s => s.UserId == userId && s.Key.MediaId == mediaId
                       && s.State != Services.Transcoding.Models.TranscodeState.Dormant
                       && s.State != Services.Transcoding.Models.TranscodeState.Completed);
+        // (3) A stream an admin just stopped keeps beating while the player drains its buffer
+        // and retries. Guard (1) no longer covers that — the transcode it keyed off is exactly
+        // what was removed — so those beats registered the title as a DIRECT PLAY and the
+        // dashboard listed it twice once the viewer pressed play again. Only CREATION is
+        // barred, not the beat itself: a real direct play opens a /stream request, and
+        // suppressing its heartbeat too would leave that genuine row frozen at 0:00 under the
+        // "Streaming" label (which means "open stream, maybe not playback") until the window
+        // passed. Touching an entry /stream already created cannot conjure a phantom.
+        var recentlyStopped = _terminatedSessions.WasRecentlyTerminatedForUser(mediaId, userId);
         if (!hasLiveTranscode && await IsStreamableAndAccessibleAsync(userId, mediaId))
         {
-            _streamRegistry.TouchOrCreate(userId, mediaId, request.Position, Request.GetClientDevice());
+            _streamRegistry.TouchOrCreate(userId, mediaId, request.Position, Request.GetClientDevice(),
+                createIfMissing: !recentlyStopped);
         }
         return Ok();
     }

@@ -43,6 +43,14 @@ from 1.0 onward.
   A stopped session is now refused for a couple of minutes (HTTP 410) and the player halts with
   "Playback was stopped by an administrator" instead of retrying. Pressing Play again still
   works immediately — it is not a lockout.
+- **A stopped stream no longer leaves a phantom "Direct Play" row behind**, which made the same
+  movie appear twice in "Now Playing" (once as Direct Play, once as Transcode) after the viewer
+  pressed Play again. The stopped player keeps sending progress beats while it drains its buffer,
+  and those beats were registering the title as a direct play — the check that normally prevents
+  that looks for a live transcode, which is exactly what Stop had just removed. For a short window
+  after a stop, those beats can no longer conjure a new row, and any stale one is cleared. Genuine
+  playback is unaffected: a real direct play announces itself with a stream request, still shows up
+  immediately, and keeps its live position.
 - **Movies with a non-default audio track selected could never play.** Choosing a specific audio
   track dropped the client's channel limit, so a 5.1/TrueHD track was re-encoded as 6-channel AAC
   even for a stereo-only browser. Chrome cannot decode that, so the player downloaded video

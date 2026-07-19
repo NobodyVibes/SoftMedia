@@ -179,6 +179,11 @@ public class AdminSessionsController : ControllerBase
         // (verified live — ffmpeg respawned and playback continued, so Stop looked broken).
         _terminatedSessions.MarkTerminated(mediaId, userId, sid);
         _transcodeService.StopTranscode(mediaId, userId, sub, deleteFiles: true, sid);
+        // Clear any direct-play row for the same title. The stopped player's beats can
+        // register one the instant the transcode disappears (the beat guard keys off a LIVE
+        // transcode), which showed up as a phantom second row alongside the new session
+        // after the viewer pressed play again.
+        _streamRegistry.Remove(userId, mediaId);
         return NoContent();
     }
 

@@ -21,6 +21,21 @@ public interface ITerminatedSessionRegistry
 {
     void MarkTerminated(Guid mediaId, Guid userId, string? sid);
     bool IsTerminated(Guid mediaId, Guid userId, string? sid);
+
+    /// <summary>
+    /// True when ANY session for this user+media was stopped in the last few seconds,
+    /// regardless of sid. Used to stop a beat from CREATING a direct-play row: a stopped
+    /// player keeps beating while it drains its buffer and retries, and the beat handler's
+    /// "is a transcode live?" guard no longer fires (the admin just removed that session) —
+    /// so the beats registered the movie as a DIRECT PLAY and the dashboard showed the same
+    /// title twice once the viewer pressed play again.
+    ///
+    /// Deliberately NOT <see cref="IsTerminated"/>: that one is sid-keyed, which is what
+    /// makes its 2-minute window safe (a deliberate new play mints a new sid and escapes at
+    /// once). Dropping the sid removes that escape hatch, so this uses its own much shorter
+    /// window — see <see cref="TerminatedSessionRegistry.BeatCreationWindow"/>.
+    /// </summary>
+    bool WasRecentlyTerminatedForUser(Guid mediaId, Guid userId);
 }
 
 public sealed class TerminatedSessionRegistry : ITerminatedSessionRegistry
@@ -28,6 +43,16 @@ public sealed class TerminatedSessionRegistry : ITerminatedSessionRegistry
     /// Long enough to outlast any client retry loop, short enough that a sid-less client
     /// (the SPA always sends one) is never locked out for meaningfully long.
     private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// How long a stopped player's beats are barred from CREATING a direct-play row. Sized
+    /// to the client's reaction time, not to <see cref="Ttl"/>: the player halts on the 410
+    /// rather than retrying indefinitely, so this only has to outlast the buffer it was
+    /// already draining. Kept short because it is sid-agnostic — every play of that title
+    /// waits it out, so the cost of overshooting is a genuinely-playing title missing from
+    /// the dashboard.
+    /// </summary>
+    public static readonly TimeSpan BeatCreationWindow = TimeSpan.FromSeconds(30);
 
     /// Bounds memory if something ever terminates in a loop; oldest entries go first.
     private const int HardCap = 512;
@@ -53,6 +78,16 @@ public sealed class TerminatedSessionRegistry : ITerminatedSessionRegistry
 
         // Expired — drop it so a later play of the same item isn't re-checked forever.
         _tombstones.TryRemove((mediaId, userId, sid), out _);
+        return false;
+    }
+
+    public bool WasRecentlyTerminatedForUser(Guid mediaId, Guid userId)
+    {
+        var now = _clock();
+        foreach (var (key, at) in _tombstones)
+        {
+            if (key.MediaId == mediaId && key.UserId == userId && now - at <= BeatCreationWindow) return true;
+        }
         return false;
     }
 

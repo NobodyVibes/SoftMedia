@@ -66,7 +66,7 @@ public class QuickConnectIntegrationTests : IntegrationTestBase
             Assert.Equal(HttpStatusCode.NotFound,
                 (await anon.PostAsJsonAsync("/api/v1/quickconnect/initiate", new { })).StatusCode);
             Assert.Equal(HttpStatusCode.NotFound,
-                (await anon.GetAsync("/api/v1/quickconnect/state?secret=abc")).StatusCode);
+                (await anon.PostAsJsonAsync("/api/v1/quickconnect/state", new { Secret = "abc" })).StatusCode);
 
             var user = await Factory.SeedUserAsync("qc-disabled");
             var jwt = JwtClient(user);
@@ -88,9 +88,11 @@ public class QuickConnectIntegrationTests : IntegrationTestBase
         var device = Factory.CreateClient(); // anonymous, no cookie jar
         var init = await InitiateAsync("Living Room TV");
 
-        // Device polls: pending until approved.
-        var pending = await device.GetFromJsonAsync<StateResp>(
-            $"/api/v1/quickconnect/state?secret={init.Secret}", JsonOpts);
+        // Device polls: pending until approved. POST body — the secret must never
+        // ride in a query string (it would land in request logs).
+        var pendingResp = await device.PostAsJsonAsync("/api/v1/quickconnect/state", new { Secret = init.Secret });
+        pendingResp.EnsureSuccessStatusCode();
+        var pending = await pendingResp.Content.ReadFromJsonAsync<StateResp>(JsonOpts);
         Assert.Equal("Pending", pending!.Status);
         Assert.Null(pending.AccessToken);
 
@@ -104,8 +106,9 @@ public class QuickConnectIntegrationTests : IntegrationTestBase
         Assert.Equal(HttpStatusCode.NoContent, approve.StatusCode);
 
         // Device's next poll claims tokens.
-        var approved = await device.GetFromJsonAsync<StateResp>(
-            $"/api/v1/quickconnect/state?secret={init.Secret}", JsonOpts);
+        var approvedResp = await device.PostAsJsonAsync("/api/v1/quickconnect/state", new { Secret = init.Secret });
+        approvedResp.EnsureSuccessStatusCode();
+        var approved = await approvedResp.Content.ReadFromJsonAsync<StateResp>(JsonOpts);
         Assert.Equal("Approved", approved!.Status);
         Assert.False(string.IsNullOrEmpty(approved.AccessToken));
         Assert.False(string.IsNullOrEmpty(approved.RefreshToken));
@@ -121,7 +124,7 @@ public class QuickConnectIntegrationTests : IntegrationTestBase
 
         // Single-use: the secret is dead after the successful claim.
         Assert.Equal(HttpStatusCode.NotFound,
-            (await device.GetAsync($"/api/v1/quickconnect/state?secret={init.Secret}")).StatusCode);
+            (await device.PostAsJsonAsync("/api/v1/quickconnect/state", new { Secret = init.Secret })).StatusCode);
     }
 
     [Fact]
@@ -190,7 +193,7 @@ public class QuickConnectIntegrationTests : IntegrationTestBase
             await db.SaveChangesAsync();
         });
 
-        var resp = await Factory.CreateClient().GetAsync($"/api/v1/quickconnect/state?secret={init.Secret}");
+        var resp = await Factory.CreateClient().PostAsJsonAsync("/api/v1/quickconnect/state", new { Secret = init.Secret });
         Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode);
     }
 }

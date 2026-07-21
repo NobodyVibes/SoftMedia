@@ -28,6 +28,9 @@ public record QuickConnectStateResponse(string Status,
     string? RefreshToken = null);
 public record QuickConnectPendingResponse(string Code, string? DeviceName, string? RequestIp, DateTime CreatedAt);
 public record QuickConnectAuthorizeRequest(string Code);
+// The poll secret travels in a POST body, never the query string — query strings land
+// in request logs (the WS-6 tokens-out-of-URLs principle applies to pairing secrets too).
+public record QuickConnectStateRequest(string? Secret);
 
 // Returned by /auth/signup when a self-registered account still needs admin approval.
 // Carries no token (audit M1) — the client shows a "pending approval" message.

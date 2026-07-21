@@ -76,17 +76,19 @@ public class QuickConnectController : ControllerBase
 
     /// <summary>
     /// Device-side poll. Pending → {status:"Pending"}; approved → tokens, exactly once;
-    /// unknown/expired/already-claimed → 404 (terminal for the poller).
+    /// unknown/expired/already-claimed → 404 (terminal for the poller). POST with the
+    /// secret in the body — a query-string secret would land in request logs (security
+    /// review 2026-07-21; same principle as WS-6's tokens-out-of-URLs).
     /// </summary>
     [AllowAnonymous]
     [EnableRateLimiting(Extensions.ServiceCollectionExtensions.QuickConnectRateLimitPolicy)]
-    [HttpGet("state")]
-    public async Task<ActionResult<QuickConnectStateResponse>> State([FromQuery] string secret)
+    [HttpPost("state")]
+    public async Task<ActionResult<QuickConnectStateResponse>> State(QuickConnectStateRequest request)
     {
         if (!await IsEnabledAsync()) return NotFound();
-        if (string.IsNullOrEmpty(secret)) return NotFound();
+        if (string.IsNullOrEmpty(request.Secret)) return NotFound();
 
-        var claim = _quickConnect.TryClaim(secret);
+        var claim = _quickConnect.TryClaim(request.Secret);
         switch (claim.Status)
         {
             case QuickConnectClaimStatus.Pending:

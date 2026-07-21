@@ -45,10 +45,11 @@ POST /api/v1/quickconnect/initiate        { "deviceName": "Living Room TV" }
 → 200 { "code": "XK7P2M", "secret": "<64-hex>", "expiresInSeconds": 600, "pollIntervalSeconds": 3 }
 ```
 
-Display `code` to the user, then poll (respect `pollIntervalSeconds`):
+Display `code` to the user, then poll (respect `pollIntervalSeconds`). The secret goes
+in the POST body — never in a URL, where it would land in request logs:
 
 ```
-GET /api/v1/quickconnect/state?secret=<secret>
+POST /api/v1/quickconnect/state          { "secret": "<secret>" }
 → 200 { "status": "Pending" }                       — keep polling
 → 200 { "status": "Approved", "accessToken", "refreshToken" }   — done; delivered ONCE
 → 404                                                — expired / already claimed / disabled: restart pairing

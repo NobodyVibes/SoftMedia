@@ -100,4 +100,24 @@ public class ImageControllerSsrfTests : IDisposable
         Assert.IsType<PhysicalFileResult>(result);
         Assert.Contains(handler.Requested, u => u.Contains("covers.openlibrary.org"));
     }
+
+    // T6.5/I-8 — the INITIAL url must pass the scheme guard, not just redirect hops.
+    // An allowlisted HOST with a non-http(s) scheme must be rejected before any
+    // network activity; HttpClient's own scheme rejection is not the security boundary.
+    [Theory]
+    [InlineData("ftp://m.media-amazon.com/images/poster.jpg")]
+    [InlineData("file:///etc/passwd")]
+    [InlineData("gopher://covers.openlibrary.org/1")]
+    public async Task Proxy_NonHttpSchemeInitialUrl_IsRejected_AndNeverRequested(string url)
+    {
+        var handler = new ScriptedHandler
+        {
+            Respond = _ => new HttpResponseMessage(HttpStatusCode.OK),
+        };
+
+        var result = await Build(handler).ProxyImage(url, null);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Empty(handler.Requested);
+    }
 }

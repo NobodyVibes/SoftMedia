@@ -25,6 +25,13 @@ public class MediaHub : Hub
     private static readonly TimeSpan JoinWindow = TimeSpan.FromSeconds(10);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime WindowStart, int Count)> _joinRates = new();
 
+    /// <summary>
+    /// L-18: scan-progress broadcasts are scoped to this group instead of Clients.All —
+    /// the only consumers (TopBar scan bell, Settings scan cards) are admin-gated, so
+    /// non-admin connections have no business receiving library IDs + scan activity.
+    /// </summary>
+    public const string AdminGroup = "scan-admins";
+
     public MediaHub(ILogger<MediaHub> logger, IServiceScopeFactory scopeFactory)
     {
         _logger = logger;
@@ -184,6 +191,27 @@ public class MediaHub : Hub
 
     public override async Task OnConnectedAsync()
     {
+        // L-18: admins join the scan-progress group at connect. The role can NOT come from
+        // claims here — the SPA connects with a reduced-privilege media token that
+        // deliberately omits the role claim (TokenService.GenerateMediaToken) — so the DB
+        // is the authority. That also makes it live state: a demoted admin stops
+        // qualifying at their next connect. (Banned/deleted users never get this far —
+        // the media-token path re-checks user eligibility per request, audit L-3.)
+        var sub = Context.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                 ?? Context.User?.FindFirst("sub")?.Value;
+        if (Guid.TryParse(sub, out var userId))
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var isAdmin = await db.Users.AsNoTracking()
+                .AnyAsync(u => u.Id == userId && u.Role == Models.UserRole.Admin && !u.IsDeleted);
+            if (isAdmin)
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, AdminGroup);
+                _logger.LogDebug("Client {ConnectionId} joined {Group}", Context.ConnectionId, AdminGroup);
+            }
+        }
+
         _logger.LogInformation("Client connected: {ConnectionId}", Context.ConnectionId);
         await base.OnConnectedAsync();
     }

@@ -168,4 +168,24 @@ public class ImageCacheServiceSsrfTests : IDisposable
         Assert.Equal(url, result);
         Assert.DoesNotContain(handler.Requested, u => u.Contains("evilarchive.org"));
     }
+
+    // T6.5/I-8 — the INITIAL url must pass the scheme guard, not just redirect hops.
+    // An allowlisted HOST with a non-http(s) scheme must be rejected before any
+    // network activity; HttpClient's own scheme rejection is not the security boundary.
+    [Theory]
+    [InlineData("ftp://coverartarchive.org/release-group/abc/front")]
+    [InlineData("file:///etc/passwd")]
+    public async Task NonHttpSchemeInitialUrl_IsRejected_AndNeverRequested(string url)
+    {
+        var handler = new ScriptedHandler
+        {
+            Respond = _ => new HttpResponseMessage(HttpStatusCode.OK),
+        };
+
+        var result = await Build(handler).CacheAlbumCoverAsync(Guid.NewGuid(), url);
+
+        // Rejected before any request: the original URL comes back unchanged.
+        Assert.Equal(url, result);
+        Assert.Empty(handler.Requested);
+    }
 }

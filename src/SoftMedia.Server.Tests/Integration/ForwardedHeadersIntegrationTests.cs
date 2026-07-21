@@ -24,6 +24,11 @@ namespace SoftMedia.Server.Tests.Integration;
 /// only in this test factory sets RemoteIpAddress to loopback so the
 /// production middleware (which trusts loopback by default) accepts
 /// forwarded headers from the test client.
+// NR-WI-002c: this class hosts a full app (background services + SQLite) via its own
+// factory subclass, so it must join the serialized "Integration" collection — outside
+// it, it runs in parallel with the other integration hosts and races their SQLite
+// teardown (the intermittent "active statements"/FK-on-teardown failures).
+[Collection("Integration")]
 public class ForwardedHeadersIntegrationTests : IAsyncLifetime
 {
     private ForwardedHeadersTestFactory _factory = null!;

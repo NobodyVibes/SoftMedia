@@ -227,9 +227,9 @@ All questions were resolved 2026-07-21. The maintainer directed "complete photo 
 
 | Item | Status | Branch / commit | Notes |
 |------|--------|-----------------|-------|
-| NR-WI-001 | Not Started | | |
-| NR-WI-002 | Not Started | | |
-| NR-WI-003 | Not Started | | |
+| NR-WI-001 | **Complete** (2026-07-21) | `main` @ ff to `18119c1`; tag `v0.9.0-rc1` after closeout merge | Direct merge per Q1; suites verified pre-merge |
+| NR-WI-002 | **Complete** (2026-07-21) | `session-1/wave-2-closeout` | T6.5 + T6.6 + test-infra fix + **L-18 CLOSED** (not re-deferred); details in §8 |
+| NR-WI-003 | **Complete** (2026-07-21) | n/a (local files) | login.json/token.json deleted; first-run already forces password change (`DbInitializer` seeds `MustChangePassword=true`, enforced server-side). **Operator action still open: if the admin password is still `admin123`, change it.** |
 | NR-WI-004 | Not Started | | |
 | NR-WI-005 | Not Started | | |
 | NR-WI-006 | Not Started | | |
@@ -256,3 +256,15 @@ Maintainer directed completing the photo implementation immediately (ahead of Se
 - **Client:** Photo enabled in `LibraryForm`; `PhotoDetailView` displays the image (full-res letterbox, open-original control, ←/→ keys, resolution card); `MediaDetailLayout` hides Play/Watched/Watchlist for photos and uses a square poster crop. Verified: hero rotation and home rows already exclude photos; search photo hits route to the detail page.
 - **Verification:** server suite green (full run) incl. 19 new photo tests; client `npm run build` clean; client 262/262.
 - **Discovered for the backlog:** none blocking; HEIC display and timeline/map grouping noted as post-1.0 polish in `docs/user-docs/features/photos.md`.
+
+### 2026-07-21 — Session 1 (Phase A) complete: merge, closeout, hygiene, RC tag
+
+- **NR-WI-001:** photo work committed by the maintainer as `18119c1`; `main` fast-forwarded from `a8a9ea0` (57 commits — all of wave 2 + July remediation + photos). Leftover untracked `ffprobe.exe.bak` deleted. Tag `v0.9.0-rc1` placed after the closeout merge (minor deviation from the item spec — tagging after closeout gives the RC the security fixes; recorded here per §5).
+- **NR-WI-002 (branch `session-1/wave-2-closeout`):**
+  - **T6.5** — initial-URL http(s) scheme guard at both `ImageCacheService.CacheImageAsync` and `ImageController.ProxyImage`; 5 theory tests (ftp/file/gopher × allowlisted hosts) assert rejection with zero network activity.
+  - **T6.6** — audit: app code never logs query strings; pinned `Microsoft.AspNetCore.Hosting.Diagnostics` to Warning in both appsettings (its Information-level "Request starting" lines carry `?token=` JWTs); `LoggingTokenScrubConfigTests` guards the pin. NR-WI-011 note: the future in-app LogLevel control must not remove this category pin.
+  - **Test-infra flake RESOLVED** — root cause was NOT missing `ClearAllPools`: `DlnaIntegrationTests` + `ForwardedHeadersIntegrationTests` hosted full apps outside the serialized "Integration" collection (factory subclasses, not `IntegrationTestBase` derivatives). Both now carry `[Collection("Integration")]`.
+  - **L-18 CLOSED (was expected to be re-deferred)** — `981e387` removed the app-wide toast; the only ScanProgress consumers (TopBar bell, Settings cards) are admin-gated (`enabled: isAdmin`), so the `Clients.All` broadcast was pure leak. Now targets `MediaHub.AdminGroup` ("scan-admins"), populated in `OnConnectedAsync` via **DB role lookup** — claims are useless here because the SPA connects with a media token that deliberately omits the role claim. 4 tests in `MediaHubAdminGroupTests` (admin joins, regular/deleted-admin/unknown don't). Client unchanged. Residual: an admin demoted mid-connection keeps the group until reconnect (L-24 class, noted as further-reduced).
+- **NR-WI-003:** `login.json` (root + server) and `token.json` deleted from disk (already gitignored/untracked). `DbInitializer` verified to seed admin with `MustChangePassword=true` (enforced in-pipeline) — first-run cannot ship usable default credentials. **Open operator action:** rotate the live admin password if still `admin123` (cannot be done for the operator without locking them out).
+- **Verification:** targeted closeout tests 22/22; full server suite green (see commit); client untouched by closeout (photo-wave client suites were 262/262 same day).
+- **Next:** Session 2 (Phase B — NR-WI-004..007). Note for NR-WI-011 implementer: keep the `Hosting.Diagnostics` pin.

@@ -391,10 +391,13 @@ public class ImageCacheService : IImageCacheService
 
         try
         {
-            // Security: Validate URL host against allowlist (SSRF prevention)
-            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            // Security: Validate URL host against allowlist (SSRF prevention).
+            // T6.5/I-8: the INITIAL url must pass the same scheme guard as redirect hops —
+            // don't rely on HttpClient to reject non-http(s) schemes downstream.
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
             {
-                _logger.LogWarning("Invalid URL format: {Url}", url);
+                _logger.LogWarning("Invalid or non-http(s) URL: {Url}", url);
                 return url;
             }
             

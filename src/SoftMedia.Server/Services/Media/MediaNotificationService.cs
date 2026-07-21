@@ -142,7 +142,10 @@ public class MediaNotificationService : IMediaNotificationService, IDisposable
                     break;
 
                 case NotificationType.ScanProgress:
-                    await _hubContext.Clients.All
+                    // L-18: scoped to admin connections. The only consumers (TopBar scan
+                    // bell, Settings scan cards) are admin-gated; the old Clients.All
+                    // leaked library IDs + scan activity to every authenticated user.
+                    await _hubContext.Clients.Group(Hubs.MediaHub.AdminGroup)
                         .SendAsync("ScanProgress", n.LibraryId.ToString(), n.Processed, n.Total, n.Status, n.Stage);
                     break;
 

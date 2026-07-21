@@ -18,6 +18,11 @@ namespace SoftMedia.Server.Tests.Integration;
 /// Uses a test factory that sets RemoteIpAddress to loopback (same pattern as
 /// ForwardedHeadersIntegrationTests) so the production LAN-only gate — correctly fail-safe on a
 /// null IP — sees a LAN client.
+// NR-WI-002c: this class hosts a full app (background services + SQLite) via its own
+// factory subclass, so it must join the serialized "Integration" collection — outside
+// it, it runs in parallel with the other integration hosts and races their SQLite
+// teardown (the intermittent "active statements"/FK-on-teardown failures).
+[Collection("Integration")]
 public class DlnaIntegrationTests : IAsyncLifetime
 {
     private DlnaTestFactory _factory = null!;

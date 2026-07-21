@@ -3,6 +3,7 @@ import { Trophy, DollarSign, Film, Pen } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
 import CastStripItem from './CastStripItem';
 import CollectionStripSection from './CollectionStripSection';
+import { ExtrasSection } from './ExtrasSection';
 
 interface MovieDetailViewProps {
     item: MediaItem;
@@ -118,6 +119,9 @@ export default function MovieDetailView({ item }: MovieDetailViewProps) {
                         )}
                     </div>
                 )}
+
+                {/* NR-WI-014 — trailers/samples/featurettes beside the movie file */}
+                <ExtrasSection mediaId={item.id} />
             </div>
         </>
     );

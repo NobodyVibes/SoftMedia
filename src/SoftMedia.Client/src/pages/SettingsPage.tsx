@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { Settings, Users, Library as LibraryIcon, Save, RefreshCw, Database, Play, Plus, AlertTriangle, RotateCcw, X } from 'lucide-react';
+import { Settings, Users, Library as LibraryIcon, Save, RefreshCw, Database, Play, Plus, AlertTriangle, RotateCcw, X, Globe } from 'lucide-react';
 import { cn, isIntervalHoursEnabled } from '../lib/utils';
 import { Combobox } from '../components/ui/Combobox';
 import { settingsService, mergeSettingsPreservingEdits, type AppSetting } from '../services/settingsService';
@@ -21,6 +21,7 @@ import { LibraryListTable } from '../components/library/LibraryListTable';
 import { LibraryForm } from '../components/library/LibraryForm';
 import { ConfirmationModal } from '../components/modals/ConfirmationModal';
 import { LibraryScanProgress } from '../components/library/LibraryScanProgress';
+import { ServerNetworkSection } from '../components/admin/ServerNetworkSection';
 import type { Library, LibraryScanJob, FileWatcherIssue } from '../types';
 import { adminService } from '../services/adminService';
 import { notificationService, type OMDbUsage, type SystemNotification } from '../services/notificationService';
@@ -385,12 +386,10 @@ export default function SettingsPage() {
         }
     };
 
-    const languageOptions = [
-        "en-US", "es-ES", "fr-FR", "de-DE", "it-IT", "pt-BR", "ja-JP", "zh-CN", "ru-RU"
-    ];
-
+    // Must match the server's accepted values (RuntimeLogLevelProvider.ValidLevels) —
+    // "Info" would be silently ignored server-side; it's "Information".
     const logLevelOptions = [
-        "Trace", "Debug", "Info", "Warning", "Error", "Critical"
+        "Trace", "Debug", "Information", "Warning", "Error", "Critical"
     ];
 
     const movieProviders = ["Wikidata", "OMDb"];
@@ -729,14 +728,6 @@ export default function SettingsPage() {
                                     </button>
                                     <span className="text-sm text-gray-400">{setting.value === 'true' ? 'Enabled' : 'Disabled'}</span>
                                 </div>
-                            ) : setting.key === 'Language' ? (
-                                <Combobox
-                                    value={setting.value}
-                                    onChange={(val) => handleChange(setting.key, val)}
-                                    options={languageOptions}
-                                    placeholder="Select language..."
-                                    className="max-w-md"
-                                />
                             ) : setting.key === 'LogLevel' ? (
                                 <Combobox
                                     value={setting.value}
@@ -1534,6 +1525,29 @@ export default function SettingsPage() {
                                     <h3 className="text-lg font-semibold text-white mb-4">Playback Detection</h3>
                                     <p className="text-xs text-gray-500 mb-4">Cross-episode fingerprint detection for intros and end credits. Runs once per series after a library scan; cached after that. Per-user "auto-skip" behavior lives under Client Settings → Playback.</p>
                                     {renderSettingsGroup('Playback')}
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'server' && (
+                            <div>
+                                <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
+                                    <Globe className="text-primary" /> Server &amp; Network
+                                </h2>
+                                {renderSettingsGroup('Network')}
+                                <ServerNetworkSection />
+
+                                {/* NR-WI-012 — webhook delivery flags. The Allow* toggles are
+                                    SSRF-guard escape hatches; the copy must say so. */}
+                                <div className="mt-8 border-t border-white/5 pt-8">
+                                    <h3 className="text-lg font-semibold text-white mb-2">Webhook Delivery</h3>
+                                    <p className="text-sm text-amber-300/90 mb-4 flex items-start gap-2">
+                                        <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                        The "Allow HTTP / Loopback / Private Network" toggles weaken the
+                                        SSRF protection on outbound webhooks. Only enable them if your
+                                        webhook receiver genuinely lives on this machine or your LAN.
+                                    </p>
+                                    {renderSettingsGroup('Webhooks')}
                                 </div>
                             </div>
                         )}

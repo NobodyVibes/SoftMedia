@@ -29,17 +29,66 @@ public class StreamController : ControllerBase
     private readonly IActiveStreamRegistry _streamRegistry;
     private readonly AppDbContext _context;
     private readonly ILogger<StreamController> _logger;
+    private readonly Services.Media.IExtrasService _extras;
+    private readonly IMediaRepository _mediaRepository;
+    private readonly IStreamSecurityService _streamSecurity;
 
     public StreamController(
         IMediaService mediaService,
         IActiveStreamRegistry streamRegistry,
         AppDbContext context,
-        ILogger<StreamController> logger)
+        ILogger<StreamController> logger,
+        Services.Media.IExtrasService extras,
+        IMediaRepository mediaRepository,
+        IStreamSecurityService streamSecurity)
     {
         _mediaService = mediaService;
         _streamRegistry = streamRegistry;
         _context = context;
         _logger = logger;
+        _extras = extras;
+        _mediaRepository = mediaRepository;
+        _streamSecurity = streamSecurity;
+    }
+
+    /// <summary>
+    /// NR-WI-014 — companion clips (trailers/samples/featurettes) for a Movie or Series.
+    /// Filesystem-probed at request time; no DB rows exist for extras by design.
+    /// </summary>
+    [HttpGet("{id:guid}/extras")]
+    public async Task<ActionResult<List<Services.Media.MediaExtra>>> GetExtras(Guid id)
+    {
+        // ACL + rating ceiling: the repository resolves denied items to null -> 404.
+        var item = await _mediaRepository.GetByIdWithLibraryAsync(id);
+        if (item is null) return NotFound();
+
+        return Ok(_extras.GetExtras(item));
+    }
+
+    /// <summary>
+    /// NR-WI-014 — direct-play stream of one extra. Extras are small companion clips,
+    /// so v1 is direct play only (no transcode ladder). The path is re-probed and
+    /// re-jailed on every request — the index is a hint, never a capability.
+    /// </summary>
+    [HttpGet("{id:guid}/extras/{index:int}")]
+    [HttpHead("{id:guid}/extras/{index:int}")]
+    public async Task<IActionResult> GetExtraStream(Guid id, int index)
+    {
+        var item = await _mediaRepository.GetByIdWithLibraryAsync(id);
+        if (item?.Library is null) return NotFound();
+
+        var path = _extras.ResolveExtraPath(item, index);
+        if (path is null || !System.IO.File.Exists(path)) return NotFound();
+
+        // Same symlink-resolved library jail as the main stream path. A hostile file
+        // that appeared in an extras folder still can't escape the library roots.
+        if (!_streamSecurity.IsPathAuthorized(path, item.Library.Paths))
+        {
+            _logger.LogWarning("Extra stream blocked by library jail: {Path}", path);
+            return NotFound();
+        }
+
+        return PhysicalFile(path, Helpers.MimeTypeResolver.GetMimeType(path), enableRangeProcessing: true);
     }
 
     /// <summary>

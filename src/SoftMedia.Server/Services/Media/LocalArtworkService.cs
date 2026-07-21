@@ -141,16 +141,14 @@ public class LocalArtworkService : ILocalArtworkService
     private static bool OwnsCurrentArt(string? url)
         => url != null && url.Contains(SidecarKeySuffix + ".", StringComparison.OrdinalIgnoreCase);
 
-    // Companion clips that don't make a folder "shared" (Radarr/Kodi conventions).
-    private static readonly string[] CompanionSuffixes = { "-trailer", "-sample", "-extra" };
-
     private static int CountVideoFiles(string[] files)
         // MediaExtensions stores extensions WITHOUT the dot ("mkv"), Path.GetExtension yields ".mkv".
         // Trailers/samples beside the movie are companions of the SAME title, not other movies —
         // counting them broke the dedicated-folder detection for common Radarr layouts.
+        // (Suffix list centralized in MediaCompanions for NR-WI-014.)
         => files.Count(f =>
             Constants.MediaExtensions.Video.Contains(Path.GetExtension(f).TrimStart('.'), StringComparer.OrdinalIgnoreCase)
-            && !CompanionSuffixes.Any(s => Path.GetFileNameWithoutExtension(f).EndsWith(s, StringComparison.OrdinalIgnoreCase)));
+            && !Constants.MediaCompanions.HasCompanionSuffix(f));
 
     private static IEnumerable<string> Candidates(string? stem, string stemSuffix, bool includeBareNames, params string[] bareNames)
     {

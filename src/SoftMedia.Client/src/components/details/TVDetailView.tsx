@@ -10,6 +10,7 @@ import LoadingImage from '../ui/LoadingImage';
 import useSequentialReveal from '../../hooks/useSequentialReveal';
 import HorizontalScrollList, { type HorizontalScrollListHandle } from '../ui/HorizontalScrollList';
 import CastStripItem from './CastStripItem';
+import { ExtrasSection } from './ExtrasSection';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 
 interface ScrollToIndexHandle {
@@ -713,6 +714,9 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
                         </HorizontalScrollList>
                     </div>
                 )}
+
+                {/* NR-WI-014 — extras in the series folder (extras/, trailers/, …) */}
+                <ExtrasSection mediaId={item.id} />
             </div>
         </>
     );

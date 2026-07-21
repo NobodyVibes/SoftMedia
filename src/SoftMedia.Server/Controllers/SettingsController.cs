@@ -16,11 +16,16 @@ public class SettingsController : ControllerBase
 {
     private readonly ISettingsService _settingsService;
     private readonly MetadataRefreshService _metadataRefreshService;
+    private readonly IRuntimeLogLevel _runtimeLogLevel;
 
-    public SettingsController(ISettingsService settingsService, MetadataRefreshService metadataRefreshService)
+    public SettingsController(
+        ISettingsService settingsService,
+        MetadataRefreshService metadataRefreshService,
+        IRuntimeLogLevel runtimeLogLevel)
     {
         _settingsService = settingsService;
         _metadataRefreshService = metadataRefreshService;
+        _runtimeLogLevel = runtimeLogLevel;
     }
 
     [HttpGet]
@@ -33,6 +38,15 @@ public class SettingsController : ControllerBase
     public async Task<IActionResult> UpdateSettings([FromBody] List<AppSetting> settings)
     {
         await _settingsService.UpdateSettingsAsync(settings);
+
+        // NR-WI-011: log verbosity applies immediately — this controller is the only
+        // write path for settings, so the hook lives here rather than in the service.
+        var logLevel = settings.FirstOrDefault(s => s.Key == "LogLevel")?.Value;
+        if (!string.IsNullOrEmpty(logLevel))
+        {
+            _runtimeLogLevel.Apply(logLevel);
+        }
+
         return Ok();
     }
     

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Film, Tv, Music, Book, LogOut, Gamepad2, Image, Settings, ChevronRight, ChevronDown, Play, Database, Users, ShieldCheck, User, type LucideIcon } from 'lucide-react';
+import { Home, Film, Tv, Music, Book, LogOut, Gamepad2, Image, Settings, ChevronRight, ChevronDown, Play, Database, Users, ShieldCheck, User, Globe, type LucideIcon } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useUIStore } from '../../store/uiStore';
 import { useLibraries } from '../../hooks/useLibrary';
@@ -53,6 +53,7 @@ const settingsNavTree = [
         ]
     },
     { id: 'users', label: 'Account Management', icon: Users, path: '/settings/users', adminOnly: true },
+    { id: 'server', label: 'Server & Network', icon: Globe, path: '/settings/server', adminOnly: true },
     { id: 'admin', label: 'Admin Dashboard', icon: ShieldCheck, path: '/settings/admin', adminOnly: true },
 ];
 

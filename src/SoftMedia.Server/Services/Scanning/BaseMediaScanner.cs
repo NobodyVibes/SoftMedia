@@ -465,7 +465,19 @@ public abstract class BaseMediaScanner : IMediaScanner
         }
 
         var extension = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
-        return SupportedExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
+        if (!SupportedExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase)) return false;
+
+        // NR-WI-014: Movie/TV companion clips (a "-trailer"/"-sample" suffix, or files in
+        // an extras/trailers subfolder) belong to their title's detail page (ExtrasService)
+        // — admitting them here would mint junk library items ("Movie-trailer" cards).
+        // Previously-admitted companions purge as orphans on the next scan.
+        if ((SupportedType == LibraryType.Movie || SupportedType == LibraryType.TV)
+            && Constants.MediaCompanions.IsCompanion(filePath))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>

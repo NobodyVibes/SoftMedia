@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
@@ -31,6 +32,18 @@ function authErrorMessage(err: unknown, fallback: string): string {
 export default function LoginPage() {
     const navigate = useNavigate();
     const login = useAuthStore((state) => state.login);
+
+    // NR-WI-010 — server identity. Anonymous endpoint; falls back to "SoftMedia"
+    // silently so a fetch failure can never block the login form.
+    const { data: branding } = useQuery<{ serverName: string; loginMessage: string | null }>({
+        queryKey: ['branding'],
+        queryFn: async () => (await api.get('/system/branding')).data,
+        staleTime: 5 * 60 * 1000,
+        retry: 1,
+    });
+    useEffect(() => {
+        if (branding?.serverName) document.title = branding.serverName;
+    }, [branding?.serverName]);
 
     const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
     const [newPassword, setNewPassword] = useState('');
@@ -147,11 +160,11 @@ export default function LoginPage() {
             <div className="w-full max-w-md p-8 rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl relative z-10">
                 <div className="text-center mb-8">
                     <h1 className="text-4xl font-bold bg-clip-text text-transparent bg-brand-gradient mb-2">
-                        SoftMedia
+                        {branding?.serverName ?? 'SoftMedia'}
                     </h1>
                     <h2 className="text-xl text-white font-medium">Welcome Back</h2>
                     <p className="text-sm text-gray-400 mt-2">
-                        Sign in to access your personal media library
+                        {branding?.loginMessage ?? 'Sign in to access your personal media library'}
                     </p>
                 </div>
 

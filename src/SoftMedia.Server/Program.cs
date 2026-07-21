@@ -21,6 +21,20 @@ if (args.Contains("--generate-jwt-secret"))
 
 var builder = WebApplication.CreateBuilder(args);
 
+// NR-WI-011 — runtime log level: one instance serves as BOTH a configuration source
+// (the logging system reloads on its change token) and the DI-resolvable switch the
+// settings UI applies through. It only contributes Logging:LogLevel:Default, so the
+// more-specific category pins in appsettings (incl. the T6.6 token-safety pin on
+// Hosting.Diagnostics) always outrank it.
+var runtimeLogLevel = new SoftMedia.Server.Services.Infrastructure.RuntimeLogLevelProvider();
+((IConfigurationBuilder)builder.Configuration).Add(runtimeLogLevel);
+builder.Services.AddSingleton<SoftMedia.Server.Services.Infrastructure.IRuntimeLogLevel>(runtimeLogLevel);
+
+// NR-WI-011 — capped in-memory log capture for the admin log viewer.
+var logRingBuffer = new SoftMedia.Server.Services.Infrastructure.LogRingBuffer();
+builder.Services.AddSingleton(logRingBuffer);
+builder.Logging.AddProvider(new SoftMedia.Server.Services.Infrastructure.RingBufferLoggerProvider(logRingBuffer));
+
 // Add services to the container.
 builder.Services.AddMemoryCache();
 
@@ -323,6 +337,12 @@ app.MapHub<MediaHub>("/hubs/media");
 using (var scope = app.Services.CreateScope())
 {
     await DbInitializer.InitializeAsync(scope.ServiceProvider);
+
+    // NR-WI-011: apply the persisted log level now that the DB (and its seeded
+    // defaults) exist. Later changes apply through SettingsController.
+    var settingsService = scope.ServiceProvider
+        .GetRequiredService<SoftMedia.Server.Services.Infrastructure.ISettingsService>();
+    runtimeLogLevel.Apply(await settingsService.GetSettingAsync("LogLevel", "Information"));
 }
 
 app.Run();

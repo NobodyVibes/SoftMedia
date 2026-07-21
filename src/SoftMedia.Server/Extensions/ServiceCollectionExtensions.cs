@@ -502,6 +502,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IArtworkRepairService, Services.Media.ArtworkRepairService>();
         services.AddScoped<Services.Media.IGenreMaintenanceService, Services.Media.GenreMaintenanceService>();
         services.AddScoped<Services.Media.IBrowseService, Services.Media.BrowseService>();
+        services.AddScoped<Services.Media.IExtrasService, Services.Media.ExtrasService>(); // NR-WI-014
 
         return services;
     }

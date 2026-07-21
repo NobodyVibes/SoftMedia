@@ -236,11 +236,11 @@ All questions were resolved 2026-07-21. The maintainer directed "complete photo 
 | NR-WI-007 | **Complete** (2026-07-21) | `session-2/client-onboarding` | OpenAPI in all envs behind `EnableApiDocs` (default on, runtime toggle) |
 | NR-WI-008 | Deferred | | Maintainer decision 2026-07-21; see Phase C note |
 | NR-WI-009 | Deferred | | Maintainer decision 2026-07-21; see Phase C note |
-| NR-WI-010 | Not Started | | |
-| NR-WI-011 | Not Started | | |
-| NR-WI-012 | Not Started | | |
+| NR-WI-010 | **Complete** (2026-07-21) | `session-4/settings-polish` | Server & Network page; branding endpoint; see §8 deviation note on PublishedBaseUrl |
+| NR-WI-011 | **Complete** (2026-07-21) | `session-4/settings-polish` | Runtime LogLevel (config-provider based) + in-memory log viewer; dead branches resolved |
+| NR-WI-012 | **Complete** (2026-07-21) | `session-4/settings-polish` | Webhooks group rendered with SSRF-warning copy |
 | NR-WI-013 | **Complete** (2026-07-21) | `security/hardening-wave-2` (uncommitted at completion; see §8) | Finish path; +19 server tests; see item body |
-| NR-WI-014 | Not Started | | |
+| NR-WI-014 | **Complete** (2026-07-21) | `session-4/settings-polish` | Filesystem-probed extras (no schema) + scanner companion-skip; see §8 |
 | NR-WI-015 | Not Started | | Operator required |
 | NR-WI-016 | Not Started | | Operator required |
 
@@ -282,3 +282,15 @@ Branch `session-2/client-onboarding` off `main`. All four items landed:
 - **Verification:** server suite full run green (see commit), client `npm run build` clean, client 262/262. UI-surface note: `EnableApiDocs` sits in the `Network` settings group which has no settings-page section until NR-WI-010 — togglable via the settings API meanwhile.
 - **Post-merge security-review fix (same day):** the Quick Connect poll originally took the secret as `GET /state?secret=` — a credential in a query string, the exact pattern WS-6 removed elsewhere (query strings land in request logs). Changed to `POST /state` with `{secret}` in the JSON body before any client shipped; doc + tests updated.
 - **Next:** Session 4 (Phase D — settings surface & polish; Session 3/Docker is deferred). Session 5 operators: Quick Connect end-to-end on a real second device is worth a live pass.
+
+### 2026-07-21 — Session 4 (Phase D) complete: settings surface & polish
+
+Branch `session-4/settings-polish` off `main`. NR-WI-010/011/012/014 landed (013/photos shipped earlier):
+
+- **NR-WI-010:** new admin **Server & Network** settings page (sidebar id `server`) hosting the `Network` group (ServerName, LoginMessage, PublishedBaseUrl, EnableApiDocs, LogLevel), a read-only connection card (`GET /api/v1/system/connection-info`: LAN IPv4s, request scheme/host, published URL), and the NR-WI-012 webhook block. `GET /api/v1/system/branding` is the one **anonymous** endpoint (login page needs the name pre-auth; discloses name + login message only); LoginPage consumes it for heading/message/document.title. **Deviation:** the item spec said PublishedBaseUrl is "consumed by at least webhooks and OpenAPI" — audit found NOTHING in the codebase emits absolute self-URLs (webhook payloads carry no links), so it is seeded + shown in connection info and reserved for future emitters rather than artificially consumed.
+- **NR-WI-011:** runtime log verbosity via `RuntimeLogLevelProvider` — one instance is BOTH an IConfigurationSource (logging reloads on its change token) and the DI `IRuntimeLogLevel` (SettingsController applies on update; Program applies the persisted value at startup). It contributes ONLY `Logging:LogLevel:Default`, so the T6.6 `Hosting.Diagnostics=Warning` pin always outranks it (unit-tested). Log viewer reads a capped (2000) in-memory `LogRingBuffer` via `GET /api/v1/system/logs` — no file sink exists and none was added; nothing persists or leaves the machine. Dead SettingsPage branches resolved: `LogLevel` now renders for real (options fixed: server accepts "Information", not "Info"); `Language` branch deleted (server language is per-user, not a server setting).
+- **NR-WI-012:** `Webhooks` group renders on the Server & Network page with explicit SSRF-warning copy on the Allow-HTTP/Loopback/PrivateNetwork escape hatches.
+- **NR-WI-014:** extras are **filesystem-probed at request time — deliberately no DB rows/schema**, so they can never leak into browse/search/home/hero. `MediaCompanions` (suffixes + well-known folders) is the shared convention constant; `ExtrasService` probes movie folders (stem-filtered for shared folders) and series folders; endpoints live on StreamController (`GET /api/v1/stream/{id}/extras[/{index}]`) — already a media route, so the `<video>` tag's query media token works; the stream path re-probes and re-jails per request (index is a hint, never a capability). **Discovered + fixed en route: scanners previously ingested `-trailer.mkv` files as their own Movie items** — Movie/TV scanners now skip companions in `CanHandleFile` (old junk items orphan-purge on next scan). Client: `ExtrasSection` on Movie + TV detail pages with a direct-play modal (v1 limitation: extras don't transcode). LocalArtworkService's private suffix list unified into `MediaCompanions`.
+- **Caught by the repo's own a11y guard:** the extras modal's click-away `<div onClick>` backdrop failed `a11yGuards.test.ts`; reworked to the house pattern (explicit close button + Escape handler, no click-away divs).
+- **Verification:** Session-4 targeted tests 15/15 (ExtrasService probe/jail/scanner-skip, System endpoints authz, RuntimeLogLevel/ring buffer); full server suite green (see commit); client build clean, 262/262.
+- **Next:** Session 5 (Phase E — operator present): CSP enforce decision, Cast/DLNA/Quick Connect live passes, manual QA sweep, `v1.0.0` cut. Docker (Phase C) remains deferred.

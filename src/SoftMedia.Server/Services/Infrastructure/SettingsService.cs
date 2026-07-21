@@ -117,6 +117,16 @@ public class SettingsService : ISettingsService
             // off (takes effect immediately, no restart). Development always serves it.
             new() { Key = "EnableApiDocs", Value = "true", Group = "Network", Description = "Serve the interactive API reference (Swagger UI and the OpenAPI document) at /swagger. Third-party client apps use this contract to integrate with your server. Disable to hide it." },
 
+            // NR-WI-010 — server identity & network.
+            new() { Key = "ServerName", Value = "SoftMedia", Group = "Network", Description = "This server's display name — shown in the browser tab and on the login page." },
+            new() { Key = "LoginMessage", Value = "", Group = "Network", Description = "Optional message shown on the login page (e.g. who to contact for an account). Empty = none." },
+            new() { Key = "PublishedBaseUrl", Value = "", Group = "Network", Description = "The public URL this server is reachable at through your reverse proxy (e.g. https://media.example.com). Used wherever an absolute link to this server is needed. Empty = not configured." },
+
+            // NR-WI-011 — runtime log verbosity. Applied immediately, no restart. The
+            // token-safety pin (Hosting.Diagnostics=Warning) is a more-specific category
+            // and always outranks this Default — raising to Debug can't leak media URLs.
+            new() { Key = "LogLevel", Value = "Information", Group = "Network", Description = "Server log verbosity (applies immediately). Debug is useful when reporting a problem; Information is the sensible default." },
+
             // DLNA (P4-004) — for smart TVs (LG/Samsung) that lack Chromecast.
             new() { Key = "EnableDlna", Value = "false", Group = "DLNA", Description = "Expose selected libraries as a DLNA/UPnP media server so smart TVs on the LAN can browse and play them directly. SECURITY: DLNA has no login, so any device on your LAN can read the EXPOSED libraries (LAN-only; never exposed to the internet). Choose which libraries to expose via 'DlnaExposedLibraries'. Default off. Requires a server restart to take effect." },
             new() { Key = "DlnaServerName", Value = "SoftMedia", Group = "DLNA", Description = "Friendly name shown for the media server on your TV." },

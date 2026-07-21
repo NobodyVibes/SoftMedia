@@ -84,3 +84,15 @@ music_diagnostic.ps1
 /src/SoftMedia.Server/ffmpeg.exe.bak
 /src/SoftMedia.Server/ffprobe.exe.bak
 *.exe.bak
+/src/SoftMedia.Server/ffmpeg.exe
+/src/SoftMedia.Server/ffprobe.exe
+
+# History-purge follow-up (2026-07-21): these bloated the repo to 5.3 GiB and broke every
+# push (GitHub HTTP 500). Purged from all history with git filter-repo; rules prevent return.
+/example-media/
+/src/SoftMedia.Server/test_transcode/
+/src/SoftMedia.Server/test_hw/
+/src/SoftMedia.Server/test_sw_manual/
+/src/SoftMedia.Server/test_media.mkv
+/src/SoftMedia.Server/test_noseek.mp4
+*.log

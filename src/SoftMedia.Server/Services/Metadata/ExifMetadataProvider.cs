@@ -1,6 +1,6 @@
 using SoftMedia.Server.Models;
+using SoftMedia.Server.Services.Media;
 using System.Text.Json;
-using MetadataExtractor;
 
 namespace SoftMedia.Server.Services.Metadata;
 
@@ -18,77 +18,33 @@ public class ExifMetadataProvider : IMetadataProvider
 
     public Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
     {
-        var title = item.Title;
-        var path = item.Path;
-        try
+        // Extraction lives in PhotoExifReader, shared with PhotoScanner's inline scan-time
+        // read — this provider is the manual-refresh path through the metadata queue.
+        var exif = PhotoExifReader.TryRead(item.Path);
+        if (exif == null)
         {
-            if (!File.Exists(path)) return Task.FromResult<MetadataResult?>(null);
-
-            var directories = ImageMetadataReader.ReadMetadata(path);
-            var metadata = new MetadataResult();
-
-            // Photo-specific EXIF fields (camera, iso, fstop, exposure, gps, dateTaken)
-            // remain in Extra by design — they are display-only and do not require
-            // relational querying. Year is promoted to MetadataResult.Year for consistency.
-            var extraData = new Dictionary<string, string>();
-
-            // Helper to find tag value across directories
-            string? GetTagValue(string tagName)
-            {
-                foreach (var directory in directories)
-                {
-                    var tag = directory.Tags.FirstOrDefault(t => t.Name.Equals(tagName, StringComparison.OrdinalIgnoreCase));
-                    if (tag != null) return tag.Description;
-                }
-                return null;
-            }
-
-            var make = GetTagValue("Make");
-            var model = GetTagValue("Model");
-            if (!string.IsNullOrEmpty(make) || !string.IsNullOrEmpty(model))
-            {
-                extraData["camera"] = $"{make} {model}".Trim();
-            }
-
-            var iso = GetTagValue("ISO Speed Ratings");
-            if (!string.IsNullOrEmpty(iso)) extraData["iso"] = iso;
-
-            var fnumber = GetTagValue("F-Number");
-            if (!string.IsNullOrEmpty(fnumber)) extraData["fstop"] = fnumber;
-
-            var exposure = GetTagValue("Exposure Time");
-            if (!string.IsNullOrEmpty(exposure)) extraData["exposure"] = exposure;
-
-            var dateTaken = GetTagValue("Date/Time Original");
-            if (!string.IsNullOrEmpty(dateTaken) && DateTime.TryParseExact(dateTaken, "yyyy:MM:dd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out var date))
-            {
-                extraData["dateTaken"] = date.ToString("yyyy-MM-dd HH:mm:ss");
-                metadata.Year = date.Year;
-            }
-
-            // GPS
-            var lat = GetTagValue("GPS Latitude");
-            var lon = GetTagValue("GPS Longitude");
-            if (!string.IsNullOrEmpty(lat) && !string.IsNullOrEmpty(lon))
-            {
-                extraData["gps"] = $"{lat}, {lon}";
-            }
-
-            if (extraData.Count > 0)
-            {
-                metadata.Extra = new Dictionary<string, JsonElement>();
-                foreach (var kvp in extraData)
-                {
-                    metadata.Extra[kvp.Key] = JsonSerializer.SerializeToElement(kvp.Value);
-                }
-            }
-
-            return Task.FromResult<MetadataResult?>(metadata);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, $"Error reading EXIF for {path}");
+            _logger.LogWarning("Could not read EXIF metadata for {Path}", item.Path);
             return Task.FromResult<MetadataResult?>(null);
         }
+
+        var metadata = new MetadataResult
+        {
+            Year = exif.Year,
+            ReleaseDate = exif.DateTaken,
+        };
+
+        // Photo-specific EXIF fields (camera, iso, fstop, exposure, gps, dateTaken)
+        // remain in Extra by design — they are display-only and do not require
+        // relational querying. MetadataAggregator persists them to MediaItem.ExifJson.
+        if (exif.Fields.Count > 0)
+        {
+            metadata.Extra = new Dictionary<string, JsonElement>();
+            foreach (var kvp in exif.Fields)
+            {
+                metadata.Extra[kvp.Key] = JsonSerializer.SerializeToElement(kvp.Value);
+            }
+        }
+
+        return Task.FromResult<MetadataResult?>(metadata);
     }
 }

@@ -52,6 +52,11 @@ public static class MimeTypeResolver
         {
             _provider.Mappings.Add(".weba", MediaConstants.MimeTypes.AudioWebm);
         }
+        // Photo formats (jpg/png/gif/webp/bmp/tiff are built in; HEIC is not)
+        if (!_provider.Mappings.ContainsKey(".heic"))
+        {
+            _provider.Mappings.Add(".heic", "image/heic");
+        }
         // Book formats
         if (!_provider.Mappings.ContainsKey(".pdf"))
         {

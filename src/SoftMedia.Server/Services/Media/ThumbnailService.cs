@@ -67,12 +67,23 @@ public class ThumbnailService : IThumbnailService
                     return null;
                 }
 
-                using var original = SKBitmap.Decode(sourcePath);
+                // EXIF orientation must be applied here: browsers auto-rotate originals
+                // from their EXIF, but the WebP re-encode below strips it — without this,
+                // portrait phone photos render sideways as thumbnails.
+                var origin = SKEncodedOrigin.TopLeft;
+                using (var codec = SKCodec.Create(sourcePath))
+                {
+                    if (codec != null) origin = codec.EncodedOrigin;
+                }
+
+                var original = SKBitmap.Decode(sourcePath);
                 if (original == null)
                 {
                     _logger.LogWarning("Failed to decode image: {Path}", sourcePath);
                     return null;
                 }
+                original = ApplyExifOrigin(original, origin);
+                using var _ = original;
 
                 // Skip if source is already smaller than target
                 if (original.Width <= targetWidth)
@@ -116,5 +127,42 @@ public class ThumbnailService : IThumbnailService
                 return null;
             }
         });
+    }
+
+    /// <summary>
+    /// Bakes the EXIF orientation into the pixel data. Maps each source pixel through the
+    /// affine transform for its <see cref="SKEncodedOrigin"/> (orientations 5–8 swap axes).
+    /// Returns the input unchanged for TopLeft; otherwise disposes the input and returns
+    /// the reoriented copy.
+    /// </summary>
+    private static SKBitmap ApplyExifOrigin(SKBitmap src, SKEncodedOrigin origin)
+    {
+        if (origin == SKEncodedOrigin.TopLeft) return src;
+
+        float w = src.Width, h = src.Height;
+        var swapAxes = origin is SKEncodedOrigin.LeftTop or SKEncodedOrigin.RightTop
+            or SKEncodedOrigin.RightBottom or SKEncodedOrigin.LeftBottom;
+
+        // Row-major 2x3 affine: x' = m00*x + m01*y + m02 ; y' = m10*x + m11*y + m12
+        SKMatrix matrix = origin switch
+        {
+            SKEncodedOrigin.TopRight => new SKMatrix(-1, 0, w, 0, 1, 0, 0, 0, 1),     // mirror X
+            SKEncodedOrigin.BottomRight => new SKMatrix(-1, 0, w, 0, -1, h, 0, 0, 1), // rotate 180
+            SKEncodedOrigin.BottomLeft => new SKMatrix(1, 0, 0, 0, -1, h, 0, 0, 1),   // mirror Y
+            SKEncodedOrigin.LeftTop => new SKMatrix(0, 1, 0, 1, 0, 0, 0, 0, 1),       // transpose
+            SKEncodedOrigin.RightTop => new SKMatrix(0, -1, h, 1, 0, 0, 0, 0, 1),     // rotate 90 CW
+            SKEncodedOrigin.RightBottom => new SKMatrix(0, -1, h, -1, 0, w, 0, 0, 1), // transverse
+            SKEncodedOrigin.LeftBottom => new SKMatrix(0, 1, 0, -1, 0, w, 0, 0, 1),   // rotate 270 CW
+            _ => SKMatrix.Identity,
+        };
+
+        var dst = new SKBitmap(swapAxes ? src.Height : src.Width, swapAxes ? src.Width : src.Height);
+        using (var canvas = new SKCanvas(dst))
+        {
+            canvas.SetMatrix(matrix);
+            canvas.DrawBitmap(src, 0, 0);
+        }
+        src.Dispose();
+        return dst;
     }
 }

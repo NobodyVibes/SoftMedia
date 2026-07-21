@@ -104,7 +104,7 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                             animate={{ opacity: 1, y: 0 }}
                             className={cn(
                                 "rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10",
-                                (item.type === MediaType.Album || item.type === MediaType.Artist || item.type === MediaType.Audio || item.type === MediaType.Track)
+                                (item.type === MediaType.Album || item.type === MediaType.Artist || item.type === MediaType.Audio || item.type === MediaType.Track || item.type === MediaType.Photo)
                                     ? "aspect-square"
                                     : "aspect-[2/3]"
                             )}
@@ -130,7 +130,9 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                             transition={{ delay: 0.2 }}
                             className="mt-6 flex flex-col gap-4"
                         >
-                            {item.type !== MediaType.Artist && item.type !== MediaType.Album && (
+                            {/* Photos are excluded like Album/Artist: they have no playable
+                                stream, and /play/{id} for one lands in a broken player. */}
+                            {item.type !== MediaType.Artist && item.type !== MediaType.Album && item.type !== MediaType.Photo && (
                                 <button
                                     onClick={onPlay}
                                     className="relative z-50 w-full flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-violet-600 text-white rounded-xl font-bold shadow-lg shadow-violet-500/40 hover:scale-[1.02] active:scale-95 text-lg opacity-100"
@@ -164,7 +166,8 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                 {item.type !== MediaType.Artist &&
                                     item.type !== MediaType.Album &&
                                     item.type !== MediaType.Audio &&
-                                    item.type !== MediaType.Track && (
+                                    item.type !== MediaType.Track &&
+                                    item.type !== MediaType.Photo && (
                                         <button
                                             onClick={() => watchedMutation.mutate(!item.watched)}
                                             className="group flex-1 flex justify-center"
@@ -297,7 +300,8 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                             {item.type !== MediaType.Artist
                                 && item.type !== MediaType.Album
                                 && item.type !== MediaType.Audio
-                                && item.type !== MediaType.Track && (
+                                && item.type !== MediaType.Track
+                                && item.type !== MediaType.Photo && (
                                 <div className="flex flex-wrap items-center gap-2 mb-6">
                                     <WatchlistButton
                                         mediaId={item.id}

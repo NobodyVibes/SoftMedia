@@ -120,6 +120,20 @@ public class MetadataAggregator : IMetadataAggregator
         if (!string.IsNullOrEmpty(metadata.Studio)) item.Studio = metadata.Studio;
         if (!string.IsNullOrEmpty(metadata.Director)) item.Director = metadata.Director;
 
+        // Photos: persist the display-only EXIF dictionary (camera/iso/gps/…) to its JSON
+        // column — the only consumer of MetadataResult.Extra that must survive to the DTO
+        // (PhotoDetailView). Values arrive as JSON strings; store a flat string map so the
+        // DTO parse matches PhotoScanner's inline writes.
+        if (item.Type == MediaType.Photo && metadata.Extra is { Count: > 0 })
+        {
+            var exifFields = metadata.Extra.ToDictionary(
+                kv => kv.Key,
+                kv => kv.Value.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? kv.Value.GetString() ?? kv.Value.ToString()
+                    : kv.Value.ToString());
+            item.ExifJson = System.Text.Json.JsonSerializer.Serialize(exifFields);
+        }
+
         // Persist normalized genres and cast to relational tables
         if (metadata.Genres != null && metadata.Genres.Count > 0)
             await PersistGenresAsync(item, metadata.Genres);

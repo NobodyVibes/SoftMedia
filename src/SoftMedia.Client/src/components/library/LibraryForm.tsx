@@ -16,10 +16,7 @@ export function LibraryForm({ initialData, onSubmit, onCancel, isLoading }: Libr
     const [paths, setPaths] = useState<string[]>(initialData?.paths || []);
     const [newPath, setNewPath] = useState('');
 
-    // 'Photo' is hidden until Phase 2 — no PhotoScanner exists yet, so a Photo
-    // library would scan empty. Re-add when the scanner lands. The enum value
-    // and the server-side ExifMetadataProvider remain wired up.
-    const libraryTypes = ['Movie', 'TV', 'Music', 'Book', 'Game'];
+    const libraryTypes = ['Movie', 'TV', 'Music', 'Book', 'Game', 'Photo'];
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

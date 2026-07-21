@@ -46,6 +46,15 @@ public class MediaItem
     public double? FrameRate { get; set; }  // Frames per second
     public int? Width { get; set; }  // Video width in pixels
     public int? Height { get; set; }  // Video height in pixels
+
+    /// <summary>
+    /// Photo EXIF display fields (camera, iso, fstop, exposure, gps, dateTaken) as a flat
+    /// JSON string-to-string object. Photos only. Deliberately a single JSON column rather
+    /// than promoted columns: these fields are display-only and never queried relationally
+    /// (dateTaken is promoted separately to ReleaseDate/Year for sorting). Parsed into
+    /// MediaItemDto.Metadata only for Photo items.
+    /// </summary>
+    public string? ExifJson { get; set; }
     
     // Tracking & Queuing logic
     public DateTime LastScannedUtc { get; set; } = DateTime.UtcNow;

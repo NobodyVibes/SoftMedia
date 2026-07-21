@@ -66,6 +66,15 @@ public static class MetadataEnrichmentPolicy
             return string.IsNullOrEmpty(item.MetadataHash);
         }
 
+        // Photos are self-describing: EXIF is read inline at scan time and the image
+        // itself is the artwork (served by PhotosController — PosterUrl is never set).
+        // Like comics, `!hasPoster` would retry them forever; instead they are complete
+        // once the scan has stamped MetadataHash.
+        if (item.Type == MediaType.Photo)
+        {
+            return string.IsNullOrEmpty(item.MetadataHash);
+        }
+
         // No metadata hash means metadata has never been fetched (except for sparse types like Artists)
         if (string.IsNullOrEmpty(item.MetadataHash) && (!hasPoster || posterIsLocalOnly) && item.Type != MediaType.Artist)
             return true;

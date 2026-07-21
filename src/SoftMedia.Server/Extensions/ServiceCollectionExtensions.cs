@@ -47,6 +47,7 @@ public static class ServiceCollectionExtensions
         path.StartsWithSegments("/api/v1/books") ||
         path.StartsWithSegments("/api/v1/image") ||
         path.StartsWithSegments("/api/v1/music") ||
+        path.StartsWithSegments("/api/v1/photos") ||
         path.StartsWithSegments("/api/v1/trickplay") ||
         path.StartsWithSegments("/api/media") ||
         path.StartsWithSegments("/hubs/media");
@@ -293,6 +294,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMediaScanner, MovieScanner>();
         services.AddScoped<IMediaScanner, GameScanner>();
         services.AddScoped<IMediaScanner, BookScanner>();
+        services.AddScoped<IMediaScanner, PhotoScanner>();
 
         // R-WI-014 — local artwork sidecar discovery (poster.jpg beside media), used by the
         // movie/TV scanners and the NFO providers.

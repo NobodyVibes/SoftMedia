@@ -311,6 +311,29 @@ public class MediaItemDto
         if (item.Artist != null && !string.IsNullOrEmpty(item.Artist.Title)) Add("artist", item.Artist.Title);
         if (item.Album != null && !string.IsNullOrEmpty(item.Album.Title)) Add("album", item.Album.Title);
         if (item.Series != null && !string.IsNullOrEmpty(item.Series.Title)) Add("seriesTitle", item.Series.Title);
+
+        // Photos: surface the EXIF display fields (camera/iso/fstop/exposure/gps/dateTaken)
+        // that PhotoDetailView renders. ExifJson is a flat string map written by PhotoScanner /
+        // MetadataAggregator; keys don't overlap the name-context keys above. The parse is
+        // bounded (~6 tiny entries) and only runs for Photo rows, so photo grids stay cheap
+        // relative to the promoted-column rule this file otherwise follows.
+        if (item.Type == MediaType.Photo && !string.IsNullOrEmpty(item.ExifJson))
+        {
+            try
+            {
+                var exif = System.Text.Json.JsonSerializer
+                    .Deserialize<Dictionary<string, string>>(item.ExifJson);
+                if (exif != null)
+                {
+                    foreach (var kv in exif) Add(kv.Key, kv.Value);
+                }
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // A corrupt ExifJson row (hand-edited DB, partial write) must not take the
+                // whole item listing down; the photo just loses its EXIF cards until rescan.
+            }
+        }
         return meta;
     }
 
@@ -338,6 +361,11 @@ public class MediaItemDto
                 // Always emit so MusicImageService's first-album cover fallback runs
                 // even when the artist row has no CoverArtPath of its own.
                 return $"/api/v1/music/artist/{item.Id}/image";
+            case MediaType.Photo:
+                // The photo IS its own artwork: cards get a server-generated WebP thumb
+                // (PhotosController); the detail view requests the same route without
+                // ?width for the original.
+                return $"/api/v1/photos/{item.Id}/image?width=480";
         }
 
         // Non-music art (and music items with no local cover) use the remote URL,

@@ -58,15 +58,6 @@ public class LibraryService : ILibraryService
 
     public async Task<Library> CreateLibraryAsync(CreateLibraryRequest request)
     {
-        // Photo libraries are deferred to Phase 2 — no PhotoScanner exists yet,
-        // so accepting the type would silently produce an empty library. The
-        // enum value, ExifMetadataProvider, and rating-filter wiring stay in
-        // place; remove this guard and re-enable the UI option when the
-        // PhotoScanner lands.
-        if (request.Type == LibraryType.Photo)
-            throw new ArgumentException(
-                "Photo libraries are not yet supported (planned for Phase 2).");
-
         var canonicalPaths = CanonicaliseAll(request.Paths);
         foreach (var path in canonicalPaths)
         {
@@ -126,11 +117,6 @@ public class LibraryService : ILibraryService
     {
         var library = await _libraryRepository.GetByIdAsync(id);
         if (library == null) throw new KeyNotFoundException("Library not found");
-
-        // See CreateLibraryAsync — Photo type is rejected until Phase 2 lands.
-        if (request.Type == LibraryType.Photo)
-            throw new ArgumentException(
-                "Photo libraries are not yet supported (planned for Phase 2).");
 
         var canonicalPaths = CanonicaliseAll(request.Paths);
         foreach (var path in canonicalPaths)

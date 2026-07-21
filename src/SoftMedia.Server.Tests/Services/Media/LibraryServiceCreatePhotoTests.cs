@@ -13,17 +13,16 @@ using Xunit;
 
 namespace SoftMedia.Server.Tests.Services.Media;
 
-/// Wave A — verifies that LibraryType.Photo is rejected at the service boundary
-/// while the project ships without a PhotoScanner. The enum value and the
-/// EXIF metadata provider remain in place; only Create / Update guard against
-/// the type so the admin UI cannot accidentally produce empty libraries.
+/// Photo libraries were guarded off while no PhotoScanner existed (Wave A). The
+/// scanner has landed, the guard is gone — these tests now pin the ENABLED behaviour:
+/// Photo creates/updates flow through the same path as every other library type.
 public class LibraryServiceCreatePhotoTests : IDisposable
 {
     private readonly string _tempDir;
 
     public LibraryServiceCreatePhotoTests()
     {
-        _tempDir = Path.Combine(Path.GetTempPath(), "softmedia-photo-guard-" + Guid.NewGuid().ToString("N"));
+        _tempDir = Path.Combine(Path.GetTempPath(), "softmedia-photo-lib-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempDir);
     }
 
@@ -33,29 +32,29 @@ public class LibraryServiceCreatePhotoTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateLibrary_PhotoType_ThrowsArgumentExceptionMentioningPhase2()
+    public async Task CreateLibrary_PhotoType_Succeeds_AndEnqueuesScan()
     {
-        var svc = BuildService(out _);
+        var svc = BuildService(out var repo, out var scanQueue);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
-            svc.CreateLibraryAsync(new CreateLibraryRequest
-            {
-                Name = "Vacation Photos",
-                Type = LibraryType.Photo,
-                Paths = new List<string> { _tempDir }
-            }));
+        var lib = await svc.CreateLibraryAsync(new CreateLibraryRequest
+        {
+            Name = "Vacation Photos",
+            Type = LibraryType.Photo,
+            Paths = new List<string> { _tempDir }
+        });
 
-        Assert.Contains("Phase 2", ex.Message);
+        Assert.Equal(LibraryType.Photo, lib.Type);
+        repo.Verify(r => r.AddAsync(It.Is<Library>(l => l.Type == LibraryType.Photo)), Times.Once);
+        scanQueue.Verify(q => q.EnqueueScan(lib.Id, lib.Name), Times.Once);
     }
 
     [Fact]
-    public async Task UpdateLibrary_PhotoType_ThrowsArgumentExceptionMentioningPhase2()
+    public async Task UpdateLibrary_ToPhotoType_Succeeds()
     {
-        // Seed a Movie library; admin attempts to flip its type to Photo.
         var existing = new Library
         {
             Id = Guid.NewGuid(),
-            Name = "Movies",
+            Name = "Misc",
             Type = LibraryType.Movie,
             Paths = new List<string> { _tempDir },
         };
@@ -66,36 +65,14 @@ public class LibraryServiceCreatePhotoTests : IDisposable
 
         var svc = BuildServiceWithRepo(libraryRepo.Object);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
-            svc.UpdateLibraryAsync(existing.Id, new UpdateLibraryRequest
-            {
-                Name = "Movies",
-                Type = LibraryType.Photo,
-                Paths = new List<string> { _tempDir }
-            }));
-
-        Assert.Contains("Phase 2", ex.Message);
-
-        // The repo's UpdateAsync must NOT have been called — the guard fires
-        // before any mutation reaches the storage layer.
-        libraryRepo.Verify(r => r.UpdateAsync(It.IsAny<Library>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task CreateLibrary_NonPhotoType_StillSucceeds()
-    {
-        // Regression guard: the new check must only short-circuit on Photo.
-        var svc = BuildService(out var repo);
-
-        var lib = await svc.CreateLibraryAsync(new CreateLibraryRequest
+        await svc.UpdateLibraryAsync(existing.Id, new UpdateLibraryRequest
         {
-            Name = "Movies",
-            Type = LibraryType.Movie,
+            Name = "Photos",
+            Type = LibraryType.Photo,
             Paths = new List<string> { _tempDir }
         });
 
-        Assert.Equal(LibraryType.Movie, lib.Type);
-        repo.Verify(r => r.AddAsync(It.IsAny<Library>()), Times.Once);
+        libraryRepo.Verify(r => r.UpdateAsync(It.Is<Library>(l => l.Type == LibraryType.Photo)), Times.Once);
     }
 
     private LibraryService BuildServiceWithRepo(ILibraryRepository libraryRepo)
@@ -114,7 +91,7 @@ public class LibraryServiceCreatePhotoTests : IDisposable
             watcher, db, access, ratings, NullLogger<LibraryService>.Instance);
     }
 
-    // audit wave-2 WS-2: LibraryService now takes the ACL + rating providers; tests run unrestricted.
+    // audit wave-2 WS-2: LibraryService takes the ACL + rating providers; tests run unrestricted.
     private static (IUserLibraryAccessProvider, IUserContentRatingProvider) UnrestrictedProviders()
     {
         var access = new Mock<IUserLibraryAccessProvider>();
@@ -124,14 +101,14 @@ public class LibraryServiceCreatePhotoTests : IDisposable
         return (access.Object, ratings.Object);
     }
 
-    private LibraryService BuildService(out Mock<ILibraryRepository> libraryRepo)
+    private LibraryService BuildService(out Mock<ILibraryRepository> libraryRepo, out Mock<ILibraryScanQueueService> scanQueue)
     {
         libraryRepo = new Mock<ILibraryRepository>();
         libraryRepo.Setup(r => r.GetAllAsync()).ReturnsAsync(Array.Empty<Library>());
         libraryRepo.Setup(r => r.AddAsync(It.IsAny<Library>())).Returns(Task.CompletedTask);
 
         var mediaRepo = new Mock<IMediaRepository>();
-        var scanQueue = new Mock<ILibraryScanQueueService>();
+        scanQueue = new Mock<ILibraryScanQueueService>();
         var imageCache = new Mock<IImageCacheService>();
         var watcher = new LibraryWatcher(
             scopeFactory: null!,

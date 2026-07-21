@@ -166,12 +166,30 @@ public class MediaController : ControllerBase
     /// R-WI-020 — personalized home rows for the calling user. Empty list (200)
     /// when the user has no play history; the client renders nothing.
     /// </summary>
+    /// <param name="scope">
+    /// Scope of the Most Watched row: "everyone" (default) ranks all users' plays
+    /// together, "me" ranks only the caller's. Unrecognised values fall back to
+    /// "everyone" rather than erroring — this drives a cosmetic row toggle, and a
+    /// stale client sending a bad value should still get a usable home page. Every
+    /// other row is personal regardless, and both scopes stay ACL/rating-filtered
+    /// for the caller.
+    /// </param>
     [HttpGet("home-rows")]
-    public async Task<ActionResult<IReadOnlyList<HomeRowDto>>> GetHomeRows([FromQuery] int itemsPerRow = 15)
+    public async Task<ActionResult<IReadOnlyList<HomeRowDto>>> GetHomeRows(
+        [FromQuery] int itemsPerRow = 15, [FromQuery] string scope = "everyone")
     {
         var idClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier);
         if (idClaim == null || !Guid.TryParse(idClaim.Value, out var userId)) return Unauthorized();
-        return Ok(await _recommendationService.GetHomeRowsAsync(userId, itemsPerRow));
+        var acrossAllUsers = !string.Equals(scope, "me", StringComparison.OrdinalIgnoreCase);
+
+        var taste = await _recommendationService.GetHomeRowsAsync(userId, itemsPerRow, acrossAllUsers);
+        var catalog = await _recommendationService.GetCatalogRowsAsync(userId, itemsPerRow);
+
+        // Taste rows first (they are the more personal signal), catalog rows after.
+        // Catalog rows may legitimately repeat an item already shown above: they answer
+        // a different question ("what else is in this genre" / "what have I not touched")
+        // and suppressing overlap would leave them arbitrarily short.
+        return Ok(taste.Concat(catalog).ToList());
     }
 
     /// <summary>

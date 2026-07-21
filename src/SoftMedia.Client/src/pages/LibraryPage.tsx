@@ -32,6 +32,8 @@ export default function LibraryPage() {
     // Filter State
     const [search, setSearch] = useState('');
     const [sortBy, setSortBy] = useState('title');
+    // Null = the sort key's natural direction, resolved server-side (SortDirection).
+    const [sortDir, setSortDir] = useState<'asc' | 'desc' | null>(null);
     const [genre, setGenre] = useState('');
     const [year, setYear] = useState<number | null>(null);
     const [minRating, setMinRating] = useState<number | null>(null);
@@ -52,13 +54,14 @@ export default function LibraryPage() {
         hasNextPage,
         isFetchingNextPage
     } = useInfiniteQuery({
-        queryKey: ['library', id, 'items', { search, sortBy, genre, year, minRating, isFavorite, watched, viewMode }],
+        queryKey: ['library', id, 'items', { search, sortBy, sortDir, genre, year, minRating, isFavorite, watched, viewMode }],
         queryFn: async ({ pageParam = 1 }) => {
             const params: Record<string, string | number | boolean | undefined | null> = {
                 page: pageParam,
                 pageSize: 50,
                 search,
                 sortBy,
+                sortDir,
                 genre,
                 year,
                 minRating,
@@ -98,7 +101,7 @@ export default function LibraryPage() {
     useEffect(() => {
         reveal.reset();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [id, search, sortBy, genre, year, minRating, isFavorite, watched, viewMode]);
+    }, [id, search, sortBy, sortDir, genre, year, minRating, isFavorite, watched, viewMode]);
 
     // Render content area based on state
     const renderContent = () => {
@@ -188,6 +191,7 @@ export default function LibraryPage() {
             <FilterBar
                 onSearch={setSearch}
                 onSort={setSortBy}
+                onSortDir={setSortDir}
                 onGenre={setGenre}
                 onYear={setYear}
                 onRating={setMinRating}

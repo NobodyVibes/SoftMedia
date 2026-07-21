@@ -6,10 +6,11 @@ import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import { useAuthStore } from './store/authStore';
-import { fetchMediaToken } from './services/api';
+import { fetchMediaToken, cancelMediaTokenRenewal } from './services/api';
 import MainLayout from './components/layout/MainLayout';
 import HomePage from './pages/HomePage';
 import LibraryPage from './pages/LibraryPage';
+import BrowsePage from './pages/BrowsePage';
 import PlayerPage from './pages/PlayerPage';
 import ReaderPage from './pages/ReaderPage';
 import SettingsPage from './pages/SettingsPage';
@@ -36,14 +37,22 @@ function App() {
   const [connectAttempts, setConnectAttempts] = useState(0);
   useEffect(() => {
     if (!token) {
+      cancelMediaTokenRenewal();
       useAuthStore.getState().setMediaToken(null);
       return;
     }
-    void fetchMediaToken();
+    // Already holding one: nothing to do. Renewal ahead of expiry is owned by the
+    // timer inside fetchMediaToken, NOT by this effect.
+    //
+    // The fetch below must stay behind this guard. `mediaToken` is a dependency,
+    // and the server mints a BRAND-NEW token on every call — so an unconditional
+    // fetch here stored a different value, retriggered this effect, and fetched
+    // again, looping for as long as the tab stayed open.
     if (mediaToken) {
       setConnectAttempts(0);
       return;
     }
+    void fetchMediaToken();
     const retry = setInterval(() => {
       setConnectAttempts((n) => n + 1);
       void fetchMediaToken();
@@ -110,6 +119,10 @@ function App() {
           <Route element={<MainLayout />}>
             <Route path="/" element={<HomePage />} />
             <Route path="/libraries/:id" element={<LibraryPage />} />
+            {/* Cross-library filtered grid. Criteria ride in the query string
+                (?genre=&decade=&unplayed=), so home rows can hand over their own
+                filter and the resulting view is shareable. */}
+            <Route path="/browse" element={<BrowsePage />} />
             <Route path="/settings" element={
               user?.role === 'Admin'
                 ? <Navigate to="/settings/playback/transcoding" replace />

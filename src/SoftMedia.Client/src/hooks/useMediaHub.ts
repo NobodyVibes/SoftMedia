@@ -94,13 +94,10 @@ export function useMediaHub({ libraryId, mediaId }: UseMediaHubOptions) {
             queryClient.invalidateQueries({ queryKey: ['media', mediaId] });
         });
 
-        connection.on('ScanProgress', (libId: string, processed: number, total: number, status: string) => {
-            console.debug('[SignalR] ScanProgress:', libId, processed, total, status);
-            // Update global store
-            import('../store/scanProgressStore').then(({ useScanProgressStore }) => {
-                useScanProgressStore.getState().updateProgress(libId, processed, total, status);
-            });
-            // Invalidate scan queue to update any progress displays
+        connection.on('ScanProgress', (libId: string, processed: number, total: number, status: string, stage: string) => {
+            console.debug('[SignalR] ScanProgress:', libId, processed, total, status, stage);
+            // Invalidate scan queue so live displays (TopBar bell entry, Settings
+            // scan status cards) refetch. Server-side batching caps this at ~2/sec.
             queryClient.invalidateQueries({ queryKey: ['scanQueue'] });
         });
 

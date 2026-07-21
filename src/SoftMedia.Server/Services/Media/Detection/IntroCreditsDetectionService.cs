@@ -97,9 +97,18 @@ public class IntroCreditsDetectionService : IIntroCreditsDetectionService
         // Step 1: extract or reuse fingerprints for every episode. Episodes whose
         // extraction fails are skipped for matching but still get their
         // LastIntroDetectionUtc stamped so we don't retry on every scan.
+        // Cancellation is checked per episode and each extracted fingerprint is
+        // CHECKPOINTED immediately: when a scan preempts this job, completed episodes
+        // stay persisted and the re-run resumes where it left off instead of
+        // re-extracting the whole series.
         foreach (var episode in episodes)
         {
-            await EnsureFingerprintAsync(episode, fingerprints, detectIntros, detectCredits, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var extractedNew = await EnsureFingerprintAsync(episode, fingerprints, detectIntros, detectCredits, cancellationToken);
+            if (extractedNew)
+            {
+                await _db.SaveChangesAsync(cancellationToken);
+            }
         }
 
         // Bail out cleanly if no episode produced any usable fingerprint at all
@@ -416,7 +425,8 @@ public class IntroCreditsDetectionService : IIntroCreditsDetectionService
         accepted(match);
     }
 
-    private async Task EnsureFingerprintAsync(
+    /// <summary>Returns true when new fingerprint data was extracted (caller checkpoints it).</summary>
+    private async Task<bool> EnsureFingerprintAsync(
         MediaItem episode,
         Dictionary<Guid, MediaFingerprint> fingerprints,
         bool extractHead,
@@ -430,6 +440,8 @@ public class IntroCreditsDetectionService : IIntroCreditsDetectionService
             fingerprints[episode.Id] = fp;
         }
 
+        var extractedNew = false;
+
         if (extractHead && fp.HeadFingerprint == null)
         {
             var hashes = await _extractor.ExtractHeadAsync(episode.Path, HeadWindowSeconds, ct);
@@ -438,6 +450,7 @@ public class IntroCreditsDetectionService : IIntroCreditsDetectionService
                 fp.HeadFingerprint = HashesToBytes(hashes);
                 fp.HeadDurationSeconds = HeadWindowSeconds;
                 fp.GeneratedUtc = DateTime.UtcNow;
+                extractedNew = true;
             }
         }
 
@@ -449,8 +462,11 @@ public class IntroCreditsDetectionService : IIntroCreditsDetectionService
                 fp.TailFingerprint = HashesToBytes(hashes);
                 fp.TailDurationSeconds = TailWindowSeconds;
                 fp.GeneratedUtc = DateTime.UtcNow;
+                extractedNew = true;
             }
         }
+
+        return extractedNew;
     }
 
     private bool IsAcceptable(SegmentMatch? match, int maxLen)

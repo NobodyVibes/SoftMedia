@@ -151,20 +151,63 @@ api.interceptors.response.use(
 
 // Media-token lifecycle (audit H3). Fetches the reduced-privilege media token and stores it
 // in memory so media URLs (?token=/?access_token=) carry it instead of the full access token.
-// Single-flight so concurrent callers share one request; failures are swallowed (URLs fall
-// back to the access token via getUrlToken). Driven by a top-level effect in App.tsx.
+// Single-flight so concurrent callers share one request; failures are swallowed (the App.tsx
+// retry loop covers a cold-start failure). Driven by a top-level effect in App.tsx.
 let mediaTokenInFlight: Promise<void> | null = null;
+let mediaTokenRenewalTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Renew this far into the token's lifetime, leaving headroom for clock skew and a slow round-trip. */
+const RENEWAL_FRACTION = 0.75;
+/** Fallback lifetime if the server omits or mis-reports one (server default is 120). */
+const FALLBACK_EXPIRY_MINUTES = 120;
+
+/**
+ * Schedule the next media-token fetch BEFORE the current one expires.
+ *
+ * Media tokens are long-lived (2h by default) but they do expire, and they are
+ * baked into every `<img>`/stream URL on the page. Without a renewal timer a tab
+ * left open simply crosses the expiry and every media request starts 401ing —
+ * artwork disappears with no user action. Nothing else renews them: the access
+ * token's refresh interceptor is a separate ~15-minute cycle that does not touch
+ * this token.
+ */
+function scheduleMediaTokenRenewal(expiresInMinutes: number | undefined): void {
+    if (mediaTokenRenewalTimer) clearTimeout(mediaTokenRenewalTimer);
+
+    const minutes = typeof expiresInMinutes === 'number' && expiresInMinutes > 0
+        ? expiresInMinutes
+        : FALLBACK_EXPIRY_MINUTES;
+    // Floor at a minute so a pathologically short server TTL can't spin this into
+    // a request loop.
+    const delayMs = Math.max(60_000, minutes * 60_000 * RENEWAL_FRACTION);
+
+    mediaTokenRenewalTimer = setTimeout(() => {
+        mediaTokenRenewalTimer = null;
+        // Don't renew for a session that ended while the timer was pending.
+        if (!useAuthStore.getState().token) return;
+        void fetchMediaToken();
+    }, delayMs);
+}
+
+/** Cancel a pending renewal — called on logout so a dead session stops polling. */
+export function cancelMediaTokenRenewal(): void {
+    if (mediaTokenRenewalTimer) {
+        clearTimeout(mediaTokenRenewalTimer);
+        mediaTokenRenewalTimer = null;
+    }
+}
 
 export function fetchMediaToken(): Promise<void> {
     if (mediaTokenInFlight) return mediaTokenInFlight;
 
     mediaTokenInFlight = api
-        .get<{ token: string }>('/auth/media-token')
+        .get<{ token: string; expiresInMinutes: number }>('/auth/media-token')
         .then((response) => {
             useAuthStore.getState().setMediaToken(response.data.token);
+            scheduleMediaTokenRenewal(response.data.expiresInMinutes);
         })
         .catch(() => {
-            // Leave mediaToken as-is; media URLs degrade to the access token.
+            // Leave mediaToken as-is; App.tsx retries while it is missing.
         })
         .finally(() => {
             mediaTokenInFlight = null;

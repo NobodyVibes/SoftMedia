@@ -138,7 +138,7 @@ public class TvScanner : BaseMediaScanner
         _logger.LogInformation("[TvScanner] Enqueueing deferred metadata enrichment for {Count} series", _seriesNeedingEnrichment.Count);
         foreach (var seriesId in _seriesNeedingEnrichment.Keys)
         {
-            await _metadataQueue.EnqueueMetadataRefreshAsync(seriesId, LibraryType.TV);
+            await _metadataQueue.EnqueueMetadataRefreshAsync(seriesId, LibraryType.TV, libraryId: library.Id);
         }
     }
 
@@ -280,8 +280,13 @@ public class TvScanner : BaseMediaScanner
             // Ensure season exists (Thread Safe)
             var season = await EnsureSeasonAsync(context, series, seasonNum, library, cancellationToken);
 
-            // Create or update episode
+            // Create or update episode. Capture whether the file actually changed BEFORE
+            // stamping Size/DateModified — the analysis strategy compares DateModified
+            // against the file's mtime, so stamping first silently disabled re-probes
+            // of modified files.
             var isNew = existing == null;
+            var fileChanged = existing != null
+                && (existing.Size != file.Size || existing.DateModified != file.LastWriteUtc);
             var episode = existing ?? new MediaItem { LibraryId = library.Id };
 
             // Determine episode title
@@ -312,8 +317,10 @@ public class TvScanner : BaseMediaScanner
             episode.Size = file.Size;
             episode.DateModified = file.LastWriteUtc;
 
-            // Delegate technical analysis to MediaAnalysisService (Smart Probe)
-            var refreshMode = isNew ? MetadataRefreshMode.Full : MetadataRefreshMode.Missing;
+            // Delegate technical analysis to MediaAnalysisService (Smart Probe).
+            // Changed files get a full re-probe; unchanged files stay in Missing mode,
+            // which only probes when technical data is absent.
+            var refreshMode = isNew || fileChanged ? MetadataRefreshMode.Full : MetadataRefreshMode.Missing;
             await _mediaAnalysisService.AnalyzeAsync(episode, filePath, refreshMode, cancellationToken);
 
             // Populate episode metadata from series (still image, summary, airdate)
@@ -331,9 +338,12 @@ public class TvScanner : BaseMediaScanner
             }
             else
             {
-                _logger.LogDebug("[TvScanner] Updated episode: {Show} S{Season}E{Episode}",
-                    showName, seasonNum, episodeNum);
-                return new ScanOperationResult(ScanResult.Updated, episode.Id, EnqueueMetadata: false);
+                // Unchanged file = skipped, so scan counters reflect reality. Metadata
+                // propagated from the cached series payload above still gets saved either way.
+                _logger.LogDebug("[TvScanner] {Action} episode: {Show} S{Season}E{Episode}",
+                    fileChanged ? "Updated" : "Skipped", showName, seasonNum, episodeNum);
+                return new ScanOperationResult(
+                    fileChanged ? ScanResult.Updated : ScanResult.Skipped, episode.Id, EnqueueMetadata: false);
             }
         }
         catch (Exception ex)

@@ -77,21 +77,6 @@ public class LibraryRepository : ILibraryRepository
             .AnyAsync(l => l.Id == id);
     }
 
-    public async Task<bool> IsPathUsedAsync(string path)
-    {
-        // Wave C — DELIBERATELY does NOT apply the ACL filter. This is an
-        // admin-only uniqueness check called from CreateLibraryAsync /
-        // UpdateLibraryAsync; the calling endpoints already require
-        // [Authorize(Roles = "Admin")] and admins always have unrestricted
-        // access. Filtering here would be redundant and could mask a real
-        // path collision if a non-admin code path ever called it.
-        //
-        // For SQLite with JSON conversion, fetching and checking in memory
-        // is reliable and efficient for small sets.
-        var libraries = await _context.Libraries.AsNoTracking().ToListAsync();
-        return libraries.Any(l => l.Paths.Contains(path));
-    }
-
     public async Task<PagedResult<(MediaItem Media, UserMediaInteraction? Interaction)>> GetLibraryItemsAsync(Guid libraryId, LibraryItemFilter filter)
     {
         var library = await _context.Libraries.FindAsync(libraryId);
@@ -243,32 +228,42 @@ public class LibraryRepository : ILibraryRepository
             }
         }
 
-        // Sorting
+        // Sorting. Direction is user-controllable; omitting it keeps each key's natural
+        // direction, so existing callers and saved URLs behave exactly as before.
+        var sortDesc = Helpers.SortDirection.IsDescending(filter.SortBy, filter.SortDir);
+
+        // joinedQuery projects to an ANONYMOUS type, which cannot be named in an
+        // Expression<Func<...>> declaration. This generic local function sidesteps that:
+        // T is inferred from the argument, so each key is written once and the direction
+        // is chosen at the call site instead of duplicating every ordering.
+        static IOrderedQueryable<T> Order<T, TKey>(
+            IQueryable<T> source,
+            System.Linq.Expressions.Expression<Func<T, TKey>> key,
+            bool descending)
+            => descending ? source.OrderByDescending(key) : source.OrderBy(key);
+
+        // R-WI-013 aggregates put to work: PlayCount/LastPlayed are maintained by the
+        // play-history flow (and recomputed on history clears). All-user aggregates by
+        // design. Plays land on MOVIES and EPISODES — a TV grid shows SERIES rows, so
+        // its sort aggregates the episodes' counts up to the series (correlated
+        // subquery; empty → 0/null). SQLite sorts NULLs last under DESC, so never-played
+        // items trail either way.
+        var isTv = library.Type == LibraryType.TV;
+
         joinedQuery = filter.SortBy?.ToLower() switch
         {
-            "title" => joinedQuery.OrderBy(x => x.Media.Title),
-            "dateadded" => joinedQuery.OrderByDescending(x => x.Media.DateAdded),
-            "year" => joinedQuery.OrderByDescending(x => x.Media.Year),
-            "rating" => joinedQuery.OrderByDescending(x => x.Interaction.Rating),
-            // R-WI-013 aggregates put to work: PlayCount/LastPlayed are maintained by
-            // the play-history flow (and recomputed on history clears). All-user
-            // aggregates by design. Plays land on MOVIES and EPISODES — a TV grid
-            // shows SERIES rows, so its sort aggregates the episodes' counts up to
-            // the series (correlated subquery; empty → 0/null). SQLite sorts NULLs
-            // last under DESC, so never-played items trail either way.
-            "playcount" => library.Type == LibraryType.TV
-                ? joinedQuery.OrderByDescending(x => _context.MediaItems
-                        .Where(e => e.SeriesId == x.Media.Id)
-                        .Sum(e => (int?)e.PlayCount) ?? 0)
-                    .ThenByDescending(x => x.Media.Title)
-                : joinedQuery.OrderByDescending(x => x.Media.PlayCount)
-                    .ThenByDescending(x => x.Media.LastPlayed),
-            "lastplayed" => library.Type == LibraryType.TV
-                ? joinedQuery.OrderByDescending(x => _context.MediaItems
-                        .Where(e => e.SeriesId == x.Media.Id)
-                        .Max(e => (DateTime?)e.LastPlayed))
-                : joinedQuery.OrderByDescending(x => x.Media.LastPlayed),
-            _ => joinedQuery.OrderBy(x => x.Media.Title)
+            "dateadded" => Order(joinedQuery, x => x.Media.DateAdded, sortDesc),
+            "year" => Order(joinedQuery, x => x.Media.Year, sortDesc),
+            "rating" => Order(joinedQuery, x => x.Interaction.Rating, sortDesc),
+            "playcount" => isTv
+                ? Order(joinedQuery, x => _context.MediaItems
+                    .Where(e => e.SeriesId == x.Media.Id).Sum(e => (int?)e.PlayCount) ?? 0, sortDesc)
+                : Order(joinedQuery, x => x.Media.PlayCount, sortDesc),
+            "lastplayed" => isTv
+                ? Order(joinedQuery, x => _context.MediaItems
+                    .Where(e => e.SeriesId == x.Media.Id).Max(e => (DateTime?)e.LastPlayed), sortDesc)
+                : Order(joinedQuery, x => x.Media.LastPlayed, sortDesc),
+            _ => Order(joinedQuery, x => x.Media.Title, sortDesc),
         };
 
         var totalCount = await joinedQuery.CountAsync();

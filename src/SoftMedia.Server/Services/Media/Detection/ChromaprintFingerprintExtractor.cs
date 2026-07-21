@@ -93,13 +93,41 @@ public class ChromaprintFingerprintExtractor : IFingerprintExtractor
                 return null;
             }
 
-            // Read stdout as binary into a memory stream, drain stderr in parallel so the
-            // pipe buffer can't fill up and deadlock the child process.
+            // Drain both pipes WITHOUT a cancellation token: their lifetime is tied to the
+            // process. Cancelling the drains directly stopped the reads while ffmpeg kept
+            // writing — it then blocked forever on the full stdout pipe and never exited,
+            // and since the kill lived in a catch we could only reach after the process
+            // exited, the whole scan queue wedged on every preemption/timeout.
             using var stdoutBuffer = new MemoryStream();
-            var stdoutTask = process.StandardOutput.BaseStream.CopyToAsync(stdoutBuffer, timeoutCts.Token);
+            var stdoutTask = process.StandardOutput.BaseStream.CopyToAsync(stdoutBuffer);
             var stderrTask = process.StandardError.ReadToEndAsync();
 
-            await Task.WhenAll(stdoutTask, stderrTask, process.WaitForExitAsync(timeoutCts.Token));
+            var interrupted = false;
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                interrupted = true;
+                // Kill FIRST so the pipes close and the drain tasks below can complete.
+                TryKill(process);
+            }
+
+            // Completes promptly: the pipes close when the process exits or dies. The
+            // 30s guard is a last resort for an unkillable process — it surfaces as the
+            // generic failure path below instead of a permanent hang.
+            await Task.WhenAll(stdoutTask, stderrTask).WaitAsync(TimeSpan.FromSeconds(30));
+
+            // Genuine cancellation (shutdown, or detection preempted by a scan) must
+            // PROPAGATE so the caller stops instead of moving on to the next episode.
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (interrupted)
+            {
+                _logger.LogWarning("[Fingerprint] FFmpeg timed out after {Timeout} for {Path}", DefaultTimeout, filePath);
+                return null;
+            }
 
             if (process.ExitCode != 0)
             {
@@ -110,11 +138,10 @@ public class ChromaprintFingerprintExtractor : IFingerprintExtractor
 
             return BytesToHashes(stdoutBuffer.ToArray());
         }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            _logger.LogWarning("[Fingerprint] FFmpeg timed out after {Timeout} for {Path}", DefaultTimeout, filePath);
             TryKill(process);
-            return null;
+            throw;
         }
         catch (Exception ex)
         {

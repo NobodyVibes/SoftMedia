@@ -16,12 +16,15 @@ import {
 } from '@dnd-kit/sortable';
 import { useAudioStore } from '../../store/audioStore';
 import { SortableQueueItem } from './SortableQueueItem';
-import { API_URL } from '../../services/api';
 import { Volume2 } from 'lucide-react';
 import { ScrollingText } from '../ui/ScrollingText';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 
 export const QueueList: React.FC = () => {
+    // Media URLs below embed the media token; re-render when it rotates so a
+    // stale token can't leave the artwork permanently broken.
+    useMediaTokenRefresh();
     const { queue, currentTrack, reorderQueue, jumpToQueueIndex } = useAudioStore();
     const [activeId, setActiveId] = React.useState<number | null>(null);
 
@@ -61,7 +64,10 @@ export const QueueList: React.FC = () => {
         if (!path) return '/placeholder-music.png';
         if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
         if (path.startsWith('http')) return path;
-        return `${API_URL}${path}`;
+        // Anything else is a static file served from wwwroot (e.g.
+        // /cache/images/albums/x.jpg). It is NOT under /api/v1 — prefixing it
+        // there yields a route that does not exist and a 404'd cover.
+        return path;
     };
 
     return (

@@ -22,8 +22,9 @@ public class OMDbProviderTests
         var settings = new Mock<ISettingsService>();
         var notifications = new Mock<INotificationService>();
         var rateLimiterFactory = new RateLimiterFactory();
+        var usageTracker = new Mock<IOmdbUsageTracker>();
 
-        var provider = new OMDbProvider(httpClient, logger.Object, rateLimiterFactory, config.Object, settings.Object, notifications.Object);
+        var provider = new OMDbProvider(httpClient, logger.Object, rateLimiterFactory, config.Object, settings.Object, notifications.Object, usageTracker.Object);
         var item = new MediaItem { Id = Guid.NewGuid(), Title = "Test Movie", Type = MediaType.Movie };
 
         // Act & Assert — should throw, never silently return null

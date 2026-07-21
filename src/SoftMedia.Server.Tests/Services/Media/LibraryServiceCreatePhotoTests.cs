@@ -127,7 +127,6 @@ public class LibraryServiceCreatePhotoTests : IDisposable
     private LibraryService BuildService(out Mock<ILibraryRepository> libraryRepo)
     {
         libraryRepo = new Mock<ILibraryRepository>();
-        libraryRepo.Setup(r => r.IsPathUsedAsync(It.IsAny<string>())).ReturnsAsync(false);
         libraryRepo.Setup(r => r.GetAllAsync()).ReturnsAsync(Array.Empty<Library>());
         libraryRepo.Setup(r => r.AddAsync(It.IsAny<Library>())).Returns(Task.CompletedTask);
 

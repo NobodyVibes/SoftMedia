@@ -8,23 +8,36 @@ interface GenreComboBoxProps {
     libraryId?: string;
     value: string;
     onChange: (value: string) => void;
+    /**
+     * Media types to scope the suggestions to when there is no library — the browse
+     * page passes "Movie,Series" so a video-only grid doesn't suggest book genres that
+     * would return nothing.
+     */
+    types?: string;
 }
 
-export function GenreComboBox({ libraryId, value, onChange }: GenreComboBoxProps) {
+export function GenreComboBox({ libraryId, value, onChange, types }: GenreComboBoxProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [inputValue, setInputValue] = useState(value);
     const containerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
-    // Fetch genres for this library
+    // Genre suggestions. With a library, ask that library; without one (the
+    // cross-library browse page) fall back to the server-wide list — previously this
+    // returned [] whenever libraryId was absent, leaving the picker permanently empty
+    // rather than merely unscoped.
     const { data: genres = [] } = useQuery<string[]>({
-        queryKey: ['library', libraryId, 'genres'],
+        queryKey: libraryId ? ['library', libraryId, 'genres'] : ['browse', 'genres', types],
         queryFn: async () => {
-            if (!libraryId) return [];
-            const res = await api.get<string[]>(`/libraries/${libraryId}/genres`);
+            if (libraryId) {
+                const res = await api.get<string[]>(`/libraries/${libraryId}/genres`);
+                return res.data;
+            }
+            const res = await api.get<string[]>('/browse/genres', {
+                params: types ? { types } : undefined,
+            });
             return res.data;
         },
-        enabled: !!libraryId,
         staleTime: 5 * 60 * 1000, // Cache for 5 minutes
     });
 

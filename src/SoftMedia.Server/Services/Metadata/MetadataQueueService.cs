@@ -34,6 +34,11 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
     // Deduplication guard — prevents the same media item from being enqueued multiple times
     private readonly ConcurrentDictionary<Guid, byte> _pendingIds = new();
 
+    // Per-library pending-enrichment gauge. Incremented when an item is enqueued WITH a
+    // library id (scanner paths), decremented when that item finishes processing. Lets the
+    // scan queue keep a job in its Metadata stage until enrichment for the library drains.
+    private readonly ConcurrentDictionary<Guid, int> _pendingByLibrary = new();
+
     public MetadataQueueService(
         IServiceScopeFactory scopeFactory,
         IMediaNotificationService notificationService,
@@ -114,7 +119,7 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
         }
     }
 
-    public async Task EnqueueMetadataRefreshAsync(Guid mediaId, LibraryType type, bool refreshImages = true, int retryCount = 0)
+    public async Task EnqueueMetadataRefreshAsync(Guid mediaId, LibraryType type, bool refreshImages = true, int retryCount = 0, Guid? libraryId = null)
     {
         // Deduplication: skip if this item is already pending processing
         if (!_pendingIds.TryAdd(mediaId, 0))
@@ -123,9 +128,17 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
             return;
         }
 
+        if (libraryId.HasValue)
+        {
+            _pendingByLibrary.AddOrUpdate(libraryId.Value, 1, (_, count) => count + 1);
+        }
+
         var channel = GetChannelForType(type);
-        await channel.Writer.WriteAsync(new MetadataQueueItem(mediaId, type, refreshImages, retryCount));
+        await channel.Writer.WriteAsync(new MetadataQueueItem(mediaId, type, refreshImages, retryCount, libraryId));
     }
+
+    public int GetPendingCountForLibrary(Guid libraryId)
+        => _pendingByLibrary.TryGetValue(libraryId, out var count) ? count : 0;
 
     private Channel<MetadataQueueItem> GetChannelForType(LibraryType type)
     {
@@ -269,6 +282,13 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
             // Release dedup guard AFTER processing completes to prevent
             // concurrent enrichment of the same item during processing.
             _pendingIds.TryRemove(item.MediaId, out _);
+
+            // Only items that were counted at enqueue (LibraryId carried) decrement the
+            // gauge, so uncounted paths (retries, global refresh) can never drive it negative.
+            if (item.LibraryId.HasValue)
+            {
+                _pendingByLibrary.AddOrUpdate(item.LibraryId.Value, 0, (_, count) => Math.Max(0, count - 1));
+            }
         }
     }
 
@@ -286,5 +306,5 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
         _registry.Report(ScheduledTaskNames.MetadataQueue, "Success");
     }
 
-    private record MetadataQueueItem(Guid MediaId, LibraryType Type, bool RefreshImages, int RetryCount = 0);
+    private record MetadataQueueItem(Guid MediaId, LibraryType Type, bool RefreshImages, int RetryCount = 0, Guid? LibraryId = null);
 }

@@ -50,7 +50,7 @@ public class MediaNotificationService : IMediaNotificationService, IDisposable
         });
     }
 
-    public void NotifyScanProgress(Guid libraryId, int processed, int total, string status)
+    public void NotifyScanProgress(Guid libraryId, int processed, int total, string status, string stage)
     {
         _channel.Writer.TryWrite(new Notification
         {
@@ -58,7 +58,8 @@ public class MediaNotificationService : IMediaNotificationService, IDisposable
             LibraryId = libraryId,
             Processed = processed,
             Total = total,
-            Status = status
+            Status = status,
+            Stage = stage
         });
     }
 
@@ -142,7 +143,7 @@ public class MediaNotificationService : IMediaNotificationService, IDisposable
 
                 case NotificationType.ScanProgress:
                     await _hubContext.Clients.All
-                        .SendAsync("ScanProgress", n.LibraryId.ToString(), n.Processed, n.Total, n.Status);
+                        .SendAsync("ScanProgress", n.LibraryId.ToString(), n.Processed, n.Total, n.Status, n.Stage);
                     break;
 
                 case NotificationType.LibraryRecentUpdated:
@@ -188,5 +189,6 @@ public class MediaNotificationService : IMediaNotificationService, IDisposable
         public int Processed { get; init; }
         public int Total { get; init; }
         public string Status { get; init; } = "";
+        public string Stage { get; init; } = "";
     }
 }

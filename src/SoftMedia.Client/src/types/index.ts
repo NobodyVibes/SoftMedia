@@ -143,11 +143,13 @@ export interface PagedResult<T> {
 }
 
 // Library Scan Types
-export type LibraryScanStatus = 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
+export type LibraryScanStatus = 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Cancelled' | 'Paused';
 export type LibraryScanStage = 'Pending' | 'Discovery' | 'Processing' | 'Metadata' | 'Finishing';
+export type LibraryScanJobType = 'LibraryScan' | 'MetadataRefresh' | 'IntroCreditsDetection';
 
 export interface LibraryScanJob {
     id: string;
+    type: LibraryScanJobType;
     libraryId: string;
     libraryName: string;
     status: LibraryScanStatus;
@@ -164,6 +166,10 @@ export interface LibraryScanJob {
     completedAt: string | null;
     queuePosition: number;
     progressPercent: number;
+    /** Items enqueued for metadata enrichment when the file walk finished (Metadata stage). */
+    metadataTotal: number;
+    /** Items still awaiting metadata enrichment (Metadata stage). */
+    metadataRemaining: number;
 }
 
 // File Watcher Issue Types

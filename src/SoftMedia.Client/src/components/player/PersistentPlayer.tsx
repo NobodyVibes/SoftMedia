@@ -19,6 +19,7 @@ import { AudioVisualizer, VisualizerSelector } from './visualizers';
 import { useVisualizerStore } from '../../store/visualizerStore';
 import { useAudioAnalyser } from '../../hooks/useAudioAnalyser';
 import { useMediaSession } from '../../hooks/useMediaSession';
+import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 
 // Preload threshold in seconds before track ends
 const PRELOAD_THRESHOLD = 15;
@@ -36,6 +37,9 @@ const formatTime = (seconds: number) => {
 };
 
 export const PersistentPlayer: React.FC = () => {
+    // Media URLs below embed the media token; re-render when it rotates so a
+    // stale token can't leave the artwork permanently broken.
+    useMediaTokenRefresh();
     const {
         currentTrack, isPlaying, volume, isMuted,
         shuffleMode, repeatMode, queue,
@@ -147,10 +151,12 @@ export const PersistentPlayer: React.FC = () => {
         if (!path) return '/placeholder-music.png';
         if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
         if (path.startsWith('http')) return path;
-        // B-09: this fallback lands on an /api/v1 route too, so it needs the
-        // query token just like the branch above (an <img> can't send the
-        // Authorization header).
-        return attachAuthToApiUrl(`${API_URL}${path}`);
+        // Anything left is a static file served from wwwroot (e.g.
+        // /cache/images/albums/x.jpg), NOT an API route — it needs no token, and
+        // the `${API_URL}` prefix this used to add produced /api/v1/cache/… ,
+        // which routes nowhere and 404s. (Supersedes B-09, which assumed this
+        // branch landed on /api/v1.)
+        return path;
     }, []);
 
     // Memoized stream URL for current track

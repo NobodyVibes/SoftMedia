@@ -1,4 +1,4 @@
-import { Search, Heart, RefreshCw } from 'lucide-react';
+import { Search, Heart, RefreshCw, ArrowUpNarrowWide, ArrowDownWideNarrow } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { useDebounce } from '../../hooks/useDebounce';
 import { cn } from '../../lib/utils';
@@ -18,6 +18,47 @@ interface FilterBarProps {
     libraryType?: string;
     libraryId?: string;
     onRescan?: () => void;
+    /**
+     * Starting values for the controls. The browse page seeds these from the URL so a
+     * row's "See more" opens with that row's criteria already selected — arriving at a
+     * Comedy grid with the genre box blank makes the filters look broken and silently
+     * discards them the moment anything else is touched.
+     *
+     * Uncontrolled after mount: these initialise state, they do not track it. The page
+     * owns the values from then on.
+     */
+    initialValues?: {
+        search?: string;
+        genre?: string;
+        year?: string;
+        rating?: string;
+        isFavorite?: boolean | null;
+        watched?: boolean | null;
+        sort?: string;
+        sortDir?: 'asc' | 'desc';
+    };
+    /** Extra sort options beyond the type-derived defaults, e.g. the browse page's play-count sorts. */
+    extraSortOptions?: Array<{ value: string; label: string }>;
+    /** Media types to scope genre suggestions to when there is no libraryId. */
+    genreTypes?: string;
+    /**
+     * Receives 'asc' | 'desc'. Omit to hide the direction toggle entirely — callers
+     * whose backend ignores the parameter should not show a control that does nothing.
+     */
+    onSortDir?: (dir: 'asc' | 'desc') => void;
+}
+
+/**
+ * The direction a sort key means when the user hasn't said otherwise: titles read A-Z,
+ * everything else (dates, years, ratings, play counts) means newest/highest/most first.
+ *
+ * MUST mirror SortDirection.NaturalFor on the server. If the two disagree, the arrow
+ * icon claims one direction while the query runs the other.
+ */
+const ASCENDING_BY_NATURE = new Set(['title', 'artist']);
+
+export function naturalDirectionFor(sortKey: string): 'asc' | 'desc' {
+    return ASCENDING_BY_NATURE.has(sortKey) ? 'asc' : 'desc';
 }
 
 // Common styles for select elements
@@ -37,15 +78,24 @@ export function FilterBar({
     showWatchedFilter,
     libraryType,
     libraryId,
-    onRescan
+    onRescan,
+    initialValues,
+    extraSortOptions,
+    genreTypes,
+    onSortDir
 }: FilterBarProps) {
-    const [search, setSearch] = useState('');
-    const [genre, setGenre] = useState('');
-    const [year, setYear] = useState('');
-    const [rating, setRating] = useState('');
-    const [isFavorite, setIsFavorite] = useState<boolean | null>(null);
-    const [watched, setWatched] = useState<string>('');
-    const [sort, setSort] = useState('title');
+    const [search, setSearch] = useState(initialValues?.search ?? '');
+    const [genre, setGenre] = useState(initialValues?.genre ?? '');
+    const [year, setYear] = useState(initialValues?.year ?? '');
+    const [rating, setRating] = useState(initialValues?.rating ?? '');
+    const [isFavorite, setIsFavorite] = useState<boolean | null>(initialValues?.isFavorite ?? null);
+    const [watched, setWatched] = useState<string>(
+        initialValues?.watched === true ? 'watched'
+            : initialValues?.watched === false ? 'unwatched'
+                : '');
+    const [sort, setSort] = useState(initialValues?.sort ?? 'title');
+    const [sortDir, setSortDir] = useState<'asc' | 'desc'>(
+        initialValues?.sortDir ?? naturalDirectionFor(initialValues?.sort ?? 'title'));
 
     const debouncedSearch = useDebounce(search, 500);
     const debouncedGenre = useDebounce(genre, 500);
@@ -106,8 +156,11 @@ export function FilterBar({
                     { value: 'lastplayed', label: 'Recently Played' },
                 ]
                 : []),
-        ];
-    }, [isMusicLibrary, isPhotoLibrary, libraryType]);
+            // Caller-supplied extras (the browse page adds its personal play-count
+            // sort), de-duplicated so an extra can't double up with one above.
+            ...(extraSortOptions ?? []),
+        ].filter((opt, i, all) => all.findIndex(o => o.value === opt.value) === i);
+    }, [isMusicLibrary, isPhotoLibrary, libraryType, extraSortOptions]);
 
     return (
         <div className="sticky top-0 z-30 bg-black/40 border-b border-white/10 px-8 py-4 backdrop-blur-md">
@@ -160,6 +213,7 @@ export function FilterBar({
                     {/* Genre Filter - Combo box with autocomplete */}
                     <GenreComboBox
                         libraryId={libraryId}
+                        types={genreTypes}
                         value={genre}
                         onChange={setGenre}
                     />
@@ -225,8 +279,17 @@ export function FilterBar({
                     <select
                         value={sort}
                         onChange={(e) => {
-                            setSort(e.target.value);
-                            onSort(e.target.value);
+                            const nextSort = e.target.value;
+                            setSort(nextSort);
+                            onSort(nextSort);
+                            // Reset to the new key's natural direction. Carrying the old
+                            // one over means switching from Title (A-Z) to Date Added
+                            // lands on OLDEST first, which reads as broken.
+                            if (onSortDir) {
+                                const natural = naturalDirectionFor(nextSort);
+                                setSortDir(natural);
+                                onSortDir(natural);
+                            }
                         }}
                         className={selectStyles}
                     >
@@ -236,6 +299,28 @@ export function FilterBar({
                             </option>
                         ))}
                     </select>
+
+                    {/* Sort Direction */}
+                    {onSortDir && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const next = sortDir === 'asc' ? 'desc' : 'asc';
+                                setSortDir(next);
+                                onSortDir(next);
+                            }}
+                            className="p-2 rounded-lg border bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                            // Names the RESULT, not the icon — "Sort ascending" on a
+                            // control that is already ascending is ambiguous to a screen
+                            // reader user.
+                            aria-label={sortDir === 'asc' ? 'Sort descending' : 'Sort ascending'}
+                            title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+                        >
+                            {sortDir === 'asc'
+                                ? <ArrowUpNarrowWide className="w-5 h-5" />
+                                : <ArrowDownWideNarrow className="w-5 h-5" />}
+                        </button>
+                    )}
 
                     {/* Favorite Toggle */}
                     <button

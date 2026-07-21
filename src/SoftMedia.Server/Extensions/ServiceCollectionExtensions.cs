@@ -448,6 +448,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IUserPreferencesService, UserPreferencesService>();
         services.AddSingleton<RateLimiterFactory>();
+
+        // OMDb daily-quota counter. Singleton so concurrent metadata fetches share
+        // one atomic count (the scoped provider instances would otherwise race).
+        services.AddSingleton<Services.Metadata.IOmdbUsageTracker, Services.Metadata.OmdbUsageTracker>();
         
         services.AddSingleton<IMediaNotificationService, MediaNotificationService>();
 
@@ -489,6 +493,8 @@ public static class ServiceCollectionExtensions
         // backup didn't include. Scoped (uses AppDbContext); driven by the admin
         // endpoint and the ArtworkRepairOnRestoreService background worker.
         services.AddScoped<IArtworkRepairService, Services.Media.ArtworkRepairService>();
+        services.AddScoped<Services.Media.IGenreMaintenanceService, Services.Media.GenreMaintenanceService>();
+        services.AddScoped<Services.Media.IBrowseService, Services.Media.BrowseService>();
 
         return services;
     }

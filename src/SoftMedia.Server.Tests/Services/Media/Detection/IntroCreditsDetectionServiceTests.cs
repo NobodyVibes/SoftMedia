@@ -72,6 +72,41 @@ public class IntroCreditsDetectionServiceTests
     }
 
     [Fact]
+    public async Task DetectAsync_Cancellation_Propagates_AndKeepsCheckpointedFingerprints()
+    {
+        await using var db = NewDb();
+        var series = AddSeriesWithEpisodes(db, episodeCount: 3, episodeDuration: 1800);
+
+        using var cts = new CancellationTokenSource();
+        int headCalls = 0;
+        // Episode 2's extraction is where cancellation lands (the fixed extractor
+        // propagates it as OCE instead of swallowing it).
+        _extractor.Setup(e => e.ExtractHeadAsync(It.IsAny<string>(), It.IsAny<double>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, double _, CancellationToken _) =>
+            {
+                if (Interlocked.Increment(ref headCalls) == 2)
+                {
+                    cts.Cancel();
+                    throw new OperationCanceledException(cts.Token);
+                }
+                return Task.FromResult<uint[]?>(BuildFingerprint(length: 1000));
+            });
+        _extractor.Setup(e => e.ExtractTailAsync(It.IsAny<string>(), It.IsAny<double>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BuildFingerprint(length: 1000));
+
+        var service = NewService(db);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.DetectAsync(series.Id, cts.Token));
+
+        // Episode 1's fingerprint was checkpointed before cancellation, so a re-run
+        // (after preemption) resumes instead of starting over; episode 3 never started.
+        var stored = await db.MediaFingerprints.ToListAsync();
+        Assert.Single(stored);
+        Assert.NotNull(stored[0].HeadFingerprint);
+        Assert.Equal(2, headCalls);
+    }
+
+    [Fact]
     public async Task DetectAsync_PersistsFingerprintsForAllEpisodes()
     {
         await using var db = NewDb();

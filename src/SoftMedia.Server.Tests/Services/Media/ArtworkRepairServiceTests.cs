@@ -46,11 +46,13 @@ public class ArtworkRepairServiceTests : IDisposable
     private sealed class CapturingQueue : IMetadataQueue
     {
         public readonly List<(Guid Id, LibraryType Type, bool RefreshImages)> Calls = new();
-        public Task EnqueueMetadataRefreshAsync(Guid mediaId, LibraryType type, bool refreshImages = true, int retryCount = 0)
+        public Task EnqueueMetadataRefreshAsync(Guid mediaId, LibraryType type, bool refreshImages = true, int retryCount = 0, Guid? libraryId = null)
         {
             Calls.Add((mediaId, type, refreshImages));
             return Task.CompletedTask;
         }
+
+        public int GetPendingCountForLibrary(Guid libraryId) => 0;
     }
 
     private ArtworkRepairService Build(CapturingQueue queue)

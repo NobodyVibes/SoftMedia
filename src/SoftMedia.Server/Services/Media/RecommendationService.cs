@@ -20,13 +20,21 @@ public class RecommendationService : IRecommendationService
     private readonly IUserContentRatingProvider _contentRatingProvider;
     private readonly ILogger<RecommendationService> _logger;
 
+    /// <summary>
+    /// Drives the genre spotlight's daily rotation. Optional with a System default,
+    /// matching RefreshTokenService — tests substitute a fake clock to pin which genre
+    /// a given date selects.
+    /// </summary>
+    private readonly TimeProvider _time;
+
     public RecommendationService(
         IMediaRepository mediaRepository,
         IUserMediaInteractionRepository interactionRepository,
         AppDbContext context,
         IUserLibraryAccessProvider libraryAccessProvider,
         IUserContentRatingProvider contentRatingProvider,
-        ILogger<RecommendationService> logger)
+        ILogger<RecommendationService> logger,
+        TimeProvider? time = null)
     {
         _mediaRepository = mediaRepository;
         _interactionRepository = interactionRepository;
@@ -34,6 +42,7 @@ public class RecommendationService : IRecommendationService
         _libraryAccessProvider = libraryAccessProvider;
         _contentRatingProvider = contentRatingProvider;
         _logger = logger;
+        _time = time ?? TimeProvider.System;
     }
 
     public async Task<NextEpisodeResponse?> GetNextEpisodeAsync(Guid userId, Guid seriesId)
@@ -479,7 +488,14 @@ public class RecommendationService : IRecommendationService
     /// Continue Watching row, watched/seed items are excluded, and thin rows
     /// (&lt;4 items) self-suppress. Rows never repeat an item.
     /// </summary>
-    public async Task<IReadOnlyList<HomeRowDto>> GetHomeRowsAsync(Guid userId, int itemsPerRow = 15)
+    /// <param name="mostWatchedAcrossAllUsers">
+    /// Scope of the Most Watched row: true (default) ranks every user's plays
+    /// together, false ranks only the caller's. Affects that row alone — the taste
+    /// rows below it are always personal. Either way the results pass the caller's
+    /// own ACL + rating filter, so scope never widens what a user can see.
+    /// </param>
+    public async Task<IReadOnlyList<HomeRowDto>> GetHomeRowsAsync(
+        Guid userId, int itemsPerRow = 15, bool mostWatchedAcrossAllUsers = true)
     {
         itemsPerRow = Math.Clamp(itemsPerRow, 4, 30);
         const int MinRowItems = 4;
@@ -518,15 +534,23 @@ public class RecommendationService : IRecommendationService
         var rows = new List<HomeRowDto>();
         var used = new HashSet<Guid>(seedIds);
 
-        // Row 0 — "Your most watched": FULL-history play counts (not the recent-60
-        // taste window), episodes rolled up to their series so a binged show is one
-        // card rather than twenty. Watched items belong here by definition, so unlike
-        // the recommendation rows there is no watched-exclusion — but the ACL +
+        // Row 0 — "Most Watched": FULL-history play counts (not the recent-60 taste
+        // window), episodes rolled up to their series so a binged show is one card
+        // rather than twenty. Watched items belong here by definition, so unlike the
+        // recommendation rows there is no watched-exclusion — but the ACL +
         // rating-ceiling gate applies unchanged, and the row self-suppresses below
         // MinRowItems (a "most watched" of one or two titles is noise, and users who
         // disabled history recording simply have no rows to count).
+        //
+        // SCOPE. mostWatchedAcrossAllUsers aggregates every user's plays ("what this
+        // server watches"); otherwise only the caller's. Cross-user aggregation is
+        // deliberately ANONYMOUS — counts only, never who watched what — and the
+        // per-caller ACL + rating gate below still applies to the resulting items, so
+        // a title from a library the caller can't see is never surfaced by someone
+        // else's plays. That gate is what keeps this from widening the read surface
+        // described on PlaybackHistory.
         var playCounts = await _context.PlaybackHistory.AsNoTracking()
-            .Where(h => h.UserId == userId
+            .Where(h => (mostWatchedAcrossAllUsers || h.UserId == userId)
                         && (h.MediaType == MediaType.Movie || h.MediaType == MediaType.Episode))
             .Select(h => new
             {
@@ -534,10 +558,22 @@ public class RecommendationService : IRecommendationService
                 // to the (dangling) media id, which the visibility filter then drops.
                 RolledId = (Guid?)h.MediaItem!.SeriesId ?? h.MediaItemId,
                 h.LastBeatAt,
+                h.UserId,
             })
             .GroupBy(x => x.RolledId)
-            .Select(g => new { Id = g.Key, Plays = g.Count(), Last = g.Max(x => x.LastBeatAt) })
-            .OrderByDescending(x => x.Plays)
+            .Select(g => new
+            {
+                Id = g.Key,
+                Plays = g.Count(),
+                // Breadth beats volume across the household: a film four people
+                // watched once outranks one somebody replayed ten times. In the
+                // single-user scope every group has Viewers == 1, so this key is a
+                // no-op there and the ordering degrades exactly to plays-then-recency.
+                Viewers = g.Select(x => x.UserId).Distinct().Count(),
+                Last = g.Max(x => x.LastBeatAt),
+            })
+            .OrderByDescending(x => x.Viewers)
+            .ThenByDescending(x => x.Plays)
             .ThenByDescending(x => x.Last)
             .Take(itemsPerRow * 2) // headroom — visibility filtering thins the list
             .ToListAsync();
@@ -560,7 +596,18 @@ public class RecommendationService : IRecommendationService
                 foreach (var m in ordered) used.Add(m.Id); // rows never repeat an item
                 rows.Add(new HomeRowDto
                 {
-                    Title = "Your most watched",
+                    Kind = HomeRowKinds.MostWatched,
+                    Title = mostWatchedAcrossAllUsers ? "Most Watched" : "Your Most Watched",
+                    // Reproducible after all, via a play-count sort. The sort key must
+                    // follow the scope toggle: "playcount" is the all-user aggregate on
+                    // MediaItem, "myplaycount" counts only the caller's history rows.
+                    // Linking to the wrong one would swap a personal ranking for the
+                    // household's without the heading changing.
+                    Filter = new HomeRowFilterDto
+                    {
+                        SortBy = mostWatchedAcrossAllUsers ? "playcount" : "myplaycount",
+                        Types = DTOs.BrowseFilter.VideoTypes.Select(t => t.ToString()).ToList(),
+                    },
                     Items = ordered.Select(m => MediaItemDto.FromMediaItem(m, Constants.MediaConstants.Routes.ImageProxy)).ToList(),
                 });
             }
@@ -619,35 +666,13 @@ public class RecommendationService : IRecommendationService
             return pool.Select(p => p.Item).Where(m => !used.Contains(m.Id)).Take(take).ToList();
         }
 
-        // Row 1 — "Because you watched {most recent VISIBLE seed that has genres}"
-        // (falls back to the next visible seed instead of dropping the row when the
-        // latest one is ceiling-hidden).
-        var recentSeedId = history
-            .Select(h => h.MediaType == MediaType.Episode && h.SeriesId != null ? h.SeriesId.Value : h.MediaItemId)
-            .FirstOrDefault(id => seedGenres.Any(g => g.MediaItemId == id));
-        if (recentSeedId != Guid.Empty)
-        {
-            var seedTitle = await visible
-                .Where(m => m.Id == recentSeedId)
-                .Select(m => m.Title)
-                .FirstOrDefaultAsync();
-            if (seedTitle != null)
-            {
-                var seedGenreIds = seedGenres.Where(g => g.MediaItemId == recentSeedId).Select(g => g.GenreId).ToList();
-                var items = await CandidatesAsync(seedGenreIds, itemsPerRow);
-                if (items.Count >= MinRowItems)
-                {
-                    foreach (var m in items) used.Add(m.Id);
-                    rows.Add(new HomeRowDto
-                    {
-                        Title = $"Because you watched {seedTitle}",
-                        Items = items.Select(m => MediaItemDto.FromMediaItem(m, Constants.MediaConstants.Routes.ImageProxy)).ToList(),
-                    });
-                }
-            }
-        }
+        // NOTE: a "Because you watched {seed}" row used to sit here. It was dropped in
+        // favour of the scope-toggled Most Watched row above: its heading could only
+        // ever name one of the handful of titles in the caller's history, so it read as
+        // frozen, and its genre-overlap candidates duplicated what "Top picks for you"
+        // already produces from the same affinity signal.
 
-        // Row 2 — "Top picks for you": the caller's top affinity genres together.
+        // Row 1 — "Top picks for you": the caller's top affinity genres together.
         var topGenreIds = affinity.Select(a => a.GenreId).ToList();
         var topPicks = await CandidatesAsync(topGenreIds, itemsPerRow);
         if (topPicks.Count >= MinRowItems)
@@ -655,12 +680,13 @@ public class RecommendationService : IRecommendationService
             foreach (var m in topPicks) used.Add(m.Id);
             rows.Add(new HomeRowDto
             {
+                Kind = HomeRowKinds.TopPicks,
                 Title = "Top picks for you",
                 Items = topPicks.Select(m => MediaItemDto.FromMediaItem(m, Constants.MediaConstants.Routes.ImageProxy)).ToList(),
             });
         }
 
-        // Row 3 — "More {top genre}" (skipped when rows 1/2 drained the pool).
+        // Row 2 — "More {top genre}" (skipped when rows 0/1 drained the pool).
         var topGenre = affinity.FirstOrDefault();
         if (topGenre != null)
         {
@@ -670,10 +696,150 @@ public class RecommendationService : IRecommendationService
                 foreach (var m in more) used.Add(m.Id);
                 rows.Add(new HomeRowDto
                 {
+                    Kind = HomeRowKinds.Genre,
                     Title = $"More {topGenre.GenreName}",
+                    // Reproducible: "everything in this genre". The row itself excludes
+                    // watched items and caps at itemsPerRow, so See more legitimately
+                    // shows MORE than the row — which is the point of the link.
+                    Filter = new HomeRowFilterDto { Genre = topGenre.GenreName },
                     Items = more.Select(m => MediaItemDto.FromMediaItem(m, Constants.MediaConstants.Routes.ImageProxy)).ToList(),
                 });
             }
+        }
+
+        return rows;
+    }
+
+    /// <summary>
+    /// Catalog rows: shelves that need no play history, so they work on a cold account
+    /// where the taste rows above can produce nothing.
+    ///
+    /// Both are MOVIES AND TV ONLY. They started out spanning every browsable type, but
+    /// on a music- and book-heavy library that meant albums and books swamped both rows
+    /// — the genre ranking never surfaced a film genre, and "Never Played" was a wall of
+    /// unplayed books. These are watch-next shelves; the per-library "Recently Added"
+    /// rows are what surface music and books.
+    ///
+    /// Both are expressible as a <see cref="BrowseFilter"/>, so both carry a Filter —
+    /// including its type restriction — and get a "See more" that opens exactly the set
+    /// the row displayed.
+    /// </summary>
+    public async Task<IReadOnlyList<HomeRowDto>> GetCatalogRowsAsync(
+        Guid userId, int itemsPerRow = 15, CancellationToken ct = default)
+    {
+        itemsPerRow = Math.Clamp(itemsPerRow, 4, 30);
+        const int MinRowItems = 4;
+
+        var access = await _libraryAccessProvider.GetCurrentAsync();
+        var ceilings = await _contentRatingProvider.GetCurrentAsync();
+        var visible = _context.MediaItems.AsNoTracking()
+            .ApplyLibraryAccessFilter(access)
+            .ApplyContentRatingFilter(ceilings)
+            .Where(m => DTOs.BrowseFilter.BrowsableTypes.Contains(m.Type));
+
+        var rows = new List<HomeRowDto>();
+
+        // --- Genre spotlight -------------------------------------------------
+        // The server's biggest genre by item count, NOT the caller's taste — this row
+        // exists to be useful before any history exists. Ranked over visible items only,
+        // so a restricted user is never pointed at a genre they cannot browse.
+        //
+        // MOVIES AND TV ONLY. Genre means different things across media, and the book
+        // and music tags dominate this table by sheer volume ("Fiction", "Thrash
+        // Metal"), so a mixed ranking never surfaced a film genre at all. Restricting
+        // the ranking AND the items keeps this a watchable shelf; the row's Filter
+        // carries the same restriction so "See more" opens the same set rather than a
+        // grid padded with albums.
+        var videoOnly = visible.Where(m => DTOs.BrowseFilter.VideoTypes.Contains(m.Type));
+
+        // ROTATION. The pool is every genre with enough items to fill a row, ordered
+        // deterministically; the calendar day picks one from it.
+        //
+        // Filtering the pool by MinRowItems FIRST is what makes rotation safe: rotating
+        // over all genres would land on a 3-item genre some days and the row would
+        // silently vanish, which reads as a bug. Every genre in the pool is guaranteed
+        // to render.
+        var genrePool = await videoOnly
+            .SelectMany(m => m.MediaItemGenres)
+            .Where(mg => mg.Genre != null)
+            .GroupBy(mg => mg.Genre!.Name)
+            .Select(g => new { Name = g.Key, Count = g.Count() })
+            .Where(g => g.Count >= MinRowItems)
+            .OrderByDescending(g => g.Count)
+            .ThenBy(g => g.Name)
+            .ToListAsync(ct);
+
+        var spotlightGenre = GenreSpotlightRotation.Pick(
+            genrePool.Select(g => g.Name).ToList(), _time.GetUtcNow());
+
+        if (spotlightGenre != null)
+        {
+            var genreItems = await videoOnly
+                .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
+                .Where(m => m.MediaItemGenres.Any(mg => mg.Genre != null && mg.Genre.Name == spotlightGenre))
+                .OrderByDescending(m => m.DateAdded)
+                .ThenBy(m => m.Title)
+                .Take(itemsPerRow)
+                .ToListAsync(ct);
+
+            // Belt-and-braces: the pool filter above already guarantees this, but the
+            // count and the item query could drift if either is edited later.
+            if (genreItems.Count >= MinRowItems)
+            {
+                rows.Add(new HomeRowDto
+                {
+                    Kind = HomeRowKinds.GenreSpotlight,
+                    Title = spotlightGenre,
+                    Filter = new HomeRowFilterDto
+                    {
+                        Genre = spotlightGenre,
+                        SortBy = "dateadded",
+                        Types = DTOs.BrowseFilter.VideoTypes.Select(t => t.ToString()).ToList(),
+                    },
+                    Items = genreItems.Select(m => MediaItemDto.FromMediaItem(m, Constants.MediaConstants.Routes.ImageProxy)).ToList(),
+                });
+            }
+        }
+
+        // --- Never played ----------------------------------------------------
+        // MOVIES AND TV ONLY, like the spotlight above: this is a "something to watch
+        // tonight" shelf, and mixing in unplayed albums and books — which on a
+        // music-heavy library outnumber the video by an order of magnitude — buried the
+        // watchable items entirely. Recently Added still covers those libraries.
+        //
+        // Roll-up aware: a Series counts as played once ANY episode was. Checking the
+        // parent row alone would list every series here, because plays are only ever
+        // recorded against the child. (The Album clause is kept for the same reason,
+        // harmless now that albums are filtered out, and correct again the moment the
+        // type restriction is widened.)
+        var neverPlayed = await videoOnly
+            .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
+            .Where(m => !_context.PlaybackHistory.Any(h =>
+                h.UserId == userId
+                && (h.MediaItemId == m.Id
+                    || (h.MediaItem != null && h.MediaItem.SeriesId == m.Id)
+                    || (h.MediaItem != null && h.MediaItem.AlbumId == m.Id))))
+            .OrderByDescending(m => m.DateAdded)
+            .ThenBy(m => m.Title)
+            .Take(itemsPerRow)
+            .ToListAsync(ct);
+
+        if (neverPlayed.Count >= MinRowItems)
+        {
+            rows.Add(new HomeRowDto
+            {
+                Kind = HomeRowKinds.NeverPlayed,
+                Title = "Never Played",
+                Filter = new HomeRowFilterDto
+                {
+                    Unplayed = true,
+                    SortBy = "dateadded",
+                    // Without this the "See more" grid would fill with the unplayed
+                    // albums and books the row just excluded.
+                    Types = DTOs.BrowseFilter.VideoTypes.Select(t => t.ToString()).ToList(),
+                },
+                Items = neverPlayed.Select(m => MediaItemDto.FromMediaItem(m, Constants.MediaConstants.Routes.ImageProxy)).ToList(),
+            });
         }
 
         return rows;

@@ -2,8 +2,8 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Layers, Sparkles } from 'lucide-react';
 import { collectionService, type CollectionEntry } from '../../services/collectionService';
-import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
-import { API_URL } from '../../services/api';
+import { resolveCardPosterUrl } from '../../lib/mediaImageUrl';
+import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 
 /**
  * Wave E2 — "More from this collection" strip on the movie detail view.
@@ -77,8 +77,11 @@ export default function CollectionStripSection({ movieId }: CollectionStripSecti
 }
 
 function CollectionStripCard({ entry }: { entry: CollectionEntry }) {
+    // Media URLs below embed the media token; re-render when it rotates so a
+    // stale token can't leave the artwork permanently broken.
+    useMediaTokenRefresh();
     const movie = entry.media;
-    const poster = resolveImageUrl(movie.posterPath);
+    const poster = resolveCardPosterUrl(movie.posterPath);
 
     return (
         <Link
@@ -116,11 +119,4 @@ function CollectionStripCard({ entry }: { entry: CollectionEntry }) {
             </div>
         </Link>
     );
-}
-
-function resolveImageUrl(path: string | null | undefined): string | null {
-    if (!path) return null;
-    if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
-    if (path.startsWith('http')) return path;
-    return `${API_URL}${path}`;
 }

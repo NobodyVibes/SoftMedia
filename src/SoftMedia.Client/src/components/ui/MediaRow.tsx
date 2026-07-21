@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import { type MediaItem } from '../../types';
 import HoverableMediaCardWrapper from '../items/HoverableMediaCardWrapper';
@@ -10,9 +11,16 @@ interface MediaRowProps {
     items: MediaItem[];
     viewAllLink?: string;
     libraryType?: string;
+    /**
+     * Optional control rendered at the right of the header, where VIEW ALL sits.
+     * Used by the Most Watched row for its Everyone/Me scope toggle. Rows pass
+     * either this or viewAllLink — both render, action first, if a row ever needs
+     * the two together.
+     */
+    headerAction?: ReactNode;
 }
 
-export default function MediaRow({ title, items, viewAllLink, libraryType }: MediaRowProps) {
+export default function MediaRow({ title, items, viewAllLink, libraryType, headerAction }: MediaRowProps) {
     const [hoveredId, setHoveredId] = useState<string | null>(null);
 
     // Sequential left-to-right cascade reveal. The browser parallel-loads images,
@@ -28,15 +36,21 @@ export default function MediaRow({ title, items, viewAllLink, libraryType }: Med
                 <h2 className="text-2xl font-bold text-white tracking-tight">
                     {title}
                 </h2>
+                <div className="flex items-center gap-4">
+                {headerAction}
                 {viewAllLink && (
-                    <a
-                        href={viewAllLink}
-                        className="flex items-center gap-1 text-sm text-gray-400 hover:text-white transition-colors group"
+                    // Router Link, not a raw <a>: the anchor triggered a full document
+                    // reload, throwing away the SPA state and re-fetching the whole
+                    // bundle on what should be an in-app navigation.
+                    <Link
+                        to={viewAllLink}
+                        className="flex items-center gap-1 text-sm text-gray-400 hover:text-white transition-colors group focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded px-1"
                     >
-                        <span>VIEW ALL</span>
+                        <span>SEE MORE</span>
                         <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
-                    </a>
+                    </Link>
                 )}
+                </div>
             </div>
 
             <div className="relative overflow-visible">

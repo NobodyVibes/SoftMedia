@@ -55,12 +55,26 @@ public abstract class BaseMediaScanner : IMediaScanner
     protected bool _strictEnrichment;
 
     /// <summary>
+    /// Directories whose listing failed during this scan's discovery (permissions,
+    /// transient I/O, depth cap). Their subtrees are shielded from orphan cleanup —
+    /// not being able to list a directory says nothing about whether its files exist.
+    /// Cleared at scan start; discovery is single-threaded so no locking is needed.
+    /// </summary>
+    protected readonly HashSet<string> _unreadableDirs = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Striped locks for parent entities to ensure thread safety without unbounded memory growth.
     /// </summary>
     private readonly SemaphoreSlim[] _stripedLocks;
     private const int LockStripeCount = 1024;
     
     protected static readonly SemaphoreSlim _dbWriteLock = new(1, 1);
+
+    /// <summary>
+    /// Minimum interval between progress reports. The SignalR batcher dedups to
+    /// latest-per-library at 500ms, so this only bounds adapter callback overhead.
+    /// </summary>
+    private const int ProgressReportIntervalMs = 250;
 
     /// <summary>
     /// Template method for scanning a library.
@@ -72,16 +86,13 @@ public abstract class BaseMediaScanner : IMediaScanner
     {
         _logger.LogInformation("[{Scanner}] Starting scan of library '{LibraryName}' (ID: {LibraryId})",
             DisplayName, library.Name, library.Id);
-            
-        // Reset stats
-        // _parentLocks no longer used (replaced by striped locks which persist)
 
         // Stats tracking (thread-safe)
         int processedCount = 0;
         int newCount = 0;
         int updatedCount = 0;
         int skippedCount = 0;
-        int totalDirs = 0;
+        int errorCount = 0;
 
         try
         {
@@ -93,10 +104,50 @@ public abstract class BaseMediaScanner : IMediaScanner
                 _strictEnrichment = enrichmentMode == "Strict";
             }
 
-            // 1. Enumerate all directories first (Producer)
-            var directories = EnumerateDirectories(library.Paths).ToList();
-            totalDirs = directories.Count;
-            _logger.LogInformation("[{Scanner}] Found {Count} directories to process", DisplayName, totalDirs);
+            _unreadableDirs.Clear();
+
+            // 0.5. Root availability guard. An unmounted drive or dropped network share must
+            //      never masquerade as an empty library: with every root gone the scan would
+            //      "complete" having seen zero files and orphan-purge the entire catalog.
+            var missingRoots = library.Paths.Where(p => !RootExists(p)).ToList();
+            if (library.Paths.Count > 0 && missingRoots.Count == library.Paths.Count)
+            {
+                throw new InvalidOperationException(
+                    $"All library paths are unreachable ({string.Join(", ", missingRoots)}). " +
+                    "Scan aborted so the library is not purged; check that the drive/share is mounted.");
+            }
+            if (missingRoots.Count > 0)
+            {
+                _logger.LogWarning(
+                    "[{Scanner}] {Count} of {Total} library paths are unreachable ({Missing}); items under them will be preserved, not purged",
+                    DisplayName, missingRoots.Count, library.Paths.Count, string.Join(", ", missingRoots));
+            }
+
+            // 1. Discovery: walk the tree once, capturing each directory's eligible files.
+            //    Gives the scan an exact total up front (real percentages for the UI) and
+            //    means the processing walk below never touches the filesystem for listings.
+            progress?.Report(new ScanProgress(0, 0, null, "Discovering files...", Stage: LibraryScanStage.Discovery));
+            var discovered = new List<(string Dir, List<FileDiscoveryResult> Files)>();
+            int totalFiles = 0;
+            long lastDiscoveryReport = Environment.TickCount64;
+            foreach (var dirPath in EnumerateDirectories(library.Paths))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var files = EnumerateFilesCurrentDir(dirPath).ToList();
+                if (files.Count == 0) continue;
+                discovered.Add((dirPath, files));
+                totalFiles += files.Count;
+
+                var now = Environment.TickCount64;
+                if (now - lastDiscoveryReport >= ProgressReportIntervalMs)
+                {
+                    lastDiscoveryReport = now;
+                    progress?.Report(new ScanProgress(0, totalFiles, null,
+                        $"Discovering files... ({totalFiles} found)", Stage: LibraryScanStage.Discovery));
+                }
+            }
+            _logger.LogInformation("[{Scanner}] Discovered {Files} files in {Dirs} directories",
+                DisplayName, totalFiles, discovered.Count);
 
             // 1.5. Build an O(1) bulk dictionary lookup to prevent N+1 queries during parallel scan
             _logger.LogDebug("[{Scanner}] Bulk-loading existing media items into memory for library '{LibraryName}'", DisplayName, library.Name);
@@ -115,46 +166,61 @@ public abstract class BaseMediaScanner : IMediaScanner
                 }
             }
 
-            // 2. Record scan start time for Db-driven orphan detection
-            var scanStartTime = DateTime.UtcNow;
-            var parallelOptions = new ParallelOptions 
-            { 
+            // 2. Orphan detection input: every file path discovered this scan. Items whose
+            //    path is absent from this set no longer exist on disk. (Set-difference
+            //    replaces the old LastScannedUtc timestamping, which forced an UPDATE of
+            //    every row in the library on every scan just to mark items as "seen".)
+            var seenPaths = new HashSet<string>(
+                discovered.SelectMany(d => d.Files).Select(f => f.Path),
+                StringComparer.OrdinalIgnoreCase);
+
+            var parallelOptions = new ParallelOptions
+            {
                 CancellationToken = cancellationToken,
-                MaxDegreeOfParallelism = Environment.ProcessorCount 
+                MaxDegreeOfParallelism = Environment.ProcessorCount
             };
 
-            await Parallel.ForEachAsync(directories, parallelOptions, async (dirPath, ct) =>
+            // Time-based report throttle shared across the parallel walk. The old
+            // "processedCount % 10" gate raced under parallelism (ticks were skipped)
+            // and libraries under 10 files never reported at all.
+            long lastProcessingReport = 0;
+            void ReportProcessing(string? currentFileName)
+            {
+                if (progress == null) return;
+                var now = Environment.TickCount64;
+                var last = Interlocked.Read(ref lastProcessingReport);
+                if (now - last < ProgressReportIntervalMs) return;
+                if (Interlocked.CompareExchange(ref lastProcessingReport, now, last) != last) return;
+                progress.Report(new ScanProgress(
+                    Volatile.Read(ref processedCount), totalFiles, currentFileName, "Scanning files...",
+                    Volatile.Read(ref newCount), Volatile.Read(ref updatedCount),
+                    Volatile.Read(ref skippedCount), Volatile.Read(ref errorCount)));
+            }
+
+            await Parallel.ForEachAsync(discovered, parallelOptions, async (dir, ct) =>
             {
                 using var scope = _scopeFactory.CreateScope();
                 var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                
-                // Get files in THIS directory only
-                var filesInDir = EnumerateFilesCurrentDir(dirPath).ToList();
-                if (filesInDir.Count == 0) return;
-
-                int localNew = 0;
-                int localUpdated = 0;
-                int localSkipped = 0;
 
                 // List for deferred metadata enqueueing
                 var deferredQueue = new List<(Guid Id, LibraryType Type)>();
 
-                foreach (var fileResult in filesInDir)
+                foreach (var fileResult in dir.Files)
                 {
                     var filePath = fileResult.Path;
                     ct.ThrowIfCancellationRequested();
-                    try 
+                    try
                     {
                         // Look up existing item using O(1) in-memory cache
                         MediaItem? existing = null;
                         if (knownFilesCache.TryGetValue(filePath, out var cachedItem))
                         {
                             existing = cachedItem;
-                            
-                            // Safe attachment: Check if context is already tracking an item with this ID.
-                            // This prevents conflicts if multiple threads/files share parent entities.
-                            var tracked = context.ChangeTracker.Entries<MediaItem>()
-                                .FirstOrDefault(e => e.Entity.Id == existing.Id);
+
+                            // Safe attachment: Check if context is already tracking an item with
+                            // this ID (shared parents). LocalView.FindEntry is an O(1) lookup —
+                            // enumerating ChangeTracker.Entries here was O(tracked²) per directory.
+                            var tracked = context.MediaItems.Local.FindEntry(existing.Id);
 
                             if (tracked == null)
                             {
@@ -164,17 +230,15 @@ public abstract class BaseMediaScanner : IMediaScanner
                             {
                                 existing = tracked.Entity;
                             }
-                            
-                            existing.LastScannedUtc = DateTime.UtcNow;
                         }
 
                         var opResult = await ProcessFileAsync(context, fileResult, existing, library, ct);
 
                         switch (opResult.Result)
                         {
-                            case ScanResult.New: localNew++; break;
-                            case ScanResult.Updated: localUpdated++; break;
-                            case ScanResult.Skipped: localSkipped++; break;
+                            case ScanResult.New: Interlocked.Increment(ref newCount); break;
+                            case ScanResult.Updated: Interlocked.Increment(ref updatedCount); break;
+                            case ScanResult.Skipped: Interlocked.Increment(ref skippedCount); break;
                         }
 
                         if (opResult.EnqueueMetadata && opResult.ItemId != Guid.Empty)
@@ -184,17 +248,14 @@ public abstract class BaseMediaScanner : IMediaScanner
                     }
                     catch (Exception ex)
                     {
+                        Interlocked.Increment(ref errorCount);
                         _logger.LogWarning(ex, "[{Scanner}] Error processing file: {FilePath}", DisplayName, filePath);
                     }
-                    
+
                     Interlocked.Increment(ref processedCount);
-                    // Progress reporting needs to be throttled or it will flood SignalR
-                    if (processedCount % 10 == 0)
-                    {
-                        progress?.Report(new ScanProgress(processedCount, -1, Path.GetFileName(dirPath), "Scanning..."));
-                    }
+                    ReportProcessing(Path.GetFileName(filePath));
                 }
-                
+
                 // Wrap Db SaveChanges with lock to fix SQLite concurrent writer panics
                 await _dbWriteLock.WaitAsync(ct);
                 try
@@ -205,31 +266,37 @@ public abstract class BaseMediaScanner : IMediaScanner
                 {
                     _dbWriteLock.Release();
                 }
-                
+
                 // Process deferred queue AFTER save
                 foreach (var item in deferredQueue)
                 {
-                    await _metadataQueue.EnqueueMetadataRefreshAsync(item.Id, item.Type);
+                    await _metadataQueue.EnqueueMetadataRefreshAsync(item.Id, item.Type, libraryId: library.Id);
                 }
-                
-                Interlocked.Add(ref newCount, localNew);
-                Interlocked.Add(ref updatedCount, localUpdated);
-                Interlocked.Add(ref skippedCount, localSkipped);
             });
 
             // 5. Cleanup Orphans (Global Scope)
+            progress?.Report(new ScanProgress(processedCount, totalFiles, null, "Cleaning up...",
+                newCount, updatedCount, skippedCount, errorCount, LibraryScanStage.Finishing));
             using (var cleanupScope = _scopeFactory.CreateScope())
             {
                 var context = cleanupScope.ServiceProvider.GetRequiredService<AppDbContext>();
-                await CleanupOrphansAsync(context, library, scanStartTime, cancellationToken);
+                if (_unreadableDirs.Count > 0)
+                {
+                    _logger.LogWarning(
+                        "[{Scanner}] {Count} directories could not be listed this scan; their subtrees are preserved, not purged: {Dirs}",
+                        DisplayName, _unreadableDirs.Count, string.Join(", ", _unreadableDirs.Take(10)));
+                }
+                var shieldedPaths = missingRoots.Concat(_unreadableDirs).ToList();
+                await CleanupOrphansAsync(context, library, knownFilesCache, seenPaths, shieldedPaths, cancellationToken);
                 await CleanupEmptyContainersAsync(context, library, cancellationToken);
                 await context.SaveChangesAsync(cancellationToken);
             }
 
-            _logger.LogInformation("[{Scanner}] Completed scan. Processed {Count}. New: {New}, Upd: {Upd}", DisplayName, processedCount, newCount, updatedCount);
-            
-            _notificationService.NotifyScanProgress(library.Id, processedCount, processedCount, "Scan complete");
-            progress?.Report(new ScanProgress(processedCount, processedCount, null, "Complete", newCount, updatedCount, skippedCount));
+            _logger.LogInformation("[{Scanner}] Completed scan. Processed {Count}. New: {New}, Upd: {Upd}, Errors: {Err}",
+                DisplayName, processedCount, newCount, updatedCount, errorCount);
+
+            progress?.Report(new ScanProgress(processedCount, totalFiles, null, "Complete",
+                newCount, updatedCount, skippedCount, errorCount, LibraryScanStage.Finishing));
         }
         catch (OperationCanceledException)
         {
@@ -265,17 +332,27 @@ public abstract class BaseMediaScanner : IMediaScanner
             while (stack.Count > 0)
             {
                 var (dir, depth) = stack.Pop();
-                if (depth >= MaxScanDepth) continue;
+                if (depth >= MaxScanDepth)
+                {
+                    // Children beyond the cap are unwalked, not gone — shield the subtree.
+                    _unreadableDirs.Add(dir);
+                    continue;
+                }
 
                 List<string> subdirs;
                 try { subdirs = Directory.EnumerateDirectories(dir).ToList(); }
-                catch { continue; /* permission / transient IO */ }
+                catch
+                {
+                    // permission / transient IO — children unknown, shield the subtree
+                    _unreadableDirs.Add(dir);
+                    continue;
+                }
 
                 foreach (var sub in subdirs)
                 {
                     bool isReparse;
                     try { isReparse = (File.GetAttributes(sub) & FileAttributes.ReparsePoint) != 0; }
-                    catch { continue; }
+                    catch { _unreadableDirs.Add(sub); continue; }
 
                     if (isReparse)
                     {
@@ -294,17 +371,25 @@ public abstract class BaseMediaScanner : IMediaScanner
     {
         var dirInfo = new DirectoryInfo(dirPath);
         if (!dirInfo.Exists) yield break;
-        
-        IEnumerable<FileInfo> files = Enumerable.Empty<FileInfo>();
+
+        // Materialize inside the try: EnumerateFiles is lazy, so access errors surface
+        // during ITERATION — a catch around just the call never sees them and they would
+        // otherwise abort the whole scan. A failed listing also shields this directory
+        // from orphan cleanup (its files are unknown, not gone).
+        List<FileInfo>? files = null;
         try
         {
-            files = dirInfo.EnumerateFiles("*.*", SearchOption.TopDirectoryOnly);
+            files = dirInfo.EnumerateFiles("*.*", SearchOption.TopDirectoryOnly).ToList();
         }
-        catch { /* Permission ignored */ }
+        catch
+        {
+            _unreadableDirs.Add(dirPath);
+        }
+        if (files == null) yield break;
 
         foreach (var file in files)
         {
-            if (CanHandleFile(file.FullName)) 
+            if (CanHandleFile(file.FullName))
             {
                 yield return new FileDiscoveryResult(file.FullName, file.Length, file.LastWriteTimeUtc);
             }
@@ -357,12 +442,12 @@ public abstract class BaseMediaScanner : IMediaScanner
 
         if (opResult.EnqueueMetadata && opResult.ItemId != Guid.Empty)
         {
-             await _metadataQueue.EnqueueMetadataRefreshAsync(opResult.ItemId, library.Type);
+             await _metadataQueue.EnqueueMetadataRefreshAsync(opResult.ItemId, library.Type, libraryId: library.Id);
         }
 
-        // Notify that an item was updated - use empty guid as placeholder
-        // The actual item notification should happen in ProcessFileAsync
-        _notificationService.NotifyScanProgress(library.Id, 1, 1, "File processed");
+        // No ScanProgress notification here: a watcher-imported file used to emit a
+        // "1/1" event that clobbered any live scan toast for the same library. Item
+        // and recently-added notifications cover the UI refresh.
     }
 
     /// <summary>
@@ -384,14 +469,25 @@ public abstract class BaseMediaScanner : IMediaScanner
     }
 
     /// <summary>
-    /// Remove items from database that no longer exist on disk.
-    /// Uses database-level ExecutionDeleteAsync for ultra-high performance.
-    /// Containers (Series, Albums) are excluded since they don't map cleanly to leaf file paths.
+    /// True when the library root path is reachable. Overridable so test scanners with a
+    /// virtual filesystem can control root availability.
+    /// </summary>
+    protected virtual bool RootExists(string path) => Directory.Exists(path);
+
+    /// <summary>
+    /// Remove items from database whose file no longer exists on disk, computed as the
+    /// set difference between the paths known at scan start and the paths discovered this
+    /// scan. Containers (Series, Seasons, Artists, Albums, ComicSeries) are excluded —
+    /// their Path is a folder, never a discovered file, so they'd always look orphaned.
+    /// Items under a shielded path (unreachable root, unlistable directory) are preserved:
+    /// their files weren't discoverable, which says nothing about whether they still exist.
     /// </summary>
     protected async Task CleanupOrphansAsync(
         AppDbContext context,
         Library library,
-        DateTime scanStartTime,
+        IReadOnlyDictionary<string, MediaItem> knownItemsByPath,
+        IReadOnlySet<string> seenPaths,
+        IReadOnlyList<string> shieldedPaths,
         CancellationToken cancellationToken)
     {
         var containerTypes = new[]
@@ -399,8 +495,26 @@ public abstract class BaseMediaScanner : IMediaScanner
             MediaType.Series,
             MediaType.Season,
             MediaType.Artist,
-            MediaType.Album
+            MediaType.Album,
+            MediaType.ComicSeries
         };
+
+        // Separator-normalized, with a trailing separator so "/media/tv" can't shield "/media/tv2".
+        static string NormalizeSeparators(string p) => p.Replace('\\', '/');
+        var shieldedPrefixes = shieldedPaths
+            .Select(r => NormalizeSeparators(r).TrimEnd('/') + '/')
+            .ToList();
+        bool IsShielded(string itemPath) =>
+            shieldedPrefixes.Any(prefix => NormalizeSeparators(itemPath).StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
+        var orphanIds = knownItemsByPath
+            .Where(kv => !seenPaths.Contains(kv.Key)
+                      && !containerTypes.Contains(kv.Value.Type)
+                      && !IsShielded(kv.Key))
+            .Select(kv => kv.Value.Id)
+            .ToList();
+
+        if (orphanIds.Count == 0) return;
 
         int deletedCount = 0;
 
@@ -408,11 +522,9 @@ public abstract class BaseMediaScanner : IMediaScanner
         if (context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
         {
             var orphans = await context.MediaItems
-                .Where(m => m.LibraryId == library.Id 
-                         && !containerTypes.Contains(m.Type) 
-                         && m.LastScannedUtc < scanStartTime)
+                .Where(m => orphanIds.Contains(m.Id))
                 .ToListAsync(cancellationToken);
-                
+
             if (orphans.Count > 0)
             {
                 context.MediaItems.RemoveRange(orphans);
@@ -421,13 +533,15 @@ public abstract class BaseMediaScanner : IMediaScanner
         }
         else
         {
-            deletedCount = await context.MediaItems
-                .Where(m => m.LibraryId == library.Id 
-                         && !containerTypes.Contains(m.Type) 
-                         && m.LastScannedUtc < scanStartTime)
-                .ExecuteDeleteAsync(cancellationToken);
+            // Chunked to stay under SQLite's bound-parameter limit
+            foreach (var chunk in orphanIds.Chunk(500))
+            {
+                deletedCount += await context.MediaItems
+                    .Where(m => chunk.Contains(m.Id))
+                    .ExecuteDeleteAsync(cancellationToken);
+            }
         }
-            
+
         if (deletedCount > 0)
         {
             _logger.LogInformation("[{Scanner}] Bulk removed {Count} orphans", DisplayName, deletedCount);

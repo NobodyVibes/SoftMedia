@@ -2,8 +2,8 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Layers, Sparkles, Loader2 } from 'lucide-react';
 import { collectionService, type CollectionEntry } from '../services/collectionService';
-import { attachAuthToApiUrl } from '../lib/mediaImageUrl';
-import { API_URL } from '../services/api';
+import { resolveCardPosterUrl, resolveHeroPosterUrl } from '../lib/mediaImageUrl';
+import { useMediaTokenRefresh } from '../hooks/useMediaTokenRefresh';
 
 /**
  * Wave E2 — full collection detail page. Reachable from the "See all" link
@@ -14,6 +14,9 @@ import { API_URL } from '../services/api';
  * settings page (out of scope for this PR; placeholder noted below).
  */
 export default function CollectionDetailPage() {
+    // Media URLs below embed the media token; re-render when it rotates so a
+    // stale token can't leave the artwork permanently broken.
+    useMediaTokenRefresh();
     const { id = '' } = useParams<{ id: string }>();
     const { data, isLoading } = useQuery({
         queryKey: ['collection', id],
@@ -51,7 +54,7 @@ export default function CollectionDetailPage() {
                     <div className="w-32 h-48 sm:w-40 sm:h-60 rounded-xl overflow-hidden bg-brand-gradient flex items-center justify-center shrink-0 shadow-2xl">
                         {data.posterUrl ? (
                             <img
-                                src={resolveImageUrl(data.posterUrl)!}
+                                src={resolveHeroPosterUrl(data.posterUrl)!}
                                 referrerPolicy="no-referrer"
                                 alt=""
                                 className="w-full h-full object-cover"
@@ -88,8 +91,11 @@ export default function CollectionDetailPage() {
 }
 
 function CollectionMovieCard({ entry }: { entry: CollectionEntry }) {
+    // Media URLs below embed the media token; re-render when it rotates so a
+    // stale token can't leave the artwork permanently broken.
+    useMediaTokenRefresh();
     const movie = entry.media;
-    const poster = resolveImageUrl(movie.posterPath);
+    const poster = resolveCardPosterUrl(movie.posterPath);
 
     return (
         <Link
@@ -116,11 +122,4 @@ function CollectionMovieCard({ entry }: { entry: CollectionEntry }) {
             </div>
         </Link>
     );
-}
-
-function resolveImageUrl(path: string | null | undefined): string | null {
-    if (!path) return null;
-    if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
-    if (path.startsWith('http')) return path;
-    return `${API_URL}${path}`;
 }

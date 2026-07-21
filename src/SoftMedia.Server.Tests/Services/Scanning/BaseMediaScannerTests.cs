@@ -140,6 +140,165 @@ public class BaseMediaScannerTests
         _mockSettingsService.Verify(x => x.GetSettingAsync("MetadataEnrichmentMode", "Relaxed"), Times.Once);
     }
 
+    /// <summary>Synchronous progress capture (Progress&lt;T&gt; posts async and can miss reports).</summary>
+    private sealed class CapturingProgress : IProgress<ScanProgress>
+    {
+        public readonly List<ScanProgress> Reports = new();
+        public void Report(ScanProgress value) { lock (Reports) Reports.Add(value); }
+    }
+
+    [Fact]
+    public async Task ScanLibraryAsync_ReportsExactTotals_AndDiscoveryStage()
+    {
+        var scanner = CreateScanner();
+        var library = new Library { Id = Guid.NewGuid(), Name = "TestLib", Paths = new List<string> { "/root" } };
+        for (int i = 0; i < 3; i++)
+            scanner.VirtualFileSystem.Add($"/root/dir{i}", new List<string> { $"/root/dir{i}/a.mkv", $"/root/dir{i}/b.mp4" });
+
+        var progress = new CapturingProgress();
+        await scanner.ScanLibraryAsync(library, progress);
+
+        Assert.Equal(LibraryScanStage.Discovery, progress.Reports.First().Stage);
+
+        var final = progress.Reports.Last();
+        Assert.Equal("Complete", final.CurrentPhase);
+        Assert.Equal(6, final.ProcessedCount);
+        Assert.Equal(6, final.TotalCount);
+        Assert.Equal(6, final.NewCount);
+        Assert.Equal(0, final.ErrorCount);
+        Assert.Equal(LibraryScanStage.Finishing, final.Stage);
+    }
+
+    [Fact]
+    public async Task ScanLibraryAsync_CountsPerFileErrors()
+    {
+        var scanner = CreateScanner();
+        var library = new Library { Id = Guid.NewGuid(), Name = "TestLib", Paths = new List<string> { "/root" } };
+        scanner.VirtualFileSystem.Add("/root", new List<string>
+        {
+            "/root/good1.mkv", "/root/bad.mkv", "/root/good2.mkv"
+        });
+        scanner.ThrowOnFile = path => path.Contains("bad");
+
+        var progress = new CapturingProgress();
+        await scanner.ScanLibraryAsync(library, progress);
+
+        var final = progress.Reports.Last();
+        Assert.Equal(3, final.ProcessedCount); // errored file still counts as processed
+        Assert.Equal(1, final.ErrorCount);
+        Assert.Equal(2, final.NewCount);
+    }
+
+    [Fact]
+    public async Task ScanLibraryAsync_RemovesOrphans_ByPathSetDifference_PreservingContainers()
+    {
+        var scanner = CreateScanner();
+        var libId = Guid.NewGuid();
+        var library = new Library { Id = libId, Name = "TestLib", Paths = new List<string> { "/root" } };
+
+        // Seed: one file still on disk, one whose file vanished, and a folder-pathed
+        // container (ComicSeries) that must never be treated as an orphan.
+        using (var seed = CreateNewContext())
+        {
+            seed.MediaItems.AddRange(
+                new MediaItem { Id = Guid.NewGuid(), LibraryId = libId, Title = "Stays", Type = MediaType.Movie, Path = "/root/stays.mkv" },
+                new MediaItem { Id = Guid.NewGuid(), LibraryId = libId, Title = "Gone", Type = MediaType.Movie, Path = "/root/gone.mkv" },
+                new MediaItem { Id = Guid.NewGuid(), LibraryId = libId, Title = "Comics", Type = MediaType.ComicSeries, Path = "/root" });
+            await seed.SaveChangesAsync();
+        }
+
+        scanner.VirtualFileSystem.Add("/root", new List<string> { "/root/stays.mkv" });
+
+        await scanner.ScanLibraryAsync(library);
+
+        using var verify = CreateNewContext();
+        var remaining = await verify.MediaItems.Select(m => m.Title).ToListAsync();
+        Assert.Contains("Stays", remaining);
+        Assert.Contains("Comics", remaining);
+        Assert.DoesNotContain("Gone", remaining);
+    }
+
+    [Fact]
+    public async Task ScanLibraryAsync_AllRootsMissing_FailsWithoutPurging()
+    {
+        var scanner = CreateScanner();
+        var libId = Guid.NewGuid();
+        var library = new Library { Id = libId, Name = "TestLib", Paths = new List<string> { "/root" } };
+        scanner.MissingRoots.Add("/root");
+
+        using (var seed = CreateNewContext())
+        {
+            seed.MediaItems.Add(new MediaItem
+            {
+                Id = Guid.NewGuid(), LibraryId = libId, Title = "Survivor",
+                Type = MediaType.Movie, Path = "/root/survivor.mkv"
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scanner.ScanLibraryAsync(library));
+
+        using var verify = CreateNewContext();
+        Assert.Equal(1, await verify.MediaItems.CountAsync());
+    }
+
+    [Fact]
+    public async Task ScanLibraryAsync_PartialRootMissing_PreservesItemsUnderIt_StillPurgesLiveRoots()
+    {
+        var scanner = CreateScanner();
+        var libId = Guid.NewGuid();
+        var library = new Library { Id = libId, Name = "TestLib", Paths = new List<string> { "/root", "/offline" } };
+        scanner.MissingRoots.Add("/offline");
+
+        using (var seed = CreateNewContext())
+        {
+            seed.MediaItems.AddRange(
+                new MediaItem { Id = Guid.NewGuid(), LibraryId = libId, Title = "Stays", Type = MediaType.Movie, Path = "/root/stays.mkv" },
+                new MediaItem { Id = Guid.NewGuid(), LibraryId = libId, Title = "Gone", Type = MediaType.Movie, Path = "/root/gone.mkv" },
+                new MediaItem { Id = Guid.NewGuid(), LibraryId = libId, Title = "Offline", Type = MediaType.Movie, Path = "/offline/unreachable.mkv" });
+            await seed.SaveChangesAsync();
+        }
+
+        scanner.VirtualFileSystem.Add("/root", new List<string> { "/root/stays.mkv" });
+
+        await scanner.ScanLibraryAsync(library);
+
+        using var verify = CreateNewContext();
+        var remaining = await verify.MediaItems.Select(m => m.Title).ToListAsync();
+        Assert.Contains("Stays", remaining);
+        Assert.Contains("Offline", remaining);   // unreachable root: preserved, not purged
+        Assert.DoesNotContain("Gone", remaining); // live root: normal orphan purge
+    }
+
+    [Fact]
+    public async Task ScanLibraryAsync_UnreadableDirectory_PreservesItsItems_StillPurgesReadableDirs()
+    {
+        var scanner = CreateScanner();
+        var libId = Guid.NewGuid();
+        var library = new Library { Id = libId, Name = "TestLib", Paths = new List<string> { "/root" } };
+
+        using (var seed = CreateNewContext())
+        {
+            seed.MediaItems.AddRange(
+                new MediaItem { Id = Guid.NewGuid(), LibraryId = libId, Title = "Stays", Type = MediaType.Movie, Path = "/root/stays.mkv" },
+                new MediaItem { Id = Guid.NewGuid(), LibraryId = libId, Title = "Gone", Type = MediaType.Movie, Path = "/root/gone.mkv" },
+                new MediaItem { Id = Guid.NewGuid(), LibraryId = libId, Title = "Hidden", Type = MediaType.Movie, Path = "/root/locked/hidden.mkv" });
+            await seed.SaveChangesAsync();
+        }
+
+        scanner.VirtualFileSystem.Add("/root", new List<string> { "/root/stays.mkv" });
+        scanner.VirtualFileSystem.Add("/root/locked", new List<string> { "/root/locked/hidden.mkv" });
+        scanner.UnreadableDirs.Add("/root/locked"); // simulated permission failure
+
+        await scanner.ScanLibraryAsync(library);
+
+        using var verify = CreateNewContext();
+        var remaining = await verify.MediaItems.Select(m => m.Title).ToListAsync();
+        Assert.Contains("Stays", remaining);
+        Assert.Contains("Hidden", remaining);     // unlistable dir: preserved, not purged
+        Assert.DoesNotContain("Gone", remaining); // readable dir: normal orphan purge
+    }
+
     [Fact]
     public async Task ScanContext_DefaultsToRelaxed_WhenSettingMissing()
     {

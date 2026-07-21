@@ -43,6 +43,7 @@ public class SettingsService : ISettingsService
             }
             else
             {
+                _context.Settings.Add(setting);
             }
             // Remove from cache (handle both typed and raw entity requests)
             _memoryCache.Remove($"Setting_{setting.Key}_Entity");

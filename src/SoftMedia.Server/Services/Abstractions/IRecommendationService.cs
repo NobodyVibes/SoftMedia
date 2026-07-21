@@ -21,7 +21,21 @@ public interface IRecommendationService
     /// (genre/collection affinity), ACL/rating-filtered at the query. Empty for a
     /// user with no history (the client self-suppresses).
     /// </summary>
-    Task<IReadOnlyList<HomeRowDto>> GetHomeRowsAsync(Guid userId, int itemsPerRow = 15);
+    /// <param name="mostWatchedAcrossAllUsers">
+    /// Scope of the Most Watched row only: true (default) ranks every user's plays
+    /// together, false ranks only the caller's. Results stay ACL/rating-filtered for
+    /// the caller in both cases.
+    /// </param>
+    Task<IReadOnlyList<HomeRowDto>> GetHomeRowsAsync(
+        Guid userId, int itemsPerRow = 15, bool mostWatchedAcrossAllUsers = true);
+
+    /// <summary>
+    /// Catalog rows (genre spotlight, never played) that need no play history and span
+    /// every browsable media type. Rendered after the taste rows; each self-suppresses
+    /// below the minimum item count.
+    /// </summary>
+    Task<IReadOnlyList<HomeRowDto>> GetCatalogRowsAsync(
+        Guid userId, int itemsPerRow = 15, CancellationToken ct = default);
 
     // Hero Section
     Task UpdateHeroCacheAsync();

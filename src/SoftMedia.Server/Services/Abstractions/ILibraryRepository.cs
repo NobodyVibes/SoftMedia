@@ -22,5 +22,4 @@ public interface ILibraryRepository
     Task UpdateRangeAsync(IEnumerable<Library> libraries);
     Task DeleteAsync(Library library);
     Task<bool> ExistsAsync(Guid id);
-    Task<bool> IsPathUsedAsync(string path);
 }

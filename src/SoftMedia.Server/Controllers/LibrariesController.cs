@@ -81,8 +81,10 @@ public class LibrariesController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> DeleteLibrary(Guid id)
     {
-        await _libraryService.DeleteLibraryAsync(id);
-        return NoContent();
+        // 404 for "nothing deleted" — a silent 204 told the admin a delete succeeded
+        // when the id was stale (double-click, out-of-date list), hiding real state.
+        var deleted = await _libraryService.DeleteLibraryAsync(id);
+        return deleted ? NoContent() : NotFound();
     }
 
     [HttpPut("reorder")]
@@ -143,6 +145,7 @@ public class LibrariesController : ControllerBase
         [FromQuery] int pageSize = 50,
         [FromQuery] string? search = null,
         [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDir = null,
         [FromQuery] string? genre = null,
         [FromQuery] int? year = null,
         [FromQuery] int? minRating = null,
@@ -158,6 +161,7 @@ public class LibrariesController : ControllerBase
             PageSize = Math.Clamp(pageSize, 1, 100),
             Search = search,
             SortBy = sortBy,
+            SortDir = sortDir,
             Genre = genre,
             Year = year,
             MinRating = minRating,

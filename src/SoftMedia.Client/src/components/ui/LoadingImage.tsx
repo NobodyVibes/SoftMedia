@@ -29,21 +29,27 @@ export default function LoadingImage({
     const [status, setStatus] = useState<'idle' | 'loaded' | 'error'>('idle');
     const offViewportSignaledRef = useRef(false);
 
-    // Subscribe to the auth token. Without this, a silent token refresh
-    // (driven by the axios refresh-token interceptor) does NOT trigger a
-    // re-render here, so any <img> rendered before the refresh keeps its
-    // stale token and 401s indefinitely. By selecting the token via Zustand
-    // we re-render when it rotates and `attachAuthToApiUrl` below picks up
-    // the fresh value.
-    const token = useAuthStore((s) => s.token);
+    // Subscribe to the MEDIA token — the one `attachAuthToApiUrl` actually embeds
+    // in the URL below. Without this subscription a rotation does NOT re-render
+    // here, so the <img> keeps its stale token and 401s indefinitely.
+    //
+    // This deliberately watches `mediaToken`, NOT `token`. It used to select the
+    // access token, which is never what lands in the query string: media URLs
+    // carry the reduced-privilege media token (WS-6 T6.1/T6.2), and the access
+    // token rotates on a completely different (~15 min) schedule. The effect was
+    // therefore firing on an unrelated signal while missing the only one that
+    // matters — an <img> built before the media token resolved (or after it
+    // rotated) stayed broken, and since `status === 'error'` renders the fallback,
+    // the artwork simply vanished from the page.
+    const mediaToken = useAuthStore((s) => s.mediaToken);
 
-    // Reset the failure state when src or token changes — otherwise an image
-    // that 401'd with a stale token stays in `status === 'error'` forever
-    // and never retries with the refreshed token.
+    // Reset the failure state when src or the media token changes — otherwise an
+    // image that 401'd with a stale (or absent) token stays in `status === 'error'`
+    // forever and never retries once a valid token arrives.
     useEffect(() => {
         setStatus('idle');
         offViewportSignaledRef.current = false;
-    }, [src, token]);
+    }, [src, mediaToken]);
 
     // Off-viewport auto-signal: if this slot never enters the viewport within
     // a brief window, tell the cascade coordinator to advance past it. The

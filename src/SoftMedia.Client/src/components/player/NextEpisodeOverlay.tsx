@@ -3,6 +3,7 @@ import { Play, X, RotateCcw, Eye, Home, SkipForward, Pause } from 'lucide-react'
 import { StarRating } from '../ui/StarRating';
 import { useNavigate } from 'react-router-dom';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 
 /** Info about the next episode from the API */
 export interface NextEpisodeInfo {
@@ -55,6 +56,9 @@ export function NextEpisodeOverlay({
     onPauseVideo,
     libraryId
 }: NextEpisodeOverlayProps) {
+    // Media URLs below embed the media token; re-render when it rotates so a
+    // stale token can't leave the artwork permanently broken.
+    useMediaTokenRefresh();
     const navigate = useNavigate();
     const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
     const [isPaused, setIsPaused] = useState(false);

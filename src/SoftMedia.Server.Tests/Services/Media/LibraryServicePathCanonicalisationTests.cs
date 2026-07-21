@@ -155,7 +155,11 @@ public class LibraryServicePathCanonicalisationTests : IDisposable
         libraryRepo.Setup(r => r.GetByIdAsync(me.Id)).ReturnsAsync(me);
         libraryRepo.Setup(r => r.GetAllAsync()).ReturnsAsync(new[] { other, me });
 
-        var svc = BuildServiceWithRepo(libraryRepo.Object);
+        // The collision check reads the CONTEXT (unfiltered by design), not the
+        // repository — seed both so the test exercises the real read path.
+        var svc = BuildServiceWithRepo(libraryRepo.Object, out var db);
+        db.Libraries.AddRange(other, me);
+        db.SaveChanges();
 
         // Try to update `me` so that its path collides with `other` via a
         // traversal alias. Expect rejection.
@@ -170,6 +174,9 @@ public class LibraryServicePathCanonicalisationTests : IDisposable
     }
 
     private LibraryService BuildServiceWithRepo(ILibraryRepository libraryRepo)
+        => BuildServiceWithRepo(libraryRepo, out _);
+
+    private LibraryService BuildServiceWithRepo(ILibraryRepository libraryRepo, out AppDbContext dbOut)
     {
         var mediaRepo = new Mock<IMediaRepository>();
         var scanQueue = new Mock<ILibraryScanQueueService>();
@@ -178,6 +185,7 @@ public class LibraryServicePathCanonicalisationTests : IDisposable
         var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase($"libsvc-tests-{Guid.NewGuid()}")
             .Options);
+        dbOut = db;
 
         var (access, ratings) = UnrestrictedProviders();
         return new LibraryService(
@@ -198,7 +206,6 @@ public class LibraryServicePathCanonicalisationTests : IDisposable
     private LibraryService BuildService(out Mock<ILibraryRepository> libraryRepo)
     {
         libraryRepo = new Mock<ILibraryRepository>();
-        libraryRepo.Setup(r => r.IsPathUsedAsync(It.IsAny<string>())).ReturnsAsync(false);
         libraryRepo.Setup(r => r.GetAllAsync()).ReturnsAsync(Array.Empty<Library>());
         libraryRepo.Setup(r => r.AddAsync(It.IsAny<Library>())).Returns(Task.CompletedTask);
 

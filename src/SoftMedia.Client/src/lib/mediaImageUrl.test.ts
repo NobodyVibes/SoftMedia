@@ -95,4 +95,20 @@ describe('resolveCardPosterUrl (integration through the full chain)', () => {
         expect(out).toContain('width=300');
         expect(out).toContain('access_token=tok-card');
     });
+
+    /**
+     * Locally cached posters are served as static files from wwwroot, NOT from
+     * an API route. The collection strip and CollectionDetailPage each carried a
+     * private resolveImageUrl() whose fallback branch prefixed `${API_URL}`,
+     * turning `/cache/images/movies/x_poster.jpg` into
+     * `/api/v1/cache/images/movies/x_poster.jpg` → 404 → broken-image icon.
+     * Scanned movies store exactly this shape in MediaItems.PosterUrl, so every
+     * card in those two views was broken.
+     */
+    it('leaves a locally cached /cache poster path unprefixed', () => {
+        const cached = '/cache/images/movies/0efd0034-4876-4612-aa8b-f82f426b15ae_poster.jpg';
+        const out = resolveCardPosterUrl(cached);
+        expect(out).toBe(cached);
+        expect(out).not.toContain('/api/v1/cache');
+    });
 });

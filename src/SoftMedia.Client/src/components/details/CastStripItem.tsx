@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { CastMember } from '../../types';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 
 interface CastStripItemProps {
     member: CastMember;
@@ -24,6 +25,9 @@ function resolveImageSrc(imageUrl?: string): string | undefined {
 }
 
 export default function CastStripItem({ member }: CastStripItemProps) {
+    // Media URLs below embed the media token; re-render when it rotates so a
+    // stale token can't leave the artwork permanently broken.
+    useMediaTokenRefresh();
     const characters = member.characters ?? [];
     const hasMultiple = characters.length > 3;
     const displayRoles = hasMultiple

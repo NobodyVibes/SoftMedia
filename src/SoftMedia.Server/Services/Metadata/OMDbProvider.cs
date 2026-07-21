@@ -8,7 +8,9 @@ namespace SoftMedia.Server.Services.Metadata;
 /// <summary>
 /// OMDB API provider for movie metadata.
 /// Requires an API key - either the bundled SoftMedia key or a user-provided custom key.
-/// Implements daily usage tracking with tier-based limits.
+/// Daily usage tracking (tier-based limits, custom keys only) is delegated to
+/// <see cref="IOmdbUsageTracker"/>; every HTTP call goes through GetOmdbResponseAsync
+/// so none can bypass counting or rate limiting.
 /// </summary>
 public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
 {
@@ -18,6 +20,7 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
     private readonly IConfiguration _configuration;
     private readonly ISettingsService _settingsService;
     private readonly INotificationService _notificationService;
+    private readonly IOmdbUsageTracker _usageTracker;
 
     public LibraryType SupportedType => LibraryType.Movie;
     public string ProviderName => "OMDb";
@@ -35,12 +38,13 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
     };
 
     public OMDbProvider(
-        HttpClient httpClient, 
-        ILogger<OMDbProvider> logger, 
+        HttpClient httpClient,
+        ILogger<OMDbProvider> logger,
         RateLimiterFactory rateLimiterFactory,
         IConfiguration configuration,
         ISettingsService settingsService,
-        INotificationService notificationService)
+        INotificationService notificationService,
+        IOmdbUsageTracker usageTracker)
     {
         _httpClient = httpClient;
         _logger = logger;
@@ -48,6 +52,7 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
         _configuration = configuration;
         _settingsService = settingsService;
         _notificationService = notificationService;
+        _usageTracker = usageTracker;
         
         // Set User-Agent for API compliance
         if (!_httpClient.DefaultRequestHeaders.Contains("User-Agent"))
@@ -89,55 +94,34 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
     }
 
     /// <summary>
-    /// Checks if daily limit allows another request. Resets counter at midnight UTC.
-    /// Only applies when using custom API key.
+    /// Single funnel for every OMDb HTTP call. Acquires a rate-limiter lease,
+    /// then (custom keys only) atomically reserves one unit of the daily quota
+    /// BEFORE sending — so a request that fails mid-flight can never leave the
+    /// counter below OMDb's own tally. Returns null when the rate limiter or
+    /// the daily limit blocks the call.
     /// </summary>
-    private async Task<bool> CanMakeRequestAsync(string mode)
+    private async Task<string?> GetOmdbResponseAsync(string url, string mode, string context, CancellationToken ct = default)
     {
-        // No tracking for SoftMedia bundled key
-        if (mode != "custom")
-            return true;
-
-        var tier = await _settingsService.GetSettingAsync("OMDbApiTier", "free");
-        var limit = TierLimits.GetValueOrDefault(tier, 1_000);
-        
-        // Get current count and date
-        var countStr = await _settingsService.GetSettingAsync("OMDbDailyCount", "0");
-        var dateStr = await _settingsService.GetSettingAsync("OMDbCountDate", "");
-        var todayStr = DateTime.UtcNow.ToString("yyyy-MM-dd");
-
-        int count = 0;
-        int.TryParse(countStr, out count);
-
-        // Reset if new day
-        if (dateStr != todayStr)
+        using var lease = await _rateLimiter.AcquireAsync(1, ct);
+        if (!lease.IsAcquired)
         {
-            count = 0;
-            await UpdateCountAsync(0, todayStr);
+            _logger.LogWarning("OMDB rate limit exceeded for {Context}", context);
+            return null;
         }
 
-        return count < limit;
-    }
-
-    /// <summary>
-    /// Records an API request to the daily counter.
-    /// </summary>
-    private async Task RecordRequestAsync()
-    {
-        var countStr = await _settingsService.GetSettingAsync("OMDbDailyCount", "0");
-        int.TryParse(countStr, out var count);
-        var todayStr = DateTime.UtcNow.ToString("yyyy-MM-dd");
-        
-        await UpdateCountAsync(count + 1, todayStr);
-    }
-
-    private async Task UpdateCountAsync(int count, string date)
-    {
-        await _settingsService.UpdateSettingsAsync(new List<Models.AppSetting>
+        if (mode == "custom")
         {
-            new() { Key = "OMDbDailyCount", Value = count.ToString(), Group = "Internal" },
-            new() { Key = "OMDbCountDate", Value = date, Group = "Internal" }
-        });
+            var tier = await _settingsService.GetSettingAsync("OMDbApiTier", "free");
+            var limit = TierLimits.GetValueOrDefault(tier, 1_000);
+            if (!await _usageTracker.TryRecordRequestAsync(limit))
+            {
+                _logger.LogWarning("OMDb daily limit exhausted. Skipping call for {Context}", context);
+                await CreateExhaustionNotificationAsync();
+                return null;
+            }
+        }
+
+        return await _httpClient.GetStringAsync(url, ct);
     }
 
     /// <summary>
@@ -184,42 +168,25 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
             return null;
         }
 
-        // Check daily limit (only for custom key mode)
-        if (!await CanMakeRequestAsync(mode))
-        {
-            _logger.LogWarning("OMDb daily limit exhausted. Skipping metadata for: {Title}", title);
-            await CreateExhaustionNotificationAsync();
-            return null;
-        }
-
         try
         {
-            // Acquire rate limit lease
-            using var lease = await _rateLimiter.AcquireAsync(1);
-            if (!lease.IsAcquired)
-            {
-                _logger.LogWarning("OMDB rate limit exceeded for '{Title}'", title);
-                return null;
-            }
-
             // 1. First, check if we already have an IMDb ID in the promoted column.
             // This allows us to skip search/fuzzy matching on refreshes and use a single direct API call.
             if (!string.IsNullOrEmpty(item.ImdbId) && item.ImdbId.StartsWith("tt"))
             {
                 _logger.LogInformation("Using promoted IMDb ID for '{Title}': {Id}", title, item.ImdbId);
-                
+
                 // Direct ID Fetch (Cost: 1 request)
                 var directUrl = $"https://www.omdbapi.com/?apikey={apiKey}&i={item.ImdbId}&plot=full";
-                var directResponse = await _httpClient.GetStringAsync(directUrl);
-                
-                if (mode == "custom") await RecordRequestAsync();
+                var directResponse = await GetOmdbResponseAsync(directUrl, mode, $"'{title}' (direct id)");
+                if (directResponse == null) return null;
 
                 using var directDoc = JsonDocument.Parse(directResponse);
                 // Check for valid response
                 if (directDoc.RootElement.TryGetProperty("Response", out var resp) && resp.GetString() == "True")
                 {
                     // Return valid result immediately
-                    return ProcessProcessAndSerialize(directDoc.RootElement, title);
+                    return ProcessAndSerialize(directDoc.RootElement, title);
                 }
                 
                 _logger.LogWarning("Promoted IMDb ID {Id} failed lookup, falling back to title search", item.ImdbId);
@@ -253,14 +220,9 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
             }
 
             _logger.LogInformation("Fetching OMDB data for: {Title}", title);
-            var response = await _httpClient.GetStringAsync(searchUrl);
-            
-            // Record successful request (only for custom key)
-            if (mode == "custom")
-            {
-                await RecordRequestAsync();
-            }
-            
+            var response = await GetOmdbResponseAsync(searchUrl, mode, $"'{title}'");
+            if (response == null) return null;
+
             JsonElement movieData;
             using (var doc = JsonDocument.Parse(response))
             {
@@ -287,13 +249,8 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
                         searchApiUrl += $"&y={year}";
                     }
 
-                    var searchResponse = await _httpClient.GetStringAsync(searchApiUrl);
-                    
-                    // Count this as another request
-                    if (mode == "custom")
-                    {
-                        await RecordRequestAsync();
-                    }
+                    var searchResponse = await GetOmdbResponseAsync(searchApiUrl, mode, $"'{title}' (search fallback)");
+                    if (searchResponse == null) return null;
 
                     using var searchDoc = JsonDocument.Parse(searchResponse);
                     var searchRoot = searchDoc.RootElement;
@@ -310,12 +267,8 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
                             
                             // Fetch full details by IMDb ID
                             var detailUrl = $"https://www.omdbapi.com/?apikey={apiKey}&i={imdbId}&plot=full";
-                            var detailResponse = await _httpClient.GetStringAsync(detailUrl);
-                            
-                            if (mode == "custom")
-                            {
-                                await RecordRequestAsync();
-                            }
+                            var detailResponse = await GetOmdbResponseAsync(detailUrl, mode, $"'{title}' (detail)");
+                            if (detailResponse == null) return null;
 
                             using var detailDoc = JsonDocument.Parse(detailResponse);
                             movieData = detailDoc.RootElement.Clone();
@@ -335,7 +288,7 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
             }
 
             // Build metadata dictionary using the cloned movieData
-            return ProcessProcessAndSerialize(movieData, title);
+            return ProcessAndSerialize(movieData, title);
         }
         catch (HttpRequestException ex)
         {
@@ -349,7 +302,7 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
         }
     }
 
-    private MetadataResult ProcessProcessAndSerialize(JsonElement movieData, string title)
+    private MetadataResult ProcessAndSerialize(JsonElement movieData, string title)
     {
             var result = new MetadataResult();
 
@@ -475,16 +428,7 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
     {
         var tier = await _settingsService.GetSettingAsync("OMDbApiTier", "free");
         var limit = TierLimits.GetValueOrDefault(tier, 1_000);
-        
-        var countStr = await _settingsService.GetSettingAsync("OMDbDailyCount", "0");
-        var dateStr = await _settingsService.GetSettingAsync("OMDbCountDate", "");
-        var todayStr = DateTime.UtcNow.ToString("yyyy-MM-dd");
-
-        int used = 0;
-        if (dateStr == todayStr && int.TryParse(countStr, out var count))
-        {
-            used = count;
-        }
+        var used = await _usageTracker.GetUsedTodayAsync();
 
         return (used, limit, tier, used >= limit);
     }
@@ -504,18 +448,20 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
             return Array.Empty<MetadataSearchCandidate>();
         }
 
-        // Same endpoint shape as the private fallback search at line 284, just exposed
-        // publicly + returns multiple candidates rather than auto-picking the first.
+        // Same endpoint shape as the fallback search inside FetchMetadataWithKeyAsync,
+        // just exposed publicly + returns multiple candidates rather than auto-picking
+        // the first. Goes through the counted funnel like every other OMDb call.
         var url = $"https://www.omdbapi.com/?apikey={apiKey}&s={Uri.EscapeDataString(query.Trim())}&type=movie";
         if (year.HasValue) url += $"&y={year}";
 
-        string body;
-        try { body = await _httpClient.GetStringAsync(url, ct); }
+        string? body;
+        try { body = await GetOmdbResponseAsync(url, mode, $"search '{query}'", ct); }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "OMDb search failed for '{Query}'", query);
             return Array.Empty<MetadataSearchCandidate>();
         }
+        if (body == null) return Array.Empty<MetadataSearchCandidate>();
 
         using var doc = JsonDocument.Parse(body);
         if (!doc.RootElement.TryGetProperty("Search", out var results) ||
@@ -556,17 +502,31 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
         return candidates;
     }
 
-    /// <summary>Fetch full metadata for an IMDb-id candidate. Reuses FetchMetadataAsync's promoted-IMDb-id short-circuit.</summary>
-    public Task<MetadataResult?> FetchByCandidateAsync(string providerItemId, CancellationToken ct)
+    /// <summary>
+    /// Fetch full metadata for an IMDb-id candidate. Resolves the API key itself
+    /// (FetchMetadataAsync intentionally throws to force key resolution) and reuses
+    /// FetchMetadataWithKeyAsync's promoted-IMDb-id short-circuit, so the call is
+    /// counted and rate-limited like every other OMDb request.
+    /// </summary>
+    public async Task<MetadataResult?> FetchByCandidateAsync(string providerItemId, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(providerItemId) || !providerItemId.StartsWith("tt"))
-            return Task.FromResult<MetadataResult?>(null);
+            return null;
 
-        return FetchMetadataAsync(new MediaItem
+        var mode = await _settingsService.GetSettingAsync("OMDbApiKeyMode", "softmedia");
+        var customKey = await _settingsService.GetSettingAsync("OMDbApiKeyCustom", "");
+        var apiKey = GetActiveApiKey(mode, customKey);
+        if (string.IsNullOrEmpty(apiKey))
+        {
+            _logger.LogDebug("OMDb fix-match fetch aborted: no active API key.");
+            return null;
+        }
+
+        return await FetchMetadataWithKeyAsync(new MediaItem
         {
             Title = "(fix-match)",
             Type = Models.MediaType.Movie,
             ImdbId = providerItemId,
-        });
+        }, apiKey, mode);
     }
 }

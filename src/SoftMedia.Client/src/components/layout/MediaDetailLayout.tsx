@@ -12,6 +12,7 @@ import { cn } from '../../lib/utils';
 import { getGenreColors } from '../../lib/genreColors';
 import { resolveHeroPosterUrl, resolveBackdropUrl } from '../../lib/mediaImageUrl';
 import { WatchlistButton } from '../details/WatchlistButton';
+import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 
 interface MediaDetailLayoutProps {
     item: MediaItem;
@@ -25,6 +26,9 @@ interface MediaDetailLayoutProps {
 }
 
 export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride, customMetadata, actionSlot }: MediaDetailLayoutProps) {
+    // Media URLs below embed the media token; re-render when it rotates so a
+    // stale token can't leave the artwork permanently broken.
+    useMediaTokenRefresh();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
 

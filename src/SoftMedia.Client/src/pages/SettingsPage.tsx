@@ -249,7 +249,10 @@ export default function SettingsPage() {
         refetchInterval: (query) => {
             const jobs = query.state.data ?? [];
             const hasActiveScans = jobs.some((j: LibraryScanJob) => j.status === 'Running' || j.status === 'Queued');
-            return hasActiveScans ? 2000 : false; // Poll every 2s when active, stop when idle
+            // Keep a slow idle poll: returning false made the query dormant, so scans
+            // started elsewhere (library creation, watcher, schedules) never appeared
+            // until a manual page refresh.
+            return hasActiveScans ? 2000 : 10000;
         },
     });
 
@@ -298,6 +301,8 @@ export default function SettingsPage() {
         mutationFn: libraryService.create,
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['libraries'] });
+            // Creating a library kicks off its initial scan server-side
+            queryClient.invalidateQueries({ queryKey: ['scanQueue'] });
             toast.success(t('Library created successfully'));
             setIsLibraryFormOpen(false);
         },
@@ -314,6 +319,8 @@ export default function SettingsPage() {
             libraryService.update(id, data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['libraries'] });
+            // Path changes can trigger a rescan server-side
+            queryClient.invalidateQueries({ queryKey: ['scanQueue'] });
             toast.success(t('Library updated successfully'));
             setIsLibraryFormOpen(false);
             setEditingLibrary(undefined);
@@ -1442,11 +1449,11 @@ export default function SettingsPage() {
                                 <div className="mb-6 p-4 bg-white/5 rounded-xl border border-white/10">
                                     <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-3">Scan Status</h3>
 
-                                    {/* Active/Queued Scans */}
-                                    {scanQueue.filter(j => j.status === 'Running' || j.status === 'Queued').length > 0 ? (
+                                    {/* Active/Queued Scans (Paused = detection yielding to scans) */}
+                                    {scanQueue.filter(j => j.status === 'Running' || j.status === 'Queued' || j.status === 'Paused').length > 0 ? (
                                         <div className="space-y-3 mb-4">
                                             {scanQueue
-                                                .filter(j => j.status === 'Running' || j.status === 'Queued')
+                                                .filter(j => j.status === 'Running' || j.status === 'Queued' || j.status === 'Paused')
                                                 .map(job => (
                                                     <LibraryScanProgress key={job.id} job={job} />
                                                 ))

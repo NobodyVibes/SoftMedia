@@ -2,10 +2,10 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { API_URL } from '../../services/api';
 import type { MediaItem } from '../../types';
 import { ScrollingText } from '../ui/ScrollingText';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 
 interface Props {
     track: MediaItem;
@@ -15,6 +15,9 @@ interface Props {
 }
 
 export const SortableQueueItem = ({ track, originalIndex, id, onPlay }: Props) => {
+    // Media URLs below embed the media token; re-render when it rotates so a
+    // stale token can't leave the artwork permanently broken.
+    useMediaTokenRefresh();
     const {
         attributes,
         listeners,
@@ -35,7 +38,10 @@ export const SortableQueueItem = ({ track, originalIndex, id, onPlay }: Props) =
         if (!path) return '/placeholder-music.png';
         if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
         if (path.startsWith('http')) return path;
-        return `${API_URL}${path}`;
+        // Anything else is a static file served from wwwroot (e.g.
+        // /cache/images/albums/x.jpg). It is NOT under /api/v1 — prefixing it
+        // there yields a route that does not exist and a 404'd cover.
+        return path;
     };
 
     return (

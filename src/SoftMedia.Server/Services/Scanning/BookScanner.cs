@@ -95,7 +95,7 @@ public class BookScanner : BaseMediaScanner
                 _seriesNeedingEnrichment.Count);
             foreach (var seriesId in _seriesNeedingEnrichment.Keys)
             {
-                await _metadataQueue.EnqueueMetadataRefreshAsync(seriesId, LibraryType.Book);
+                await _metadataQueue.EnqueueMetadataRefreshAsync(seriesId, LibraryType.Book, libraryId: library.Id);
             }
         }
     }
@@ -127,6 +127,20 @@ public class BookScanner : BaseMediaScanner
         var filePath = file.Path;
         try
         {
+            // Fast path: unchanged file (same size + mtime) needs no re-extraction —
+            // embedded metadata can't have changed, and opening every EPUB/PDF on every
+            // rescan was the dominant cost of scanning a stable book library. Enrichment
+            // policy still runs so incomplete items keep getting queued.
+            if (existing != null && existing.Size == file.Size && existing.DateModified == file.LastWriteUtc)
+            {
+                if (MetadataEnrichmentPolicy.NeedsEnrichment(existing, _strictEnrichment))
+                {
+                    _logger.LogDebug("[BookScanner] Queued metadata enrichment (unchanged file): {Path}", filePath);
+                    return new ScanOperationResult(ScanResult.Updated, existing.Id, EnqueueMetadata: true);
+                }
+                return new ScanOperationResult(ScanResult.Skipped, existing.Id, EnqueueMetadata: false);
+            }
+
             // Option B: embedded metadata first (EPUB OPF package / PDF Info dict).
             // Publisher-authored data is dramatically more accurate than whatever
             // the file happened to be named when it landed on disk.

@@ -33,6 +33,19 @@ public class TestMediaScanner : BaseMediaScanner
     // Simulate work delay to test concurrency
     public int SimulateWorkDelayMs { get; set; } = 0;
 
+    // Files whose processing should throw (error-count testing)
+    public Func<string, bool>? ThrowOnFile { get; set; }
+
+    // Roots reported as unreachable; all other virtual roots exist.
+    public HashSet<string> MissingRoots { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    protected override bool RootExists(string path) => !MissingRoots.Contains(path);
+
+    // Directories whose file listing "fails" (simulated permission error). Mirrors the
+    // real enumerator: the failure is recorded in _unreadableDirs during discovery so
+    // the subtree is shielded from orphan cleanup.
+    public HashSet<string> UnreadableDirs { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     public TestMediaScanner(
         IServiceScopeFactory scopeFactory,
         ILogger<TestMediaScanner> logger,
@@ -51,6 +64,11 @@ public class TestMediaScanner : BaseMediaScanner
 
     protected override IEnumerable<FileDiscoveryResult> EnumerateFilesCurrentDir(string dirPath)
     {
+        if (UnreadableDirs.Contains(dirPath))
+        {
+            _unreadableDirs.Add(dirPath);
+            return Enumerable.Empty<FileDiscoveryResult>();
+        }
         if (VirtualFileSystem.TryGetValue(dirPath, out var files))
         {
             return files.Select(f => new FileDiscoveryResult(f, 0, DateTime.UtcNow));
@@ -66,6 +84,10 @@ public class TestMediaScanner : BaseMediaScanner
         CancellationToken cancellationToken)
     {
         var filePath = file.Path;
+        if (ThrowOnFile?.Invoke(filePath) == true)
+        {
+            throw new InvalidOperationException($"Simulated failure for {filePath}");
+        }
         if (SimulateWorkDelayMs > 0)
         {
             await Task.Delay(SimulateWorkDelayMs, cancellationToken);

@@ -74,10 +74,7 @@ public class LibraryService : ILibraryService
             {
                 throw new ArgumentException($"Directory does not exist: {path}");
             }
-            if (await _libraryRepository.IsPathUsedAsync(path))
-            {
-                throw new ArgumentException($"Path '{path}' is already used by another library.");
-            }
+            await ThrowIfPathCollidesAsync(path, excludeLibraryId: null);
         }
 
         // Detect within-request duplicates (e.g. admin entered the same folder twice
@@ -142,18 +139,7 @@ public class LibraryService : ILibraryService
             {
                 throw new ArgumentException($"Directory does not exist: {path}");
             }
-
-            // Check if path is used by OTHER libraries — compare canonical forms
-            // on both sides so aliases (C:\M vs c:\m\..\m) collide.
-            var libraries = await _libraryRepository.GetAllAsync();
-            var collision = libraries
-                .Where(l => l.Id != id)
-                .SelectMany(l => l.Paths ?? new List<string>())
-                .Any(existing => PathsEqual(Canonicalise(existing), path));
-            if (collision)
-            {
-                throw new ArgumentException($"Path '{path}' is already used by another library.");
-            }
+            await ThrowIfPathCollidesAsync(path, excludeLibraryId: id);
         }
 
         RejectIntraRequestDuplicates(canonicalPaths);
@@ -171,6 +157,46 @@ public class LibraryService : ILibraryService
     }
 
     // --- Path safety helpers (Todo 08) -------------------------------------
+
+    /// <summary>
+    /// Throws when <paramref name="canonicalPath"/> is already claimed by a library
+    /// other than <paramref name="excludeLibraryId"/> — naming the owner, because
+    /// "already used by another library" sent an admin hunting through every library's
+    /// paths to find which one (a deleted-then-recreated test library, in the incident
+    /// that motivated this).
+    ///
+    /// BOTH sides are canonicalised before comparing, with Windows-appropriate case
+    /// handling (PathsEqual). Create used to do a raw case-sensitive Contains against
+    /// the stored strings while update canonicalised — so a legacy row whose stored
+    /// form differed (casing, separators, trailing slash) let a second library claim
+    /// the same folder through create, and the two then double-scanned it.
+    ///
+    /// Queries Libraries UNFILTERED (no ACL): this is an integrity check on admin-only
+    /// endpoints, and filtering could hide a real collision with a row the caller's
+    /// ACL happens to exclude.
+    /// </summary>
+    private async Task ThrowIfPathCollidesAsync(string canonicalPath, Guid? excludeLibraryId)
+    {
+        var libraries = await _context.Libraries.AsNoTracking().ToListAsync();
+
+        var owner = libraries
+            .Where(l => excludeLibraryId == null || l.Id != excludeLibraryId.Value)
+            .FirstOrDefault(l => (l.Paths ?? new List<string>()).Any(existing =>
+            {
+                // A legacy row holding an unparseable path must not brick every
+                // create/update on the server — fall back to comparing it raw.
+                string existingCanonical;
+                try { existingCanonical = Canonicalise(existing); }
+                catch (ArgumentException) { existingCanonical = existing; }
+                return PathsEqual(existingCanonical, canonicalPath);
+            }));
+
+        if (owner != null)
+        {
+            throw new ArgumentException(
+                $"Path '{canonicalPath}' is already used by library '{owner.Name}'.");
+        }
+    }
 
     /// Canonicalise a single path: trim whitespace, resolve to absolute via
     /// `Path.GetFullPath` (which handles `.` `..` relative segments), and strip
@@ -233,10 +259,14 @@ public class LibraryService : ILibraryService
         }
     }
 
-    public async Task DeleteLibraryAsync(Guid id)
+    public async Task<bool> DeleteLibraryAsync(Guid id)
     {
+        // GetByIdAsync is ACL-filtered; null covers both "no such library" and
+        // "caller cannot see it". Report false either way so the endpoint answers
+        // 404 instead of a silent 204 that claims a delete which never happened —
+        // the anti-probe rule (404 over 403) keeps the two cases indistinguishable.
         var library = await _libraryRepository.GetByIdAsync(id);
-        if (library == null) return;
+        if (library == null) return false;
 
         _libraryWatcher.RemoveWatchersForLibrary(id);
 
@@ -264,6 +294,8 @@ public class LibraryService : ILibraryService
             await _context.SaveChangesAsync();
             _logger.LogDebug("Invalidated hero cache after deleting library {LibraryName}", library.Name);
         }
+
+        return true;
     }
 
     public async Task ReorderLibrariesAsync(List<Guid> orderedIds)

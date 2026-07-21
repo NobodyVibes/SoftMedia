@@ -268,6 +268,29 @@ public class AdminController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// Collapses the Genre table onto its canonical form: merges case-variants
+    /// ("Science Fiction" / "science fiction"), splits BISAC subject paths that book
+    /// providers send as one string, and drops non-genre headings (bare years,
+    /// "Dune (Imaginary place)").
+    ///
+    /// Defaults to a DRY RUN — it reports what would change and writes nothing.
+    /// Pass dryRun=false to apply. Idempotent: re-running on clean data is a no-op.
+    /// Aborts rather than leaving any item with zero genres.
+    /// </summary>
+    [HttpPost("normalize-genres")]
+    public async Task<IActionResult> NormalizeGenres(
+        [FromServices] Services.Media.IGenreMaintenanceService genreMaintenance,
+        [FromQuery] bool dryRun = true,
+        CancellationToken ct = default)
+    {
+        var result = await genreMaintenance.NormalizeAsync(dryRun, ct);
+        _logger.LogInformation(
+            "Admin {User} ran genre normalisation (dryRun={DryRun}): {Before} -> {After} genres",
+            User.Identity?.Name, dryRun, result.GenresBefore, result.GenresAfter);
+        return Ok(result);
+    }
+
     // --- Scheduled tasks (P1-WI-005) ---
 
     /// <summary>Lists all background tasks with their last-run telemetry.</summary>

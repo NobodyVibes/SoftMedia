@@ -64,7 +64,8 @@ public class ImageUrlExtractorService : IImageUrlExtractorService
                 download.Episode,
                 item.Type,
                 download.Type,
-                download.PersonId);
+                download.PersonId,
+                item.LibraryId);
         }
 
         _logger.LogInformation("Enqueued {Count} image downloads for {Title} ({Type})",

@@ -143,18 +143,8 @@ public class LibraryRepositoryAclTests : IDisposable
         Assert.Equal(2, page.TotalCount);
     }
 
-    [Fact]
-    public async Task IsPathUsedAsync_DoesNotApplyAclFilter()
-    {
-        // The path-collision check is admin-only. A user with restricted ACL
-        // shouldn't reach this method, but the implementation must NOT mask
-        // collisions even if it ever does. Confirms the method sees the
-        // existing path despite the user's ACL excluding _libB.
-        using var db = new AppDbContext(_options);
-        var repo = BuildRepo(LibraryAccess.AllowOnly(new[] { _libA.Id }), db);
-
-        Assert.True(await repo.IsPathUsedAsync("/a"));
-        Assert.True(await repo.IsPathUsedAsync("/b"));
-        Assert.False(await repo.IsPathUsedAsync("/never-used"));
-    }
+    // NOTE: IsPathUsedAsync (and its does-not-apply-ACL test) moved: the collision
+    // check now lives in LibraryService.ThrowIfPathCollidesAsync, which queries
+    // Libraries unfiltered by construction. The ACL-bypass property is pinned at the
+    // service level in LibraryServicePathCollisionTests.
 }

@@ -4,6 +4,7 @@ import { StarRating } from '../ui/StarRating';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 import type { MediaItem } from '../../types';
 import type { PostPlayInfo } from '../../services/postPlayService';
+import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 
 interface MovieEndOverlayProps {
     /** Title of the movie that just finished (already marked watched by the player). */
@@ -48,6 +49,9 @@ export function MovieEndOverlay({
     onPauseVideo,
     libraryId,
 }: MovieEndOverlayProps) {
+    // Media URLs below embed the media token; re-render when it rotates so a
+    // stale token can't leave the artwork permanently broken.
+    useMediaTokenRefresh();
     const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
     const [isPaused, setIsPaused] = useState(false);
     const [rating, setRating] = useState<number | null>(currentRating ?? null);

@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { Search, Bell, Menu, ChevronDown, User as UserIcon, Settings, AlertCircle, HelpCircle, Users, LogOut, X, AlertTriangle, Info } from 'lucide-react';
+import { Search, Bell, Menu, ChevronDown, User as UserIcon, Settings, AlertCircle, HelpCircle, Users, LogOut, X, AlertTriangle, Info, Loader2 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useUIStore } from '../../store/uiStore';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -8,6 +8,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useDebounce } from '../../hooks/useDebounce';
 import { searchService } from '../../services/searchService';
 import { notificationService, type SystemNotification } from '../../services/notificationService';
+import { libraryService } from '../../services/libraryService';
+import type { LibraryScanJob } from '../../types';
 import GlobalSearchResults from './GlobalSearchResults';
 
 export default function TopBar() {
@@ -43,6 +45,26 @@ export default function TopBar() {
         refetchInterval: 30000, // Poll every 30 seconds
     });
 
+    // Live scan activity (admin only). SignalR invalidates ['scanQueue'] on every scan
+    // event, so this updates in near-real-time while mounted; the idle 30s poll catches
+    // scans started while the hub was disconnected.
+    const { data: scanQueue = [] } = useQuery<LibraryScanJob[]>({
+        queryKey: ['scanQueue'],
+        queryFn: libraryService.getScanQueue,
+        enabled: isAdmin,
+        refetchInterval: (query) => {
+            const jobs = query.state.data ?? [];
+            const active = jobs.some((j: LibraryScanJob) => j.status === 'Running' || j.status === 'Queued');
+            return active ? 5000 : 30000;
+        },
+    });
+    const activeScans = scanQueue.filter(j => j.status === 'Running' || j.status === 'Queued');
+    const hasActiveScans = activeScans.length > 0;
+    const runningScan = activeScans.find(j => j.status === 'Running');
+    const scanSummary = runningScan
+        ? `${runningScan.libraryName}${runningScan.totalFiles > 0 ? ` — ${runningScan.processedFiles}/${runningScan.totalFiles}` : ''}${activeScans.length > 1 ? ` (+${activeScans.length - 1} more)` : ''}`
+        : `${activeScans.length} scan${activeScans.length === 1 ? '' : 's'} queued`;
+
     // Dismiss mutation
     const dismissMutation = useMutation({
         mutationFn: (id: string) => notificationService.dismissNotification(id),
@@ -71,7 +93,9 @@ export default function TopBar() {
     };
 
     const showSearchResults = isSearchFocused && debouncedQuery.length >= 2;
-    const notificationCount = notifications.length;
+    // The live scan entry counts toward the badge while active; it disappears on its own
+    // when the queue drains (it is derived state, not a persisted notification).
+    const notificationCount = notifications.length + (hasActiveScans ? 1 : 0);
 
     const getSeverityIcon = (severity: string) => {
         switch (severity) {
@@ -175,7 +199,27 @@ export default function TopBar() {
 
                                     {/* Notifications List */}
                                     <div className="max-h-[300px] overflow-y-auto">
-                                        {notifications.length === 0 ? (
+                                        {/* Live scan activity — derived entry, present only while
+                                            scans are running/queued; links to the scan status UI. */}
+                                        {hasActiveScans && (
+                                            <button
+                                                onClick={() => {
+                                                    setIsNotificationMenuOpen(false);
+                                                    navigate('/settings/library/libraries');
+                                                }}
+                                                className="w-[calc(100%-16px)] mx-2 mt-2 p-3 rounded-lg border border-blue-500/30 bg-blue-500/10 text-left hover:bg-blue-500/20 transition-colors"
+                                            >
+                                                <div className="flex items-start gap-2">
+                                                    <Loader2 size={16} className="text-blue-400 animate-spin mt-0.5 flex-shrink-0" />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-sm font-medium text-white">Library scan in progress</p>
+                                                        <p className="text-xs text-gray-400 mt-0.5 truncate">{scanSummary}</p>
+                                                        <p className="text-xs text-primary mt-1">View scan status →</p>
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        )}
+                                        {notifications.length === 0 && !hasActiveScans ? (
                                             <div className="p-6 text-center text-gray-500">
                                                 <Bell size={24} className="mx-auto mb-2 opacity-30" />
                                                 <p className="text-sm">No notifications</p>

@@ -115,6 +115,14 @@ public class MusicScanner : BaseMediaScanner
         var filePath = file.Path;
         try
         {
+            // Fast path: unchanged file (same size + mtime) needs no re-tagging — opening
+            // every audio file with TagLib on every rescan was the dominant cost of
+            // scanning a stable music library. Tags can only differ if the file changed.
+            if (existing != null && existing.Size == file.Size && existing.DateModified == file.LastWriteUtc)
+            {
+                return new ScanOperationResult(ScanResult.Skipped, existing.Id, EnqueueMetadata: false);
+            }
+
             // Parse metadata using TagLib
             using var tagFile = TagLib.File.Create(filePath);
             var tag = tagFile.Tag;
@@ -241,7 +249,7 @@ public class MusicScanner : BaseMediaScanner
             await context.SaveChangesAsync(cancellationToken);
 
             // Queue for metadata enrichment (image/bio)
-            await _metadataQueue.EnqueueMetadataRefreshAsync(artist.Id, LibraryType.Music);
+            await _metadataQueue.EnqueueMetadataRefreshAsync(artist.Id, LibraryType.Music, libraryId: artist.LibraryId);
 
             // Add to cache for subsequent lookups
             _artistCache.TryAdd(artistName, artist);
@@ -301,7 +309,7 @@ public class MusicScanner : BaseMediaScanner
             await context.SaveChangesAsync(cancellationToken);
 
             // Queue for metadata enrichment
-            await _metadataQueue.EnqueueMetadataRefreshAsync(album.Id, LibraryType.Music);
+            await _metadataQueue.EnqueueMetadataRefreshAsync(album.Id, LibraryType.Music, libraryId: album.LibraryId);
 
             // Add to cache for subsequent lookups
             _albumCache.TryAdd(cacheKey, album);

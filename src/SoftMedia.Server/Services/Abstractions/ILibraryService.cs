@@ -9,7 +9,8 @@ public interface ILibraryService
     Task<IEnumerable<Library>> GetLibrariesAsync();
     Task<Library> CreateLibraryAsync(CreateLibraryRequest request);
     Task UpdateLibraryAsync(Guid id, UpdateLibraryRequest request);
-    Task DeleteLibraryAsync(Guid id);
+    /// <summary>True when a library was deleted; false when no visible library has that id.</summary>
+    Task<bool> DeleteLibraryAsync(Guid id);
     Task ReorderLibrariesAsync(List<Guid> orderedIds);
 
     Task<PagedResult<MediaItemDto>> GetLibraryItemsAsync(Guid libraryId, LibraryItemFilter filter);

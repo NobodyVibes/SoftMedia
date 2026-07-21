@@ -9,7 +9,13 @@ public enum LibraryScanStatus
     Running,
     Completed,
     Failed,
-    Cancelled
+    Cancelled,
+    /// <summary>
+    /// Background work (intro/credits detection) deliberately yielding while
+    /// user-facing scans/refreshes run; resumes automatically. Currently only
+    /// used by the synthetic detection summary row.
+    /// </summary>
+    Paused
 }
 
 /// <summary>
@@ -109,6 +115,18 @@ public class LibraryScanJob
     /// Position in the queue (1 = next to run, 0 = currently running or completed).
     /// </summary>
     public int QueuePosition { get; set; }
+
+    /// <summary>
+    /// Items enqueued for metadata enrichment when the file walk finished.
+    /// Only meaningful while <see cref="Stage"/> is <see cref="LibraryScanStage.Metadata"/>.
+    /// </summary>
+    public int MetadataTotal { get; set; }
+
+    /// <summary>
+    /// Items still awaiting metadata enrichment for this library.
+    /// Only meaningful while <see cref="Stage"/> is <see cref="LibraryScanStage.Metadata"/>.
+    /// </summary>
+    public int MetadataRemaining { get; set; }
     
     /// <summary>
     /// Calculates progress percentage (0-100).

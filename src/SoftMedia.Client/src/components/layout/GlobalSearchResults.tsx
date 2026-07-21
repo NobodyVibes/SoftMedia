@@ -5,6 +5,7 @@ import type { GlobalSearchResult } from '../../services/searchService';
 import { MediaType, type MediaItem } from '../../types';
 import { useAudioStore } from '../../store/audioStore';
 import { resolveCardPosterUrl } from '../../lib/mediaImageUrl';
+import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 
 /** Context line that disambiguates duplicate titles across result types. */
 function subtitleFor(item: MediaItem): string | null {
@@ -41,6 +42,9 @@ const libraryIcons: Record<string, React.ReactNode> = {
 };
 
 export default function GlobalSearchResults({ results, isLoading, onClose }: GlobalSearchResultsProps) {
+    // Media URLs below embed the media token; re-render when it rotates so a
+    // stale token can't leave the artwork permanently broken.
+    useMediaTokenRefresh();
     const navigate = useNavigate();
     const playTrack = useAudioStore((s) => s.playTrack);
 

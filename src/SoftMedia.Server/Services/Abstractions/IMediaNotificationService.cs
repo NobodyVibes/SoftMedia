@@ -21,7 +21,9 @@ public interface IMediaNotificationService
     void NotifyLibraryRecentUpdated(Guid libraryId);
 
     /// <summary>
-    /// Notify clients of scan progress for a library.
+    /// Notify clients of scan progress for a library. Stage is one of
+    /// Discovery/Processing/Metadata/Finishing while running, or the terminal
+    /// "Complete"/"Failed" markers the client uses to dismiss progress UI.
     /// </summary>
-    void NotifyScanProgress(Guid libraryId, int processed, int total, string status);
+    void NotifyScanProgress(Guid libraryId, int processed, int total, string status, string stage);
 }

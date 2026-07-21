@@ -232,22 +232,40 @@ public class MetadataAggregator : IMetadataAggregator
     {
         try
         {
-            var trimmedNames = genreNames
-                .Select(g => g.Trim())
-                .Where(g => !string.IsNullOrEmpty(g))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            // Canonicalise before touching the DB: splits BISAC subject paths that
+            // book providers send as one string ("FICTION / Science Fiction / Space
+            // Opera"), drops non-genre subject headings ("Dune (Imaginary place)",
+            // bare years), and unifies casing so music tags and video genres share
+            // rows. See GenreNormalizer for the full rationale.
+            var canonicalNames = GenreNormalizer.NormalizeAll(genreNames);
 
-            if (trimmedNames.Count == 0) return;
+            if (canonicalNames.Count == 0) return;
 
-            // Batch-load all matching Genre entities in a single query
-            var existingGenres = await _dbContext.Genres
-                .Where(g => trimmedNames.Contains(g.Name))
-                .ToDictionaryAsync(g => g.Name, StringComparer.OrdinalIgnoreCase);
+            // Match case-INSENSITIVELY against existing rows. SQLite's default BINARY
+            // collation makes both `IN (...)` and the UNIQUE index on Name
+            // case-sensitive, so comparing raw names let "Science Fiction" fail to
+            // find an existing "science fiction" and insert a duplicate — which is
+            // exactly how three spellings of it accumulated. Comparing on lowered
+            // values is what actually de-duplicates; the Genre table is small enough
+            // (hundreds of rows) that losing the index on this lookup is irrelevant.
+            var lowered = canonicalNames.Select(n => n.ToLowerInvariant()).ToList();
+            var existingRows = await _dbContext.Genres
+                .Where(g => lowered.Contains(g.Name.ToLower()))
+                .ToListAsync();
+
+            // Tolerate case-duplicates still present in the table (this runs whether
+            // or not the one-off merge has happened yet): collapse to the lowest Id
+            // per name instead of throwing on a duplicate dictionary key.
+            var existingGenres = existingRows
+                .GroupBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    grp => grp.Key,
+                    grp => grp.OrderBy(g => g.Id).First(),
+                    StringComparer.OrdinalIgnoreCase);
 
             // Batch-create any missing Genre entities
             var newGenres = new List<Genre>();
-            foreach (var name in trimmedNames)
+            foreach (var name in canonicalNames)
             {
                 if (!existingGenres.ContainsKey(name))
                 {
@@ -269,7 +287,7 @@ public class MetadataAggregator : IMetadataAggregator
                 .ToListAsync();
 
             var existingGenreIds = existingAssociations.Select(a => a.GenreId).ToHashSet();
-            var desiredGenreIds = trimmedNames
+            var desiredGenreIds = canonicalNames
                 .Select(name => existingGenres[name].Id)
                 .ToHashSet();
 

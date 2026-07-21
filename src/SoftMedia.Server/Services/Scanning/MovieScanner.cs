@@ -56,8 +56,13 @@ public class MovieScanner : BaseMediaScanner
             if (string.IsNullOrEmpty(title))
                 title = Path.GetFileNameWithoutExtension(filePath);
 
-            // Create or update movie
+            // Create or update movie. Capture whether the file actually changed BEFORE
+            // stamping Size/DateModified — the analysis strategy compares DateModified
+            // against the file's mtime, so stamping first silently disabled re-probes
+            // of modified files.
             var isNew = existing == null;
+            var fileChanged = existing != null
+                && (existing.Size != file.Size || existing.DateModified != file.LastWriteUtc);
             var movie = existing ?? new MediaItem { LibraryId = library.Id };
 
             movie.Title = title;
@@ -68,8 +73,10 @@ public class MovieScanner : BaseMediaScanner
             movie.Size = file.Size;
             movie.DateModified = file.LastWriteUtc;
 
-            // Delegate technical analysis to MediaAnalysisService (Smart Probe)
-            var refreshMode = isNew ? MetadataRefreshMode.Full : MetadataRefreshMode.Missing;
+            // Delegate technical analysis to MediaAnalysisService (Smart Probe).
+            // Changed files get a full re-probe; unchanged files stay in Missing mode,
+            // which only probes when technical data is absent.
+            var refreshMode = isNew || fileChanged ? MetadataRefreshMode.Full : MetadataRefreshMode.Missing;
             await _mediaAnalysisService.AnalyzeAsync(movie, filePath, refreshMode, cancellationToken);
 
             // R-WI-014: local sidecar artwork (poster.jpg / folder.jpg / <stem>-poster.* beside
@@ -108,8 +115,11 @@ public class MovieScanner : BaseMediaScanner
                 }
                 else
                 {
-                    _logger.LogDebug("[MovieScanner] Updated movie: {Title}", title);
-                    return new ScanOperationResult(ScanResult.Updated, movie.Id, EnqueueMetadata: false);
+                    // Unchanged file + complete metadata = skipped, so scan counters
+                    // reflect reality instead of reporting every rescan as "updated".
+                    _logger.LogDebug("[MovieScanner] {Action} movie: {Title}", fileChanged ? "Updated" : "Skipped", title);
+                    return new ScanOperationResult(
+                        fileChanged ? ScanResult.Updated : ScanResult.Skipped, movie.Id, EnqueueMetadata: false);
                 }
             }
         }

@@ -186,18 +186,20 @@ public class MusicImageService : IMusicImageService
     /// </summary>
     private bool IsPathAllowed(string fullPath)
     {
-        // Library roots: reuse the hardened central jail (audit wave-2 L-13). StreamSecurityService
-        // resolves symlinks at every path component, anchors the prefix on a directory separator,
-        // and rejects argument-injection characters — the bespoke GetFullPath + raw StartsWith here
-        // did none of those and diverged from AudioController.GetCoverArt, which already delegates.
-        var libraryPaths = _context.Libraries.ToList()
-            .SelectMany(l => l.Paths ?? new List<string>()).ToList();
-        if (_streamSecurity.IsPathAuthorized(fullPath, libraryPaths))
-            return true;
-
-        // Server-managed image cache (wwwroot/cache/images). These files are written by the server,
-        // so a literal prefix check is sufficient — but anchor it on a trailing separator so a
-        // sibling directory ("cache/images-evil") can't match.
+        // Server-managed image cache (wwwroot/cache/images) is checked FIRST because it is
+        // the overwhelmingly common case — nearly every cover request resolves here.
+        //
+        // The order matters for more than speed. The library-jail probe below logs at
+        // WARN whenever a path falls outside it, so running it first made every single
+        // cached cover emit "Access denied: … is not within any authorized library
+        // paths" before the cache check quietly succeeded. Real access failures were
+        // buried in a stream of warnings about images that served perfectly. It also
+        // loaded every Library row from the database on each image request.
+        //
+        // These files are written by the server, so a literal prefix check suffices —
+        // anchored on a trailing separator so a sibling directory ("cache/images-evil")
+        // cannot match. The allowlist is the UNION of both checks either way, so
+        // reordering grants no access that was not already granted.
         var webRoot = !string.IsNullOrEmpty(_env.WebRootPath)
             ? _env.WebRootPath
             : Path.Combine(Environment.CurrentDirectory, "wwwroot");
@@ -207,6 +209,15 @@ public class MusicImageService : IMusicImageService
 
         var normalizedFull = Path.GetFullPath(fullPath);
         if (normalizedFull.StartsWith(cacheRoot, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Library roots: reuse the hardened central jail (audit wave-2 L-13). StreamSecurityService
+        // resolves symlinks at every path component, anchors the prefix on a directory separator,
+        // and rejects argument-injection characters — the bespoke GetFullPath + raw StartsWith here
+        // did none of those and diverged from AudioController.GetCoverArt, which already delegates.
+        var libraryPaths = _context.Libraries.ToList()
+            .SelectMany(l => l.Paths ?? new List<string>()).ToList();
+        if (_streamSecurity.IsPathAuthorized(fullPath, libraryPaths))
             return true;
 
         _logger.LogWarning("Path not in allowed directories: {Path}", fullPath);

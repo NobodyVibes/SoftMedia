@@ -41,10 +41,22 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
         });
     }
 
-    public async Task EnqueueImageDownloadAsync(Guid mediaId, string remoteUrl, int? seasonNumber = null, int? episodeNumber = null, MediaType type = MediaType.Movie, ImageType imageType = ImageType.Poster, int? personId = null)
+    // Per-library pending-download gauge, mirroring MetadataQueueService's: incremented
+    // when a request is enqueued WITH a library id, decremented when it finishes. Lets the
+    // scan queue hold a job's Metadata stage open until this library's artwork is cached.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, int> _pendingByLibrary = new();
+
+    public async Task EnqueueImageDownloadAsync(Guid mediaId, string remoteUrl, int? seasonNumber = null, int? episodeNumber = null, MediaType type = MediaType.Movie, ImageType imageType = ImageType.Poster, int? personId = null, Guid? libraryId = null)
     {
-        await _channel.Writer.WriteAsync(new ImageDownloadRequest(mediaId, remoteUrl, seasonNumber, episodeNumber, type, imageType, personId));
+        if (libraryId.HasValue)
+        {
+            _pendingByLibrary.AddOrUpdate(libraryId.Value, 1, (_, count) => count + 1);
+        }
+        await _channel.Writer.WriteAsync(new ImageDownloadRequest(mediaId, remoteUrl, seasonNumber, episodeNumber, type, imageType, personId, libraryId));
     }
+
+    public int GetPendingCountForLibrary(Guid libraryId)
+        => _pendingByLibrary.TryGetValue(libraryId, out var count) ? count : 0;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -73,6 +85,12 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
                     }
                     finally
                     {
+                        // Only requests counted at enqueue (LibraryId carried) decrement,
+                        // so uncounted paths can never drive the gauge negative.
+                        if (request.LibraryId.HasValue)
+                        {
+                            _pendingByLibrary.AddOrUpdate(request.LibraryId.Value, 0, (_, count) => Math.Max(0, count - 1));
+                        }
                         ReportActivity();
                     }
                 });
@@ -297,4 +315,4 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
     }
 }
 
-public record ImageDownloadRequest(Guid MediaId, string RemoteUrl, int? SeasonNumber, int? EpisodeNumber, MediaType Type, ImageType ImageType, int? PersonId = null);
+public record ImageDownloadRequest(Guid MediaId, string RemoteUrl, int? SeasonNumber, int? EpisodeNumber, MediaType Type, ImageType ImageType, int? PersonId = null, Guid? LibraryId = null);

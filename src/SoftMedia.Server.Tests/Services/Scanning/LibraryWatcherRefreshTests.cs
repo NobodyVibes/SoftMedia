@@ -43,7 +43,6 @@ public class LibraryWatcherRefreshTests : IDisposable
     {
         var watcher = NewMockWatcher();
         var repo = new Mock<ILibraryRepository>();
-        repo.Setup(r => r.IsPathUsedAsync(It.IsAny<string>())).ReturnsAsync(false);
         repo.Setup(r => r.GetAllAsync()).ReturnsAsync(Array.Empty<Library>());
         repo.Setup(r => r.AddAsync(It.IsAny<Library>())).Returns(Task.CompletedTask);
 

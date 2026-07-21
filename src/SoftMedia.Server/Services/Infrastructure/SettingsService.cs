@@ -112,6 +112,11 @@ public class SettingsService : ISettingsService
             new() { Key = "DefaultAudioChannels", Value = "auto", Group = "Streaming", Description = "Default audio channel preference (auto, stereo, 5.1, 7.1)." },
             new() { Key = "MaxAudioStreamingBitrate", Value = "0", Group = "Streaming", Description = "Maximum audio transcode bitrate (kbps). 0 = unlimited. Common: 128, 192, 256, 320." },
 
+            // NR-WI-007 — the API reference is a feature of a self-hosted server, so it is
+            // served in production by default; operators who want it dark can toggle this
+            // off (takes effect immediately, no restart). Development always serves it.
+            new() { Key = "EnableApiDocs", Value = "true", Group = "Network", Description = "Serve the interactive API reference (Swagger UI and the OpenAPI document) at /swagger. Third-party client apps use this contract to integrate with your server. Disable to hide it." },
+
             // DLNA (P4-004) — for smart TVs (LG/Samsung) that lack Chromecast.
             new() { Key = "EnableDlna", Value = "false", Group = "DLNA", Description = "Expose selected libraries as a DLNA/UPnP media server so smart TVs on the LAN can browse and play them directly. SECURITY: DLNA has no login, so any device on your LAN can read the EXPOSED libraries (LAN-only; never exposed to the internet). Choose which libraries to expose via 'DlnaExposedLibraries'. Default off. Requires a server restart to take effect." },
             new() { Key = "DlnaServerName", Value = "SoftMedia", Group = "DLNA", Description = "Friendly name shown for the media server on your TV." },
@@ -158,6 +163,9 @@ public class SettingsService : ISettingsService
             
             // Users
             new() { Key = "AllowUserSignup", Value = "Disabled", Group = "Users", Description = "Control public registration (Disabled, InviteOnly, Enabled)." },
+            // NR-WI-006 — opt-in: initiate is an anonymous (rate-limited) surface, so the
+            // feature ships dark until the operator turns it on.
+            new() { Key = "EnableQuickConnect", Value = "false", Group = "Users", Description = "Let TVs and apps sign in with a short pairing code instead of a typed password: the device shows a code, and any logged-in user approves it from Settings to link the device to their account. Off by default." },
             new() { Key = "TwoFactorExpirationDays", Value = "0", Group = "Users", Description = "For accounts with 2FA enabled: remember a device for this many days after a successful 2FA, so the user isn't prompted again until it expires. 0 = require 2FA on every login." },
 
             // Playback — server-wide CPU policy for intro / credits detection.

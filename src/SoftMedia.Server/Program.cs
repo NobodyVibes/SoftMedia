@@ -218,11 +218,27 @@ if (app.Configuration.GetValue<bool>("Security:ForceHttpsRedirect"))
     app.UseHttpsRedirection();
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+// NR-WI-007: the API docs serve in EVERY environment, gated at request time by the
+// EnableApiDocs setting (default on; toggling needs no restart). Development always
+// serves them regardless of the setting.
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/swagger"),
+    branch => branch.Use(async (ctx, next) =>
+    {
+        if (!ctx.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment())
+        {
+            var settings = ctx.RequestServices.GetRequiredService<SoftMedia.Server.Services.Infrastructure.ISettingsService>();
+            var enabled = await settings.GetSettingAsync("EnableApiDocs", "true");
+            if (!string.Equals(enabled, "true", StringComparison.OrdinalIgnoreCase))
+            {
+                ctx.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+        }
+        await next();
+    }));
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseCors("AllowFrontend");
 app.UseResponseCompression();

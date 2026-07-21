@@ -53,7 +53,7 @@ public class HlsManifestService : IHlsManifestService
             // DEFAULT/AUTOSELECT are NO because the web client renders its own
             // <track> — an auto-selected rendition would double-render there; native
             // players still offer it in their subtitle UI.
-            var subtitleUrl = $"/api/transcode/{mediaId}/subtitles.m3u8?{string.Join("&", subtitleQueryParts)}";
+            var subtitleUrl = $"/api/v1/transcode/{mediaId}/subtitles.m3u8?{string.Join("&", subtitleQueryParts)}";
 
             rewrittenContent.AppendLine("#EXTM3U");
             rewrittenContent.AppendLine($"#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Subtitles\",DEFAULT=NO,AUTOSELECT=NO,URI=\"{subtitleUrl}\"");

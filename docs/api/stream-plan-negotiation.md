@@ -27,10 +27,15 @@ media/streaming routes, and rotates on every silent access-token refresh — re-
 token per request rather than caching it for the life of a stream (the web player re-stamps it via
 its HLS loader; see `VideoPlayer.tsx` `xhrSetup`).
 
+> **Route note (NR-WI-004, 2026-07-21):** `api/v1/transcode/...` is the canonical prefix.
+> The historical un-versioned `api/transcode/...` remains mounted as a deprecated alias
+> (same controller, same auth/token rules) for older minted URLs — new clients must use
+> `api/v1/transcode`.
+
 ## 2. Request a plan
 
 ```
-POST /api/transcode/{mediaItemId}/plan
+POST /api/v1/transcode/{mediaItemId}/plan
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
@@ -74,7 +79,7 @@ Response — `StreamPlan`:
   if a query exists). The file is byte-served with Range support. The server does **no**
   processing — deinterlacing/scaling are the client's job on this path.
 - **Remux / Transcode** — `url` is an HLS master playlist
-  (`/api/transcode/{id}/master.m3u8?...`) already carrying `resolution`, `codec` and `sid`.
+  (`/api/v1/transcode/{id}/master.m3u8?...`) already carrying `resolution`, `codec` and `sid`.
   Append as needed:
 
   | Query param | Meaning |
@@ -85,13 +90,13 @@ Response — `StreamPlan`:
   | `seek` | start offset in whole seconds |
   | `burnSubtitles` | `true` to force burn-in |
 
-  Sidecar text subtitles: `GET /api/transcode/{id}/subtitles.vtt?token=…&sub=…&sid=…`.
+  Sidecar text subtitles: `GET /api/v1/transcode/{id}/subtitles.vtt?token=…&sub=…&sid=…`.
 
 ## 5. Session lifecycle
 
 | Action | Call |
 |---|---|
-| Stop / abandon playback | `DELETE /api/transcode/{id}?sid=<streamId>&token=…` |
+| Stop / abandon playback | `DELETE /api/v1/transcode/{id}?sid=<streamId>&token=…` |
 | Progress save (resume support) | `POST /api/v1/interaction/{id}/progress` `{ "position": seconds }` (Bearer auth) |
 | Mark watched | `POST /api/v1/interaction/{id}/watched` `{ "watched": true }` |
 

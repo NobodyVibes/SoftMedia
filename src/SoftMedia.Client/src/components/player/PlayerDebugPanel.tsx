@@ -90,7 +90,7 @@ export function PlayerDebugPanel({ mediaId, token, subtitleTrack, clientCapabili
                 // POST request with client capabilities. WS-6: POSTs authenticate via
                 // the Authorization header (query tokens are media/cast + GET-only now).
                 const query = [subParam, sidParam].join('').replace(/^&/, '?');
-                const response = await fetch(`/api/transcode/${mediaId}/debug${query}`, {
+                const response = await fetch(`/api/v1/transcode/${mediaId}/debug${query}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAccessToken()}` },
                     body: JSON.stringify(clientCapabilities || {

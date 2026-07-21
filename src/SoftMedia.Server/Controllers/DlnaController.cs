@@ -22,6 +22,10 @@ namespace SoftMedia.Server.Controllers;
 [ApiController]
 [AllowAnonymous]
 [Route("dlna")]
+// NR-WI-007: excluded from the OpenAPI document — this is a UPnP surface for TVs
+// (SOAP + GENA verbs like SUBSCRIBE), not part of the client API contract, and
+// Swashbuckle cannot map the non-standard verbs (KeyNotFoundException: 'SUBSCRIBE').
+[ApiExplorerSettings(IgnoreApi = true)]
 public class DlnaController : ControllerBase
 {
     private const string SoapNs = "http://schemas.xmlsoap.org/soap/envelope/";

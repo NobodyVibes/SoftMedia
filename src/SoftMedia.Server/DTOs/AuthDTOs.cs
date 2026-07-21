@@ -2,11 +2,32 @@ using SoftMedia.Server.Models;
 
 namespace SoftMedia.Server.DTOs;
 
-public record LoginRequest(string Username, string Password);
+// NR-WI-005: TokenDelivery selects how the refresh token is returned. Omitted/"cookie"
+// (browsers) keeps the HttpOnly-cookie flow; "body" (native/headless clients that have
+// no cookie jar) returns the refresh token in the AuthResponse and sets no cookie.
+public record LoginRequest(string Username, string Password, string? TokenDelivery = null);
 
 public record SignupRequest(string Username, string Password, string? InviteCode, string FirstName, string LastName);
 
-public record AuthResponse(string AccessToken, UserDto User);
+// RefreshToken is only populated for TokenDelivery="body" flows; null is omitted from
+// the wire so the browser-facing shape is unchanged.
+public record AuthResponse(string AccessToken, UserDto User,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? RefreshToken = null);
+
+// NR-WI-005: body-based refresh/logout for clients without a cookie jar.
+public record RefreshRequest(string? RefreshToken);
+
+// NR-WI-006 — Quick Connect device pairing.
+public record QuickConnectInitiateRequest(string? DeviceName);
+public record QuickConnectInitiateResponse(string Code, string Secret, int ExpiresInSeconds, int PollIntervalSeconds);
+public record QuickConnectStateResponse(string Status,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? AccessToken = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? RefreshToken = null);
+public record QuickConnectPendingResponse(string Code, string? DeviceName, string? RequestIp, DateTime CreatedAt);
+public record QuickConnectAuthorizeRequest(string Code);
 
 // Returned by /auth/signup when a self-registered account still needs admin approval.
 // Carries no token (audit M1) — the client shows a "pending approval" message.
@@ -24,7 +45,7 @@ public record TwoFactorRequiredResponse(string Status, string ChallengeId)
     public TwoFactorRequiredResponse(string challengeId) : this("2fa_required", challengeId) { }
 }
 
-public record TwoFactorRequest(string ChallengeId, string Code);
+public record TwoFactorRequest(string ChallengeId, string Code, string? TokenDelivery = null);
 
 // TOTP enrollment DTOs (P2-WI-005).
 public record TotpEnrollResponse(string Secret, string OtpAuthUri);

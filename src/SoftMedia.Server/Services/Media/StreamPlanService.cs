@@ -426,7 +426,7 @@ public class StreamPlanService : IStreamPlanService
     private StreamPlan CreateRemuxPlan(Guid mediaId, MediaItem item, string videoCodec, string audioCodec, bool isHdr, int resolution, ClientCapabilities caps, string token)
     {
         var sidParam = !string.IsNullOrEmpty(caps.StreamId) ? $"&sid={caps.StreamId}" : "";
-        var url = $"/api/transcode/{mediaId}/master.m3u8?token={token}{sidParam}";
+        var url = $"/api/v1/transcode/{mediaId}/master.m3u8?token={token}{sidParam}";
         var resolutionStr = resolution > 0 ? $"{resolution}p" : "Unknown";
         var hdrStr = isHdr ? " HDR" : "";
 
@@ -531,7 +531,7 @@ public class StreamPlanService : IStreamPlanService
 
         // Build URL with codec and HDR parameters
         var sidParam = !string.IsNullOrEmpty(caps.StreamId) ? $"&sid={caps.StreamId}" : "";
-        var url = $"/api/transcode/{mediaId}/master.m3u8?token={token}&resolution={targetResolution}&codec={targetVideoCodec}{sidParam}";
+        var url = $"/api/v1/transcode/{mediaId}/master.m3u8?token={token}&resolution={targetResolution}&codec={targetVideoCodec}{sidParam}";
         
         // Add bitrate limit if present (and less than global max, otherwise no need to clutter URL)
         if (caps.MaxBitrate < MaxAllowedBitrate)

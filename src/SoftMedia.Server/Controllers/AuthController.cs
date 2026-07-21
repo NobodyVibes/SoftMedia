@@ -200,14 +200,14 @@ public class AuthController : ControllerBase
             if (trusted != null)
             {
                 await _trustedDevices.TouchAsync(trusted);
-                return Ok(await IssueLoginResponseAsync(user));
+                return Ok(await IssueLoginResponseAsync(user, WantsBodyDelivery(request.TokenDelivery)));
             }
 
             var challengeId = _totpService.CreateChallenge(user.Id);
             return Ok(new TwoFactorRequiredResponse(challengeId));
         }
 
-        return Ok(await IssueLoginResponseAsync(user));
+        return Ok(await IssueLoginResponseAsync(user, WantsBodyDelivery(request.TokenDelivery)));
     }
 
     /// <summary>
@@ -260,23 +260,39 @@ public class AuthController : ControllerBase
             SetDeviceCookie(rawToken, expirationDays);
         }
 
-        return Ok(await IssueLoginResponseAsync(user));
+        return Ok(await IssueLoginResponseAsync(user, WantsBodyDelivery(request.TokenDelivery)));
     }
 
-    /// Issues the access token + rotating refresh cookie and builds the AuthResponse.
-    /// Shared by password-only login and TOTP-completed login.
-    private async Task<AuthResponse> IssueLoginResponseAsync(SoftMedia.Server.Models.User user)
+    /// <summary>
+    /// NR-WI-005: true when the client asked for body delivery of the refresh token
+    /// ("body"). Anything else — null, "cookie", garbage — keeps the cookie flow, so
+    /// a typo can never silently strand a browser without its cookie.
+    /// </summary>
+    private static bool WantsBodyDelivery(string? tokenDelivery) =>
+        string.Equals(tokenDelivery, "body", StringComparison.OrdinalIgnoreCase);
+
+    /// Issues the access token + rotating refresh token and builds the AuthResponse.
+    /// Shared by password-only login and TOTP-completed login. Delivery: HttpOnly
+    /// cookie (browsers, default) or response body (native clients, NR-WI-005) —
+    /// never both, so exactly one copy of the credential exists client-side.
+    private async Task<AuthResponse> IssueLoginResponseAsync(SoftMedia.Server.Models.User user, bool deliverRefreshInBody = false)
     {
         var accessToken = _tokenService.GenerateAccessToken(user);
         var (refreshRaw, _) = await _refreshTokens.IssueAsync(user, ClientIp());
-        SetRefreshTokenCookie(refreshRaw);
+        if (!deliverRefreshInBody)
+        {
+            SetRefreshTokenCookie(refreshRaw);
+        }
 
         var usedInviteCode = await _context.Invites
             .Where(i => i.UsedById == user.Id)
             .Select(i => i.Code)
             .FirstOrDefaultAsync();
 
-        return new AuthResponse(accessToken, await BuildUserDtoAsync(user, usedInviteCode, user.MustChangePassword));
+        return new AuthResponse(
+            accessToken,
+            await BuildUserDtoAsync(user, usedInviteCode, user.MustChangePassword),
+            deliverRefreshInBody ? refreshRaw : null);
     }
 
     /// Consumes a single-use recovery code (moves its hash to UsedRecoveryCodes).
@@ -387,7 +403,16 @@ public class AuthController : ControllerBase
     [HttpPost("refresh-token")]
     public async Task<ActionResult<AuthResponse>> Refresh()
     {
+        // NR-WI-005: the cookie wins when both are present (a browser can't UNSEND its
+        // cookie, so body input must never override it); native clients send the token
+        // in the JSON body instead. Delivery of the rotated token matches the source.
         var raw = Request.Cookies["refreshToken"];
+        var fromBody = false;
+        if (string.IsNullOrEmpty(raw))
+        {
+            raw = await TryReadRefreshTokenFromBodyAsync();
+            fromBody = !string.IsNullOrEmpty(raw);
+        }
         if (string.IsNullOrEmpty(raw))
         {
             // Diagnostic: cookies that DID arrive (names only — values are
@@ -461,7 +486,10 @@ public class AuthController : ControllerBase
             return Unauthorized("Session was refreshed concurrently. Please login again.");
         }
         var (newRaw, _) = rotated.Value;
-        SetRefreshTokenCookie(newRaw);
+        if (!fromBody)
+        {
+            SetRefreshTokenCookie(newRaw);
+        }
 
         var accessToken = _tokenService.GenerateAccessToken(user);
         var usedInviteCode = await _context.Invites
@@ -469,13 +497,44 @@ public class AuthController : ControllerBase
             .Select(i => i.Code)
             .FirstOrDefaultAsync();
 
-        return Ok(new AuthResponse(accessToken, await BuildUserDtoAsync(user, usedInviteCode, user.MustChangePassword)));
+        return Ok(new AuthResponse(
+            accessToken,
+            await BuildUserDtoAsync(user, usedInviteCode, user.MustChangePassword),
+            fromBody ? newRaw : null));
+    }
+
+    /// <summary>
+    /// NR-WI-005: reads <c>{"refreshToken": "..."}</c> from the request body for clients
+    /// without a cookie jar. Manual read (not [FromBody]) because the browser flow POSTs
+    /// an EMPTY body here and model binding would reject that with a 400 before the
+    /// cookie was ever consulted. Returns null on absent/malformed bodies.
+    /// </summary>
+    private async Task<string?> TryReadRefreshTokenFromBodyAsync()
+    {
+        // No ContentLength gate: chunked requests (HttpClient's PostAsJsonAsync, many
+        // native HTTP stacks) carry no Content-Length header at all. An actually-empty
+        // JSON body falls into the JsonException catch below.
+        if (!(Request.ContentType?.Contains("application/json", StringComparison.OrdinalIgnoreCase) ?? false)) return null;
+        try
+        {
+            var body = await System.Text.Json.JsonSerializer.DeserializeAsync<RefreshRequest>(
+                Request.Body,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return string.IsNullOrWhiteSpace(body?.RefreshToken) ? null : body.RefreshToken;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Malformed JSON is treated as "no token supplied" — the caller returns the
+            // same 401 as a missing token, so the error surface stays uniform.
+            return null;
+        }
     }
 
     [HttpPost("logout")]
     public async Task<IActionResult> Logout()
     {
-        var raw = Request.Cookies["refreshToken"];
+        // NR-WI-005: native clients pass their refresh token in the body to revoke it.
+        var raw = Request.Cookies["refreshToken"] ?? await TryReadRefreshTokenFromBodyAsync();
         if (!string.IsNullOrEmpty(raw))
         {
             var validation = await _refreshTokens.ValidateAsync(raw);

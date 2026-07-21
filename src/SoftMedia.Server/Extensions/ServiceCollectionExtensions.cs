@@ -41,7 +41,8 @@ public static class ServiceCollectionExtensions
     /// so the two can never drift apart.
     /// </summary>
     internal static bool IsMediaRoute(Microsoft.AspNetCore.Http.PathString path) =>
-        path.StartsWithSegments("/api/transcode") ||
+        path.StartsWithSegments("/api/transcode") ||    // legacy alias (NR-WI-004)
+        path.StartsWithSegments("/api/v1/transcode") ||
         path.StartsWithSegments("/api/v1/stream") ||
         path.StartsWithSegments("/api/v1/audio") ||
         path.StartsWithSegments("/api/v1/books") ||
@@ -91,6 +92,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IPasswordHasher, PasswordHasher>();
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+        // NR-WI-006: in-memory pairing store — singleton so a device's poll sees the
+        // approval made through a different request's scope.
+        services.AddSingleton<IQuickConnectService, QuickConnectService>();
         services.AddScoped<IApiTokenService, ApiTokenService>();
         services.AddScoped<ITrustedDeviceService, TrustedDeviceService>();
         services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ScopeAuthorizationHandler>();
@@ -216,6 +220,7 @@ public static class ServiceCollectionExtensions
                         var path = context.HttpContext.Request.Path;
                         var inScope = !string.IsNullOrEmpty(mediaId) &&
                             (path.StartsWithSegments($"/api/transcode/{mediaId}", StringComparison.OrdinalIgnoreCase) ||
+                             path.StartsWithSegments($"/api/v1/transcode/{mediaId}", StringComparison.OrdinalIgnoreCase) ||
                              path.StartsWithSegments($"/api/v1/stream/{mediaId}", StringComparison.OrdinalIgnoreCase));
                         if (!inScope)
                         {
@@ -504,6 +509,10 @@ public static class ServiceCollectionExtensions
     public const string AuthRateLimitPolicy = "auth";
     public const string ImageProxyRateLimitPolicy = "image-proxy";
     public const string TwoFactorRateLimitPolicy = "2fa";
+    /// NR-WI-006 — Quick Connect initiate + state polling. Separate from "auth" so a
+    /// device polling every ~3s can't starve the same IP's login attempts (NAT'd
+    /// households share an IP). 40/min covers initiate + a 3s poll with headroom.
+    public const string QuickConnectRateLimitPolicy = "quickconnect";
     /// R-WI-019 — scan-webhook trigger. Generous for real import bursts (an *arr
     /// season import fires a handful of hooks), tight enough that a hostile or
     /// misconfigured credential can't keep the scan queue perpetually hot.
@@ -618,6 +627,22 @@ public static class ServiceCollectionExtensions
                         AutoReplenishment = true
                     });
             });
+
+            // NR-WI-006: Quick Connect initiate + state polling, per-IP. Sliding window
+            // for the same boundary-burst reason as "auth"; 40/min covers one initiate
+            // plus a 3-second poll loop with headroom, while bounding anonymous abuse.
+            options.AddPolicy(QuickConnectRateLimitPolicy, httpContext =>
+                RateLimitPartition.GetSlidingWindowLimiter(
+                    partitionKey: "qc:" + (httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown-ip"),
+                    factory: _ => new SlidingWindowRateLimiterOptions
+                    {
+                        PermitLimit = 40,
+                        Window = TimeSpan.FromMinutes(1),
+                        SegmentsPerWindow = 6,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0,
+                        AutoReplenishment = true
+                    }));
         });
         return services;
     }

@@ -9,6 +9,7 @@ import { ApiTokensCard } from '../components/account/ApiTokensCard';
 import { HistoryPrivacyCard } from '../components/account/HistoryPrivacyCard';
 import { TotpCard } from '../components/account/TotpCard';
 import { WebhooksCard } from '../components/account/WebhooksCard';
+import { QuickConnectCard } from '../components/account/QuickConnectCard';
 
 export default function MyAccountPage() {
     const navigate = useNavigate();
@@ -197,6 +198,9 @@ export default function MyAccountPage() {
                             </button>
                         </form>
                     </div>
+
+                    {/* Quick Connect device pairing (NR-WI-006) */}
+                    <QuickConnectCard />
 
                     {/* Two-Factor Authentication */}
                     <TotpCard />

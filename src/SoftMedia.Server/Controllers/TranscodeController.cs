@@ -21,7 +21,8 @@ namespace SoftMedia.Server.Controllers;
 /// </summary>
 [Authorize(Policy = ScopePolicies.ReadLibrary)] // B-18: content = read:library for tokens
 [ApiController]
-[Route("api/transcode")]
+[Route("api/v1/transcode")] // NR-WI-004: canonical, consistent with every other controller
+[Route("api/transcode")]    // legacy alias — deprecated, kept for minted URLs and older clients
 public class TranscodeController : ControllerBase
 {
     private readonly ITranscodeService _transcodeService;

@@ -648,7 +648,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             console.log('[StreamPlan] Requesting stream plan with capabilities:', capabilitiesToSend);
 
             try {
-                const response = await fetch(`/api/transcode/${item.id}/plan`, {
+                const response = await fetch(`/api/v1/transcode/${item.id}/plan`, {
                     method: 'POST',
                     headers: transcodeAuthHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify(capabilitiesToSend)
@@ -725,7 +725,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     // new one when the change happened in the first second of playback.
                     if (isSubtitleChange) {
                         setIsSubtitleChange(false);
-                        fetch(`/api/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() }).catch(() => { });
+                        fetch(`/api/v1/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() }).catch(() => { });
                     }
                 }
                 // Priority 4: Resume position for fresh loads
@@ -881,7 +881,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         // &gen busts caches across far-seek restarts: the URL was
                         // otherwise identical while the VTT content changes per seek
                         // offset (stale copy = subs off by the whole seek).
-                        const subtitleUrl = `/api/transcode/${item.id}/subtitles.vtt?token=${subtitleToken}&sub=${selectedSubtitleTrack}&sid=${streamId}&gen=${Math.floor(seekOffset)}`;
+                        const subtitleUrl = `/api/v1/transcode/${item.id}/subtitles.vtt?token=${subtitleToken}&sub=${selectedSubtitleTrack}&sid=${streamId}&gen=${Math.floor(seekOffset)}`;
                         console.log(`Adding subtitle track: ${subtitleUrl}`);
 
                         // Create and add new track element
@@ -1005,7 +1005,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             // the access token fresh at cleanup time — the one from stream start may have
             // rotated since.
             if (isTranscoding && item.id) {
-                fetch(`/api/transcode/${item.id}?sid=${streamId}`, {
+                fetch(`/api/v1/transcode/${item.id}?sid=${streamId}`, {
                     method: 'DELETE',
                     headers: transcodeAuthHeaders()
                 }).catch(() => { /* Ignore cleanup errors */ });
@@ -1056,7 +1056,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
             // Clean up transcode session before navigating
             if (isTranscoding) {
-                fetch(`/api/transcode/${item.id}?sid=${streamId}`, {
+                fetch(`/api/v1/transcode/${item.id}?sid=${streamId}`, {
                     method: 'DELETE',
                     headers: transcodeAuthHeaders()
                 }).catch(() => { });
@@ -1091,7 +1091,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
             // Clean up transcode session before navigating
             if (isTranscoding) {
-                fetch(`/api/transcode/${item.id}?sid=${streamId}`, {
+                fetch(`/api/v1/transcode/${item.id}?sid=${streamId}`, {
                     method: 'DELETE',
                     headers: transcodeAuthHeaders()
                 }).catch(() => { });
@@ -1114,7 +1114,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
             // Clean up transcode session
             if (isTranscoding) {
-                fetch(`/api/transcode/${item.id}?sid=${streamId}`, {
+                fetch(`/api/v1/transcode/${item.id}?sid=${streamId}`, {
                     method: 'DELETE',
                     headers: transcodeAuthHeaders()
                 }).catch(() => { });
@@ -1190,7 +1190,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const handleLeaveMovie = useCallback((path: string) => {
         setShowMovieEndOverlay(false);
         if (isTranscoding && item.id) {
-            fetch(`/api/transcode/${item.id}?sid=${streamId}`, {
+            fetch(`/api/v1/transcode/${item.id}?sid=${streamId}`, {
                 method: 'DELETE',
                 headers: transcodeAuthHeaders()
             }).catch(() => { });
@@ -1223,7 +1223,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 // sid identifies THIS playback session — without it the lookup misses and the
                 // endpoint 404s on every play event (which hls.js emits repeatedly while it
                 // retries, flooding the console).
-                fetch(`/api/transcode/${item.id}/resume?sid=${streamId}${selectedSubtitleTrack !== null ? `&sub=${selectedSubtitleTrack}` : ''}`, {
+                fetch(`/api/v1/transcode/${item.id}/resume?sid=${streamId}${selectedSubtitleTrack !== null ? `&sub=${selectedSubtitleTrack}` : ''}`, {
                     method: 'POST',
                     headers: transcodeAuthHeaders()
                 }).catch(() => { });
@@ -1233,7 +1233,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             setIsPlaying(false);
             // Signal backend to pause transcoding (throttle control)
             if (isTranscoding && token && item.id) {
-                fetch(`/api/transcode/${item.id}/pause?sid=${streamId}${selectedSubtitleTrack !== null ? `&sub=${selectedSubtitleTrack}` : ''}`, {
+                fetch(`/api/v1/transcode/${item.id}/pause?sid=${streamId}${selectedSubtitleTrack !== null ? `&sub=${selectedSubtitleTrack}` : ''}`, {
                     method: 'POST',
                     headers: transcodeAuthHeaders()
                 }).catch(() => { });
@@ -1278,7 +1278,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             }
             // Signal backend to clean up transcode session when video ends
             if (isTranscoding && token && item.id) {
-                fetch(`/api/transcode/${item.id}?sid=${streamId}`, {
+                fetch(`/api/v1/transcode/${item.id}?sid=${streamId}`, {
                     method: 'DELETE',
                     headers: transcodeAuthHeaders()
                 }).catch(() => { });
@@ -1418,7 +1418,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             // WS-6: sendBeacon can't set headers and query tokens no longer authenticate
             // POSTs — a keepalive fetch is the modern equivalent (survives page unload)
             // and carries the access token in the Authorization header.
-            fetch(`/api/transcode/${item.id}/stop?all=true`, {
+            fetch(`/api/v1/transcode/${item.id}/stop?all=true`, {
                 method: 'POST',
                 keepalive: true,
                 headers: transcodeAuthHeaders()
@@ -1549,7 +1549,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         // Clean up transcode session before navigating
         if (isTranscoding && token && item.id) {
             try {
-                await fetch(`/api/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() });
+                await fetch(`/api/v1/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() });
             } catch { /* Ignore cleanup errors */ }
         }
 
@@ -1564,7 +1564,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     // the negotiated plan keyed by sid (R-WI-002), so a minimal seek URL can no longer drop the
     // quality decision or bypass the per-user bitrate cap.
     const buildTranscodeSeekUrl = (seekTime: number) => {
-        let url = `/api/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}&sid=${streamId}`;
+        let url = `/api/v1/transcode/${item.id}/master.m3u8?token=${token}&seek=${Math.floor(seekTime)}&sid=${streamId}`;
         if (selectedSubtitleTrack !== null) {
             url += `&sub=${selectedSubtitleTrack}`;
         }
@@ -1598,7 +1598,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             // path already guards against (and R-WI-015 broadcasts to the OS scrubber).
             setCurrentTime(0);
 
-            fetch(`/api/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() })
+            fetch(`/api/v1/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() })
                 .catch(() => { });
 
             setSrc(buildTranscodeSeekUrl(seekTime));
@@ -1612,7 +1612,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 setSeekOffset(Math.floor(seekTime));
                 setCurrentTime(0); // same transient guard as the forward-restart branch
 
-                fetch(`/api/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() })
+                fetch(`/api/v1/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() })
                     .catch(() => { });
 
                 setSrc(buildTranscodeSeekUrl(seekTime));
@@ -1937,7 +1937,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                             if (frameDebounceRef.current) clearTimeout(frameDebounceRef.current);
                             frameDebounceRef.current = setTimeout(() => {
                                 if (!token) return;
-                                const url = `/api/transcode/${item.id}/frame?time=${time.toFixed(1)}&token=${token}`;
+                                const url = `/api/v1/transcode/${item.id}/frame?time=${time.toFixed(1)}&token=${token}`;
                                 setFramePreviewUrl(url);
                             }, 100);
                         }}
@@ -2245,7 +2245,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                             // ?cast=true → the plan URL carries a long-lived,
                                             // media-scoped cast token (the receiver can't refresh
                                             // the short-lived session JWT mid-movie).
-                                            const resp = await fetch(`/api/transcode/${item.id}/plan?cast=true`, {
+                                            const resp = await fetch(`/api/v1/transcode/${item.id}/plan?cast=true`, {
                                                 method: 'POST',
                                                 headers: transcodeAuthHeaders({ 'Content-Type': 'application/json' }),
                                                 body: JSON.stringify(castCaps),

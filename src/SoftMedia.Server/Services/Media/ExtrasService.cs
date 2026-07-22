@@ -69,10 +69,11 @@ public class ExtrasService : IExtrasService
             foreach (var file in Directory.EnumerateFiles(folder))
             {
                 if (!IsVideo(file) || !MediaCompanions.HasCompanionSuffix(file)) continue;
-                // For movies, only companions of THIS title (stem prefix) — a shared
-                // folder can hold several movies, each with its own trailer.
-                if (movieStem != null &&
-                    !Path.GetFileNameWithoutExtension(file).StartsWith(movieStem, StringComparison.OrdinalIgnoreCase))
+                // For movies, only companions of THIS title — a shared folder can hold
+                // several movies, each with its own trailer. Boundary-prefix matching in
+                // either direction, so "Film-trailer" pairs with the release-tagged
+                // "Film.1080p.BDRip.mkv" (users name trailers without the tags).
+                if (movieStem != null && !StemMatchesTitle(CompanionBase(file), movieStem))
                     continue;
                 results.Add(file);
             }
@@ -100,6 +101,34 @@ public class ExtrasService : IExtrasService
         MediaExtensions.Video.Contains(Path.GetExtension(file).TrimStart('.'), StringComparer.OrdinalIgnoreCase)
         && !Helpers.MediaPathSafety.HasArgumentInjectionRisk(file);
 
+    /// <summary>The companion's stem with its "-trailer"/"-sample"/… suffix removed.</summary>
+    private static string CompanionBase(string file)
+    {
+        var stem = Path.GetFileNameWithoutExtension(file);
+        foreach (var suffix in MediaCompanions.Suffixes)
+        {
+            if (stem.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                return stem[..^suffix.Length];
+        }
+        return stem;
+    }
+
+    /// <summary>
+    /// True when one name is a prefix of the other ON A SEPARATOR BOUNDARY. Handles the
+    /// dominant real-world case — trailers named without the movie file's release tags
+    /// ("Film-trailer.mkv" beside "Film.1080p.BDRip.x264.mkv") — while the boundary
+    /// requirement keeps "Aliens-trailer" from ever attaching to "Alien".
+    /// </summary>
+    private static bool StemMatchesTitle(string companionBase, string movieStem)
+    {
+        static bool IsSeparator(char c) => c is '.' or '-' or '_' or ' ' or '(' or '[';
+        static bool PrefixOnBoundary(string longer, string shorter) =>
+            longer.StartsWith(shorter, StringComparison.OrdinalIgnoreCase)
+            && (longer.Length == shorter.Length || IsSeparator(longer[shorter.Length]));
+
+        return PrefixOnBoundary(companionBase, movieStem) || PrefixOnBoundary(movieStem, companionBase);
+    }
+
     private static string KindOf(string file)
     {
         var stem = Path.GetFileNameWithoutExtension(file);
@@ -118,11 +147,17 @@ public class ExtrasService : IExtrasService
         var stem = Path.GetFileNameWithoutExtension(file);
         var itemStem = item.Type == MediaType.Movie ? Path.GetFileNameWithoutExtension(item.Path) : item.Title;
 
-        // "Movie (2020)-trailer" -> "Trailer"; "extras/Making Of.mkv" -> "Making Of".
-        if (stem.StartsWith(itemStem, StringComparison.OrdinalIgnoreCase))
-            stem = stem[itemStem.Length..];
-        stem = stem.TrimStart('-', '.', ' ', '_');
-        if (string.IsNullOrWhiteSpace(stem)) stem = KindOf(file);
+        // "Movie (2020)-trailer" or "Movie-trailer" beside "Movie.1080p.mkv" -> "Trailer";
+        // "extras/Making Of.mkv" -> "Making Of".
+        if (MediaCompanions.HasCompanionSuffix(file) && StemMatchesTitle(CompanionBase(file), itemStem))
+        {
+            stem = KindOf(file);
+        }
+        else if (stem.StartsWith(itemStem, StringComparison.OrdinalIgnoreCase))
+        {
+            stem = stem[itemStem.Length..].TrimStart('-', '.', ' ', '_');
+            if (string.IsNullOrWhiteSpace(stem)) stem = KindOf(file);
+        }
 
         return char.ToUpperInvariant(stem[0]) + stem[1..];
     }

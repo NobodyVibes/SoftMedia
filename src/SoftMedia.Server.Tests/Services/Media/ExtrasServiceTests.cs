@@ -71,6 +71,38 @@ public class ExtrasServiceTests : IDisposable
     }
 
     [Fact]
+    public void Movie_ReleaseTaggedFilename_MatchesUntaggedTrailer()
+    {
+        // Real-world report (2026-07-21): trailers are named without the movie file's
+        // release tags. Boundary-prefix matching must pair them — and only within the
+        // right title in a shared trilogy folder.
+        Touch("1997.Austin.Powers-.International.Man.Of.Mystery.1920x818.BDRip.x264.TrueHD.mkv");
+        Touch("1999.Austin.Powers-.The.Spy.Who.Shagged.Me.1920x818.BDRip.x264.TrueHD.mkv");
+        Touch("2002.Austin.Powers-.Goldmember.1920x816.BDRip.x264.TrueHD.mkv");
+        Touch("2002.Austin.Powers-.Goldmember-trailer.mkv");
+
+        var goldmember = _svc.GetExtras(Movie("2002.Austin.Powers-.Goldmember.1920x816.BDRip.x264.TrueHD.mkv"));
+        var spy = _svc.GetExtras(Movie("1999.Austin.Powers-.The.Spy.Who.Shagged.Me.1920x818.BDRip.x264.TrueHD.mkv"));
+
+        var extra = Assert.Single(goldmember);
+        Assert.Equal("Trailer", extra.Title); // not the raw filename stem
+        Assert.Empty(spy); // the trailer belongs to Goldmember only
+    }
+
+    [Fact]
+    public void Movie_BoundaryCheck_PreventsPrefixCrossMatch()
+    {
+        // "Aliens-trailer" must never attach to "Alien" — the extra character after
+        // the shared prefix is not a separator.
+        Touch("Alien.mkv");
+        Touch("Aliens.mkv");
+        Touch("Aliens-trailer.mkv");
+
+        Assert.Empty(_svc.GetExtras(Movie("Alien.mkv")));
+        Assert.Single(_svc.GetExtras(Movie("Aliens.mkv")));
+    }
+
+    [Fact]
     public void Series_ProbesItsFolder()
     {
         var seriesDir = Path.Combine(_dir, "The Show");

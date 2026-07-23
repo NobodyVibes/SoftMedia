@@ -9,6 +9,7 @@ import QualityBadge from '../ui/QualityBadge';
 import MediaQualityInfo from '../ui/MediaQualityInfo';
 import { StarRating } from '../ui/StarRating';
 import { cn } from '../../lib/utils';
+import { toast } from 'sonner';
 import { getGenreColors } from '../../lib/genreColors';
 import { resolveHeroPosterUrl, resolveBackdropUrl } from '../../lib/mediaImageUrl';
 import { WatchlistButton } from '../details/WatchlistButton';
@@ -107,34 +108,34 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                 </button>
 
                 <div className="flex flex-col lg:flex-row gap-8 lg:gap-12">
+                    {/* Photos skip the WHOLE sidebar column: the detail view IS the photo
+                        (a thumbnail of it is duplication), and its actions render inline
+                        under the title instead of floating in an empty rail. */}
+                    {item.type !== MediaType.Photo && (
                     <div className="flex-shrink-0 w-full sm:w-64 md:w-72 lg:w-80 mx-auto lg:mx-0">
-                        {/* Photos skip the poster box: the detail view IS the photo, so a
-                            sidebar thumbnail of the same image is pure duplication. */}
-                        {item.type !== MediaType.Photo && (
-                            <motion.div
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className={cn(
-                                    "rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10",
-                                    (item.type === MediaType.Album || item.type === MediaType.Artist || item.type === MediaType.Audio || item.type === MediaType.Track)
-                                        ? "aspect-square"
-                                        : "aspect-[2/3]"
-                                )}
-                            >
-                                {heroPoster ? (
-                                    <img
-                                        src={heroPoster}
-                                        alt={item.title}
-                                        referrerPolicy="no-referrer"
-                                        className="w-full h-full object-cover"
-                                    />
-                                ) : (
-                                    <div className="w-full h-full bg-slate-800 flex items-center justify-center text-slate-600">
-                                        <span className="text-6xl">?</span>
-                                    </div>
-                                )}
-                            </motion.div>
-                        )}
+                        <motion.div
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className={cn(
+                                "rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10",
+                                (item.type === MediaType.Album || item.type === MediaType.Artist || item.type === MediaType.Audio || item.type === MediaType.Track)
+                                    ? "aspect-square"
+                                    : "aspect-[2/3]"
+                            )}
+                        >
+                            {heroPoster ? (
+                                <img
+                                    src={heroPoster}
+                                    alt={item.title}
+                                    referrerPolicy="no-referrer"
+                                    className="w-full h-full object-cover"
+                                />
+                            ) : (
+                                <div className="w-full h-full bg-slate-800 flex items-center justify-center text-slate-600">
+                                    <span className="text-6xl">?</span>
+                                </div>
+                            )}
+                        </motion.div>
 
                         {/* Actions Sidebar */}
                         <motion.div
@@ -143,9 +144,9 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                             transition={{ delay: 0.2 }}
                             className="mt-6 flex flex-col gap-4"
                         >
-                            {/* Photos are excluded like Album/Artist: they have no playable
-                                stream, and /play/{id} for one lands in a broken player. */}
-                            {item.type !== MediaType.Artist && item.type !== MediaType.Album && item.type !== MediaType.Photo && (
+                            {/* (Photos never reach this sidebar — the whole column is
+                                skipped for them above.) */}
+                            {item.type !== MediaType.Artist && item.type !== MediaType.Album && (
                                 <button
                                     onClick={onPlay}
                                     className="relative z-50 w-full flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-violet-600 text-white rounded-xl font-bold shadow-lg shadow-violet-500/40 hover:scale-[1.02] active:scale-95 text-lg opacity-100"
@@ -192,8 +193,7 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                 {item.type !== MediaType.Artist &&
                                     item.type !== MediaType.Album &&
                                     item.type !== MediaType.Audio &&
-                                    item.type !== MediaType.Track &&
-                                    item.type !== MediaType.Photo && (
+                                    item.type !== MediaType.Track && (
                                         <button
                                             onClick={() => watchedMutation.mutate(!item.watched)}
                                             className="group flex-1 flex justify-center"
@@ -224,6 +224,7 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                             </div>
                         </motion.div>
                     </div>
+                    )}
 
                     {/* Info Column - Title, Rating, Actions, Description */}
                     <div className="flex-grow">
@@ -235,6 +236,39 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-4 leading-tight">
                                 {item.title}
                             </h1>
+
+                            {/* Photo actions live inline under the title (the sidebar rail
+                                that hosts them for other types doesn't render for photos). */}
+                            {item.type === MediaType.Photo && (
+                                <div className="flex items-center gap-3 mb-6">
+                                    <button
+                                        onClick={() => favoriteMutation.mutate(!item.isFavorite)}
+                                        title={item.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                                        aria-label={item.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                                        className={cn(
+                                            "p-3 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full transition-all hover:scale-110 focus-visible:scale-110 active:scale-95",
+                                            item.isFavorite
+                                                ? "bg-red-500/20 text-red-500"
+                                                : "bg-white/5 hover:bg-white/10 text-white"
+                                        )}
+                                    >
+                                        <Heart className={cn("w-5 h-5", item.isFavorite && "fill-current")} />
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            navigator.clipboard?.writeText(window.location.href)
+                                                .then(() => toast.success('Link copied to clipboard'))
+                                                .catch(() => toast.error('Could not copy the link'));
+                                        }}
+                                        title="Copy link"
+                                        aria-label="Copy link to this photo"
+                                        className="p-3 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 text-white transition-all hover:scale-110 focus-visible:scale-110 active:scale-95"
+                                    >
+                                        <Share2 className="w-5 h-5" />
+                                    </button>
+                                    {actionSlot}
+                                </div>
+                            )}
 
                             {/* Secondary Metadata Row */}
                             <div className="flex flex-wrap items-center gap-6 mb-6 font-medium text-gray-200">

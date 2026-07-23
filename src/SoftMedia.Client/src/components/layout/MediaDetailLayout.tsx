@@ -108,29 +108,33 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
 
                 <div className="flex flex-col lg:flex-row gap-8 lg:gap-12">
                     <div className="flex-shrink-0 w-full sm:w-64 md:w-72 lg:w-80 mx-auto lg:mx-0">
-                        <motion.div
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className={cn(
-                                "rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10",
-                                (item.type === MediaType.Album || item.type === MediaType.Artist || item.type === MediaType.Audio || item.type === MediaType.Track || item.type === MediaType.Photo)
-                                    ? "aspect-square"
-                                    : "aspect-[2/3]"
-                            )}
-                        >
-                            {heroPoster ? (
-                                <img
-                                    src={heroPoster}
-                                    alt={item.title}
-                                    referrerPolicy="no-referrer"
-                                    className="w-full h-full object-cover"
-                                />
-                            ) : (
-                                <div className="w-full h-full bg-slate-800 flex items-center justify-center text-slate-600">
-                                    <span className="text-6xl">?</span>
-                                </div>
-                            )}
-                        </motion.div>
+                        {/* Photos skip the poster box: the detail view IS the photo, so a
+                            sidebar thumbnail of the same image is pure duplication. */}
+                        {item.type !== MediaType.Photo && (
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className={cn(
+                                    "rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10",
+                                    (item.type === MediaType.Album || item.type === MediaType.Artist || item.type === MediaType.Audio || item.type === MediaType.Track)
+                                        ? "aspect-square"
+                                        : "aspect-[2/3]"
+                                )}
+                            >
+                                {heroPoster ? (
+                                    <img
+                                        src={heroPoster}
+                                        alt={item.title}
+                                        referrerPolicy="no-referrer"
+                                        className="w-full h-full object-cover"
+                                    />
+                                ) : (
+                                    <div className="w-full h-full bg-slate-800 flex items-center justify-center text-slate-600">
+                                        <span className="text-6xl">?</span>
+                                    </div>
+                                )}
+                            </motion.div>
+                        )}
 
                         {/* Actions Sidebar */}
                         <motion.div

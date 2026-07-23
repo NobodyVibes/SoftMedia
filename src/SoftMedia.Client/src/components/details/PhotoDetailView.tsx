@@ -87,14 +87,21 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
     const prevItem = currentIndex > 0 ? libraryItems?.[currentIndex - 1] : null;
     const nextItem = currentIndex !== -1 && currentIndex < (libraryItems?.length ?? 0) - 1 ? libraryItems?.[currentIndex + 1] : null;
 
+    // Wrap-around paging: the album is a loop, matching the slideshow. At the first
+    // photo "previous" is the last; at the last, "next" is the first. Null only when
+    // there is genuinely nowhere to go (single photo, or not in the nav list).
+    const canWrap = currentIndex !== -1 && (libraryItems?.length ?? 0) > 1;
+    const prevTarget = prevItem ?? (canWrap ? libraryItems![libraryItems!.length - 1] : null);
+    const nextTarget = nextItem ?? (canWrap ? libraryItems![0] : null);
+
     // Arrow keys page through the library like a slideshow. Skipped while an
     // input has focus so the global search box keeps its cursor keys.
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
             const target = e.target as HTMLElement | null;
             if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
-            if (e.key === 'ArrowLeft' && prevItem) navigate(`/media/${prevItem.id}${albumSuffix}`);
-            if (e.key === 'ArrowRight' && nextItem) navigate(`/media/${nextItem.id}${albumSuffix}`);
+            if (e.key === 'ArrowLeft' && prevTarget) navigate(`/media/${prevTarget.id}${albumSuffix}`);
+            if (e.key === 'ArrowRight' && nextTarget) navigate(`/media/${nextTarget.id}${albumSuffix}`);
             // Escape leaves fullscreen (under REAL browser fullscreen the browser eats
             // Esc itself; the fullscreenchange listener handles that path instead).
             if (e.key === 'Escape' && fullscreen) exitFullscreen();
@@ -102,34 +109,30 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [prevItem, nextItem, navigate, albumSuffix, fullscreen]);
+    }, [prevTarget, nextTarget, navigate, albumSuffix, fullscreen]);
 
     // Preload the next photo during the current one's dwell so the crossfade fades
     // into real pixels, not a blank frame still downloading.
     useEffect(() => {
-        if (!nextItem) return;
+        if (!nextTarget) return;
         const preload = new Image();
-        preload.src = attachAuthToApiUrl(`/api/v1/photos/${nextItem.id}/image`);
-    }, [nextItem?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+        preload.src = attachAuthToApiUrl(`/api/v1/photos/${nextTarget.id}/image`);
+    }, [nextTarget?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Slideshow: advance every 5s while the ?slideshow=1 flag rides along the
-    // navigation (component state wouldn't survive the route change). LOOPS back to
-    // the first photo at the end — the old stop-at-end rule meant pressing Play on
-    // the LAST photo (where date-less GIFs usually sort) cancelled itself instantly.
-    // It only turns itself off when there's genuinely nothing to advance to: a
-    // one-photo scope, or a photo missing from the nav list entirely.
-    const slideshowTarget = nextItem
-        ?? (currentIndex !== -1 && (libraryItems?.length ?? 0) > 1 ? libraryItems![0] : null);
+    // navigation (component state wouldn't survive the route change). Uses the same
+    // wrap-around target as the arrows, so it loops until paused; it only turns
+    // itself off when there's genuinely nothing to advance to.
     useEffect(() => {
         if (!slideshow) return;
-        if (!slideshowTarget) {
+        if (!nextTarget) {
             setFlag('slideshow', false);
             return;
         }
-        const timer = window.setTimeout(() => navigate(`/media/${slideshowTarget.id}${albumSuffix}`), 5000);
+        const timer = window.setTimeout(() => navigate(`/media/${nextTarget.id}${albumSuffix}`), 5000);
         return () => window.clearTimeout(timer);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [slideshow, slideshowTarget?.id, albumSuffix]);
+    }, [slideshow, nextTarget?.id, albumSuffix]);
 
     const metadata = item.metadata || {};
     const camera = metadata.camera as string;
@@ -243,23 +246,23 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                 />
                 {outgoingLayer}
 
-                {/* Hover chevrons — same targets as the ← / → keys */}
-                {prevItem && (
+                {/* Full-height paging bars — same wrap-around targets as the ← / → keys */}
+                {prevTarget && (
                     <button
-                        onClick={() => navigate(`/media/${prevItem.id}${albumSuffix}`)}
+                        onClick={() => navigate(`/media/${prevTarget.id}${albumSuffix}`)}
                         aria-label="Previous photo"
-                        className="absolute left-3 top-1/2 -translate-y-1/2 p-3 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/80"
+                        className="absolute inset-y-0 left-0 w-16 md:w-24 flex items-center justify-start pl-3 bg-gradient-to-r from-black/60 via-black/25 to-transparent text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                     >
-                        <ChevronLeft className="w-6 h-6" />
+                        <ChevronLeft className="w-8 h-8 drop-shadow" />
                     </button>
                 )}
-                {nextItem && (
+                {nextTarget && (
                     <button
-                        onClick={() => navigate(`/media/${nextItem.id}${albumSuffix}`)}
+                        onClick={() => navigate(`/media/${nextTarget.id}${albumSuffix}`)}
                         aria-label="Next photo"
-                        className="absolute right-3 top-1/2 -translate-y-1/2 p-3 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/80"
+                        className="absolute inset-y-0 right-0 w-16 md:w-24 flex items-center justify-end pr-3 bg-gradient-to-l from-black/60 via-black/25 to-transparent text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                     >
-                        <ChevronRight className="w-6 h-6" />
+                        <ChevronRight className="w-8 h-8 drop-shadow" />
                     </button>
                 )}
 
@@ -345,27 +348,27 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
 
             {/* Navigation Buttons */}
             <div className="flex justify-between items-center pt-8 border-t border-white/10">
-                {prevItem ? (
+                {prevTarget ? (
                     <button
-                        onClick={() => navigate(`/media/${prevItem!.id}${albumSuffix}`)}
+                        onClick={() => navigate(`/media/${prevTarget!.id}${albumSuffix}`)}
                         className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors group min-h-[44px]"
                     >
                         <ChevronLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
                         <div className="text-left">
                             <div className="text-xs text-gray-500">Previous</div>
-                            <div className="font-medium max-w-[150px] truncate">{prevItem.title}</div>
+                            <div className="font-medium max-w-[150px] truncate">{prevTarget.title}</div>
                         </div>
                     </button>
                 ) : <div />}
 
-                {nextItem && (
+                {nextTarget && (
                     <button
-                        onClick={() => navigate(`/media/${nextItem!.id}${albumSuffix}`)}
+                        onClick={() => navigate(`/media/${nextTarget!.id}${albumSuffix}`)}
                         className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors group text-right min-h-[44px]"
                     >
                         <div className="text-right">
                             <div className="text-xs text-gray-500">Next</div>
-                            <div className="font-medium max-w-[150px] truncate">{nextItem.title}</div>
+                            <div className="font-medium max-w-[150px] truncate">{nextTarget.title}</div>
                         </div>
                         <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                     </button>
@@ -388,22 +391,22 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                     />
                     {outgoingLayer}
 
-                    {prevItem && (
+                    {prevTarget && (
                         <button
-                            onClick={() => navigate(`/media/${prevItem.id}${albumSuffix}`)}
+                            onClick={() => navigate(`/media/${prevTarget.id}${albumSuffix}`)}
                             aria-label="Previous photo"
-                            className="absolute left-4 top-1/2 -translate-y-1/2 p-3 min-w-[48px] min-h-[48px] flex items-center justify-center rounded-full bg-black/50 text-white opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/80"
+                            className="absolute inset-y-0 left-0 w-20 md:w-32 flex items-center justify-start pl-4 bg-gradient-to-r from-black/70 via-black/25 to-transparent text-white opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100 transition-opacity"
                         >
-                            <ChevronLeft className="w-7 h-7" />
+                            <ChevronLeft className="w-9 h-9 drop-shadow" />
                         </button>
                     )}
-                    {nextItem && (
+                    {nextTarget && (
                         <button
-                            onClick={() => navigate(`/media/${nextItem.id}${albumSuffix}`)}
+                            onClick={() => navigate(`/media/${nextTarget.id}${albumSuffix}`)}
                             aria-label="Next photo"
-                            className="absolute right-4 top-1/2 -translate-y-1/2 p-3 min-w-[48px] min-h-[48px] flex items-center justify-center rounded-full bg-black/50 text-white opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/80"
+                            className="absolute inset-y-0 right-0 w-20 md:w-32 flex items-center justify-end pr-4 bg-gradient-to-l from-black/70 via-black/25 to-transparent text-white opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100 transition-opacity"
                         >
-                            <ChevronRight className="w-7 h-7" />
+                            <ChevronRight className="w-9 h-9 drop-shadow" />
                         </button>
                     )}
 

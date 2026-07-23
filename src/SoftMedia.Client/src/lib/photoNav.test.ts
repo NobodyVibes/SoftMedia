@@ -17,4 +17,9 @@ describe('buildPhotoNavSuffix', () => {
     it('is empty only when there is genuinely nothing to carry', () => {
         expect(buildPhotoNavSuffix(null, false)).toBe('');
     });
+
+    it('carries the fullscreen flag alongside the others', () => {
+        expect(buildPhotoNavSuffix(null, false, true)).toBe('?fs=1');
+        expect(buildPhotoNavSuffix('Trip', true, true)).toBe('?album=Trip&slideshow=1&fs=1');
+    });
 });

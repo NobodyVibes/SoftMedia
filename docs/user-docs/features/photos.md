@@ -26,6 +26,11 @@ SoftMedia can index and display photo libraries alongside your other media.
 - **Favorites** (2026-07-23): hover a photo tile and click the heart (it stays
   visible on favorited photos); a Favorites chip in the filter bar narrows any
   view to hearted photos. Favorites are per-user.
+- **Hover arrows & fullscreen** (2026-07-23): hovering the photo reveals
+  previous/next chevrons (same targets as the ← / → keys) and a fullscreen
+  button. Fullscreen shows the photo edge-to-edge on black with the same arrows
+  and slideshow controls; it survives paging between photos, uses the browser's
+  real fullscreen when permitted, and exits via ✕ or Escape.
 - **Slideshow** (2026-07-23): a play button on the photo viewer auto-advances
   every 5 seconds through the current album (or search scope), looping back to
   the first photo at the end — so it can start from any photo, including the

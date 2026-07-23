@@ -1,11 +1,11 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../services/api';
 import { type MediaItem, type PagedResult } from '../../types';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 import { buildPhotoNavSuffix } from '../../lib/photoNav';
-import { Camera, MapPin, Aperture, Clock, ChevronLeft, ChevronRight, Maximize2, Pause, Play } from 'lucide-react';
+import { Camera, MapPin, Aperture, Clock, ChevronLeft, ChevronRight, Expand, Maximize2, Pause, Play, X } from 'lucide-react';
 
 interface PhotoDetailViewProps {
     item: MediaItem;
@@ -20,17 +20,48 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
     const [searchParams, setSearchParams] = useSearchParams();
     const albumKey = searchParams.has('album') ? searchParams.get('album')! : null;
     const slideshow = searchParams.get('slideshow') === '1';
+    // Fullscreen rides in the URL like the slideshow — component state wouldn't
+    // survive the per-photo route change.
+    const fullscreen = searchParams.get('fs') === '1';
+    const lightboxRef = useRef<HTMLDivElement>(null);
 
-    // Navigation suffix carries BOTH contexts: which album we're paging within, and
-    // whether the slideshow keeps rolling across the navigation.
-    const albumSuffix = buildPhotoNavSuffix(albumKey, slideshow);
+    // Navigation suffix carries the album scope, the slideshow flag, and the
+    // fullscreen flag across per-photo navigation.
+    const albumSuffix = buildPhotoNavSuffix(albumKey, slideshow, fullscreen);
 
-    const toggleSlideshow = () => {
-        const next = new URLSearchParams(searchParams);
-        if (slideshow) next.delete('slideshow');
-        else next.set('slideshow', '1');
-        setSearchParams(next, { replace: true });
+    // Updater form: listeners created on one photo can fire after navigating to
+    // another — a captured searchParams snapshot would resurrect stale params.
+    const setFlag = (name: string, on: boolean) => {
+        setSearchParams(prev => {
+            const next = new URLSearchParams(prev);
+            if (on) next.set(name, '1');
+            else next.delete(name);
+            return next;
+        }, { replace: true });
     };
+    const toggleSlideshow = () => setFlag('slideshow', !slideshow);
+    const exitFullscreen = () => setFlag('fs', false);
+
+    // Best-effort REAL browser fullscreen on top of the overlay: requested when the
+    // lightbox mounts (still within the click's transient activation), released on
+    // unmount. If the browser refuses, the fixed inset-0 overlay still covers the
+    // viewport — the feature degrades to a pseudo-fullscreen, not a failure.
+    useEffect(() => {
+        if (!fullscreen) return;
+        lightboxRef.current?.requestFullscreen?.().catch(() => { /* pseudo-fullscreen */ });
+
+        // The browser's own exit (Esc under real fullscreen fires no keydown here)
+        // must also clear the flag, or the overlay would linger.
+        const onFsChange = () => {
+            if (!document.fullscreenElement) exitFullscreen();
+        };
+        document.addEventListener('fullscreenchange', onFsChange);
+        return () => {
+            document.removeEventListener('fullscreenchange', onFsChange);
+            if (document.fullscreenElement) document.exitFullscreen().catch(() => { });
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [fullscreen]);
 
     const { data: libraryItems } = useQuery({
         queryKey: albumKey !== null
@@ -62,10 +93,14 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
             if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
             if (e.key === 'ArrowLeft' && prevItem) navigate(`/media/${prevItem.id}${albumSuffix}`);
             if (e.key === 'ArrowRight' && nextItem) navigate(`/media/${nextItem.id}${albumSuffix}`);
+            // Escape leaves fullscreen (under REAL browser fullscreen the browser eats
+            // Esc itself; the fullscreenchange listener handles that path instead).
+            if (e.key === 'Escape' && fullscreen) exitFullscreen();
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [prevItem, nextItem, navigate, albumSuffix]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [prevItem, nextItem, navigate, albumSuffix, fullscreen]);
 
     // Slideshow: advance every 5s while the ?slideshow=1 flag rides along the
     // navigation (component state wouldn't survive the route change). LOOPS back to
@@ -78,9 +113,7 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
     useEffect(() => {
         if (!slideshow) return;
         if (!slideshowTarget) {
-            const cleared = new URLSearchParams(searchParams);
-            cleared.delete('slideshow');
-            setSearchParams(cleared, { replace: true });
+            setFlag('slideshow', false);
             return;
         }
         const timer = window.setTimeout(() => navigate(`/media/${slideshowTarget.id}${albumSuffix}`), 5000);
@@ -110,7 +143,36 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                     alt={item.title}
                     className="w-full max-h-[75vh] object-contain"
                 />
+
+                {/* Hover chevrons — same targets as the ← / → keys */}
+                {prevItem && (
+                    <button
+                        onClick={() => navigate(`/media/${prevItem.id}${albumSuffix}`)}
+                        aria-label="Previous photo"
+                        className="absolute left-3 top-1/2 -translate-y-1/2 p-3 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/80"
+                    >
+                        <ChevronLeft className="w-6 h-6" />
+                    </button>
+                )}
+                {nextItem && (
+                    <button
+                        onClick={() => navigate(`/media/${nextItem.id}${albumSuffix}`)}
+                        aria-label="Next photo"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-3 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/80"
+                    >
+                        <ChevronRight className="w-6 h-6" />
+                    </button>
+                )}
+
                 <div className="absolute top-3 right-3 flex gap-2">
+                    <button
+                        onClick={() => setFlag('fs', true)}
+                        title="Fullscreen"
+                        aria-label="View fullscreen"
+                        className="p-3 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/80"
+                    >
+                        <Expand className="w-5 h-5" />
+                    </button>
                     <button
                         onClick={toggleSlideshow}
                         title={slideshow ? 'Pause slideshow' : 'Start slideshow'}
@@ -210,6 +272,61 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                     </button>
                 )}
             </div>
+
+            {/* Fullscreen lightbox: same photo, arrows, and slideshow controls, black
+                edge-to-edge. Survives per-photo navigation because ?fs=1 rides in the
+                URL; real browser fullscreen is layered on best-effort (see effect). */}
+            {fullscreen && (
+                <div ref={lightboxRef} className="fixed inset-0 z-50 bg-black flex items-center justify-center group/fs">
+                    <img
+                        src={fullImageUrl}
+                        alt={item.title}
+                        className="max-w-full max-h-full object-contain"
+                    />
+
+                    {prevItem && (
+                        <button
+                            onClick={() => navigate(`/media/${prevItem.id}${albumSuffix}`)}
+                            aria-label="Previous photo"
+                            className="absolute left-4 top-1/2 -translate-y-1/2 p-3 min-w-[48px] min-h-[48px] flex items-center justify-center rounded-full bg-black/50 text-white opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/80"
+                        >
+                            <ChevronLeft className="w-7 h-7" />
+                        </button>
+                    )}
+                    {nextItem && (
+                        <button
+                            onClick={() => navigate(`/media/${nextItem.id}${albumSuffix}`)}
+                            aria-label="Next photo"
+                            className="absolute right-4 top-1/2 -translate-y-1/2 p-3 min-w-[48px] min-h-[48px] flex items-center justify-center rounded-full bg-black/50 text-white opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/80"
+                        >
+                            <ChevronRight className="w-7 h-7" />
+                        </button>
+                    )}
+
+                    <div className="absolute top-4 right-4 flex gap-2">
+                        <button
+                            onClick={toggleSlideshow}
+                            title={slideshow ? 'Pause slideshow' : 'Start slideshow'}
+                            aria-label={slideshow ? 'Pause slideshow' : 'Start slideshow'}
+                            className={`p-3 min-w-[48px] min-h-[48px] flex items-center justify-center rounded-full bg-black/50 text-white transition-opacity hover:bg-black/80 ${slideshow ? 'opacity-100' : 'opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100'}`}
+                        >
+                            {slideshow ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 fill-current" />}
+                        </button>
+                        <button
+                            onClick={exitFullscreen}
+                            title="Exit fullscreen"
+                            aria-label="Exit fullscreen"
+                            className="p-3 min-w-[48px] min-h-[48px] flex items-center justify-center rounded-full bg-black/50 text-white opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/80"
+                        >
+                            <X className="w-5 h-5" />
+                        </button>
+                    </div>
+
+                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/80 text-sm bg-black/50 rounded-full px-4 py-1.5 opacity-0 group-hover/fs:opacity-100 transition-opacity">
+                        {item.title}
+                    </div>
+                </div>
+            )}
         </div >
     );
 }

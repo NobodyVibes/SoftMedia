@@ -7,10 +7,11 @@
  * once silently dropped both params on every navigation (slideshow died after one
  * advance).
  */
-export function buildPhotoNavSuffix(albumKey: string | null, slideshow: boolean): string {
+export function buildPhotoNavSuffix(albumKey: string | null, slideshow: boolean, fullscreen = false): string {
     const params = new URLSearchParams();
     if (albumKey !== null) params.set('album', albumKey);
     if (slideshow) params.set('slideshow', '1');
+    if (fullscreen) params.set('fs', '1');
     const query = params.toString();
     return query !== '' ? `?${query}` : '';
 }

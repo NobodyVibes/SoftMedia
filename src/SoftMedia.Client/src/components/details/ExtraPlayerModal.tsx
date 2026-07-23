@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 import type { MediaExtra } from '../../hooks/useExtras';
 
@@ -19,8 +20,20 @@ export function ExtraPlayerModal({ mediaId, extra, onClose }: {
     }, [onClose]);
 
     return (
-        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
-            <div className="relative w-full max-w-5xl">
+        // Gentle entrance: the backdrop fades in and the player eases up from a
+        // slight scale-down, so the video doesn't hard-cut onto the screen.
+        <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+        >
+            <motion.div
+                initial={{ opacity: 0, scale: 0.96, y: 12 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                transition={{ duration: 0.25, ease: 'easeOut', delay: 0.05 }}
+                className="relative w-full max-w-5xl"
+            >
                 <div className="flex items-center justify-between mb-2">
                     <span className="text-white font-medium">{extra.title}</span>
                     <button
@@ -38,7 +51,7 @@ export function ExtraPlayerModal({ mediaId, extra, onClose }: {
                     autoPlay
                     className="w-full max-h-[80vh] rounded-xl bg-black"
                 />
-            </div>
-        </div>
+            </motion.div>
+        </motion.div>
     );
 }

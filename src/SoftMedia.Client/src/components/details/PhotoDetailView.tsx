@@ -68,20 +68,25 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
     }, [prevItem, nextItem, navigate, albumSuffix]);
 
     // Slideshow: advance every 5s while the ?slideshow=1 flag rides along the
-    // navigation (component state wouldn't survive the route change). Stops itself
-    // at the end of the album/library.
+    // navigation (component state wouldn't survive the route change). LOOPS back to
+    // the first photo at the end — the old stop-at-end rule meant pressing Play on
+    // the LAST photo (where date-less GIFs usually sort) cancelled itself instantly.
+    // It only turns itself off when there's genuinely nothing to advance to: a
+    // one-photo scope, or a photo missing from the nav list entirely.
+    const slideshowTarget = nextItem
+        ?? (currentIndex !== -1 && (libraryItems?.length ?? 0) > 1 ? libraryItems![0] : null);
     useEffect(() => {
         if (!slideshow) return;
-        if (!nextItem) {
+        if (!slideshowTarget) {
             const cleared = new URLSearchParams(searchParams);
             cleared.delete('slideshow');
             setSearchParams(cleared, { replace: true });
             return;
         }
-        const timer = window.setTimeout(() => navigate(`/media/${nextItem.id}${albumSuffix}`), 5000);
+        const timer = window.setTimeout(() => navigate(`/media/${slideshowTarget.id}${albumSuffix}`), 5000);
         return () => window.clearTimeout(timer);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [slideshow, nextItem?.id, albumSuffix]);
+    }, [slideshow, slideshowTarget?.id, albumSuffix]);
 
     const metadata = item.metadata || {};
     const camera = metadata.camera as string;

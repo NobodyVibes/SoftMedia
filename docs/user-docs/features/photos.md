@@ -27,8 +27,9 @@ SoftMedia can index and display photo libraries alongside your other media.
   visible on favorited photos); a Favorites chip in the filter bar narrows any
   view to hearted photos. Favorites are per-user.
 - **Slideshow** (2026-07-23): a play button on the photo viewer auto-advances
-  every 5 seconds through the current album (or search scope), stopping at the
-  end. Pause with the same button; manual navigation keeps the show rolling.
+  every 5 seconds through the current album (or search scope), looping back to
+  the first photo at the end — so it can start from any photo, including the
+  last one. Pause with the same button; manual navigation keeps the show rolling.
 - **HEIC support** (2026-07-23): iPhone HEIC photos now display — thumbnails and
   a full-size preview are converted server-side through the bundled ffmpeg (the
   original file stays untouched; "open original" still downloads the HEIC).

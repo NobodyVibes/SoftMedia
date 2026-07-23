@@ -251,7 +251,7 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                     <button
                         onClick={() => navigate(`/media/${prevTarget.id}${albumSuffix}`)}
                         aria-label="Previous photo"
-                        className="absolute inset-y-0 left-0 w-14 md:w-20 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white transition-colors"
+                        className="absolute inset-y-0 left-0 w-14 md:w-20 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all"
                     >
                         <ChevronLeft className="w-8 h-8 drop-shadow" />
                     </button>
@@ -260,7 +260,7 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                     <button
                         onClick={() => navigate(`/media/${nextTarget.id}${albumSuffix}`)}
                         aria-label="Next photo"
-                        className="absolute inset-y-0 right-0 w-14 md:w-20 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white transition-colors"
+                        className="absolute inset-y-0 right-0 w-14 md:w-20 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all"
                     >
                         <ChevronRight className="w-8 h-8 drop-shadow" />
                     </button>
@@ -395,7 +395,7 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                         <button
                             onClick={() => navigate(`/media/${prevTarget.id}${albumSuffix}`)}
                             aria-label="Previous photo"
-                            className="absolute inset-y-0 left-0 w-16 md:w-24 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white transition-colors"
+                            className="absolute inset-y-0 left-0 w-16 md:w-24 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100 transition-all"
                         >
                             <ChevronLeft className="w-9 h-9 drop-shadow" />
                         </button>
@@ -404,7 +404,7 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                         <button
                             onClick={() => navigate(`/media/${nextTarget.id}${albumSuffix}`)}
                             aria-label="Next photo"
-                            className="absolute inset-y-0 right-0 w-16 md:w-24 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white transition-colors"
+                            className="absolute inset-y-0 right-0 w-16 md:w-24 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100 transition-all"
                         >
                             <ChevronRight className="w-9 h-9 drop-shadow" />
                         </button>

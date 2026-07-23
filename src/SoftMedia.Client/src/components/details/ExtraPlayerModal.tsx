@@ -20,17 +20,21 @@ export function ExtraPlayerModal({ mediaId, extra, onClose }: {
     }, [onClose]);
 
     return (
-        // Gentle entrance: the backdrop fades in and the player eases up from a
-        // slight scale-down, so the video doesn't hard-cut onto the screen.
+        // Gentle entrance/exit: the backdrop fades and the player eases between a
+        // slight scale-down and rest, so playback neither hard-cuts in nor
+        // vanishes abruptly. Exit needs an <AnimatePresence> around the caller's
+        // conditional render — both call sites have one.
         <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
+            exit={{ opacity: 0, transition: { duration: 0.15, ease: 'easeIn' } }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
             className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
         >
             <motion.div
                 initial={{ opacity: 0, scale: 0.96, y: 12 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: 12, transition: { duration: 0.15, ease: 'easeIn' } }}
                 transition={{ duration: 0.25, ease: 'easeOut', delay: 0.05 }}
                 className="relative w-full max-w-5xl"
             >

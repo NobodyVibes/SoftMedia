@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { ArrowLeft, Play, Heart, Share2, Eye, Star, Clapperboard } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
 import { type MediaItem, MediaType } from '../../types';
@@ -351,9 +351,11 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                 </div>
             </div>
 
-            {trailerOpen && trailer && (
-                <ExtraPlayerModal mediaId={item.id} extra={trailer} onClose={() => setTrailerOpen(false)} />
-            )}
+            <AnimatePresence>
+                {trailerOpen && trailer && (
+                    <ExtraPlayerModal mediaId={item.id} extra={trailer} onClose={() => setTrailerOpen(false)} />
+                )}
+            </AnimatePresence>
         </div>
     );
 }

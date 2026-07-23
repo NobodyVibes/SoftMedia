@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AnimatePresence } from 'framer-motion';
 import { Clapperboard, Play } from 'lucide-react';
 import { useExtras, findTrailer, type MediaExtra } from '../../hooks/useExtras';
 import { ExtraPlayerModal } from './ExtraPlayerModal';
@@ -42,9 +43,11 @@ export function ExtrasSection({ mediaId, itemType }: { mediaId: string; itemType
                 ))}
             </div>
 
-            {playing && (
-                <ExtraPlayerModal mediaId={mediaId} extra={playing} onClose={() => setPlaying(null)} />
-            )}
+            <AnimatePresence>
+                {playing && (
+                    <ExtraPlayerModal mediaId={mediaId} extra={playing} onClose={() => setPlaying(null)} />
+                )}
+            </AnimatePresence>
         </div>
     );
 }

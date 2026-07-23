@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../services/api';
@@ -104,6 +104,14 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [prevItem, nextItem, navigate, albumSuffix, fullscreen]);
 
+    // Preload the next photo during the current one's dwell so the crossfade fades
+    // into real pixels, not a blank frame still downloading.
+    useEffect(() => {
+        if (!nextItem) return;
+        const preload = new Image();
+        preload.src = attachAuthToApiUrl(`/api/v1/photos/${nextItem.id}/image`);
+    }, [nextItem?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Slideshow: advance every 5s while the ?slideshow=1 flag rides along the
     // navigation (component state wouldn't survive the route change). LOOPS back to
     // the first photo at the end — the old stop-at-end rule meant pressing Play on
@@ -136,13 +144,51 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
     // (the /api/v1/photos route is in the server's media-route allowlist).
     const fullImageUrl = attachAuthToApiUrl(`/api/v1/photos/${item.id}/image`);
 
-    // Entrance transition per the device preference. Keyed on item.id so paging
-    // (arrows, keys, slideshow) replays it; entrance-only by design — the previous
-    // photo is gone by the time the route changes, so a true crossfade isn't
-    // possible without holding both images, which "simple" doesn't warrant.
+    // Transition per the device preference. The entering photo is keyed on item.id
+    // so paging (arrows, keys, slideshow) replays it, and the OUTGOING photo is held
+    // in a state layer that animates out on top — a real crossfade, not a hard cut
+    // followed by a fade (the original complaint). MediaDetailPage keeps the
+    // previous item as placeholderData, so this component never unmounts mid-fade.
     const { preferences } = useLocalPreferences();
+    const transitionKind = preferences.slideshowTransition;
+    const [outgoing, setOutgoing] = useState<{ id: string; url: string } | null>(null);
+    const shownRef = useRef({ id: item.id, url: fullImageUrl });
+    useEffect(() => {
+        if (shownRef.current.id !== item.id) {
+            if (transitionKind !== 'none') setOutgoing(shownRef.current);
+            shownRef.current = { id: item.id, url: fullImageUrl };
+        }
+    }, [item.id, fullImageUrl, transitionKind]);
+
+    const exitProps = (() => {
+        switch (transitionKind) {
+            case 'slide':
+                // The old photo departs the way the new one arrives: leftward.
+                return { initial: { opacity: 1, x: 0 }, animate: { opacity: 0, x: -48 }, transition: { duration: 0.45, ease: 'easeOut' as const } };
+            case 'fade':
+            case 'zoom':
+                return { initial: { opacity: 1 }, animate: { opacity: 0 }, transition: { duration: 0.5, ease: 'easeOut' as const } };
+            default:
+                return null;
+        }
+    })();
+
+    /** The outgoing photo, absolutely stacked over the incoming one, animating away.
+     *  Removed from the tree when its animation completes. */
+    const outgoingLayer = outgoing && exitProps && (
+        <motion.img
+            key={`out-${outgoing.id}`}
+            {...exitProps}
+            onAnimationComplete={() => setOutgoing(null)}
+            src={outgoing.url}
+            alt=""
+            aria-hidden
+            className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+        />
+    );
+
     const entranceProps = (() => {
-        switch (preferences.slideshowTransition) {
+        switch (transitionKind) {
             case 'fade':
                 return { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.5, ease: 'easeOut' as const } };
             case 'slide':
@@ -171,6 +217,7 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                     alt={item.title}
                     className="w-full max-h-[75vh] object-contain"
                 />
+                {outgoingLayer}
 
                 {/* Hover chevrons — same targets as the ← / → keys */}
                 {prevItem && (
@@ -313,6 +360,7 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                         alt={item.title}
                         className="max-w-full max-h-full object-contain"
                     />
+                    {outgoingLayer}
 
                     {prevItem && (
                         <button

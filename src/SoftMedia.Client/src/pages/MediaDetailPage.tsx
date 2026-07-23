@@ -35,6 +35,11 @@ export default function MediaDetailPage() {
             return response.data;
         },
         enabled: !!id,
+        // Keep the previous item rendered while the next loads: detail→detail
+        // navigation (photo paging/slideshows, collection hops) would otherwise
+        // unmount the page into a "Loading..." flash — which also destroys any
+        // in-flight photo crossfade.
+        placeholderData: (previous: MediaItem | undefined) => previous,
     });
 
     if (isLoading) {

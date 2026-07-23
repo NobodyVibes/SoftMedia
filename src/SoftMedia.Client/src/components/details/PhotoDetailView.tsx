@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../services/api';
 import { type MediaItem, type PagedResult } from '../../types';
@@ -13,10 +13,23 @@ interface PhotoDetailViewProps {
 export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
     const navigate = useNavigate();
 
-    // Fetch library items for navigation (Limit to 1000 for now)
+    // Opened from an album grid? Then ← / → page within THAT album, not the whole
+    // library — and navigation preserves the album context. `album` may be "" (the
+    // root album), so presence is the signal, not truthiness.
+    const [searchParams] = useSearchParams();
+    const albumKey = searchParams.has('album') ? searchParams.get('album')! : null;
+    const albumSuffix = albumKey !== null ? `?album=${encodeURIComponent(albumKey)}` : '';
+
     const { data: libraryItems } = useQuery({
-        queryKey: ['library', item.libraryId, 'items', 'navigation'],
+        queryKey: albumKey !== null
+            ? ['photoAlbum', item.libraryId, albumKey]
+            : ['library', item.libraryId, 'items', 'navigation'],
         queryFn: async () => {
+            if (albumKey !== null) {
+                const response = await api.get<MediaItem[]>(
+                    `/photos/albums/photos?libraryId=${item.libraryId}&key=${encodeURIComponent(albumKey)}`);
+                return response.data;
+            }
             const response = await api.get<PagedResult<MediaItem>>(`/libraries/${item.libraryId}/items`, {
                 params: { page: 1, pageSize: 1000 }
             });
@@ -35,8 +48,8 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
         const onKeyDown = (e: KeyboardEvent) => {
             const target = e.target as HTMLElement | null;
             if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
-            if (e.key === 'ArrowLeft' && prevItem) navigate(`/media/${prevItem.id}`);
-            if (e.key === 'ArrowRight' && nextItem) navigate(`/media/${nextItem.id}`);
+            if (e.key === 'ArrowLeft' && prevItem) navigate(`/media/${prevItem.id}${albumSuffix}`);
+            if (e.key === 'ArrowRight' && nextItem) navigate(`/media/${nextItem.id}${albumSuffix}`);
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
@@ -130,7 +143,7 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
             <div className="flex justify-between items-center pt-8 border-t border-white/10">
                 {prevItem ? (
                     <button
-                        onClick={() => navigate(`/media/${prevItem!.id}`)}
+                        onClick={() => navigate(`/media/${prevItem!.id}${albumSuffix}`)}
                         className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors group min-h-[44px]"
                     >
                         <ChevronLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
@@ -143,7 +156,7 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
 
                 {nextItem && (
                     <button
-                        onClick={() => navigate(`/media/${nextItem!.id}`)}
+                        onClick={() => navigate(`/media/${nextItem!.id}${albumSuffix}`)}
                         className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors group text-right min-h-[44px]"
                     >
                         <div className="text-right">

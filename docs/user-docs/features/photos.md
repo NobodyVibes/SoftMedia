@@ -14,6 +14,12 @@ SoftMedia can index and display photo libraries alongside your other media.
   leaves your machine, consistent with the privacy charter.
 - **Dimensions** are read from the image header (no full decode) and shown on the
   detail page.
+- **Albums from your folders** (2026-07-22): a photo library opens as a grid of
+  album cards — one per folder, named after it, covered by its newest photo, newest
+  album first. Loose photos in the library root land in "Unsorted"; a library that
+  is a single folder of pictures skips the album layer and shows the photos
+  directly. Inside an album: a square photo grid in date-taken order, and the
+  photo viewer's ← / → keys page within that album.
 - **Cards & thumbnails**: grids serve server-generated WebP thumbnails with EXIF
   orientation baked in (portrait phone photos display upright).
 - **Detail view**: full-resolution photo (letterboxed), EXIF cards, an

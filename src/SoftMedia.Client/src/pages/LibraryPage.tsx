@@ -6,6 +6,7 @@ import api from '../services/api';
 import HoverableMediaCardWrapper from '../components/items/HoverableMediaCardWrapper';
 import { FilterBar } from '../components/library/FilterBar';
 import PlaylistsView from '../components/playlists/PlaylistsView';
+import PhotoLibraryView from '../components/library/PhotoLibraryView';
 import { type MediaItem, type PagedResult, type Library } from '../types';
 import { useMediaHub } from '../hooks/useMediaHub';
 import useSequentialReveal from '../hooks/useSequentialReveal';
@@ -81,7 +82,9 @@ export default function LibraryPage() {
             return lastPage.page + 1;
         },
         initialPageParam: 1,
-        enabled: !!id && !isPlaylistsView,
+        // Photo libraries render their own album view (PhotoLibraryView) with its
+        // own queries — the flat items feed would be wasted work.
+        enabled: !!id && !isPlaylistsView && library?.type !== 'Photo',
     });
 
     useEffect(() => {
@@ -184,6 +187,16 @@ export default function LibraryPage() {
             console.error('Failed to start scan:', error);
         }
     };
+
+    // Photos get a dedicated album-first design — the poster-card grid and its
+    // filter bar are movie/show furniture that doesn't fit a photo collection.
+    if (library?.type === 'Photo') {
+        return (
+            <div className="min-h-screen bg-background flex flex-col">
+                <PhotoLibraryView libraryId={id!} libraryName={library.name} onRescan={handleRescan} />
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-background flex flex-col">

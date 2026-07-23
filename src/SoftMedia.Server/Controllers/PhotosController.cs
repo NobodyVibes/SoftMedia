@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
@@ -7,6 +9,13 @@ using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Media;
 
 namespace SoftMedia.Server.Controllers;
+
+/// <summary>
+/// A folder-derived photo album: photos group by the directory they live in,
+/// relative to the library root ("2024/Italy" → album "Italy"). No metadata or
+/// schema — the user's own folder structure IS the organization.
+/// </summary>
+public record PhotoAlbumDto(string Key, string Name, int PhotoCount, Guid CoverPhotoId, DateTime? LatestDate);
 
 /// <summary>
 /// Serves photo-library images. The photo file IS its own artwork: cards request a WebP
@@ -25,17 +34,23 @@ public class PhotosController : ControllerBase
     private readonly IMediaRepository _mediaRepository;
     private readonly IStreamSecurityService _streamSecurity;
     private readonly IThumbnailService _thumbnailService;
+    private readonly Data.AppDbContext _context;
+    private readonly Services.Security.LibraryAccess.IUserLibraryAccessProvider _libraryAccess;
     private readonly ILogger<PhotosController> _logger;
 
     public PhotosController(
         IMediaRepository mediaRepository,
         IStreamSecurityService streamSecurity,
         IThumbnailService thumbnailService,
+        Data.AppDbContext context,
+        Services.Security.LibraryAccess.IUserLibraryAccessProvider libraryAccess,
         ILogger<PhotosController> logger)
     {
         _mediaRepository = mediaRepository;
         _streamSecurity = streamSecurity;
         _thumbnailService = thumbnailService;
+        _context = context;
+        _libraryAccess = libraryAccess;
         _logger = logger;
     }
 
@@ -83,4 +98,101 @@ public class PhotosController : ControllerBase
 
         return PhysicalFile(servePath, serveMime, enableRangeProcessing: true);
     }
+
+    /// <summary>
+    /// Folder-derived albums for a photo library, newest first. The cover is the
+    /// album's most recent photo. Unknown/denied/non-photo libraries 404 (anti-probe).
+    /// </summary>
+    [HttpGet("albums")]
+    public async Task<ActionResult<List<PhotoAlbumDto>>> GetAlbums([FromQuery] Guid libraryId)
+    {
+        var library = await GetAccessiblePhotoLibraryAsync(libraryId);
+        if (library == null) return NotFound();
+
+        var photos = await _context.MediaItems.AsNoTracking()
+            .Where(m => m.LibraryId == libraryId && m.Type == MediaType.Photo)
+            .Select(m => new { m.Id, m.Path, m.ReleaseDate, m.DateAdded })
+            .ToListAsync();
+
+        var albums = photos
+            .GroupBy(p => AlbumKeyFor(p.Path, library.Paths))
+            .Select(g =>
+            {
+                var cover = g.OrderByDescending(p => p.ReleaseDate ?? p.DateAdded).First();
+                return new PhotoAlbumDto(
+                    g.Key,
+                    AlbumNameFor(g.Key),
+                    g.Count(),
+                    cover.Id,
+                    g.Max(p => p.ReleaseDate ?? p.DateAdded));
+            })
+            .OrderByDescending(a => a.LatestDate)
+            .ToList();
+
+        return Ok(albums);
+    }
+
+    /// <summary>
+    /// The photos of one album, in chronological order (date taken, falling back to
+    /// date added). <paramref name="key"/> is the album key from <see cref="GetAlbums"/>;
+    /// empty/absent = the library root's loose photos.
+    /// </summary>
+    [HttpGet("albums/photos")]
+    public async Task<ActionResult<List<MediaItemDto>>> GetAlbumPhotos([FromQuery] Guid libraryId, [FromQuery] string? key)
+    {
+        var library = await GetAccessiblePhotoLibraryAsync(libraryId);
+        if (library == null) return NotFound();
+
+        var photos = await _context.MediaItems.AsNoTracking()
+            .Where(m => m.LibraryId == libraryId && m.Type == MediaType.Photo)
+            .ToListAsync();
+
+        var normalizedKey = key ?? "";
+        var inAlbum = photos
+            .Where(p => AlbumKeyFor(p.Path, library.Paths) == normalizedKey)
+            .OrderBy(p => p.ReleaseDate ?? p.DateAdded)
+            .ThenBy(p => p.SortTitle, StringComparer.OrdinalIgnoreCase)
+            .Select(p => MediaItemDto.FromMediaItem(p))
+            .ToList();
+
+        return Ok(inAlbum);
+    }
+
+    /// <summary>Resolves the library iff it exists, is a photo library, and the caller's
+    /// per-user ACL admits it — every failure mode collapses to null → 404.</summary>
+    private async Task<Library?> GetAccessiblePhotoLibraryAsync(Guid libraryId)
+    {
+        var library = await _context.Libraries.AsNoTracking()
+            .FirstOrDefaultAsync(l => l.Id == libraryId && l.Type == LibraryType.Photo);
+        if (library == null) return null;
+
+        var access = await _libraryAccess.GetCurrentAsync();
+        if (!access.IsUnrestricted && !access.AllowedLibraryIds.Contains(libraryId)) return null;
+
+        return library;
+    }
+
+    /// <summary>
+    /// Album key = the photo's directory relative to its library root, '/'-normalized
+    /// ("2024/Italy"); photos directly in a root key to "". Multi-root libraries with
+    /// identical relative folders merge — the folder name is the identity, by design.
+    /// </summary>
+    // Public so tests can drive it directly (project convention; no InternalsVisibleTo).
+    public static string AlbumKeyFor(string photoPath, List<string> libraryRoots)
+    {
+        var dir = (Path.GetDirectoryName(photoPath) ?? "").Replace('\\', '/').TrimEnd('/');
+        foreach (var root in libraryRoots)
+        {
+            var normalizedRoot = root.Replace('\\', '/').TrimEnd('/');
+            if (dir.Equals(normalizedRoot, StringComparison.OrdinalIgnoreCase)) return "";
+            if (dir.StartsWith(normalizedRoot + "/", StringComparison.OrdinalIgnoreCase))
+                return dir[(normalizedRoot.Length + 1)..];
+        }
+        // Root mismatch (library path edited since scan): fall back to the leaf folder
+        // so the photo still lands in a sensibly-named album instead of vanishing.
+        return dir.Split('/').LastOrDefault() ?? "";
+    }
+
+    public static string AlbumNameFor(string key) =>
+        string.IsNullOrEmpty(key) ? "Unsorted" : key.Split('/').Last();
 }

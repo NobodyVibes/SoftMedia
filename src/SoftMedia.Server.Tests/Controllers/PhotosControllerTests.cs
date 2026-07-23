@@ -1,11 +1,14 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using SoftMedia.Server.Controllers;
+using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Media;
+using SoftMedia.Server.Services.Security.LibraryAccess;
 using Xunit;
 
 namespace SoftMedia.Server.Tests.Controllers;
@@ -15,6 +18,9 @@ public class PhotosControllerTests : IDisposable
     private readonly Mock<IMediaRepository> _repo = new();
     private readonly Mock<IStreamSecurityService> _security = new();
     private readonly Mock<IThumbnailService> _thumbs = new();
+    private readonly Mock<IUserLibraryAccessProvider> _access = new();
+    private readonly AppDbContext _db = new(new DbContextOptionsBuilder<AppDbContext>()
+        .UseInMemoryDatabase($"photos-ctrl-{Guid.NewGuid()}").Options);
     private readonly string _tempDir;
     private readonly string _photoPath;
 
@@ -31,11 +37,16 @@ public class PhotosControllerTests : IDisposable
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* best-effort */ }
     }
 
-    private PhotosController BuildController() => new(
-        _repo.Object, _security.Object, _thumbs.Object, NullLogger<PhotosController>.Instance)
+    private PhotosController BuildController()
     {
-        ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
-    };
+        _access.Setup(a => a.GetCurrentAsync()).ReturnsAsync(LibraryAccess.Unrestricted);
+        return new PhotosController(
+            _repo.Object, _security.Object, _thumbs.Object, _db, _access.Object,
+            NullLogger<PhotosController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
+    }
 
     private MediaItem SeedPhoto(MediaType type = MediaType.Photo)
     {

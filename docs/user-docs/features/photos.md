@@ -47,4 +47,5 @@ SoftMedia can index and display photo libraries alongside your other media.
   show a fallback card. Convert to JPEG for full support.
 - Very large images beyond the decode-bomb pixel budget are served as originals
   but not thumbnailed.
-- No timeline/map grouping yet — the library grid sorts by date added or title.
+- Albums come from folders only — no manual album editing, and no timeline/map
+  views yet. Rearranging folders on disk rearranges the albums on the next scan.

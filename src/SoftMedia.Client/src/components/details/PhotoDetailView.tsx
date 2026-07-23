@@ -251,18 +251,18 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                     <button
                         onClick={() => navigate(`/media/${prevTarget.id}${albumSuffix}`)}
                         aria-label="Previous photo"
-                        className="absolute inset-y-0 left-0 w-14 md:w-20 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all"
+                        className="absolute inset-y-0 left-0 w-10 md:w-12 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all"
                     >
-                        <ChevronLeft className="w-8 h-8 drop-shadow" />
+                        <ChevronLeft className="w-6 h-6 drop-shadow" />
                     </button>
                 )}
                 {nextTarget && (
                     <button
                         onClick={() => navigate(`/media/${nextTarget.id}${albumSuffix}`)}
                         aria-label="Next photo"
-                        className="absolute inset-y-0 right-0 w-14 md:w-20 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all"
+                        className="absolute inset-y-0 right-0 w-10 md:w-12 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all"
                     >
-                        <ChevronRight className="w-8 h-8 drop-shadow" />
+                        <ChevronRight className="w-6 h-6 drop-shadow" />
                     </button>
                 )}
 
@@ -395,18 +395,18 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                         <button
                             onClick={() => navigate(`/media/${prevTarget.id}${albumSuffix}`)}
                             aria-label="Previous photo"
-                            className="absolute inset-y-0 left-0 w-16 md:w-24 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100 transition-all"
+                            className="absolute inset-y-0 left-0 w-12 md:w-16 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100 transition-all"
                         >
-                            <ChevronLeft className="w-9 h-9 drop-shadow" />
+                            <ChevronLeft className="w-7 h-7 drop-shadow" />
                         </button>
                     )}
                     {nextTarget && (
                         <button
                             onClick={() => navigate(`/media/${nextTarget.id}${albumSuffix}`)}
                             aria-label="Next photo"
-                            className="absolute inset-y-0 right-0 w-16 md:w-24 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100 transition-all"
+                            className="absolute inset-y-0 right-0 w-12 md:w-16 flex items-center justify-center bg-black/30 hover:bg-black/50 focus-visible:bg-black/50 text-white/80 hover:text-white opacity-0 group-hover/fs:opacity-100 focus-visible:opacity-100 transition-all"
                         >
-                            <ChevronRight className="w-9 h-9 drop-shadow" />
+                            <ChevronRight className="w-7 h-7 drop-shadow" />
                         </button>
                     )}
 

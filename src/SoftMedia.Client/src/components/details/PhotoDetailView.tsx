@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import api from '../../services/api';
 import { type MediaItem, type PagedResult } from '../../types';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { buildPhotoNavSuffix } from '../../lib/photoNav';
 import { Camera, MapPin, Aperture, Clock, ChevronLeft, ChevronRight, Maximize2, Pause, Play } from 'lucide-react';
 
 interface PhotoDetailViewProps {
@@ -22,10 +23,7 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
 
     // Navigation suffix carries BOTH contexts: which album we're paging within, and
     // whether the slideshow keeps rolling across the navigation.
-    const navParams = new URLSearchParams();
-    if (albumKey !== null) navParams.set('album', albumKey);
-    if (slideshow) navParams.set('slideshow', '1');
-    const albumSuffix = navParams.size > 0 ? `?${navParams}` : '';
+    const albumSuffix = buildPhotoNavSuffix(albumKey, slideshow);
 
     const toggleSlideshow = () => {
         const next = new URLSearchParams(searchParams);

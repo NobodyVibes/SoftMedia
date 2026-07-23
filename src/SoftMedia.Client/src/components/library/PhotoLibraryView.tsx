@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
@@ -88,7 +88,20 @@ export default function PhotoLibraryView({ libraryId, libraryName, onRescan }: {
     useMediaTokenRefresh();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
-    const [album, setAlbum] = useState<PhotoAlbum | null>(null);
+    // The open album lives in the URL (?album=), not component state, so the photo
+    // detail page's Back button can return STRAIGHT here — and so browser
+    // back/refresh/bookmarks land on the album, not the album grid. "" is the
+    // root album, so presence is the signal.
+    const [searchParams, setSearchParams] = useSearchParams();
+    const urlAlbumKey = searchParams.has('album') ? searchParams.get('album')! : null;
+    const openAlbumByKey = (a: PhotoAlbum | null) => {
+        setSearchParams(prev => {
+            const next = new URLSearchParams(prev);
+            if (a === null) next.delete('album');
+            else next.set('album', a.key);
+            return next;
+        });
+    };
     const [view, setView] = useState<'albums' | 'timeline'>('albums');
 
     // Photo-specific filters
@@ -109,6 +122,10 @@ export default function PhotoLibraryView({ libraryId, libraryName, onRescan }: {
         queryKey: ['photoFacets', libraryId],
         queryFn: async () => (await api.get<PhotoFacets>(`/photos/filters?libraryId=${libraryId}`)).data,
     });
+
+    // Resolve the URL's album key against the loaded list (a stale/renamed key
+    // falls back to the album grid rather than erroring).
+    const album = urlAlbumKey !== null ? albums.find(a => a.key === urlAlbumKey) ?? null : null;
 
     // A library that is ONLY loose photos (single album) skips the album layer
     // entirely — one folder of pictures shouldn't need two clicks to see them.
@@ -189,7 +206,7 @@ export default function PhotoLibraryView({ libraryId, libraryName, onRescan }: {
             <div className="flex items-center gap-3 mb-4">
                 {openAlbum && albums.length > 1 && (
                     <button
-                        onClick={() => { setAlbum(null); clearFilters(); }}
+                        onClick={() => { openAlbumByKey(null); clearFilters(); }}
                         aria-label="Back to albums"
                         className="p-3 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 focus-visible:bg-white/10 text-white transition-colors"
                     >
@@ -329,7 +346,7 @@ export default function PhotoLibraryView({ libraryId, libraryName, onRescan }: {
                                 initial={{ opacity: 0, y: 12 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ duration: 0.25, delay: Math.min(i * 0.03, 0.3) }}
-                                onClick={() => setAlbum(a)}
+                                onClick={() => openAlbumByKey(a)}
                                 className="group relative aspect-square rounded-xl overflow-hidden bg-white/5 border border-white/10 text-left hover:border-white/25 focus-visible:border-white/25 transition-colors"
                             >
                                 <img

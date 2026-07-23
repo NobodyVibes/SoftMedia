@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { ArrowLeft, Play, Heart, Share2, Eye, Star, Clapperboard } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
@@ -33,6 +33,7 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
     // stale token can't leave the artwork permanently broken.
     useMediaTokenRefresh();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const queryClient = useQueryClient();
 
     // Trailer promotion: the trailer belongs beside Play — where the "do I want to
@@ -98,7 +99,18 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
             {/* Content */}
             <div className="relative z-10 w-full px-4 lg:px-6 pt-4 lg:pt-6 pb-12">
                 <button
-                    onClick={() => navigate(-1)}
+                    onClick={() => {
+                        // Photos: Back means "back to the album", NOT browser history —
+                        // after paging through 20 photos, history-back would replay all
+                        // 20. The album key rides on the photo URL, and PhotoLibraryView
+                        // reads the same ?album= param to open that album directly.
+                        if (item.type === MediaType.Photo && item.libraryId) {
+                            const albumKey = searchParams.has('album') ? searchParams.get('album')! : null;
+                            navigate(`/libraries/${item.libraryId}${albumKey !== null ? `?album=${encodeURIComponent(albumKey)}` : ''}`);
+                            return;
+                        }
+                        navigate(-1);
+                    }}
                     className="mb-8 flex items-center gap-2 text-gray-300 hover:text-white transition-colors group"
                 >
                     <div className="p-2 rounded-full bg-black/20 group-hover:bg-black/40 transition-colors">

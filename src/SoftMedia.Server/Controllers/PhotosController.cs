@@ -133,12 +133,21 @@ public class PhotosController : ControllerBase
     }
 
     /// <summary>
-    /// The photos of one album, in chronological order (date taken, falling back to
-    /// date added). <paramref name="key"/> is the album key from <see cref="GetAlbums"/>;
-    /// empty/absent = the library root's loose photos.
+    /// Photos in chronological order (date taken, falling back to date added; `sortDir=desc`
+    /// flips to newest-first). <paramref name="key"/> is the album key from
+    /// <see cref="GetAlbums"/> — "" is the library root's loose photos; OMITTING the
+    /// parameter searches across the whole library (the search-results view).
+    /// Photo-specialised filters: <paramref name="search"/> (title contains),
+    /// <paramref name="camera"/> (EXIF camera), <paramref name="year"/> (year taken).
     /// </summary>
     [HttpGet("albums/photos")]
-    public async Task<ActionResult<List<MediaItemDto>>> GetAlbumPhotos([FromQuery] Guid libraryId, [FromQuery] string? key)
+    public async Task<ActionResult<List<MediaItemDto>>> GetAlbumPhotos(
+        [FromQuery] Guid libraryId,
+        [FromQuery] string? key = null,
+        [FromQuery] string? search = null,
+        [FromQuery] string? camera = null,
+        [FromQuery] int? year = null,
+        [FromQuery] string? sortDir = null)
     {
         var library = await GetAccessiblePhotoLibraryAsync(libraryId);
         if (library == null) return NotFound();
@@ -147,15 +156,80 @@ public class PhotosController : ControllerBase
             .Where(m => m.LibraryId == libraryId && m.Type == MediaType.Photo)
             .ToListAsync();
 
-        var normalizedKey = key ?? "";
-        var inAlbum = photos
-            .Where(p => AlbumKeyFor(p.Path, library.Paths) == normalizedKey)
-            .OrderBy(p => p.ReleaseDate ?? p.DateAdded)
-            .ThenBy(p => p.SortTitle, StringComparer.OrdinalIgnoreCase)
-            .Select(p => MediaItemDto.FromMediaItem(p))
+        IEnumerable<MediaItem> filtered = photos;
+        if (key != null)
+        {
+            filtered = filtered.Where(p => AlbumKeyFor(p.Path, library.Paths) == key);
+        }
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            filtered = filtered.Where(p => p.Title.Contains(search, StringComparison.OrdinalIgnoreCase));
+        }
+        if (!string.IsNullOrWhiteSpace(camera))
+        {
+            filtered = filtered.Where(p => string.Equals(CameraOf(p), camera, StringComparison.OrdinalIgnoreCase));
+        }
+        if (year.HasValue)
+        {
+            filtered = filtered.Where(p => (p.ReleaseDate ?? p.DateAdded).Year == year.Value);
+        }
+
+        var ordered = string.Equals(sortDir, "desc", StringComparison.OrdinalIgnoreCase)
+            ? filtered.OrderByDescending(p => p.ReleaseDate ?? p.DateAdded)
+                .ThenByDescending(p => p.SortTitle, StringComparer.OrdinalIgnoreCase)
+            : filtered.OrderBy(p => p.ReleaseDate ?? p.DateAdded)
+                .ThenBy(p => p.SortTitle, StringComparer.OrdinalIgnoreCase);
+
+        return Ok(ordered.Select(p => MediaItemDto.FromMediaItem(p)).ToList());
+    }
+
+    /// <summary>
+    /// Facet values for the photo filter bar: distinct EXIF cameras (alphabetical) and
+    /// years with photos (newest first). Empty facets mean the control has nothing to
+    /// offer and the client hides it.
+    /// </summary>
+    [HttpGet("filters")]
+    public async Task<ActionResult<object>> GetFilterFacets([FromQuery] Guid libraryId)
+    {
+        var library = await GetAccessiblePhotoLibraryAsync(libraryId);
+        if (library == null) return NotFound();
+
+        var photos = await _context.MediaItems.AsNoTracking()
+            .Where(m => m.LibraryId == libraryId && m.Type == MediaType.Photo)
+            .Select(m => new { m.ExifJson, m.ReleaseDate, m.DateAdded })
+            .ToListAsync();
+
+        var cameras = photos
+            .Select(p => CameraFromExifJson(p.ExifJson))
+            .Where(c => !string.IsNullOrEmpty(c))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        return Ok(inAlbum);
+        var years = photos
+            .Select(p => (p.ReleaseDate ?? p.DateAdded).Year)
+            .Distinct()
+            .OrderByDescending(y => y)
+            .ToList();
+
+        return Ok(new { cameras, years });
+    }
+
+    /// <summary>The EXIF camera string ("Make Model") persisted by PhotoExifReader, or null.</summary>
+    private static string? CameraOf(MediaItem photo) => CameraFromExifJson(photo.ExifJson);
+
+    private static string? CameraFromExifJson(string? exifJson)
+    {
+        if (string.IsNullOrEmpty(exifJson)) return null;
+        try
+        {
+            var exif = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(exifJson);
+            return exif != null && exif.TryGetValue("camera", out var cam) ? cam : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null; // corrupt row: the photo just has no camera facet
+        }
     }
 
     /// <summary>Resolves the library iff it exists, is a photo library, and the caller's

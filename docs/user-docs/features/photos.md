@@ -20,6 +20,12 @@ SoftMedia can index and display photo libraries alongside your other media.
   is a single folder of pictures skips the album layer and shows the photos
   directly. Inside an album: a square photo grid in date-taken order, and the
   photo viewer's ← / → keys page within that album.
+- **Photo-specialised search & filters** (2026-07-23): the photo filter bar offers
+  text search, an EXIF camera filter, a year-taken filter, and an oldest/newest
+  toggle — no genres/ratings/watched controls, which mean nothing for photos.
+  Searching or filtering from the album grid searches across the whole library;
+  the same controls inside an album narrow just that album. The camera and year
+  dropdowns only appear when the library actually has those facets.
 - **Cards & thumbnails**: grids serve server-generated WebP thumbnails with EXIF
   orientation baked in (portrait phone photos display upright).
 - **Detail view**: full-resolution photo (letterboxed), EXIF cards, an

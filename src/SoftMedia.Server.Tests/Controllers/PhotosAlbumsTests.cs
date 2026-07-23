@@ -89,15 +89,21 @@ public class PhotosAlbumsTests
     }
 
     [Fact]
-    public async Task GetAlbumPhotos_EmptyKey_IsTheRootAlbum()
+    public async Task GetAlbumPhotos_EmptyKey_IsRootAlbum_NullKey_IsWholeLibrary()
     {
         await SeedAsync();
+        var controller = Build();
 
-        var result = await Build().GetAlbumPhotos(_libId, null);
-        var photos = Assert.IsType<List<MediaItemDto>>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        // key="" → the library root's loose photos (the "Unsorted" album).
+        var root = Assert.IsType<List<MediaItemDto>>(Assert.IsType<OkObjectResult>(
+            (await controller.GetAlbumPhotos(_libId, "")).Result).Value);
+        Assert.Single(root);
+        Assert.Equal("loose", root[0].Title);
 
-        Assert.Single(photos);
-        Assert.Equal("loose", photos[0].Title);
+        // key omitted → every photo in the library (the search-results scope).
+        var all = Assert.IsType<List<MediaItemDto>>(Assert.IsType<OkObjectResult>(
+            (await controller.GetAlbumPhotos(_libId)).Result).Value);
+        Assert.Equal(4, all.Count);
     }
 
     [Fact]
@@ -115,6 +121,69 @@ public class PhotosAlbumsTests
 
         // A movie library must not answer on the photo-albums surface.
         Assert.IsType<NotFoundResult>((await Build().GetAlbums(movieLib.Id)).Result);
+    }
+
+    [Fact]
+    public async Task GetAlbumPhotos_Search_Camera_Year_Filters_AndDescSort()
+    {
+        _db.Libraries.Add(new Library { Id = _libId, Name = "Photos", Type = LibraryType.Photo, Paths = new() { @"C:\photos" } });
+        void Photo(string name, DateTime taken, string? camera) => _db.MediaItems.Add(new MediaItem
+        {
+            Id = Guid.NewGuid(),
+            LibraryId = _libId,
+            Type = MediaType.Photo,
+            Title = name,
+            SortTitle = name,
+            Path = $@"C:\photos\Trip\{name}.jpg",
+            ReleaseDate = taken,
+            DateAdded = taken,
+            ExifJson = camera == null ? null : $$"""{"camera":"{{camera}}"}""",
+        });
+        Photo("beach sunset", new DateTime(2025, 7, 1), "samsung SM-F926U");
+        Photo("beach day", new DateTime(2026, 7, 2), "samsung SM-F926U");
+        Photo("mountains", new DateTime(2026, 1, 3), "Canon EOS R5");
+        await _db.SaveChangesAsync();
+        var controller = Build();
+
+        // search within the album
+        var bySearch = Assert.IsType<List<MediaItemDto>>(Assert.IsType<OkObjectResult>(
+            (await controller.GetAlbumPhotos(_libId, "Trip", "beach", null, null, null)).Result).Value);
+        Assert.Equal(2, bySearch.Count);
+
+        // camera facet filter
+        var byCamera = Assert.IsType<List<MediaItemDto>>(Assert.IsType<OkObjectResult>(
+            (await controller.GetAlbumPhotos(_libId, "Trip", null, "canon eos r5", null, null)).Result).Value);
+        Assert.Single(byCamera);
+        Assert.Equal("mountains", byCamera[0].Title);
+
+        // year taken
+        var byYear = Assert.IsType<List<MediaItemDto>>(Assert.IsType<OkObjectResult>(
+            (await controller.GetAlbumPhotos(_libId, "Trip", null, null, 2026, null)).Result).Value);
+        Assert.Equal(2, byYear.Count);
+
+        // library-wide search: key OMITTED (null) reaches every album
+        var libraryWide = Assert.IsType<List<MediaItemDto>>(Assert.IsType<OkObjectResult>(
+            (await controller.GetAlbumPhotos(_libId, null, "beach", null, null, "desc")).Result).Value);
+        Assert.Equal(new[] { "beach day", "beach sunset" }, libraryWide.Select(p => p.Title).ToArray()); // newest first
+    }
+
+    [Fact]
+    public async Task GetFilterFacets_ReturnsDistinctCameras_AndYearsNewestFirst()
+    {
+        await SeedAsync(); // no cameras in the base seed
+        var withCam = await _db.MediaItems.FirstAsync(m => m.Title == "venice");
+        withCam.ExifJson = """{"camera":"samsung SM-F926U"}""";
+        await _db.SaveChangesAsync();
+
+        var result = await Build().GetFilterFacets(_libId);
+        var json = System.Text.Json.JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(result.Result).Value);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+
+        var cameras = doc.RootElement.GetProperty("cameras").EnumerateArray().Select(c => c.GetString()).ToList();
+        Assert.Equal(new[] { "samsung SM-F926U" }, cameras);
+
+        var years = doc.RootElement.GetProperty("years").EnumerateArray().Select(y => y.GetInt32()).ToList();
+        Assert.Equal(new[] { 2024, 2023 }, years); // newest first
     }
 
     [Theory]

@@ -20,6 +20,18 @@ SoftMedia can index and display photo libraries alongside your other media.
   is a single folder of pictures skips the album layer and shows the photos
   directly. Inside an album: a square photo grid in date-taken order, and the
   photo viewer's ← / → keys page within that album.
+- **Timeline view** (2026-07-23): an Albums | Timeline toggle at the top of the
+  library — Timeline shows every photo newest-first under sticky month headers
+  ("July 2026"). Filtering while in Timeline collapses to flat search results.
+- **Favorites** (2026-07-23): hover a photo tile and click the heart (it stays
+  visible on favorited photos); a Favorites chip in the filter bar narrows any
+  view to hearted photos. Favorites are per-user.
+- **Slideshow** (2026-07-23): a play button on the photo viewer auto-advances
+  every 5 seconds through the current album (or search scope), stopping at the
+  end. Pause with the same button; manual navigation keeps the show rolling.
+- **HEIC support** (2026-07-23): iPhone HEIC photos now display — thumbnails and
+  a full-size preview are converted server-side through the bundled ffmpeg (the
+  original file stays untouched; "open original" still downloads the HEIC).
 - **Photo-specialised search & filters** (2026-07-23): the photo filter bar offers
   text search, an EXIF camera filter, a year-taken filter, and an oldest/newest
   toggle — no genres/ratings/watched controls, which mean nothing for photos.
@@ -48,9 +60,10 @@ SoftMedia can index and display photo libraries alongside your other media.
 
 ## Known limitations
 
-- **HEIC**: indexed and scanned (dimensions unavailable), but thumbnails cannot
-  be generated (no decoder) and most browsers cannot display HEIC — such photos
-  show a fallback card. Convert to JPEG for full support.
+- **HEIC**: displayed via server-side ffmpeg conversion (thumbnails + preview).
+  Dimension metadata is still unavailable for HEIC, and conversion requires the
+  ffmpeg binary SoftMedia already uses for transcoding — without it, HEIC photos
+  fall back to a placeholder card.
 - Very large images beyond the decode-bomb pixel budget are served as originals
   but not thumbnailed.
 - Albums come from folders only — no manual album editing, and no timeline/map

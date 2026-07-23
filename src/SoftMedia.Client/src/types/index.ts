@@ -14,6 +14,8 @@ export interface MediaItem {
     path?: string; // Added for reader detection
     year?: number;
     dateAdded: string;
+    /** Full release/capture date (photos: EXIF date taken). */
+    releaseDate?: string;
     posterPath?: string;
     backdropPath?: string;
     duration?: string | number; // "2h 15m" format or seconds

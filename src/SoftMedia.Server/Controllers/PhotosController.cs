@@ -29,7 +29,9 @@ public record PhotoAlbumDto(string Key, string Name, int PhotoCount, Guid CoverP
 public class PhotosController : ControllerBase
 {
     private const int MinThumbnailWidth = 64;
-    private const int MaxThumbnailWidth = 800;
+    // The converted "full view" size for HEIC (browsers can't display the original);
+    // also the hard ceiling on any requested thumbnail width.
+    private const int HeicPreviewWidth = 1920;
 
     private readonly IMediaRepository _mediaRepository;
     private readonly IStreamSecurityService _streamSecurity;
@@ -56,7 +58,7 @@ public class PhotosController : ControllerBase
 
     /// <summary>
     /// Serve a photo, optionally as a resized WebP thumbnail via <c>?width=</c>
-    /// (64–800px). Denials return 404, not 403, per SDD §6.2's anti-probe rule.
+    /// (64–1920px). Denials return 404, not 403, per SDD §6.2's anti-probe rule.
     /// </summary>
     [HttpGet("{id:guid}/image")]
     public async Task<IActionResult> GetImage(Guid id, [FromQuery] int? width)
@@ -79,17 +81,27 @@ public class PhotosController : ControllerBase
         var servePath = item.Path;
         var serveMime = MimeTypeResolver.GetMimeType(item.Path);
 
-        if (width.HasValue && width.Value >= MinThumbnailWidth && width.Value <= MaxThumbnailWidth)
+        // Browsers can't display HEIC, so the "original" for a HEIC photo is a large
+        // server-converted WebP (via ThumbnailService's ffmpeg fallback). A width in
+        // range still wins below; this only covers the no-width full view.
+        var extension = Path.GetExtension(item.Path).ToLowerInvariant();
+        var effectiveWidth = width;
+        if (!effectiveWidth.HasValue && extension is ".heic" or ".heif")
+        {
+            effectiveWidth = HeicPreviewWidth;
+        }
+
+        if (effectiveWidth.HasValue && effectiveWidth.Value >= MinThumbnailWidth && effectiveWidth.Value <= HeicPreviewWidth)
         {
             var thumbPath = await _thumbnailService.GetOrCreateThumbnailAsync(
-                item.Path, item.Id, width.Value);
+                item.Path, item.Id, effectiveWidth.Value);
             if (thumbPath != null)
             {
                 servePath = thumbPath;
                 serveMime = "image/webp";
             }
-            // Thumbnail failure (e.g. HEIC — no SkiaSharp codec) falls through to the
-            // original file; the client's image error fallback handles undisplayable formats.
+            // Thumbnail failure falls through to the original file; the client's image
+            // error fallback handles undisplayable formats.
         }
 
         var lastModified = System.IO.File.GetLastWriteTimeUtc(servePath);
@@ -147,7 +159,8 @@ public class PhotosController : ControllerBase
         [FromQuery] string? search = null,
         [FromQuery] string? camera = null,
         [FromQuery] int? year = null,
-        [FromQuery] string? sortDir = null)
+        [FromQuery] string? sortDir = null,
+        [FromQuery] bool? favorites = null)
     {
         var library = await GetAccessiblePhotoLibraryAsync(libraryId);
         if (library == null) return NotFound();
@@ -155,6 +168,10 @@ public class PhotosController : ControllerBase
         var photos = await _context.MediaItems.AsNoTracking()
             .Where(m => m.LibraryId == libraryId && m.Type == MediaType.Photo)
             .ToListAsync();
+
+        // Per-user interaction rows drive both the favorites filter and the hearts the
+        // grid renders (MediaItemDto.IsFavorite).
+        var interactions = await LoadInteractionsAsync(photos);
 
         IEnumerable<MediaItem> filtered = photos;
         if (key != null)
@@ -173,6 +190,10 @@ public class PhotosController : ControllerBase
         {
             filtered = filtered.Where(p => (p.ReleaseDate ?? p.DateAdded).Year == year.Value);
         }
+        if (favorites == true)
+        {
+            filtered = filtered.Where(p => interactions.TryGetValue(p.Id, out var i) && i.IsFavorite);
+        }
 
         var ordered = string.Equals(sortDir, "desc", StringComparison.OrdinalIgnoreCase)
             ? filtered.OrderByDescending(p => p.ReleaseDate ?? p.DateAdded)
@@ -180,7 +201,23 @@ public class PhotosController : ControllerBase
             : filtered.OrderBy(p => p.ReleaseDate ?? p.DateAdded)
                 .ThenBy(p => p.SortTitle, StringComparer.OrdinalIgnoreCase);
 
-        return Ok(ordered.Select(p => MediaItemDto.FromMediaItem(p)).ToList());
+        return Ok(ordered
+            .Select(p => MediaItemDto.FromMediaItem(p, null, interactions.GetValueOrDefault(p.Id)))
+            .ToList());
+    }
+
+    /// <summary>The caller's interaction rows for the given photos, keyed by media id.
+    /// Empty for principals without a user id claim (e.g. malformed tokens).</summary>
+    private async Task<Dictionary<Guid, UserMediaInteraction>> LoadInteractionsAsync(List<MediaItem> photos)
+    {
+        var sub = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                 ?? User.FindFirst("sub")?.Value;
+        if (!Guid.TryParse(sub, out var userId)) return new Dictionary<Guid, UserMediaInteraction>();
+
+        var ids = photos.Select(p => p.Id).ToList();
+        return await _context.UserMediaInteractions.AsNoTracking()
+            .Where(i => i.UserId == userId && ids.Contains(i.MediaItemId))
+            .ToDictionaryAsync(i => i.MediaItemId);
     }
 
     /// <summary>

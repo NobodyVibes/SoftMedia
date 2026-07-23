@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using SkiaSharp;
+using SoftMedia.Server.Services.Infrastructure;
 
 namespace SoftMedia.Server.Services.Media;
 
@@ -7,18 +9,21 @@ namespace SoftMedia.Server.Services.Media;
 /// On-demand thumbnail generation service.
 /// Generates WebP thumbnails and caches them on disk.
 /// Uses per-key semaphores to prevent thundering herd on concurrent requests for the same image.
+/// Formats SkiaSharp has no codec for (HEIC/HEIF from iPhones) fall back to the bundled ffmpeg.
 /// </summary>
 public class ThumbnailService : IThumbnailService
 {
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<ThumbnailService> _logger;
+    private readonly IBinaryLocationService _binaryLocation;
     private readonly string _cacheDirectory;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
 
-    public ThumbnailService(IWebHostEnvironment env, ILogger<ThumbnailService> logger)
+    public ThumbnailService(IWebHostEnvironment env, ILogger<ThumbnailService> logger, IBinaryLocationService binaryLocation)
     {
         _env = env;
         _logger = logger;
+        _binaryLocation = binaryLocation;
 
         var webRoot = !string.IsNullOrEmpty(_env.WebRootPath)
             ? _env.WebRootPath
@@ -53,19 +58,28 @@ public class ThumbnailService : IThumbnailService
         }
     }
 
-    private Task<string?> GenerateThumbnailAsync(string sourcePath, string cachePath, int targetWidth)
+    private async Task<string?> GenerateThumbnailAsync(string sourcePath, string cachePath, int targetWidth)
     {
-        return Task.Run(() =>
+        // Distinguish "no SkiaSharp codec" (HEIC → ffmpeg fallback) from "decodable but
+        // over the pixel budget" (decode-bomb → refuse OUTRIGHT; routing bombs into
+        // ffmpeg would just move the resource exhaustion, audit wave-2 H-3).
+        using (var probe = SKCodec.Create(sourcePath))
+        {
+            if (probe == null)
+            {
+                return await TryGenerateWithFfmpegAsync(sourcePath, cachePath, targetWidth);
+            }
+            if (!Helpers.ImageSafety.IsWithinBudget(probe.Info.Width, probe.Info.Height))
+            {
+                _logger.LogWarning("Refusing to decode oversized image: {Path}", sourcePath);
+                return null;
+            }
+        }
+
+        return await Task.Run(() =>
         {
             try
             {
-                // Security (audit wave-2 H-3): reject decode-bombs by checking the header
-                // dimensions BEFORE SKBitmap.Decode allocates the full pixel buffer.
-                if (!Helpers.ImageSafety.IsDecodableWithinBudget(sourcePath))
-                {
-                    _logger.LogWarning("Refusing to decode oversized/undecodable image: {Path}", sourcePath);
-                    return null;
-                }
 
                 // EXIF orientation must be applied here: browsers auto-rotate originals
                 // from their EXIF, but the WebP re-encode below strips it — without this,
@@ -127,6 +141,80 @@ public class ThumbnailService : IThumbnailService
                 return null;
             }
         });
+    }
+
+    /// <summary>
+    /// ffmpeg fallback for formats SkiaSharp has no codec for — in practice HEIC/HEIF
+    /// from iPhones. ffmpeg decodes, scales (never upscales), auto-applies the HEIF
+    /// rotation properties, and writes the same WebP the Skia path produces, so
+    /// callers can't tell which pipeline served them. Null on any failure — the
+    /// caller falls back to serving the original bytes.
+    /// </summary>
+    private async Task<string?> TryGenerateWithFfmpegAsync(string sourcePath, string cachePath, int targetWidth)
+    {
+        try
+        {
+            // Same argument-injection guard the scanners apply (audit H2) — ffmpeg gets
+            // this path as a process argument.
+            if (Helpers.MediaPathSafety.HasArgumentInjectionRisk(sourcePath)) return null;
+
+            var ffmpeg = _binaryLocation.ResolveFFmpegPath();
+            if (string.IsNullOrEmpty(ffmpeg) || !File.Exists(ffmpeg)) return null;
+
+            var tempPath = cachePath + ".tmp.webp";
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffmpeg,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add("-y");
+            psi.ArgumentList.Add("-i");
+            psi.ArgumentList.Add(sourcePath);
+            psi.ArgumentList.Add("-vf");
+            // \, escapes the comma for the filter parser; min() never upscales.
+            psi.ArgumentList.Add($"scale=min({targetWidth}\\,iw):-1");
+            psi.ArgumentList.Add("-frames:v");
+            psi.ArgumentList.Add("1");
+            psi.ArgumentList.Add("-c:v");
+            psi.ArgumentList.Add("libwebp");
+            psi.ArgumentList.Add("-quality");
+            psi.ArgumentList.Add("80");
+            psi.ArgumentList.Add(tempPath);
+
+            using var process = Process.Start(psi);
+            if (process == null) return null;
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            try
+            {
+                await process.WaitForExitAsync(timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+                _logger.LogWarning("ffmpeg thumbnail timed out for {Path}", sourcePath);
+                return null;
+            }
+
+            if (process.ExitCode != 0 || !File.Exists(tempPath) || new FileInfo(tempPath).Length == 0)
+            {
+                _logger.LogDebug("ffmpeg thumbnail failed (exit {Code}) for {Path}", process.ExitCode, sourcePath);
+                try { File.Delete(tempPath); } catch { /* best-effort */ }
+                return null;
+            }
+
+            File.Move(tempPath, cachePath, overwrite: true);
+            _logger.LogDebug("Generated thumbnail via ffmpeg: {CachePath} ({Width}px)", cachePath, targetWidth);
+            return cachePath;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ffmpeg thumbnail fallback failed for {Path}", sourcePath);
+            return null;
+        }
     }
 
     /// <summary>

@@ -54,6 +54,10 @@ public class MediaItemDto
     public string SortTitle { get; set; } = string.Empty;
     public string Path { get; set; } = string.Empty;
     public int? Year { get; set; }
+
+    /// <summary>Full release/capture date (photos: EXIF date taken). Additive — consumers
+    /// that only need the year keep using <see cref="Year"/>.</summary>
+    public DateTime? ReleaseDate { get; set; }
     public DateTime DateAdded { get; set; }
     public MediaType Type { get; set; }
     
@@ -233,6 +237,7 @@ public class MediaItemDto
 
             // Map promoted properties
             dto.Year = item.Year;
+            dto.ReleaseDate = item.ReleaseDate;
             dto.Description = item.Overview;
             dto.CommunityRating = item.CommunityRating;
             dto.Rating = item.ContentRating;

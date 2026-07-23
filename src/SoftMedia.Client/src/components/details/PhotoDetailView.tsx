@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import api from '../../services/api';
 import { type MediaItem, type PagedResult } from '../../types';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
-import { Camera, MapPin, Aperture, Clock, ChevronLeft, ChevronRight, Maximize2 } from 'lucide-react';
+import { Camera, MapPin, Aperture, Clock, ChevronLeft, ChevronRight, Maximize2, Pause, Play } from 'lucide-react';
 
 interface PhotoDetailViewProps {
     item: MediaItem;
@@ -16,9 +16,23 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
     // Opened from an album grid? Then ← / → page within THAT album, not the whole
     // library — and navigation preserves the album context. `album` may be "" (the
     // root album), so presence is the signal, not truthiness.
-    const [searchParams] = useSearchParams();
+    const [searchParams, setSearchParams] = useSearchParams();
     const albumKey = searchParams.has('album') ? searchParams.get('album')! : null;
-    const albumSuffix = albumKey !== null ? `?album=${encodeURIComponent(albumKey)}` : '';
+    const slideshow = searchParams.get('slideshow') === '1';
+
+    // Navigation suffix carries BOTH contexts: which album we're paging within, and
+    // whether the slideshow keeps rolling across the navigation.
+    const navParams = new URLSearchParams();
+    if (albumKey !== null) navParams.set('album', albumKey);
+    if (slideshow) navParams.set('slideshow', '1');
+    const albumSuffix = navParams.size > 0 ? `?${navParams}` : '';
+
+    const toggleSlideshow = () => {
+        const next = new URLSearchParams(searchParams);
+        if (slideshow) next.delete('slideshow');
+        else next.set('slideshow', '1');
+        setSearchParams(next, { replace: true });
+    };
 
     const { data: libraryItems } = useQuery({
         queryKey: albumKey !== null
@@ -53,7 +67,23 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [prevItem, nextItem, navigate]);
+    }, [prevItem, nextItem, navigate, albumSuffix]);
+
+    // Slideshow: advance every 5s while the ?slideshow=1 flag rides along the
+    // navigation (component state wouldn't survive the route change). Stops itself
+    // at the end of the album/library.
+    useEffect(() => {
+        if (!slideshow) return;
+        if (!nextItem) {
+            const cleared = new URLSearchParams(searchParams);
+            cleared.delete('slideshow');
+            setSearchParams(cleared, { replace: true });
+            return;
+        }
+        const timer = window.setTimeout(() => navigate(`/media/${nextItem.id}${albumSuffix}`), 5000);
+        return () => window.clearTimeout(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [slideshow, nextItem?.id, albumSuffix]);
 
     const metadata = item.metadata || {};
     const camera = metadata.camera as string;
@@ -77,16 +107,26 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                     alt={item.title}
                     className="w-full max-h-[75vh] object-contain"
                 />
-                <a
-                    href={fullImageUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    title="Open original in new tab"
-                    aria-label="Open original in new tab"
-                    className="absolute top-3 right-3 p-3 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/80"
-                >
-                    <Maximize2 className="w-5 h-5" />
-                </a>
+                <div className="absolute top-3 right-3 flex gap-2">
+                    <button
+                        onClick={toggleSlideshow}
+                        title={slideshow ? 'Pause slideshow' : 'Start slideshow'}
+                        aria-label={slideshow ? 'Pause slideshow' : 'Start slideshow'}
+                        className={`p-3 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-black/60 text-white transition-opacity hover:bg-black/80 ${slideshow ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}`}
+                    >
+                        {slideshow ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 fill-current" />}
+                    </button>
+                    <a
+                        href={fullImageUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Open original in new tab"
+                        aria-label="Open original in new tab"
+                        className="p-3 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/80"
+                    >
+                        <Maximize2 className="w-5 h-5" />
+                    </a>
+                </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

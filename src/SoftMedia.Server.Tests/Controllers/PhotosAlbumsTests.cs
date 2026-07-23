@@ -168,6 +168,52 @@ public class PhotosAlbumsTests
     }
 
     [Fact]
+    public async Task GetAlbumPhotos_FavoritesFilter_AndIsFavoriteFlag_ArePerUser()
+    {
+        await SeedAsync();
+        var userId = Guid.NewGuid();
+        var venice = await _db.MediaItems.FirstAsync(m => m.Title == "venice");
+        _db.UserMediaInteractions.Add(new UserMediaInteraction
+        {
+            UserId = userId,
+            MediaItemId = venice.Id,
+            IsFavorite = true,
+        });
+        await _db.SaveChangesAsync();
+
+        var controller = Build();
+        controller.ControllerContext.HttpContext.User = new System.Security.Claims.ClaimsPrincipal(
+            new System.Security.Claims.ClaimsIdentity(new[]
+            {
+                new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, userId.ToString()),
+            }, "TestAuth"));
+
+        // favorites=true narrows to hearted photos, library-wide (key omitted).
+        var favs = Assert.IsType<List<MediaItemDto>>(Assert.IsType<OkObjectResult>(
+            (await controller.GetAlbumPhotos(_libId, favorites: true)).Result).Value);
+        Assert.Single(favs);
+        Assert.Equal("venice", favs[0].Title);
+        Assert.True(favs[0].IsFavorite);
+
+        // Unfiltered listings still carry the flag so the grid can render hearts.
+        var all = Assert.IsType<List<MediaItemDto>>(Assert.IsType<OkObjectResult>(
+            (await controller.GetAlbumPhotos(_libId, "2024/Italy")).Result).Value);
+        Assert.Equal(2, all.Count);
+        Assert.True(all.Single(p => p.Title == "venice").IsFavorite);
+        Assert.False(all.Single(p => p.Title == "colosseum").IsFavorite);
+
+        // A DIFFERENT user sees no favorites — interactions are per-user.
+        controller.ControllerContext.HttpContext.User = new System.Security.Claims.ClaimsPrincipal(
+            new System.Security.Claims.ClaimsIdentity(new[]
+            {
+                new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, Guid.NewGuid().ToString()),
+            }, "TestAuth"));
+        var otherFavs = Assert.IsType<List<MediaItemDto>>(Assert.IsType<OkObjectResult>(
+            (await controller.GetAlbumPhotos(_libId, favorites: true)).Result).Value);
+        Assert.Empty(otherFavs);
+    }
+
+    [Fact]
     public async Task GetFilterFacets_ReturnsDistinctCameras_AndYearsNewestFirst()
     {
         await SeedAsync(); // no cameras in the base seed

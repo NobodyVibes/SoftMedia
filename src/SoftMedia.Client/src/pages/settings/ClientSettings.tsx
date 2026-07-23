@@ -141,6 +141,22 @@ export default function ClientSettings({ subsection = 'general' }: ClientSetting
                                 )} />
                             </button>
                         </div>
+
+                        {/* Photo slideshow transition (per-device preference) */}
+                        <div className="space-y-2 md:col-span-2">
+                            <label className="text-white text-sm">Photo Slideshow Transition</label>
+                            <select
+                                value={localPrefs.slideshowTransition}
+                                onChange={(e) => updateLocalPref('slideshowTransition', e.target.value)}
+                                className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary [&>option]:bg-[#1a1a1a] [&>option]:text-white"
+                            >
+                                <option value="fade">Fade</option>
+                                <option value="zoom">Zoom (slow Ken Burns drift)</option>
+                                <option value="slide">Slide</option>
+                                <option value="none">None (instant)</option>
+                            </select>
+                            <p className="text-xs text-gray-500">How photos enter in the photo viewer and slideshow.</p>
+                        </div>
                     </div>
                 </div>
             </div>

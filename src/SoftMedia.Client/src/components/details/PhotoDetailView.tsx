@@ -3,7 +3,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../services/api';
 import { type MediaItem, type PagedResult } from '../../types';
+import { motion } from 'framer-motion';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { useLocalPreferences } from '../../hooks/useLocalPreferences';
 import { buildPhotoNavSuffix } from '../../lib/photoNav';
 import { Camera, MapPin, Aperture, Clock, ChevronLeft, ChevronRight, Expand, Maximize2, Pause, Play, X } from 'lucide-react';
 
@@ -134,11 +136,37 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
     // (the /api/v1/photos route is in the server's media-route allowlist).
     const fullImageUrl = attachAuthToApiUrl(`/api/v1/photos/${item.id}/image`);
 
+    // Entrance transition per the device preference. Keyed on item.id so paging
+    // (arrows, keys, slideshow) replays it; entrance-only by design — the previous
+    // photo is gone by the time the route changes, so a true crossfade isn't
+    // possible without holding both images, which "simple" doesn't warrant.
+    const { preferences } = useLocalPreferences();
+    const entranceProps = (() => {
+        switch (preferences.slideshowTransition) {
+            case 'fade':
+                return { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.5, ease: 'easeOut' as const } };
+            case 'slide':
+                return { initial: { opacity: 0, x: 48 }, animate: { opacity: 1, x: 0 }, transition: { duration: 0.45, ease: 'easeOut' as const } };
+            case 'zoom':
+                // Fade in quickly, then drift the scale for the whole 5s dwell —
+                // a restrained Ken Burns.
+                return {
+                    initial: { opacity: 0, scale: 1 },
+                    animate: { opacity: 1, scale: 1.05 },
+                    transition: { opacity: { duration: 0.5 }, scale: { duration: 6, ease: 'linear' as const } },
+                };
+            default:
+                return {}; // 'none' — instant
+        }
+    })();
+
     return (
         <div className="space-y-8">
             {/* The photo IS the content — show it full-width, letterboxed. */}
             <div className="relative group rounded-xl overflow-hidden bg-black/60 border border-white/10">
-                <img
+                <motion.img
+                    key={item.id}
+                    {...entranceProps}
                     src={fullImageUrl}
                     alt={item.title}
                     className="w-full max-h-[75vh] object-contain"
@@ -277,8 +305,10 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                 edge-to-edge. Survives per-photo navigation because ?fs=1 rides in the
                 URL; real browser fullscreen is layered on best-effort (see effect). */}
             {fullscreen && (
-                <div ref={lightboxRef} className="fixed inset-0 z-50 bg-black flex items-center justify-center group/fs">
-                    <img
+                <div ref={lightboxRef} className="fixed inset-0 z-50 bg-black overflow-hidden flex items-center justify-center group/fs">
+                    <motion.img
+                        key={item.id}
+                        {...entranceProps}
                         src={fullImageUrl}
                         alt={item.title}
                         className="max-w-full max-h-full object-contain"

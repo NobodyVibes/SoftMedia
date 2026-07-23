@@ -20,6 +20,8 @@ export interface LocalPreferences {
     subtitleColor: string;      // 'white' | 'yellow' | 'cyan' | 'green'
     subtitleBgOpacity: string;  // '0' | '0.5' | '0.75' | '1'
     subtitleEdgeStyle: string;  // 'none' | 'outline' | 'shadow'
+    // Photo slideshow entrance transition (per-device, like all viewing prefs)
+    slideshowTransition: string; // 'none' | 'fade' | 'zoom' | 'slide'
 }
 
 const BASE_PREFERENCES_KEY = 'softmedia_preferences';
@@ -39,6 +41,7 @@ const defaultPreferences: LocalPreferences = {
     subtitleColor: 'white',
     subtitleBgOpacity: '0.75',
     subtitleEdgeStyle: 'none',
+    slideshowTransition: 'fade',
 };
 
 /**

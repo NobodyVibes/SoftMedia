@@ -146,12 +146,18 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
 
     // Transition per the device preference. The entering photo is keyed on item.id
     // so paging (arrows, keys, slideshow) replays it, and the OUTGOING photo is held
-    // in a state layer that animates out on top — a real crossfade, not a hard cut
-    // followed by a fade (the original complaint). MediaDetailPage keeps the
-    // previous item as placeholderData, so this component never unmounts mid-fade.
+    // in a state layer that animates out on top — a real crossfade. Critically, BOTH
+    // halves are gated on the incoming image having DECODED: until onLoad fires, the
+    // old photo holds at full opacity and the new one stays hidden — otherwise a
+    // slow download made the old photo fade over nothing and the new one pop in
+    // mid-animation (the "sometimes it flickers" report).
     const { preferences } = useLocalPreferences();
     const transitionKind = preferences.slideshowTransition;
     const [outgoing, setOutgoing] = useState<{ id: string; url: string } | null>(null);
+    // The photo id whose image has finished loading; the incoming img is "ready"
+    // once it matches. onError also marks ready so a broken file can't wedge the
+    // old photo on screen forever.
+    const [readyId, setReadyId] = useState(item.id);
     const shownRef = useRef({ id: item.id, url: fullImageUrl });
     useEffect(() => {
         if (shownRef.current.id !== item.id) {
@@ -159,27 +165,49 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
             shownRef.current = { id: item.id, url: fullImageUrl };
         }
     }, [item.id, fullImageUrl, transitionKind]);
+    const incomingReady = readyId === item.id || transitionKind === 'none';
 
-    const exitProps = (() => {
+    const t = (() => {
         switch (transitionKind) {
-            case 'slide':
-                // The old photo departs the way the new one arrives: leftward.
-                return { initial: { opacity: 1, x: 0 }, animate: { opacity: 0, x: -48 }, transition: { duration: 0.45, ease: 'easeOut' as const } };
             case 'fade':
+                return {
+                    hidden: { opacity: 0 }, visible: { opacity: 1 }, exit: { opacity: 0 },
+                    spec: { duration: 0.5, ease: 'easeOut' as const },
+                };
+            case 'slide':
+                // The old photo departs leftward as the new one arrives from the right.
+                return {
+                    hidden: { opacity: 0, x: 48 }, visible: { opacity: 1, x: 0 }, exit: { opacity: 0, x: -48 },
+                    spec: { duration: 0.45, ease: 'easeOut' as const },
+                };
             case 'zoom':
-                return { initial: { opacity: 1 }, animate: { opacity: 0 }, transition: { duration: 0.5, ease: 'easeOut' as const } };
+                // Fade in quickly, then drift the scale for the whole 5s dwell —
+                // a restrained Ken Burns.
+                return {
+                    hidden: { opacity: 0, scale: 1 }, visible: { opacity: 1, scale: 1.05 }, exit: { opacity: 0 },
+                    spec: { opacity: { duration: 0.5 }, scale: { duration: 6, ease: 'linear' as const } },
+                };
             default:
-                return null;
+                return null; // 'none' — instant
         }
     })();
 
-    /** The outgoing photo, absolutely stacked over the incoming one, animating away.
-     *  Removed from the tree when its animation completes. */
-    const outgoingLayer = outgoing && exitProps && (
+    const entranceProps = t ? {
+        initial: t.hidden,
+        animate: incomingReady ? t.visible : t.hidden,
+        transition: t.spec,
+    } : {};
+
+    /** The outgoing photo, absolutely stacked over the incoming one. It HOLDS at
+     *  full visibility until the incoming image is ready, then animates away and
+     *  removes itself. */
+    const outgoingLayer = outgoing && t && (
         <motion.img
             key={`out-${outgoing.id}`}
-            {...exitProps}
-            onAnimationComplete={() => setOutgoing(null)}
+            initial={t.visible}
+            animate={incomingReady ? t.exit : t.visible}
+            transition={{ duration: 0.5, ease: 'easeOut' }}
+            onAnimationComplete={() => { if (incomingReady) setOutgoing(null); }}
             src={outgoing.url}
             alt=""
             aria-hidden
@@ -187,35 +215,31 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
         />
     );
 
-    const entranceProps = (() => {
-        switch (transitionKind) {
-            case 'fade':
-                return { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.5, ease: 'easeOut' as const } };
-            case 'slide':
-                return { initial: { opacity: 0, x: 48 }, animate: { opacity: 1, x: 0 }, transition: { duration: 0.45, ease: 'easeOut' as const } };
-            case 'zoom':
-                // Fade in quickly, then drift the scale for the whole 5s dwell —
-                // a restrained Ken Burns.
-                return {
-                    initial: { opacity: 0, scale: 1 },
-                    animate: { opacity: 1, scale: 1.05 },
-                    transition: { opacity: { duration: 0.5 }, scale: { duration: 6, ease: 'linear' as const } },
-                };
-            default:
-                return {}; // 'none' — instant
-        }
-    })();
+    const markReady = () => setReadyId(item.id);
+
+    // Layout guard: size the frame from the photo's known dimensions BEFORE the
+    // image loads, so the container can't collapse (another flicker source) while
+    // the incoming image has no intrinsic size yet. 3:2 is the fallback for photos
+    // without dimension metadata (HEIC).
+    const frameAspect = item.width && item.height ? `${item.width} / ${item.height}` : '3 / 2';
 
     return (
         <div className="space-y-8">
-            {/* The photo IS the content — show it full-width, letterboxed. */}
-            <div className="relative group rounded-xl overflow-hidden bg-black/60 border border-white/10">
+            {/* The photo IS the content — show it full-width, letterboxed. The frame
+                is sized by aspect-ratio (known before load) so it can't collapse
+                while the next image is still downloading. */}
+            <div
+                className="relative group rounded-xl overflow-hidden bg-black/60 border border-white/10 w-full max-h-[75vh] mx-auto"
+                style={{ aspectRatio: frameAspect }}
+            >
                 <motion.img
                     key={item.id}
                     {...entranceProps}
                     src={fullImageUrl}
                     alt={item.title}
-                    className="w-full max-h-[75vh] object-contain"
+                    onLoad={markReady}
+                    onError={markReady}
+                    className="absolute inset-0 w-full h-full object-contain"
                 />
                 {outgoingLayer}
 
@@ -358,7 +382,9 @@ export default function PhotoDetailView({ item }: PhotoDetailViewProps) {
                         {...entranceProps}
                         src={fullImageUrl}
                         alt={item.title}
-                        className="max-w-full max-h-full object-contain"
+                        onLoad={markReady}
+                        onError={markReady}
+                        className="absolute inset-0 w-full h-full object-contain"
                     />
                     {outgoingLayer}
 

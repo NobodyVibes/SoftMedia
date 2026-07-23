@@ -1,5 +1,5 @@
-import { type ReactNode } from 'react';
-import { ArrowLeft, Play, Heart, Share2, Eye, Star } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { ArrowLeft, Play, Heart, Share2, Eye, Star, Clapperboard } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -13,6 +13,8 @@ import { getGenreColors } from '../../lib/genreColors';
 import { resolveHeroPosterUrl, resolveBackdropUrl } from '../../lib/mediaImageUrl';
 import { WatchlistButton } from '../details/WatchlistButton';
 import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
+import { useExtras, findTrailer } from '../../hooks/useExtras';
+import { ExtraPlayerModal } from '../details/ExtraPlayerModal';
 
 interface MediaDetailLayoutProps {
     item: MediaItem;
@@ -31,6 +33,13 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
     useMediaTokenRefresh();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
+
+    // Trailer promotion: the trailer belongs beside Play — where the "do I want to
+    // watch this?" decision happens — not buried at the page bottom. The query only
+    // runs for Movie/Series; ExtrasSection shares its cache and lists the rest.
+    const { data: extras } = useExtras(item.id, item.type);
+    const trailer = findTrailer(extras);
+    const [trailerOpen, setTrailerOpen] = useState(false);
 
     const rateMutation = useMutation({
         mutationFn: (rating: number) => api.post(`/interaction/${item.id}/rate`, { rating }),
@@ -139,6 +148,19 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                 >
                                     <Play className="w-6 h-6 fill-current" />
                                     Play
+                                </button>
+                            )}
+
+                            {/* NR-WI-014 follow-up: the trailer is promoted here from the
+                                Extras row — it sits with the watch decision, not at the
+                                page bottom. Only renders when a trailer file exists. */}
+                            {trailer && (item.type === MediaType.Movie || item.type === MediaType.Series) && (
+                                <button
+                                    onClick={() => setTrailerOpen(true)}
+                                    className="w-full flex items-center justify-center gap-2 px-8 py-3 min-h-[44px] bg-white/10 hover:bg-white/15 focus-visible:bg-white/15 text-white rounded-xl font-semibold transition-colors"
+                                >
+                                    <Clapperboard className="w-5 h-5" />
+                                    Trailer
                                 </button>
                             )}
 
@@ -328,6 +350,10 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                     {children}
                 </div>
             </div>
+
+            {trailerOpen && trailer && (
+                <ExtraPlayerModal mediaId={item.id} extra={trailer} onClose={() => setTrailerOpen(false)} />
+            )}
         </div>
     );
 }

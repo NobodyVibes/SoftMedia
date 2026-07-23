@@ -120,8 +120,9 @@ export default function MovieDetailView({ item }: MovieDetailViewProps) {
                     </div>
                 )}
 
-                {/* NR-WI-014 — trailers/samples/featurettes beside the movie file */}
-                <ExtrasSection mediaId={item.id} />
+                {/* NR-WI-014 — bonus content beside the movie file (the trailer itself
+                    is promoted to the Trailer button next to Play) */}
+                <ExtrasSection mediaId={item.id} itemType={item.type} />
             </div>
         </>
     );

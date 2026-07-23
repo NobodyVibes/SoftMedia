@@ -715,8 +715,9 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
                     </div>
                 )}
 
-                {/* NR-WI-014 — extras in the series folder (extras/, trailers/, …) */}
-                <ExtrasSection mediaId={item.id} />
+                {/* NR-WI-014 — bonus content in the series folder (the trailer itself
+                    is promoted to the Trailer button next to Play) */}
+                <ExtrasSection mediaId={item.id} itemType={item.type} />
             </div>
         </>
     );

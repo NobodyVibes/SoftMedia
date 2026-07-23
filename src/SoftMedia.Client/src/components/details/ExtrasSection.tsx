@@ -1,42 +1,22 @@
-import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Clapperboard, Play, X } from 'lucide-react';
-import api from '../../services/api';
-import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
-
-interface MediaExtra {
-    index: number;
-    title: string;
-    kind: string;
-    fileName: string;
-    sizeBytes: number;
-}
+import { useState } from 'react';
+import { Clapperboard, Play } from 'lucide-react';
+import { useExtras, findTrailer, type MediaExtra } from '../../hooks/useExtras';
+import { ExtraPlayerModal } from './ExtraPlayerModal';
 
 /**
- * NR-WI-014 — companion clips (trailers, samples, featurettes) for a movie or series.
- * Server-probed from the filesystem; renders nothing when the title has none.
- * Playback is direct-play in a lightweight modal — extras are small clips and don't
- * go through the transcode pipeline (v1 limitation, documented).
+ * NR-WI-014 — bonus content (samples, featurettes, behind-the-scenes) for a movie
+ * or series. The trailer itself is NOT listed here: it's promoted to a "Trailer"
+ * button beside Play in MediaDetailLayout — this row is everything else. Renders
+ * nothing when the title has no non-trailer extras.
  */
-export function ExtrasSection({ mediaId }: { mediaId: string }) {
+export function ExtrasSection({ mediaId, itemType }: { mediaId: string; itemType: string | undefined }) {
     const [playing, setPlaying] = useState<MediaExtra | null>(null);
+    const { data: extras = [] } = useExtras(mediaId, itemType);
 
-    // Escape closes the player (house modal style: explicit close affordances, no
-    // click-away divs — those fail the Universal Client a11y guard).
-    useEffect(() => {
-        if (!playing) return;
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPlaying(null); };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [playing]);
+    const trailer = findTrailer(extras);
+    const bonus = extras.filter((e) => e.index !== trailer?.index);
 
-    const { data: extras = [] } = useQuery<MediaExtra[]>({
-        queryKey: ['extras', mediaId],
-        queryFn: async () => (await api.get<MediaExtra[]>(`/stream/${mediaId}/extras`)).data,
-        staleTime: 60_000,
-    });
-
-    if (extras.length === 0) return null;
+    if (bonus.length === 0) return null;
 
     return (
         <div className="mt-10">
@@ -45,7 +25,7 @@ export function ExtrasSection({ mediaId }: { mediaId: string }) {
                 Extras
             </h3>
             <div className="flex flex-wrap gap-3">
-                {extras.map((extra) => (
+                {bonus.map((extra) => (
                     <button
                         key={extra.index}
                         onClick={() => setPlaying(extra)}
@@ -63,27 +43,7 @@ export function ExtrasSection({ mediaId }: { mediaId: string }) {
             </div>
 
             {playing && (
-                <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
-                    <div className="relative w-full max-w-5xl">
-                        <div className="flex items-center justify-between mb-2">
-                            <span className="text-white font-medium">{playing.title}</span>
-                            <button
-                                onClick={() => setPlaying(null)}
-                                aria-label="Close"
-                                className="p-3 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
-                            >
-                                <X className="w-5 h-5" />
-                            </button>
-                        </div>
-                        {/* Direct play; the media token rides in the query (media route). */}
-                        <video
-                            src={attachAuthToApiUrl(`/api/v1/stream/${mediaId}/extras/${playing.index}`)}
-                            controls
-                            autoPlay
-                            className="w-full max-h-[80vh] rounded-xl bg-black"
-                        />
-                    </div>
-                </div>
+                <ExtraPlayerModal mediaId={mediaId} extra={playing} onClose={() => setPlaying(null)} />
             )}
         </div>
     );

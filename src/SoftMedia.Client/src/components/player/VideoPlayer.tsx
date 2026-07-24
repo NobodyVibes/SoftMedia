@@ -24,6 +24,7 @@ import { computeCueShift, applyCueShift, clampUserOffset } from './subtitleSync'
 import { buildCueCss } from './subtitleStyle';
 import { describeCastReadiness } from '../../hooks/castReadiness';
 import { CastDiagnostics } from './CastDiagnostics';
+import { MAX_NETWORK_RETRIES, networkRetryDelayMs, parseRetryAfterSeconds } from './playerRecovery';
 
 
 
@@ -181,6 +182,21 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
     // Unique Stream ID to isolate transcode sessions per playback instance
     const [streamId] = useState(() => Math.random().toString(36).substring(2, 11));
+
+    // SR-WI-026 — plan-POST failure surfacing + capped HLS network retries.
+    // busyRetrySeconds: non-null while the server answered the plan POST with
+    // 429 (concurrent-stream cap); counts down to an automatic retry.
+    const [busyRetrySeconds, setBusyRetrySeconds] = useState<number | null>(null);
+    // Bumped to re-run the stream-plan effect (429 countdown expiry / Try again).
+    const [planRetryNonce, setPlanRetryNonce] = useState(0);
+    // True while capped fatal-network reconnect attempts are running.
+    const [isReconnecting, setIsReconnecting] = useState(false);
+    const networkRetryCountRef = useRef(0);
+    const networkRetryTimerRef = useRef<NodeJS.Timeout | null>(null);
+    // SR-WI-025 — far-seek generation counter: the awaited DELETE makes the src
+    // swap async, so an older seek's slow DELETE must not apply a stale src
+    // over a newer seek's (last-write-wins, like the old synchronous code).
+    const farSeekGenerationRef = useRef(0);
 
     const handleDismissToast = useCallback(() => {
         setPlayerToast(null);
@@ -654,7 +670,21 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     body: JSON.stringify(capabilitiesToSend)
                 });
 
-                if (!response.ok || !isMounted) return;
+                if (!isMounted) return;
+
+                // SR-WI-026: a failed plan POST used to bail silently here,
+                // leaving the player on "Loading player..." forever. Surface it.
+                if (!response.ok) {
+                    if (response.status === 429) {
+                        // Server is at its concurrent-stream cap. Honor
+                        // Retry-After and count down to an automatic retry.
+                        setBusyRetrySeconds(parseRetryAfterSeconds(response.headers.get('Retry-After')));
+                    } else {
+                        setError(`The server could not start playback (HTTP ${response.status}).`);
+                    }
+                    return;
+                }
+                setBusyRetrySeconds(null);
 
                 const plan: StreamPlan = await response.json();
                 console.log('[StreamPlan] Received plan:', plan);
@@ -796,8 +826,24 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     // ~15-minute rotation (the token is read at run time via getUrlToken instead). It must run
     // only when the item/tracks/quality/capability inputs change; the values above are read
     // fresh from the closure of the run those inputs trigger.
+    // planRetryNonce (SR-WI-026) re-runs it on purpose: 429-busy countdown expiry / "Try again".
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [item, selectedSubtitleTrack, selectedAudioTrack, resumePosition, hasLoadedProgress, isSubtitleChange, forceStartFromBeginning, isDetectingCapabilities, mediaCapabilities, selectedQuality]);
+    }, [item, selectedSubtitleTrack, selectedAudioTrack, resumePosition, hasLoadedProgress, isSubtitleChange, forceStartFromBeginning, isDetectingCapabilities, mediaCapabilities, selectedQuality, planRetryNonce]);
+
+    // SR-WI-026: 429-busy countdown — tick once per second, then trigger an
+    // automatic plan retry when it reaches zero.
+    useEffect(() => {
+        if (busyRetrySeconds === null) return;
+        if (busyRetrySeconds <= 0) {
+            setBusyRetrySeconds(null);
+            setPlanRetryNonce(n => n + 1);
+            return;
+        }
+        const timer = setTimeout(() => {
+            setBusyRetrySeconds(s => (s === null ? null : s - 1));
+        }, 1000);
+        return () => clearTimeout(timer);
+    }, [busyRetrySeconds]);
 
 
 
@@ -813,6 +859,17 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         const video = videoRef.current;
         setIsLoading(true);
         setError(null);
+
+        // SR-WI-026: a fresh source gets a fresh fatal-network retry budget.
+        const clearNetworkRetryTimer = () => {
+            if (networkRetryTimerRef.current) {
+                clearTimeout(networkRetryTimerRef.current);
+                networkRetryTimerRef.current = null;
+            }
+        };
+        clearNetworkRetryTimer();
+        networkRetryCountRef.current = 0;
+        setIsReconnecting(false);
 
         if (hlsRef.current) {
             hlsRef.current.destroy();
@@ -941,24 +998,69 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     // Checked before `fatal` because hls.js reports a 410 on a segment as a
                     // non-fatal network error it intends to retry.
                     if (data.response?.code === 410) {
+                        clearNetworkRetryTimer();
+                        setIsReconnecting(false);
                         setError('Playback was stopped by an administrator.');
+                        videoRef.current?.pause();
+                        hls.destroy();
+                        return;
+                    }
+                    // 409 Conflict = the transcode session FAILED server-side
+                    // (ffmpeg crashed and crash-retries are exhausted, SR-WI-020):
+                    // playlist/segment requests answer 409 {"error":"transcode_failed"}.
+                    // Terminal like the 410 — reloading the playlist can never
+                    // succeed against a Failed session. The error screen's Retry
+                    // does a full player re-init (fresh streamId → fresh plan and
+                    // session), which is the only way forward.
+                    if (data.response?.code === 409) {
+                        clearNetworkRetryTimer();
+                        setIsReconnecting(false);
+                        setError('Transcoding failed on the server.');
                         videoRef.current?.pause();
                         hls.destroy();
                         return;
                     }
                     if (data.fatal) {
                         switch (data.type) {
-                            case Hls.ErrorTypes.NETWORK_ERROR:
-                                hls.startLoad();
+                            case Hls.ErrorTypes.NETWORK_ERROR: {
+                                // SR-WI-026: bounded reconnect instead of the old
+                                // unconditional startLoad()-forever loop with no UI.
+                                // 6 attempts with backoff (~31s), then terminal.
+                                if (networkRetryCountRef.current >= MAX_NETWORK_RETRIES) {
+                                    clearNetworkRetryTimer();
+                                    setIsReconnecting(false);
+                                    setError('Connection to the server was lost.');
+                                    videoRef.current?.pause();
+                                    hls.destroy();
+                                    break;
+                                }
+                                networkRetryCountRef.current += 1;
+                                setIsReconnecting(true);
+                                clearNetworkRetryTimer();
+                                networkRetryTimerRef.current = setTimeout(() => {
+                                    networkRetryTimerRef.current = null;
+                                    hls.startLoad();
+                                }, networkRetryDelayMs(networkRetryCountRef.current));
                                 break;
+                            }
                             case Hls.ErrorTypes.MEDIA_ERROR:
                                 hls.recoverMediaError();
                                 break;
                             default:
+                                clearNetworkRetryTimer();
                                 setError(`Playback error: ${data.type}`);
                                 hls.destroy();
                                 break;
                         }
+                    }
+                });
+
+                // SR-WI-026: a successfully loaded fragment means the connection
+                // recovered — drop the indicator and refund the retry budget.
+                hls.on(Hls.Events.FRAG_LOADED, () => {
+                    if (networkRetryCountRef.current > 0) {
+                        networkRetryCountRef.current = 0;
+                        setIsReconnecting(false);
                     }
                 });
 
@@ -997,6 +1099,11 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         }
 
         return () => {
+            // A pending reconnect must not fire startLoad() on a destroyed hls.
+            if (networkRetryTimerRef.current) {
+                clearTimeout(networkRetryTimerRef.current);
+                networkRetryTimerRef.current = null;
+            }
             if (hlsRef.current) {
                 hlsRef.current.destroy();
                 hlsRef.current = null;
@@ -1577,6 +1684,31 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         return url;
     };
 
+    // SR-WI-025 (client half): the far-seek restart used to fire the old
+    // session's DELETE and swap src in the same tick — the fire-and-forget
+    // DELETE could land server-side AFTER the new playlist request and kill the
+    // successor session. Await the DELETE before swapping (navigateEpisode
+    // already does), capped at 2s so a hung DELETE can never block seeking.
+    // The generation counter keeps rapid consecutive far-seeks last-write-wins:
+    // an older seek's slow DELETE must not apply its stale src over a newer one.
+    const stopSessionThenSwapSrc = async (newUrl: string) => {
+        const generation = ++farSeekGenerationRef.current;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 2000);
+        try {
+            await fetch(`/api/v1/transcode/${item.id}?sid=${streamId}`, {
+                method: 'DELETE',
+                headers: transcodeAuthHeaders(),
+                signal: controller.signal,
+            });
+        } catch { /* ignore — the seek proceeds regardless */ }
+        finally {
+            clearTimeout(timer);
+        }
+        if (farSeekGenerationRef.current !== generation) return; // superseded by a newer far-seek
+        setSrc(newUrl);
+    };
+
     const handleSeekToTime = (seekTime: number) => {
         if (!videoRef.current || displayDuration <= 0) return;
 
@@ -1598,10 +1730,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             // path already guards against (and R-WI-015 broadcasts to the OS scrubber).
             setCurrentTime(0);
 
-            fetch(`/api/v1/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() })
-                .catch(() => { });
-
-            setSrc(buildTranscodeSeekUrl(seekTime));
+            void stopSessionThenSwapSrc(buildTranscodeSeekUrl(seekTime));
         } else {
             const targetInStream = seekTime - seekOffset;
             if (targetInStream >= 0 && targetInStream <= currentTranscodedDuration) {
@@ -1612,10 +1741,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 setSeekOffset(Math.floor(seekTime));
                 setCurrentTime(0); // same transient guard as the forward-restart branch
 
-                fetch(`/api/v1/transcode/${item.id}?sid=${streamId}`, { method: 'DELETE', headers: transcodeAuthHeaders() })
-                    .catch(() => { });
-
-                setSrc(buildTranscodeSeekUrl(seekTime));
+                void stopSessionThenSwapSrc(buildTranscodeSeekUrl(seekTime));
             } else {
                 // Element seeks are STREAM-relative. Seeking the absolute time here
                 // double-applied the offset when the element's duration was still
@@ -1747,14 +1873,10 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         handleSkipCredits();
     }, [inCredits, localPrefs.autoSkipCredits, handleSkipCredits]);
 
-    if (!token || !src) {
-        return (
-            <div className="w-full h-full bg-black flex items-center justify-center">
-                <div className="text-white/50 animate-pulse">Loading player...</div>
-            </div>
-        );
-    }
-
+    // SR-WI-026: the error screen is checked BEFORE the src/token loading gate —
+    // plan-POST failures set error while src is still empty, and the old order
+    // left the player on "Loading player..." forever. Retry reloads the page:
+    // a full re-init with a fresh streamId, i.e. a fresh plan and session.
     if (error) {
         return (
             <div className="w-full h-full bg-black flex items-center justify-center flex-col gap-4">
@@ -1765,6 +1887,34 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 >
                     Retry
                 </button>
+            </div>
+        );
+    }
+
+    // SR-WI-026: server answered the plan POST with 429 (concurrent-stream cap).
+    // Counts down to an automatic retry; "Try again" retries immediately.
+    if (busyRetrySeconds !== null) {
+        return (
+            <div className="w-full h-full bg-black flex items-center justify-center flex-col gap-4">
+                <div className="text-white/80">Server is busy — too many simultaneous streams.</div>
+                <div className="text-white/50 text-sm animate-pulse">Retrying in {busyRetrySeconds}s...</div>
+                <button
+                    onClick={() => {
+                        setBusyRetrySeconds(null);
+                        setPlanRetryNonce(n => n + 1);
+                    }}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                    Try again
+                </button>
+            </div>
+        );
+    }
+
+    if (!token || !src) {
+        return (
+            <div className="w-full h-full bg-black flex items-center justify-center">
+                <div className="text-white/50 animate-pulse">Loading player...</div>
             </div>
         );
     }
@@ -1794,6 +1944,14 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                 {isBuffering ? 'Buffering...' : (isTranscoding ? 'Starting transcoding...' : 'Starting playback...')}
                             </div>
                         </div>
+                    </div>
+                )}
+
+                {/* SR-WI-026: transient indicator while capped fatal-network reconnect attempts run */}
+                {isReconnecting && (
+                    <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-lg">
+                        <div className="w-4 h-4 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
+                        <span className="text-white/80 text-sm font-medium">Reconnecting...</span>
                     </div>
                 )}
 

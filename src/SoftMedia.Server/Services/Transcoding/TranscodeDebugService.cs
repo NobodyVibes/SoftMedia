@@ -11,7 +11,7 @@ namespace SoftMedia.Server.Services.Transcoding;
 
 public interface ITranscodeDebugService
 {
-    Task<object> GetDebugInfoAsync(Guid mediaId, Guid userId, ClientCapabilities? clientCaps, int? sub, bool isAdmin);
+    Task<object> GetDebugInfoAsync(Guid mediaId, Guid userId, ClientCapabilities? clientCaps, int? sub, bool isAdmin, string? sid = null);
 }
 
 public class TranscodeDebugService : ITranscodeDebugService
@@ -39,11 +39,14 @@ public class TranscodeDebugService : ITranscodeDebugService
         _logger = logger;
     }
 
-    public async Task<object> GetDebugInfoAsync(Guid mediaId, Guid userId, ClientCapabilities? clientCaps, int? sub, bool isAdmin)
+    public async Task<object> GetDebugInfoAsync(Guid mediaId, Guid userId, ClientCapabilities? clientCaps, int? sub, bool isAdmin, string? sid = null)
     {
         if (sub.HasValue && sub.Value < 0) sub = null;
 
-        var sessionKey = new TranscodeSessionKey(mediaId, userId, sub);
+        // SR-WI-024: sessions are keyed WITH the client's StreamId (sid) — building the key
+        // without it made every sid-keyed lookup miss, so the panel reported "likely direct
+        // play" for real transcodes. Pass sid through exactly as StartTranscodeAsync keys it.
+        var sessionKey = new TranscodeSessionKey(mediaId, userId, sub, sid);
         var session = _sessionManager.GetSession(sessionKey);
         
         // Fetch individual server settings
@@ -102,7 +105,22 @@ public class TranscodeDebugService : ITranscodeDebugService
         
         // Get probe info from transcoded output
         var probeInfo = await ProbeTranscodedOutput(session, isAdmin);
-        
+
+        // SR-WI-023/SR-WI-024: report the ACTUAL tone-map decision the profile builder makes,
+        // not the old `IsSourceHdr && !PreserveHdr` guess (which lied for remux and, before the
+        // software chain existed, for every non-NVIDIA transcode). Mirrors the builder: the
+        // pipeline (CUDA on nvidia, software zscale+tonemap otherwise) engages for an HDR source
+        // unless HDR passthrough is BOTH requested and carriable (hevc/av1 output — h264 output
+        // overrides preserve), and subtitle burn-in forces tone mapping even then. Remux/copy
+        // never tone-maps.
+        var subtitleBurnIn = session.BurnSubtitles || (session.IsBitmapSubtitle && sub.HasValue);
+        var effectiveCodec = session.TargetCodec ?? outputVideoCodec;
+        var codecCanCarryHdr = effectiveCodec.Contains("hevc", StringComparison.OrdinalIgnoreCase)
+            || effectiveCodec.Contains("265", StringComparison.OrdinalIgnoreCase)
+            || effectiveCodec.Contains("av1", StringComparison.OrdinalIgnoreCase);
+        var preserveEngaged = session.PreserveHdr && codecCanCarryHdr && !subtitleBurnIn;
+        var toneMapped = session.IsSourceHdr && !session.IsRemux && !preserveEngaged;
+
         // Build comprehensive debug response
         return new
         {
@@ -166,9 +184,9 @@ public class TranscodeDebugService : ITranscodeDebugService
             {
                 targetCodec = session.TargetCodec ?? streamPlan.VideoCodec,
                 targetResolution = session.TargetResolution ?? streamPlan.Resolution,
-                preserveHdr = session.PreserveHdr,
-                toneMapped = session.IsSourceHdr && !session.PreserveHdr,
-                subtitleBurnIn = session.BurnSubtitles || (session.IsBitmapSubtitle && sub.HasValue),
+                preserveHdr = preserveEngaged,
+                toneMapped,
+                subtitleBurnIn,
                 subtitleTrack = sub,
                 subtitleLanguage = session.SubtitleLanguage
             },

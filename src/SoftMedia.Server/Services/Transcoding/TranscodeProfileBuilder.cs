@@ -58,6 +58,12 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
     /// </summary>
     public const string BurnInSubtitleFileName = "burnin.ass";
 
+    /// <summary>
+    /// SR-WI-023: one-time-per-server-run latch for the "software tone mapping is CPU-intensive"
+    /// warning (0 = not yet logged). Static on purpose — the builder is registered transient.
+    /// </summary>
+    private static int _softwareToneMapWarned;
+
     private readonly ILogger<TranscodeProfileBuilder> _logger;
     private readonly IBinaryLocationService _binaryLocationService;
     private readonly IMediaProbeService _mediaProbeService;
@@ -192,12 +198,30 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
         
         // --- 10-BIT / HDR HANDLING ---
         bool isHdr = probe != null && IsHdr(probe.ColorTransfer);
+        var hwAccelLower = settings.HardwareAcceleration.ToLower();
         bool skipTonemapping = settings.PreserveHDR && isHdr;
-        
+
+        // SR-WI-023 #5: PreserveHDR is only honourable when the negotiated output codec can carry
+        // 10-bit HDR (hevc/av1). Every h264 encoder here emits 8-bit yuv420p, so "preserving" a
+        // PQ/HLG source into h264 would squash it into washed-out gray — tone-map instead.
+        if (skipTonemapping && !CodecCanCarryHdr(settings.OutputVideoCodec))
+        {
+            _logger.LogInformation(
+                "PreserveHDR requested but output codec {Codec} is 8-bit h264: disabling HDR passthrough and tone mapping instead (SR-WI-023).",
+                settings.OutputVideoCodec);
+            skipTonemapping = false;
+        }
+
         // Smart HDR Override: If subtitles are active on HDR content, we MUST tone map to burn them in accurately.
         bool forceToneMappingForSubtitles = isHdr && hasSubtitleOverlay;
-        bool useToneMappingPipeline = isHdr && settings.HardwareAcceleration.ToLower() == "nvidia" && (!skipTonemapping || forceToneMappingForSubtitles);
-        
+        bool useToneMappingPipeline = isHdr && hwAccelLower == "nvidia" && (!skipTonemapping || forceToneMappingForSubtitles);
+
+        // SR-WI-023: non-NVIDIA (none/intel/amd) HDR→SDR previously encoded PQ/HLG straight to
+        // yuv420p with no conversion — washed-out gray output. The software zscale+tonemap chain
+        // is ON BY DEFAULT for non-NVIDIA (maintainer decision §6 Q3, 2026-07-24).
+        bool useSoftwareToneMap = isHdr && hwAccelLower != "nvidia" && (!skipTonemapping || forceToneMappingForSubtitles);
+        bool toneMapActive = useToneMappingPipeline || useSoftwareToneMap;
+
         if (skipTonemapping && !forceToneMappingForSubtitles)
         {
             _logger.LogInformation("PreserveHDR enabled: skipping tonemapping for 10-bit/HDR content");
@@ -207,8 +231,28 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             _logger.LogInformation("PreserveHDR enabled but OVERRIDDEN: tone mapping forced for subtitle burn-in compatibility");
         }
 
+        if (useSoftwareToneMap && Interlocked.Exchange(ref _softwareToneMapWarned, 1) == 0)
+        {
+            _logger.LogWarning(
+                "Software tone mapping engaged for HDR content — this is CPU-intensive. " +
+                "Configure hardware acceleration (Settings > Transcoding) to offload it to the GPU. " +
+                "This warning is logged once per server run.");
+        }
+
         // HARDWARE DECODE
-        var hwDecodeOptions = GetHardwareDecodeOptions(settings.HardwareAcceleration, hasSubtitleOverlay, useToneMappingPipeline);
+        // SR-WI-023 #3: when the SOFTWARE tone-map chain is engaged, the decoder must produce
+        // system-memory frames — zscale/tonemap cannot consume QSV/D3D11VA hardware frames. Force
+        // software decode for the session; the hardware ENCODERS (h264_qsv/h264_amf/…) still apply
+        // because they accept system-memory input frames.
+        var hwDecodeOptions = useSoftwareToneMap
+            ? string.Empty
+            : GetHardwareDecodeOptions(settings.HardwareAcceleration, hasSubtitleOverlay, useToneMappingPipeline);
+        if (useSoftwareToneMap && hwAccelLower is "intel" or "amd")
+        {
+            _logger.LogInformation(
+                "HDR source with {HwAccel} acceleration: forcing software decode so the software tone-map chain can run (hardware encode unaffected).",
+                settings.HardwareAcceleration);
+        }
         if (!string.IsNullOrEmpty(hwDecodeOptions))
         {
             argumentBuilder.Append(hwDecodeOptions);
@@ -258,29 +302,53 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
                 chain.Add("yadif_cuda=mode=send_frame"); // frames are in CUDA memory here
             }
             chain.Add(scale);
-            
-            var toneAlgo = settings.ToneMappingAlgorithm.ToLower();
-            if (toneAlgo != "hable" && toneAlgo != "reinhard" && toneAlgo != "mobius")
-            {
-                toneAlgo = "hable";
-            }
+
+            var toneAlgo = NormalizeToneMapAlgorithm(settings.ToneMappingAlgorithm);
             chain.Add($"tonemap_cuda=tonemap={toneAlgo}:format=nv12");
             _logger.LogDebug("Using tonemap algorithm: {Algorithm}", toneAlgo);
-            
+
             double fps = probe?.FrameRate > 0 ? probe.FrameRate : 24.0;
             chain.Add($"fps={fps}");
-            
+
             if (hasSubtitleOverlay)
             {
                // Download from CUDA to CPU memory for subtitle burning
                chain.Add("hwdownload");
                chain.Add("format=nv12");
             }
-            
+
             toneMapFilter = string.Join(",", chain);
         }
-        
-        if (!useToneMappingPipeline)
+        else if (useSoftwareToneMap)
+        {
+            // SR-WI-023 #1/#2: software HDR→SDR chain for none/intel/amd. Composition mirrors the
+            // CUDA pipeline's insertion point and ordering — deinterlace → scale → tone-map — so
+            // every downstream branch (bitmap overlay, text burn-in, plain -vf) composes the same
+            // way for both pipelines. Scaling BEFORE the tone map runs the expensive zscale
+            // linearisation at the (usually smaller) target resolution, exactly like scale_cuda
+            // feeding tonemap_cuda; scale quality on PQ-encoded pixels is not visually
+            // distinguishable here and this matches the CUDA path's quality/CPU trade-off.
+            // zscale is present in the bundled jellyfin-ffmpeg (verified 7.1.4).
+            var chain = new List<string>();
+            if (isInterlaced)
+            {
+                chain.Add("bwdif=mode=send_frame");
+            }
+
+            var swScale = GetSoftwareScaleExpression(settings.MaxResolution);
+            if (!string.IsNullOrEmpty(swScale))
+            {
+                chain.Add(swScale);
+            }
+
+            var toneAlgo = NormalizeToneMapAlgorithm(settings.ToneMappingAlgorithm);
+            chain.Add($"zscale=t=linear:npl=100,tonemap={toneAlgo},zscale=p=bt709:t=bt709:m=bt709:r=tv,format=yuv420p");
+            _logger.LogDebug("Using software tonemap algorithm: {Algorithm}", toneAlgo);
+
+            toneMapFilter = string.Join(",", chain);
+        }
+
+        if (!toneMapActive)
         {
             // Determine if we should preserve 10-bit depth (p010) for SDR content
             // Only if input is 10-bit and output codec supports it (HEVC/AV1)
@@ -298,7 +366,23 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
                  _logger.LogInformation("Preserving 10-bit depth (p010) for 10-bit SDR content");
              }
         }
-        
+
+        // SR-WI-023 #4: explicit color metadata on EVERY encode output (previously none was
+        // emitted, leaving players to guess). Tone-mapped or SDR output is tagged bt709; HDR
+        // passthrough carries the source characteristics (HDR10/HDR10+ → PQ, HLG → arib-std-b67),
+        // fixing the PreserveHDR fMP4 path that shipped HDR pixels without signaling.
+        bool outputStaysHdr = isHdr && skipTonemapping && !forceToneMappingForSubtitles;
+        string colorMetadataArgs;
+        if (outputStaysHdr)
+        {
+            var trc = probe?.ColorTransfer?.Contains("arib-std-b67") == true ? "arib-std-b67" : "smpte2084";
+            colorMetadataArgs = $"-color_primaries bt2020 -color_trc {trc} -colorspace bt2020nc ";
+        }
+        else
+        {
+            colorMetadataArgs = "-color_primaries bt709 -color_trc bt709 -colorspace bt709 ";
+        }
+
         if (hasSubtitleOverlay)
         {
             var filterChain = new StringBuilder();
@@ -308,10 +392,11 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
                 // [0:s] is subtitles, [0:v] is video
                 string videoInput = "[0:v]";
 
-                if (useToneMappingPipeline)
+                if (toneMapActive)
                 {
                     // Apply tone mapping to video first: [0:v]toneMapFilter[tm];
-                    // (the tone-map chain already starts with yadif_cuda for interlaced sources)
+                    // (both tone-map chains already start with their deinterlacer for interlaced
+                    // sources, and both already fold the scale in — no scaleFilter append below)
                     filterChain.Append($"[0:v]{toneMapFilter}[tm];");
                     videoInput = "[tm]";
                 }
@@ -329,7 +414,7 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
                 // [vid] is the video stream output from scale2ref (original resolution/tonemapped)
                 string videoLabel = "[vid]";
                 
-                if (!useToneMappingPipeline && !string.IsNullOrEmpty(scaleFilter))
+                if (!toneMapActive && !string.IsNullOrEmpty(scaleFilter))
                 {
                     // Cleanup scaleFilter if using software scaling
                     var cleanScale = scaleFilter.Replace("-vf ", "").Replace("\"", "").Trim();
@@ -366,8 +451,10 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
                 // (= the session dir), so no path ever needs filter-level escaping, and the
                 // extracted file has exactly one stream so no :si selector is needed.
 
-                // Prepend tone mapping if active (its chain already deinterlaces when needed)
-                if (useToneMappingPipeline)
+                // Prepend tone mapping if active (its chain already deinterlaces and scales when
+                // needed, and burning happens AFTER tone mapping so bt709 subtitle colors land on
+                // bt709 frames — mirrors the CUDA chain)
+                if (toneMapActive)
                 {
                     filterChain.Append($"{toneMapFilter},");
                 }
@@ -380,7 +467,7 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
                 // fontsdir=. lets libass find the dumped embedded fonts (harmless when none exist).
                 filterChain.Append($"subtitles={BurnInSubtitleFileName}:fontsdir=.");
 
-                if (!useToneMappingPipeline && !string.IsNullOrEmpty(scaleFilter))
+                if (!toneMapActive && !string.IsNullOrEmpty(scaleFilter))
                 {
                     filterChain.Append(scaleFilter);
                 }
@@ -389,11 +476,12 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             }
             
             argumentBuilder.Append(GetEncoderOptions(settings, probe?.FrameRate ?? 23.976, maxBitrate));
+            argumentBuilder.Append(colorMetadataArgs);
         }
-        else 
+        else
         {
              // No subtitles
-             if (useToneMappingPipeline)
+             if (toneMapActive)
              {
                  argumentBuilder.Append($"-vf \"{toneMapFilter}\" ");
              }
@@ -403,8 +491,9 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
              }
              
              argumentBuilder.Append(GetEncoderOptions(settings, probe?.FrameRate ?? 23.976, maxBitrate));
+             argumentBuilder.Append(colorMetadataArgs);
         }
-        
+
         // Standard mapping for non-bitmap scenarios
         // (Bitmap scenarios handle mapping internally to preserve overlay)
         bool isBitmap = hasSubtitleOverlay && IsBitmapSubtitleCodec(subtitleCodec);
@@ -594,6 +683,37 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
         return colorTransfer != null && (colorTransfer.Contains("smpte2084") || colorTransfer.Contains("arib-std-b67"));
     }
 
+    /// <summary>
+    /// SR-WI-023 #5: true when the negotiated output codec can carry 10-bit HDR (hevc/av1).
+    /// h264 (and "auto", which resolves to h264 in <see cref="GetVideoEncoder"/>) cannot —
+    /// PreserveHDR must be overridden to tone mapping for those.
+    /// </summary>
+    private static bool CodecCanCarryHdr(string outputVideoCodec)
+    {
+        var c = outputVideoCodec.ToLowerInvariant();
+        return c.Contains("hevc") || c.Contains("265") || c.Contains("av1");
+    }
+
+    /// <summary>Validated tone-map operator; anything unknown falls back to hable.</summary>
+    private static string NormalizeToneMapAlgorithm(string algorithm)
+    {
+        var toneAlgo = algorithm.ToLowerInvariant();
+        return toneAlgo is "hable" or "reinhard" or "mobius" ? toneAlgo : "hable";
+    }
+
+    /// <summary>
+    /// Bare software scale expression (no -vf wrapper) with the never-upscale clamp and lanczos —
+    /// shared by <see cref="GetScaleFilter"/> and the software tone-map chain. Empty for
+    /// "original" (no scaling).
+    /// </summary>
+    private static string GetSoftwareScaleExpression(string maxResolution) => maxResolution.ToLower() switch
+    {
+        "720p" => "scale='min(1280,iw)':-2:flags=lanczos",
+        "1080p" => "scale='min(1920,iw)':-2:flags=lanczos",
+        "4k" => "scale='min(3840,iw)':-2:flags=lanczos",
+        _ => ""
+    };
+
     private string GetHardwareDecodeOptions(string hwAccel, bool hasSubtitleOverlay, bool useToneMappingPipeline)
     {
         return hwAccel.ToLower() switch
@@ -718,13 +838,7 @@ public class TranscodeProfileBuilder : ITranscodeProfileBuilder
             return $"-vf \"{cudaChain}\" ";
         }
 
-        var scale = maxResolution.ToLower() switch
-        {
-            "720p" => "scale='min(1280,iw)':-2:flags=lanczos",
-            "1080p" => "scale='min(1920,iw)':-2:flags=lanczos",
-            "4k" => "scale='min(3840,iw)':-2:flags=lanczos",
-            _ => ""
-        };
+        var scale = GetSoftwareScaleExpression(maxResolution);
 
         var parts = new List<string>();
         if (deinterlace) parts.Add("bwdif=mode=send_frame");

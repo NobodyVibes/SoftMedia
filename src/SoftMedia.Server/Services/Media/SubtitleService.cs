@@ -1,4 +1,7 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using SoftMedia.Server.Services.Abstractions;
@@ -7,6 +10,15 @@ namespace SoftMedia.Server.Services.Media;
 
 public interface ISubtitleService
 {
+    /// <summary>
+    /// SR-WI-022 — extract a text subtitle track to a sidecar WebVTT file. Success requires
+    /// ffmpeg exit code 0 AND a non-empty output (parity with the burn-in extractor): a
+    /// timeout-killed run leaves a PARTIAL .vtt that makes subtitles silently vanish mid-movie,
+    /// so partials are deleted, never served. Extractions are cached persistently under
+    /// wwwroot/cache/subtitles keyed by (source path, track, source mtime) — the cache holds the
+    /// UNSHIFTED extraction and each caller gets its own COPY at <paramref name="outputPath"/>,
+    /// because the transcode session seek-shifts its copy in place via OffsetWebVttTimestamps.
+    /// </summary>
     Task<bool> ExtractSubtitleToVttAsync(string inputPath, int subtitleStreamIndex, string outputPath);
 
     /// <summary>
@@ -38,75 +50,154 @@ public class SubtitleService : ISubtitleService
     private readonly ILogger<SubtitleService> _logger;
     private readonly IProcessRunner _processRunner;
     private readonly IBinaryLocationService _binaryLocationService;
+    private readonly string _vttCacheRoot;
+
+    // SR-WI-022: per-(source, track) gate so two sessions far-seeking the same title don't
+    // both demux a 40GB remux — the second waits, then hits the cache. Static because the
+    // service is scoped (one instance per request scope) but the cache is process-wide.
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> VttExtractionGates = new();
 
     public SubtitleService(
         ILogger<SubtitleService> logger,
         IProcessRunner processRunner,
-        IBinaryLocationService binaryLocationService)
+        IBinaryLocationService binaryLocationService,
+        IWebHostEnvironment env)
     {
         _logger = logger;
         _processRunner = processRunner;
         _binaryLocationService = binaryLocationService;
+
+        // Same cache-root convention as TrickplayService/ImageCacheService: the repo has no
+        // data/ dir — persistent caches live under wwwroot/cache/<area>.
+        var webRoot = !string.IsNullOrEmpty(env.WebRootPath)
+            ? env.WebRootPath
+            : Path.Combine(Environment.CurrentDirectory, "wwwroot");
+        _vttCacheRoot = Path.Combine(webRoot, "cache", "subtitles");
     }
 
     public async Task<bool> ExtractSubtitleToVttAsync(string inputPath, int subtitleStreamIndex, string outputPath)
     {
+        // Cache key: (source identity, track, source mtime). The extraction method has no
+        // mediaId in its contract, so source identity is a hash of the full input path —
+        // stable across sessions for the same library file. An mtime change (re-mux, upgrade)
+        // produces a new variant and evicts the stale one.
+        var sourceKey = BuildVttCacheKey(inputPath, subtitleStreamIndex);
+        var mtimeTicks = GetLastWriteTicks(inputPath);
+        var gate = VttExtractionGates.GetOrAdd(sourceKey, _ => new SemaphoreSlim(1, 1));
+
+        await gate.WaitAsync();
         try
         {
-            var ffmpegPath = _binaryLocationService.ResolveFFmpegPath();
-            
-            // FFmpeg command to extract subtitle track and convert to WebVTT
-            // -i input: input file
-            // -map 0:s:{index}: select specific subtitle stream
-            // -c:s webvtt: convert to WebVTT format
-            // -y: overwrite output file
-            var arguments = $"-i \"{inputPath}\" -map 0:s:{subtitleStreamIndex} -c:s webvtt -y \"{outputPath}\"";
-            
-            _logger.LogInformation("Extracting subtitle track {Index} to WebVTT: {Path}", subtitleStreamIndex, outputPath);
-            
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = ffmpegPath,
-                Arguments = arguments,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
+            Directory.CreateDirectory(_vttCacheRoot);
+            var cachePath = Path.Combine(_vttCacheRoot, $"{sourceKey}_{mtimeTicks}.vtt");
 
-            var output = await _processRunner.RunProcessAsync(startInfo);
-            
-            // Note: ProcessRunner returns output but doesn't easily expose ExitCode if we just use the interface.
-            // For simple extraction checks, file existence is key.
-            // But verify: ProcessRunner implementation captures stdout. FFmpeg logs to stderr.
-            // We might need to check if we trust existing ProcessRunner for this.
-            // The original code used Process directly to check ExitCode. 
-            // My Interface definition: Task<string> RunProcessAsync(ProcessStartInfo startInfo);
-            // It swallows ExitCode. 
-            // However, we verify file existence.
-            
-            if (!File.Exists(outputPath))
+            // Cache hit: hand the caller its OWN copy. The cached file stays UNSHIFTED —
+            // TranscodeService seek-shifts the session copy in place (OffsetWebVttTimestamps),
+            // so the cache must never be mutated or shared by reference.
+            if (File.Exists(cachePath) && new FileInfo(cachePath).Length > 0)
             {
-                _logger.LogWarning("Subtitle extraction did not create output file: {Path}", outputPath);
-                return false;
+                File.Copy(cachePath, outputPath, overwrite: true);
+                _logger.LogInformation("Subtitle VTT cache hit for track {Index} of {Input}: {Cache}",
+                    subtitleStreamIndex, inputPath, cachePath);
+                return true;
             }
 
-            var fileInfo = new FileInfo(outputPath);
-            // Basic check if file is empty
-            if (fileInfo.Length == 0)
+            // Extract into a temp file inside the cache dir (same volume → atomic move), then
+            // promote on verified success. The caller's outputPath is never written partially.
+            var tempPath = Path.Combine(_vttCacheRoot, $"{sourceKey}_{mtimeTicks}.{Guid.NewGuid():N}.tmp.vtt");
+            try
             {
-                 _logger.LogWarning("Subtitle extraction created empty file: {Path}", outputPath);
-                 return false;
-            }
+                var ffmpegPath = _binaryLocationService.ResolveFFmpegPath();
 
-            _logger.LogInformation("Subtitle extracted successfully: {Path} ({Size} bytes)", outputPath, fileInfo.Length);
-            
-            return true;
+                // -map 0:s:{index}: the chosen subtitle stream (subtitle-relative index)
+                // -c:s webvtt: convert to WebVTT for sidecar delivery
+                var arguments = $"-i \"{inputPath}\" -map 0:s:{subtitleStreamIndex} -c:s webvtt -y \"{tempPath}\"";
+
+                _logger.LogInformation("Extracting subtitle track {Index} to WebVTT: {Path}", subtitleStreamIndex, outputPath);
+
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = ffmpegPath,
+                    Arguments = arguments,
+                };
+
+                // SR-WI-022 — parity with the burn-in extractor (R-WI-012): exit-code-strict with
+                // the 10-minute hung-source backstop, NOT the 30s RunProcessAsync kill that
+                // truncated large-remux extractions and made subtitles vanish mid-movie.
+                var exitCode = await _processRunner.RunProcessForExitCodeAsync(startInfo, ExtractionTimeout);
+
+                // Exit code 0 AND a non-empty file — a timeout-killed or failed ffmpeg leaves a
+                // PARTIAL .vtt that looks plausible. Never trust the file alone, never keep the partial.
+                if (exitCode != 0 || !File.Exists(tempPath) || new FileInfo(tempPath).Length == 0)
+                {
+                    _logger.LogWarning(
+                        "Subtitle extraction failed (exit {Code}) for track {Index} of {Input}; deleting any partial output.",
+                        exitCode, subtitleStreamIndex, inputPath);
+                    TryDelete(tempPath);
+                    return false;
+                }
+
+                // Verified success: evict stale mtime variants for this (source, track), promote
+                // the fresh extraction into the cache, then copy to the caller's target.
+                DeleteStaleVttVariants(sourceKey, cachePath, tempPath);
+                File.Move(tempPath, cachePath, overwrite: true);
+                File.Copy(cachePath, outputPath, overwrite: true);
+
+                _logger.LogInformation("Subtitle extracted successfully: {Path} ({Size} bytes)",
+                    outputPath, new FileInfo(outputPath).Length);
+                return true;
+            }
+            catch
+            {
+                TryDelete(tempPath);
+                throw;
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error extracting subtitle track {Index} from {Path}", subtitleStreamIndex, inputPath);
             return false;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private static string BuildVttCacheKey(string inputPath, int subtitleStreamIndex)
+    {
+        string canonical;
+        try { canonical = Path.GetFullPath(inputPath); }
+        catch { canonical = inputPath; }
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(canonical.ToLowerInvariant()));
+        return $"{Convert.ToHexString(hash, 0, 8).ToLowerInvariant()}_s{subtitleStreamIndex}";
+    }
+
+    private static long GetLastWriteTicks(string inputPath)
+    {
+        // Missing/unreadable sources return the 1601 sentinel rather than throwing; the
+        // extraction itself will fail cleanly, so the key just needs to be deterministic.
+        try { return File.GetLastWriteTimeUtc(inputPath).Ticks; }
+        catch { return 0; }
+    }
+
+    private void DeleteStaleVttVariants(string sourceKey, string cachePath, string tempPath)
+    {
+        try
+        {
+            foreach (var candidate in Directory.EnumerateFiles(_vttCacheRoot, $"{sourceKey}_*.vtt"))
+            {
+                if (string.Equals(candidate, cachePath, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(candidate, tempPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                TryDelete(candidate);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not clean stale subtitle cache variants for {Key}", sourceKey);
         }
     }
 

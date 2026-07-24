@@ -17,6 +17,17 @@ public class TranscodeCapacityException : Exception
 }
 
 /// <summary>
+/// SR-WI-020/026: thrown when playlist/segment data is requested for a session whose
+/// ffmpeg crashed and exhausted its retries. The controller maps this to HTTP 409 +
+/// {"error":"transcode_failed"} so the client shows a real error instead of buffering
+/// forever against a corpse.
+/// </summary>
+public class TranscodeFailedException : Exception
+{
+    public TranscodeFailedException(string message) : base(message) { }
+}
+
+/// <summary>
 /// Manages video transcoding sessions with throttling support.
 /// Registered as Singleton to maintain process tracking across all HTTP requests.
 /// </summary>
@@ -37,6 +48,13 @@ public class TranscodeService : ITranscodeService
 
     // Support both .ts (MPEG-TS) and .m4s (fMP4) segment extensions
     private static readonly Regex SegmentPattern = new(@"^seg_(\d+)\.(ts|m4s)$", RegexOptions.Compiled);
+
+    // SR-WI-028 capacity reservation (closes the check-then-add race): slots reserved
+    // between the cap check and session registration, so parallel first-requests for
+    // different keys can't collectively exceed the caps.
+    private readonly object _capacityGate = new();
+    private int _pendingStarts;
+    private readonly ConcurrentDictionary<Guid, int> _pendingStartsPerUser = new();
 
     public TranscodeService(
         IServiceScopeFactory scopeFactory, 
@@ -135,6 +153,10 @@ public class TranscodeService : ITranscodeService
     /// </summary>
     public int GetLatestSegmentIndex(string sessionDir) => _hlsService.GetLatestSegmentIndex(sessionDir);
 
+    /// <summary>Parsed session-playlist facts (segment count, duration, ENDLIST) — used by
+    /// the throttle monitor to tell normal completion from a crash (SR-WI-020).</summary>
+    public HlsPlaylistInfo? GetPlaylistInfo(string sessionDir) => _hlsService.GetPlaylistInfo(sessionDir);
+
     /// <summary>
     /// Parse the HLS playlist to get actual cumulative duration up to segmentCount segments.
     /// </summary>
@@ -160,8 +182,21 @@ public class TranscodeService : ITranscodeService
         {
             session.ClientSegmentIndex = segmentIndex;
             session.LastClientRequestTime = DateTime.UtcNow;
-            session.CrashRetryCount = 0; // Reset on successful activity
+            // NOTE: CrashRetryCount deliberately NOT reset here (SR-WI-020) — resetting on
+            // mere client activity let a crash-looping source retry forever. The monitor
+            // resets it once transcoding progresses past the crash point.
             session.IsPaused = false;    // Client is actively requesting - wake from DORMANT if needed
+
+            // SR-WI-020: a dormant session's ffmpeg was killed on purpose; nothing used to
+            // restart it, so the client drained the buffer into an infinite stall. Kick a
+            // background revival (idempotent, takes the session lock) as soon as segments
+            // are being consumed again.
+            if (session.State == TranscodeState.Dormant
+                && (session.Process == null || session.Process.HasExited))
+            {
+                _ = Task.Run(() => TryReviveSessionAsync(key, countAsCrashRetry: false));
+            }
+
             _logger.LogDebug("Client position updated: {MediaId} -> segment {Index}", key.MediaId, segmentIndex);
         }
     }
@@ -183,6 +218,16 @@ public class TranscodeService : ITranscodeService
             
             session.IsPaused = isPaused;
             session.LastClientRequestTime = DateTime.UtcNow;
+
+            // SR-WI-020: unpausing a dormant session proactively restarts ffmpeg so the
+            // buffer refills BEFORE the client drains it (instead of stalling ~2 minutes
+            // after resume, which was the single most common playback failure).
+            if (!isPaused && session.State == TranscodeState.Dormant
+                && (session.Process == null || session.Process.HasExited))
+            {
+                _ = Task.Run(() => TryReviveSessionAsync(key, countAsCrashRetry: false));
+            }
+
             _logger.LogInformation("Session {MediaId} paused={IsPaused}", key.MediaId, isPaused);
             return true;
         }
@@ -221,6 +266,7 @@ public class TranscodeService : ITranscodeService
         // over-cap request throws TranscodeCapacityException, which the controller maps
         // to 429 + Retry-After. Only count sessions that are NOT this exact session key
         // (a re-request for an already-running stream must not be rejected as "new").
+        int maxConcurrent, maxPerUser;
         using (var scope = _scopeFactory.CreateScope())
         {
             var settingsService = scope.ServiceProvider.GetRequiredService<ISettingsService>();
@@ -232,32 +278,44 @@ public class TranscodeService : ITranscodeService
             // remove — ffmpeg is CPU-bound, so these are already extreme for home hardware.
             const int HardGlobalCeiling = 16;
             const int HardPerUserCeiling = 6;
-            var maxConcurrent = maxConcurrentCfg > 0 ? Math.Min(maxConcurrentCfg, HardGlobalCeiling) : HardGlobalCeiling;
-            var maxPerUser = maxPerUserCfg > 0 ? Math.Min(maxPerUserCfg, HardPerUserCeiling) : 3;
+            maxConcurrent = maxConcurrentCfg > 0 ? Math.Min(maxConcurrentCfg, HardGlobalCeiling) : HardGlobalCeiling;
+            maxPerUser = maxPerUserCfg > 0 ? Math.Min(maxPerUserCfg, HardPerUserCeiling) : 3;
+        }
 
-            var requestKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex, sid);
+        var sessionKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex, sid);
+
+        // SR-WI-028: check-then-add raced — parallel first requests for DIFFERENT keys could
+        // each pass the count and exceed the cap. Reserve a slot under a gate; the reservation
+        // is released once the session is registered (or the attempt fails/returns existing).
+        lock (_capacityGate)
+        {
             bool IsActiveOther(TranscodeSession s) =>
-                s.State != TranscodeState.Dormant && s.State != TranscodeState.Completed && !s.Key.Equals(requestKey);
+                s.State != TranscodeState.Dormant && s.State != TranscodeState.Completed
+                && s.State != TranscodeState.Failed && !s.Key.Equals(sessionKey);
 
             var active = _sessionManager.GetAllSessions().Where(IsActiveOther).ToList();
 
-            if (active.Count >= maxConcurrent)
+            if (active.Count + _pendingStarts >= maxConcurrent)
             {
                 _logger.LogWarning("Global max concurrent transcodes ({Max}) reached, rejecting {MediaId}", maxConcurrent, mediaId);
                 throw new TranscodeCapacityException(
                     $"Server transcode limit ({maxConcurrent}) reached. Try again shortly.");
             }
 
-            if (active.Count(s => s.UserId == userId) >= maxPerUser)
+            var userPending = _pendingStartsPerUser.GetValueOrDefault(userId);
+            if (active.Count(s => s.UserId == userId) + userPending >= maxPerUser)
             {
                 _logger.LogWarning("Per-user max concurrent transcodes ({Max}) reached for user {UserId}", maxPerUser, userId);
                 throw new TranscodeCapacityException(
                     $"Your transcode limit ({maxPerUser}) is reached. Stop another stream and try again.");
             }
+
+            _pendingStarts++;
+            _pendingStartsPerUser.AddOrUpdate(userId, 1, (_, v) => v + 1);
         }
-        
-        var sessionKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex, sid);
-        
+
+        try
+        {
         using (await _sessionManager.AcquireLockAsync(sessionKey))
         {
             // Check if session already exists
@@ -331,8 +389,52 @@ public class TranscodeService : ITranscodeService
                     }
                     else
                     {
+                        // SR-WI-020: an "already active and valid" session may be a corpse —
+                        // dormant park, ffmpeg crash, or a mislabeled completion. Returning it
+                        // unexamined replayed the same frozen playlist forever (the infinite
+                        // "Buffering..." after a pause). Check liveness before trusting it.
+                        bool needsFullRestart = false;
+                        if (existingSession.Process == null || existingSession.Process.HasExited)
+                        {
+                            var playlistInfo = _hlsService.GetPlaylistInfo(existingSession.SessionDirectory);
+                            if (playlistInfo is { HasEndList: true })
+                            {
+                                // Fully transcoded — the finished playlist serves from disk.
+                                existingSession.State = TranscodeState.Completed;
+                            }
+                            else
+                            {
+                                // A fresh master.m3u8 request is explicit client intent: reset
+                                // any exhausted crash budget and try to continue where the
+                                // playlist left off (append revival — no re-transcode of what
+                                // already exists).
+                                existingSession.CrashRetryCount = 0;
+                                if (existingSession.State == TranscodeState.Failed)
+                                    existingSession.State = TranscodeState.Transcoding;
+
+                                var revived = await ReviveSessionCoreAsync(existingSession, playlistInfo);
+                                if (revived)
+                                {
+                                    existingSession.IsPaused = false;
+                                }
+                                else
+                                {
+                                    _logger.LogWarning(
+                                        "Could not revive dead session for {MediaId}; falling back to full restart", mediaId);
+                                    await StopSessionInternalAsync(existingSession, sessionKey);
+                                    needsFullRestart = true;
+                                }
+                            }
+                        }
+
+                        if (needsFullRestart)
+                        {
+                            // fall through to fresh-session creation below
+                        }
+                        else
+                        {
                         _logger.LogDebug("Transcode session already active and valid for {MediaId}", mediaId);
-                        
+
                         // Check if subtitles were requested but not extracted (logic retained from original)
                         if (subtitleTrackIndex.HasValue && existingSession.SubtitleVttPath == null && !existingSession.IsBitmapSubtitle)
                         {
@@ -375,8 +477,9 @@ public class TranscodeService : ITranscodeService
                         {
                             return existingSession;
                         }
-                        
+
                         return existingSession;
+                        } // end !needsFullRestart
                     }
                 }
                 else
@@ -516,10 +619,34 @@ public class TranscodeService : ITranscodeService
             _logger.LogInformation("Session {MediaId} added to active sessions. SubtitleVttPath={Path}",
                 mediaId, session.SubtitleVttPath ?? "null");
             
-            // Wait for playlist to be created
-            await Task.Delay(3000);
-            
+            // SR-WI-028: wait for the playlist to appear instead of a fixed 3s sleep —
+            // fast starts (remux, hw encode) return in a few hundred ms, slow ones get
+            // up to 15s before we hand back a session whose playlist may 404 briefly.
+            var playlistPath = Path.Combine(sessionDir, "master.m3u8");
+            var pollDeadline = DateTime.UtcNow.AddSeconds(15);
+            while (DateTime.UtcNow < pollDeadline)
+            {
+                try
+                {
+                    if (File.Exists(playlistPath) && new FileInfo(playlistPath).Length > 0) break;
+                }
+                catch (IOException) { /* transient — keep polling */ }
+                if (process.HasExited) break; // startup failure — no point waiting out the clock
+                await Task.Delay(200);
+            }
+
             return session;
+        }
+        }
+        finally
+        {
+            // Release the SR-WI-028 capacity reservation. The registered session (if any)
+            // now counts as active on its own; a failed/early-returned attempt frees the slot.
+            lock (_capacityGate)
+            {
+                _pendingStarts--;
+                _pendingStartsPerUser.AddOrUpdate(userId, 0, (_, v) => Math.Max(0, v - 1));
+            }
         }
     }
 
@@ -594,9 +721,102 @@ public class TranscodeService : ITranscodeService
     }
 
     /// <summary>
+    /// SR-WI-020 — rebase the builder's HLS muxer options so a revived ffmpeg APPENDS to the
+    /// existing playlist from the next segment index instead of starting a new one. Relies on
+    /// the builder always emitting "-start_number 0"; returns null when the token is absent
+    /// (caller falls back to a full restart rather than corrupting the playlist).
+    /// </summary>
+    public static string? ApplyResumeArgs(string arguments, int startNumber)
+    {
+        const string freshToken = "-start_number 0 ";
+        var idx = arguments.IndexOf(freshToken, StringComparison.Ordinal);
+        if (idx < 0) return null;
+
+        arguments = arguments.Remove(idx, freshToken.Length)
+            .Insert(idx, $"-start_number {startNumber} ");
+
+        if (!arguments.Contains("append_list", StringComparison.Ordinal))
+        {
+            var flagsMatch = Regex.Match(arguments, @"-hls_flags (\S+)");
+            arguments = flagsMatch.Success
+                ? arguments.Replace(flagsMatch.Value, $"-hls_flags {flagsMatch.Groups[1].Value}+append_list")
+                : arguments.Insert(idx, "-hls_flags append_list ");
+        }
+
+        return arguments;
+    }
+
+    /// <summary>
+    /// SR-WI-020 — restart ffmpeg for a session whose process died (dormant park after a
+    /// pause, a crash, or host restart races), appending to the existing playlist from the
+    /// last completed segment so nothing already transcoded is redone. Caller MUST hold the
+    /// per-key session lock. Returns false when revival isn't possible (missing dir/playlist
+    /// or unpatchable args) — callers fall back to a full restart or mark the session Failed.
+    /// </summary>
+    private async Task<bool> ReviveSessionCoreAsync(TranscodeSession session, HlsPlaylistInfo? playlistInfo)
+    {
+        if (!Directory.Exists(session.SessionDirectory)) return false;
+        playlistInfo ??= _hlsService.GetPlaylistInfo(session.SessionDirectory);
+        if (playlistInfo == null) return false;
+
+        var resumeSeek = (session.SeekPosition ?? 0) + playlistInfo.TotalDurationSeconds;
+        var process = await StartFFmpegProcessAsync(session, resumeSeek, resumeStartNumber: playlistInfo.SegmentCount);
+        if (process == null) return false;
+
+        session.Process = process;
+        session.State = TranscodeState.Transcoding;
+        session.IsSuspended = false;
+        _logger.LogInformation(
+            "Revived session {MediaId}: appending from segment {Seg} (t={Seek:F1}s, {Count} segments already on disk)",
+            session.Key.MediaId, playlistInfo.SegmentCount, resumeSeek, playlistInfo.SegmentCount);
+        return true;
+    }
+
+    /// <summary>
+    /// SR-WI-020 — public revival entry for the throttle monitor (crash retry) and the
+    /// resume/segment paths (dormant wake). Takes the per-key lock; idempotent when the
+    /// process is already alive.
+    /// </summary>
+    public async Task<bool> TryReviveSessionAsync(TranscodeSessionKey key, bool countAsCrashRetry)
+    {
+        using (await _sessionManager.AcquireLockAsync(key))
+        {
+            var session = _sessionManager.GetSession(key);
+            if (session == null) return false;
+            if (session.Process is { HasExited: false }) return true; // already alive
+            if (session.State == TranscodeState.Failed) return false; // client must re-request explicitly
+
+            var playlistInfo = _hlsService.GetPlaylistInfo(session.SessionDirectory);
+            if (playlistInfo is { HasEndList: true })
+            {
+                session.State = TranscodeState.Completed; // fully transcoded — serves from disk
+                return true;
+            }
+
+            if (countAsCrashRetry)
+            {
+                session.LastCrashSegmentIndex = session.LatestSegmentIndex;
+                session.CrashRetryCount++;
+                if (session.CrashRetryCount > MaxCrashRetries)
+                {
+                    session.State = TranscodeState.Failed;
+                    _logger.LogError(
+                        "Session {MediaId} FAILED: ffmpeg crashed {Count} times without progress; giving up until the client re-requests",
+                        session.Key.MediaId, session.CrashRetryCount - 1);
+                    return false;
+                }
+            }
+
+            var revived = await ReviveSessionCoreAsync(session, playlistInfo);
+            if (revived) session.IsPaused = false;
+            return revived;
+        }
+    }
+
+    /// <summary>
     /// Start FFmpeg process with current session settings
     /// </summary>
-    private async Task<Process?> StartFFmpegProcessAsync(TranscodeSession session, double? seekPosition)
+    private async Task<Process?> StartFFmpegProcessAsync(TranscodeSession session, double? seekPosition, int? resumeStartNumber = null)
     {
         using var scope = _scopeFactory.CreateScope();
         var ffmpegService = scope.ServiceProvider.GetRequiredService<IFFmpegService>();
@@ -643,7 +863,21 @@ public class TranscodeService : ITranscodeService
                 session.AudioChannels);
         }
 
-        _logger.LogInformation("Starting FFmpeg for {MediaId} (seek={Seek}): {Args}", 
+        // SR-WI-020: a revival must append to the existing playlist, not restart it.
+        if (resumeStartNumber.HasValue)
+        {
+            var patched = ApplyResumeArgs(startInfo.Arguments, resumeStartNumber.Value);
+            if (patched == null)
+            {
+                _logger.LogWarning(
+                    "Cannot patch resume args for {MediaId} (builder output changed?); revival unavailable",
+                    session.Key.MediaId);
+                return null;
+            }
+            startInfo.Arguments = patched;
+        }
+
+        _logger.LogInformation("Starting FFmpeg for {MediaId} (seek={Seek}): {Args}",
             session.Key.MediaId, seekPosition, startInfo.Arguments);
 
         var process = new Process { StartInfo = startInfo };
@@ -671,11 +905,23 @@ public class TranscodeService : ITranscodeService
     public Stream? GetPlaylist(Guid mediaId, Guid userId, int? subtitleTrackIndex = null, string? sid = null)
     {
         var session = GetSession(mediaId, userId, subtitleTrackIndex, sid);
+        ThrowIfFailed(session);
         if (session != null && Directory.Exists(session.SessionDirectory))
         {
             return _hlsService.GetPlaylistStream(session.SessionDirectory);
         }
         return null;
+    }
+
+    /// <summary>SR-WI-026: a Failed session must surface as a hard error (409), not as the
+    /// 404s/stale-playlist limbo the client would retry forever.</summary>
+    private static void ThrowIfFailed(TranscodeSession? session)
+    {
+        if (session?.State == TranscodeState.Failed)
+        {
+            throw new TranscodeFailedException(
+                "Transcoding failed on the server for this stream (ffmpeg exited repeatedly).");
+        }
     }
 
     /// <summary>
@@ -684,6 +930,7 @@ public class TranscodeService : ITranscodeService
     public Stream? GetSegment(Guid mediaId, Guid userId, string segmentName, int? subtitleTrackIndex = null, string? sid = null)
     {
         var session = GetSession(mediaId, userId, subtitleTrackIndex, sid);
+        ThrowIfFailed(session);
         if (session != null && Directory.Exists(session.SessionDirectory))
         {
             return _hlsService.GetSegmentStream(session.SessionDirectory, segmentName);
@@ -697,6 +944,7 @@ public class TranscodeService : ITranscodeService
     public Stream? GetInitSegment(Guid mediaId, Guid userId, int? subtitleTrackIndex = null, string? sid = null)
     {
         var session = GetSession(mediaId, userId, subtitleTrackIndex, sid);
+        ThrowIfFailed(session);
         if (session != null && Directory.Exists(session.SessionDirectory))
         {
             return _hlsService.GetInitSegmentStream(session.SessionDirectory);
@@ -723,10 +971,17 @@ public class TranscodeService : ITranscodeService
     public void StopTranscode(Guid mediaId, Guid userId, int? subtitleTrackIndex = null, bool deleteFiles = true, string? sid = null)
     {
         var sessionKey = new TranscodeSessionKey(mediaId, userId, subtitleTrackIndex, sid);
-        
-        if (_sessionManager.TryRemoveSession(sessionKey, out var session))
+
+        // SR-WI-025: serialize against StartTranscodeAsync's restart path — an unserialized
+        // DELETE racing a far-seek restart could remove and kill the brand-new successor
+        // session under the same key. Sync-over-async is acceptable here: the per-key
+        // SemaphoreSlim has no thread affinity (no deadlock) and contention is rare.
+        using (_sessionManager.AcquireLockAsync(sessionKey).GetAwaiter().GetResult())
         {
-            StopSession(session!, deleteFiles);
+            if (_sessionManager.TryRemoveSession(sessionKey, out var session))
+            {
+                StopSession(session!, deleteFiles);
+            }
         }
     }
 
@@ -755,6 +1010,9 @@ public class TranscodeService : ITranscodeService
     /// </summary>
     public void EnterDormantState(TranscodeSessionKey key)
     {
+        // SR-WI-025: hold the per-key lock so parking can't kill a process that a
+        // concurrent restart/revival just created (see StopTranscode note).
+        using var _ = _sessionManager.AcquireLockAsync(key).GetAwaiter().GetResult();
         var session = _sessionManager.GetSession(key);
         if (session != null)
         {
@@ -783,11 +1041,42 @@ public class TranscodeService : ITranscodeService
     /// </summary>
     public void DeleteDormantSession(TranscodeSessionKey key)
     {
+        // SR-WI-025: same serialization as StopTranscode.
+        using var _ = _sessionManager.AcquireLockAsync(key).GetAwaiter().GetResult();
         if (_sessionManager.TryRemoveSession(key, out var session))
         {
             StopSession(session!, deleteFiles: true);
             _logger.LogInformation("Dormant session {MediaId} deleted", key.MediaId);
         }
+    }
+
+    /// <summary>
+    /// SR-WI-021 — kill every live ffmpeg on host shutdown. Without this, child processes
+    /// survived server restarts, kept burning CPU/disk, and their open handles made the
+    /// startup temp-purge fail silently. Segments are retained (retention cleans them);
+    /// only the processes die. Called by TranscodeShutdownService.StopAsync.
+    /// </summary>
+    public void KillAllSessionProcesses()
+    {
+        foreach (var session in _sessionManager.GetAllSessions().ToList())
+        {
+            try
+            {
+                if (session.Process is { HasExited: false })
+                {
+                    session.Process.Kill(entireProcessTree: true);
+                    session.Process.WaitForExit(2000);
+                }
+                session.Process?.Dispose();
+                session.Process = null;
+                session.State = TranscodeState.Dormant;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to kill ffmpeg for session {MediaId} during shutdown", session.Key.MediaId);
+            }
+        }
+        _logger.LogInformation("Transcode shutdown sweep complete — no ffmpeg processes left behind");
     }
 
     /// <summary>

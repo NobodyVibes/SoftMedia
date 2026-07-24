@@ -236,6 +236,17 @@ public class TranscodeController : ControllerBase
                 bitrate = storedPlan.MaxBitrate;
             }
 
+            // SR-WI-028: the plan path floors every client bitrate at 1000 kbps (SanitizeCapabilities'
+            // Math.Clamp) — the null-plan path must too, or a fabricated/expired sid with ?bitrate=1
+            // reaches ffmpeg as "-maxrate 1k" (unwatchable output that still burns a transcode slot).
+            // Applied BEFORE the per-user cap so an admin policy below 1000 still wins, exactly as
+            // on the plan path (user cap is applied after sanitization there).
+            if (storedPlan == null && bitrate is > 0 and < 1000)
+            {
+                _logger.LogWarning("Raising fabricated-sid bitrate {Requested} kbps to the 1000 kbps floor for {MediaId}", bitrate, id);
+                bitrate = 1000;
+            }
+
             // Enforce the per-user bitrate cap on EVERY transcode request, independent of whether
             // a plan was persisted. A client can reach master.m3u8 with a never-negotiated sid and
             // a high ?bitrate=, which would otherwise flow to ffmpeg unclamped — the residual D-4
@@ -275,6 +286,24 @@ public class TranscodeController : ControllerBase
                         "Overriding fabricated-sid codec {Requested} with server setting {Setting} for {MediaId}",
                         codec, codecSetting, id);
                     codec = codecSetting;
+                }
+                // SR-WI-028: with OutputVideoCodec=auto the codec param previously flowed to
+                // ffmpeg unvalidated — a client could force an expensive hevc/av1 encode (or feed
+                // garbage) via a fabricated sid. Restrict to the supported encode set the plan
+                // path negotiates: h264/hevc always, av1 only when the admin enabled it.
+                else if (!string.IsNullOrEmpty(codec)
+                         && !string.Equals(codec, "auto", StringComparison.OrdinalIgnoreCase))
+                {
+                    var codecLower = codec.ToLowerInvariant();
+                    var av1Enabled = await _settingsService.GetSettingAsync("EnableAV1Encoding", false);
+                    var codecAllowed = codecLower is "h264" or "hevc" || (codecLower == "av1" && av1Enabled);
+                    if (!codecAllowed)
+                    {
+                        _logger.LogWarning(
+                            "Rejecting fabricated-sid codec {Requested} for {MediaId}; falling back to h264",
+                            codec, id);
+                        codec = "h264";
+                    }
                 }
             }
 
@@ -443,9 +472,12 @@ public class TranscodeController : ControllerBase
     {
         try
         {
+            // SR-WI-024: sid must reach the debug service — sessions are keyed with it, so
+            // dropping it here made every sid-keyed lookup miss ("likely direct play").
+            if (!TranscodeSid.IsValid(sid)) return BadRequest("Invalid session id.");
             var userId = GetUserId();
             var isAdmin = User.IsInRole("Admin");
-            var result = await _debugService.GetDebugInfoAsync(id, userId, clientCaps, sub, isAdmin);
+            var result = await _debugService.GetDebugInfoAsync(id, userId, clientCaps, sub, isAdmin, sid);
             return Ok(result);
         }
         catch (Exception ex)

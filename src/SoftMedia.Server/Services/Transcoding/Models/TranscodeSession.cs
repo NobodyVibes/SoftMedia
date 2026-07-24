@@ -20,7 +20,11 @@ public enum TranscodeState
     /// <summary>User paused playback, FFmpeg stopped, segments retained</summary>
     Dormant,
     /// <summary>Session ended, cleanup complete</summary>
-    Completed
+    Completed,
+    /// <summary>SR-WI-020: FFmpeg exited abnormally and crash retries are exhausted.
+    /// Playlist/segment requests return 409 so the client can show a real error
+    /// instead of buffering forever.</summary>
+    Failed
 }
 
 /// <summary>
@@ -41,6 +45,13 @@ public class TranscodeSession
     public DateTime SessionStartTime { get; init; } = DateTime.UtcNow;
     public bool IsPaused { get; set; } = false;
     public int CrashRetryCount { get; set; } = 0;
+
+    /// <summary>
+    /// SR-WI-020: segment index at the moment of the last crash. The retry budget resets
+    /// only once transcoding progresses meaningfully PAST this point — resetting on mere
+    /// client activity (the old behavior) let a crash-looping source retry forever.
+    /// </summary>
+    public int LastCrashSegmentIndex { get; set; } = -1;
     public string SessionDirectory { get; init; } = string.Empty;
     
     /// <summary>

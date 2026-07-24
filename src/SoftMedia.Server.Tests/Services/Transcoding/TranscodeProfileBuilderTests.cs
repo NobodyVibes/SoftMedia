@@ -474,6 +474,242 @@ public class TranscodeProfileBuilderTests : IDisposable
         Assert.Contains("-c:a aac -ac 2", psi.Arguments);
     }
 
+    // ---- SR-WI-023: HDR tone mapping (nvidia CUDA / non-nvidia software) + color metadata ----
+
+    /// <summary>The exact software HDR→SDR chain (with the default hable operator).</summary>
+    private const string SoftwareToneMapChain =
+        "zscale=t=linear:npl=100,tonemap=hable,zscale=p=bt709:t=bt709:m=bt709:r=tv,format=yuv420p";
+
+    private const string Bt709Tags = "-color_primaries bt709 -color_trc bt709 -colorspace bt709";
+
+    [Theory]
+    [InlineData("none", "smpte2084")]     // HDR10 (PQ)
+    [InlineData("intel", "smpte2084")]
+    [InlineData("amd", "smpte2084")]
+    [InlineData("none", "arib-std-b67")]  // HLG
+    [InlineData("intel", "arib-std-b67")]
+    [InlineData("amd", "arib-std-b67")]
+    public async Task Hdr_source_on_non_nvidia_engages_the_software_tonemap_chain_with_bt709_tags(string hw, string transfer)
+    {
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: transfer);
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = hw, MaxResolution = "original" });
+
+        Assert.Contains($"-vf \"{SoftwareToneMapChain}\"", args);
+        Assert.Contains(Bt709Tags, args);
+        Assert.DoesNotContain("tonemap_cuda", args);   // CUDA chain is nvidia-only
+        Assert.DoesNotContain("bt2020", args);         // output is SDR, never tagged HDR
+    }
+
+    [Theory]
+    [InlineData("smpte2084")]
+    [InlineData("arib-std-b67")]
+    public async Task Hdr_source_on_nvidia_keeps_the_cuda_tonemap_chain_with_bt709_tags(string transfer)
+    {
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: transfer);
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = "nvidia", MaxResolution = "original" });
+
+        Assert.Contains("tonemap_cuda", args);
+        Assert.DoesNotContain("zscale", args); // software chain must not double up on CUDA frames
+        Assert.Contains(Bt709Tags, args);
+    }
+
+    [Theory]
+    [InlineData("nvidia")]
+    [InlineData("intel")]
+    [InlineData("amd")]
+    [InlineData("none")]
+    public async Task Sdr_source_never_tone_maps_but_is_still_tagged_bt709(string hw)
+    {
+        SetupSource(); // yuv420p, no HDR transfer
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = hw, MaxResolution = "original" });
+
+        Assert.DoesNotContain("tonemap", args);
+        Assert.DoesNotContain("zscale", args);
+        Assert.Contains(Bt709Tags, args); // SR-WI-023 #4: color metadata on ALL encode outputs
+    }
+
+    [Theory]
+    [InlineData("intel", "-hwaccel qsv", "h264_qsv")]
+    [InlineData("amd", "-hwaccel d3d11va", "h264_amf")]
+    public async Task Hdr_on_intel_amd_forces_software_decode_but_keeps_the_hardware_encoder(string hw, string hwDecodeFlag, string encoder)
+    {
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = hw, MaxResolution = "original" });
+
+        // zscale/tonemap cannot consume QSV/D3D11VA hardware frames: decode goes software…
+        Assert.DoesNotContain(hwDecodeFlag, args);
+        // …while the hardware encoder stays (it accepts system-memory frames).
+        Assert.Contains($"-c:v {encoder}", args);
+        Assert.Contains($"-vf \"{SoftwareToneMapChain}\"", args);
+    }
+
+    [Theory]
+    [InlineData("intel", "-hwaccel qsv")]
+    [InlineData("amd", "-hwaccel d3d11va")]
+    public async Task Sdr_on_intel_amd_keeps_hardware_decode(string hw, string hwDecodeFlag)
+    {
+        SetupSource();
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = hw, MaxResolution = "original" });
+
+        Assert.Contains(hwDecodeFlag, args);
+    }
+
+    [Theory]
+    [InlineData("reinhard", "tonemap=reinhard")]
+    [InlineData("mobius", "tonemap=mobius")]
+    [InlineData("not-a-real-operator", "tonemap=hable")] // unknown falls back to hable
+    public async Task Software_chain_uses_the_configured_tonemap_operator(string setting, string expected)
+    {
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+
+        var args = await ArgsAsync(new TranscodeSettings
+        {
+            HardwareAcceleration = "none",
+            MaxResolution = "original",
+            ToneMappingAlgorithm = setting,
+        });
+
+        Assert.Contains(expected, args);
+    }
+
+    [Fact]
+    public async Task Software_tonemap_composes_after_the_downscale_like_the_cuda_chain()
+    {
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = "none", MaxResolution = "720p" });
+
+        // Scale FIRST (fewer pixels through the expensive zscale linearisation), tonemap second —
+        // mirroring scale_cuda → tonemap_cuda.
+        Assert.Contains($"scale='min(1280,iw)':-2:flags=lanczos,{SoftwareToneMapChain}", args);
+    }
+
+    [Fact]
+    public async Task Interlaced_hdr_source_deinterlaces_at_the_head_of_the_software_chain()
+    {
+        SetupSource(fieldOrder: "tt", pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = "none", MaxResolution = "original" });
+
+        Assert.Contains($"bwdif=mode=send_frame,{SoftwareToneMapChain}", args);
+    }
+
+    [Fact]
+    public async Task Hdr_text_subtitles_burn_after_the_software_tonemap()
+    {
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+        _probe.Setup(p => p.ProbeSubtitleCodecAsync(It.IsAny<string>(), It.IsAny<int>())).ReturnsAsync("subrip");
+
+        var args = await ArgsAsync(
+            new TranscodeSettings { HardwareAcceleration = "none", MaxResolution = "original" },
+            subtitleTrackIndex: 2);
+
+        // bt709 subtitle colors must land on already-tone-mapped bt709 frames.
+        Assert.Contains($"{SoftwareToneMapChain},subtitles=", args);
+    }
+
+    [Fact]
+    public async Task Hdr_bitmap_subtitles_overlay_on_the_tone_mapped_video()
+    {
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+        _probe.Setup(p => p.ProbeSubtitleCodecAsync(It.IsAny<string>(), It.IsAny<int>())).ReturnsAsync("hdmv_pgs_subtitle");
+
+        var args = await ArgsAsync(
+            new TranscodeSettings { HardwareAcceleration = "none", MaxResolution = "original" },
+            subtitleTrackIndex: 2);
+
+        Assert.Contains($"[0:v]{SoftwareToneMapChain}[tm];", args);
+        Assert.Contains("[tm]scale2ref", args);
+    }
+
+    // ---- SR-WI-023 #4/#5: PreserveHDR passthrough signaling and the h264 override ----
+
+    [Theory]
+    [InlineData("smpte2084", "-color_primaries bt2020 -color_trc smpte2084 -colorspace bt2020nc")]     // HDR10
+    [InlineData("arib-std-b67", "-color_primaries bt2020 -color_trc arib-std-b67 -colorspace bt2020nc")] // HLG
+    public async Task Preserved_hdr_into_hevc_passes_through_with_source_color_signaling(string transfer, string expectedTags)
+    {
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: transfer);
+
+        var args = await ArgsAsync(new TranscodeSettings
+        {
+            HardwareAcceleration = "none",
+            MaxResolution = "original",
+            OutputVideoCodec = "hevc",
+            PreserveHDR = true,
+        });
+
+        Assert.DoesNotContain("tonemap", args); // passthrough: no tone mapping
+        Assert.DoesNotContain("zscale", args);
+        Assert.Contains(expectedTags, args);    // the fMP4 path no longer ships unsignaled HDR
+        Assert.Contains("-hls_segment_type fmp4", args);
+    }
+
+    [Theory]
+    [InlineData("h264")]
+    [InlineData("auto")] // auto resolves to h264
+    public async Task Preserve_hdr_with_h264_output_is_overridden_to_tone_mapping(string codecSetting)
+    {
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+
+        var args = await ArgsAsync(new TranscodeSettings
+        {
+            HardwareAcceleration = "none",
+            MaxResolution = "original",
+            OutputVideoCodec = codecSetting,
+            PreserveHDR = true,
+        });
+
+        // h264 is 8-bit here: "preserving" PQ would squash it into gray. Tone-map instead.
+        Assert.Contains(SoftwareToneMapChain, args);
+        Assert.Contains(Bt709Tags, args);
+        Assert.DoesNotContain("bt2020", args);
+    }
+
+    [Fact]
+    public async Task Preserve_hdr_with_h264_output_on_nvidia_is_overridden_to_cuda_tone_mapping()
+    {
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+
+        var args = await ArgsAsync(new TranscodeSettings
+        {
+            HardwareAcceleration = "nvidia",
+            MaxResolution = "original",
+            OutputVideoCodec = "h264",
+            PreserveHDR = true,
+        });
+
+        Assert.Contains("tonemap_cuda", args);
+        Assert.Contains(Bt709Tags, args);
+        Assert.DoesNotContain("bt2020", args);
+    }
+
+    [Fact]
+    public async Task Preserve_hdr_with_subtitles_still_tone_maps_on_the_software_path()
+    {
+        // The nvidia path always forced tone mapping for burn-in; the software chain must too.
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+        _probe.Setup(p => p.ProbeSubtitleCodecAsync(It.IsAny<string>(), It.IsAny<int>())).ReturnsAsync("subrip");
+
+        var args = await ArgsAsync(
+            new TranscodeSettings
+            {
+                HardwareAcceleration = "none",
+                MaxResolution = "original",
+                OutputVideoCodec = "hevc",
+                PreserveHDR = true,
+            },
+            subtitleTrackIndex: 2);
+
+        Assert.Contains($"{SoftwareToneMapChain},subtitles=", args);
+        Assert.Contains(Bt709Tags, args);
+    }
+
     [Fact]
     public async Task Selected_track_channels_resolve_by_ABSOLUTE_stream_index_not_the_primary_track()
     {

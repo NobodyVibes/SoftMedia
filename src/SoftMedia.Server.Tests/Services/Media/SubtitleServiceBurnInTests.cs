@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using SoftMedia.Server.Services.Abstractions;
@@ -35,7 +36,9 @@ public class SubtitleServiceBurnInTests : IDisposable
         var binaries = new Mock<IBinaryLocationService>();
         binaries.Setup(b => b.ResolveFFmpegPath()).Returns("ffmpeg");
         binaries.Setup(b => b.ResolveFFprobePath()).Returns("ffprobe");
-        return new SubtitleService(NullLogger<SubtitleService>.Instance, _runner.Object, binaries.Object);
+        var env = new Mock<IWebHostEnvironment>();
+        env.SetupGet(e => e.WebRootPath).Returns(_dir);
+        return new SubtitleService(NullLogger<SubtitleService>.Instance, _runner.Object, binaries.Object, env.Object);
     }
 
     private void SetupExtraction(int exitCode, bool writesFile, string content = "[Script Info]\nTitle: x")

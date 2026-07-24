@@ -35,6 +35,13 @@ public class TrickplayService : ITrickplayService
     private const int Rows = 10;
     private const int TilesPerSheet = Columns * Rows;
 
+    /// SR-WI-028: ceiling on a single FFmpeg generation run — a stuck/unreadable
+    /// source must not hang generation forever. Generous because sampling a long
+    /// 4K source end-to-end is legitimately slow. Settable so tests can exercise
+    /// the timeout path without waiting 30 minutes (project convention; no
+    /// InternalsVisibleTo).
+    public TimeSpan GenerationTimeout { get; set; } = TimeSpan.FromMinutes(30);
+
     private readonly IBinaryLocationService _binaryLocation;
     private readonly ISettingsService _settings;
     private readonly ILogger<TrickplayService> _logger;
@@ -79,6 +86,24 @@ public class TrickplayService : ITrickplayService
         return File.Exists(candidate) ? candidate : null;
     }
 
+    /// SR-WI-028: manifest sheet order must be NUMERIC on the index in "sheet-N.jpg" —
+    /// the old ordinal string sort put "sheet-10.jpg" before "sheet-2.jpg", scrambling
+    /// scrub previews for anything long enough for ≥11 sheets (~2h47m at the default
+    /// cadence). On-disk names are untouched (installed servers already have
+    /// sheet-N.jpg files); only the listing order is fixed. The client
+    /// (useTrickplay.ts) indexes the `sheets` array positionally, so a correctly
+    /// ordered list is sufficient. Unparseable names sort last, tie-broken ordinal.
+    /// Public so tests can drive it directly (project convention; no InternalsVisibleTo).
+    public static List<string> SortSheets(IEnumerable<string> fileNames) =>
+        fileNames.OrderBy(SheetIndex).ThenBy(f => f, StringComparer.Ordinal).ToList();
+
+    private static int SheetIndex(string fileName)
+    {
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        var dash = stem.LastIndexOf('-');
+        return dash >= 0 && int.TryParse(stem.AsSpan(dash + 1), out var n) ? n : int.MaxValue;
+    }
+
     public async Task<bool> GenerateAsync(Guid itemId, string sourcePath, CancellationToken ct)
     {
         if (HasTrickplay(itemId)) return true;
@@ -118,7 +143,33 @@ public class TrickplayService : ITrickplayService
             using var proc = Process.Start(psi);
             if (proc == null) { _logger.LogError("Trickplay: failed to start FFmpeg"); return false; }
             var stderrTask = proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync(ct);
+
+            // SR-WI-028: WaitForExitAsync throws on cancellation WITHOUT killing the
+            // child (and Dispose doesn't either), which leaked a full-speed FFmpeg;
+            // a stuck source also had no ceiling at all. Kill the whole process tree
+            // on cancellation or timeout.
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(GenerationTimeout);
+            try
+            {
+                await proc.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // Timeout (not caller cancellation): log and fail this item instead of
+                // surfacing a cancellation the caller never requested.
+                _logger.LogWarning("Trickplay FFmpeg timed out after {Timeout} for {ItemId}; killing process tree",
+                    GenerationTimeout, itemId);
+                return false;
+            }
+            finally
+            {
+                if (!proc.HasExited)
+                {
+                    try { proc.Kill(entireProcessTree: true); } catch { /* exited between check and kill */ }
+                }
+            }
+
             if (proc.ExitCode != 0)
             {
                 _logger.LogWarning("Trickplay FFmpeg exit {Code} for {ItemId}: {Err}",
@@ -126,11 +177,10 @@ public class TrickplayService : ITrickplayService
                 return false;
             }
 
-            var sheets = Directory.GetFiles(tmpDir, "sheet-*.jpg")
+            var sheets = SortSheets(Directory.GetFiles(tmpDir, "sheet-*.jpg")
                 .Select(Path.GetFileName)
                 .Where(f => f != null)
-                .OrderBy(f => f, StringComparer.Ordinal)
-                .ToList();
+                .Select(f => f!));
             if (sheets.Count == 0)
             {
                 _logger.LogWarning("Trickplay produced no sheets for {ItemId}", itemId);

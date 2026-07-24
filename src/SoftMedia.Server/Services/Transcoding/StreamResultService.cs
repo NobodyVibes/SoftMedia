@@ -20,9 +20,24 @@ public class StreamResultService : IStreamResultService
         _logger = logger;
     }
 
+    /// <summary>
+    /// SR-WI-026: a Failed session (ffmpeg crashed, retries exhausted) surfaces as
+    /// 409 + {"error":"transcode_failed"} — the contract the client's player maps to a
+    /// terminal "Transcoding failed on the server" state instead of retrying forever.
+    /// </summary>
+    private static readonly object TranscodeFailedBody = new { error = "transcode_failed" };
+
     public async Task<IActionResult> GenerateMasterPlaylistResultAsync(Guid mediaId, Guid userId, int? sub, string? token, string? sid = null)
     {
-        var stream = _transcodeService.GetPlaylist(mediaId, userId, sub, sid);
+        Stream? stream;
+        try
+        {
+            stream = _transcodeService.GetPlaylist(mediaId, userId, sub, sid);
+        }
+        catch (TranscodeFailedException)
+        {
+            return new ConflictObjectResult(TranscodeFailedBody);
+        }
         if (stream == null)
         {
             _logger.LogWarning("Playlist not ready for {Id} - transcoding may still be starting", mediaId);
@@ -48,7 +63,15 @@ public class StreamResultService : IStreamResultService
 
     public IActionResult GetSegmentResult(Guid mediaId, Guid userId, int? sub, string segment, string? sid = null)
     {
-        var stream = _transcodeService.GetSegment(mediaId, userId, segment, sub, sid);
+        Stream? stream;
+        try
+        {
+            stream = _transcodeService.GetSegment(mediaId, userId, segment, sub, sid);
+        }
+        catch (TranscodeFailedException)
+        {
+            return new ConflictObjectResult(TranscodeFailedBody);
+        }
         if (stream == null) return new NotFoundResult();
 
         // Return correct MIME type based on segment extension
@@ -61,8 +84,16 @@ public class StreamResultService : IStreamResultService
 
     public IActionResult GetInitSegmentResult(Guid mediaId, Guid userId, int? sub, string? sid = null)
     {
-        var stream = _transcodeService.GetInitSegment(mediaId, userId, sub, sid);
-        if (stream == null) 
+        Stream? stream;
+        try
+        {
+            stream = _transcodeService.GetInitSegment(mediaId, userId, sub, sid);
+        }
+        catch (TranscodeFailedException)
+        {
+            return new ConflictObjectResult(TranscodeFailedBody);
+        }
+        if (stream == null)
         {
             _logger.LogWarning("Init segment not found for {Id}", mediaId);
             return new NotFoundObjectResult("Initialization segment not available");

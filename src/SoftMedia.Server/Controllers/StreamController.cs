@@ -113,21 +113,52 @@ public class StreamController : ControllerBase
             // gate closes the "hit /stream directly, ignore the plan" bypass.
             // Music is exempt: the cap is a video-streaming control, and audio
             // bitrates would otherwise make small caps silently kill all music.
-            if (streamInfo.Type is Models.MediaType.Movie or Models.MediaType.Episode
-                && streamInfo.Bitrate is > 0
-                && Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var capUserId))
+            // SR-WI-028: the gate now covers EVERY video item served here (not just
+            // Movie/Episode — e.g. video clips in photo libraries), and unprobed
+            // rows no longer bypass it: when Bitrate was never probed we estimate
+            // from container size and duration instead.
+            var isVideo = streamInfo.Type is Models.MediaType.Movie or Models.MediaType.Episode
+                || streamInfo.ContentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase);
+            if (isVideo && Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var capUserId))
             {
                 var capKbps = await _context.Users
                     .Where(u => u.Id == capUserId)
                     .Select(u => u.MaxStreamBitrateKbps)
                     .FirstOrDefaultAsync();
-                if (capKbps is > 0 && streamInfo.Bitrate.Value / 1000 > capKbps.Value)
+                if (capKbps is > 0)
                 {
-                    _logger.LogWarning(
-                        "Direct play refused for {MediaId}: source {SourceKbps} kbps exceeds user cap {CapKbps} kbps",
-                        id, streamInfo.Bitrate.Value / 1000, capKbps.Value);
-                    return StatusCode(StatusCodes.Status403Forbidden,
-                        new { error = "This item exceeds your streaming bitrate limit — use the transcoded stream." });
+                    var effectiveBps = streamInfo.Bitrate is > 0 ? streamInfo.Bitrate.Value : 0L;
+                    if (effectiveBps <= 0)
+                    {
+                        // Unprobed/legacy row: estimate the average bitrate as
+                        // Size*8 bits over Duration seconds. That's the container
+                        // average (video + audio + mux overhead), slightly above the
+                        // video-only rate — which errs on the strict side for a cap.
+                        // When neither is known, keep the historical allow-through
+                        // rather than blocking playback on missing metadata.
+                        var dims = await _context.MediaItems
+                            .Where(m => m.Id == id)
+                            .Select(m => new { m.Size, m.Duration })
+                            .FirstOrDefaultAsync();
+                        if (dims is { Size: > 0, Duration: > 0 })
+                        {
+                            effectiveBps = (long)(dims.Size * 8.0 / dims.Duration);
+                        }
+                        else
+                        {
+                            _logger.LogDebug(
+                                "Bitrate cap not enforceable for {MediaId}: no probed bitrate and no size/duration to estimate from",
+                                id);
+                        }
+                    }
+                    if (effectiveBps / 1000 > capKbps.Value)
+                    {
+                        _logger.LogWarning(
+                            "Direct play refused for {MediaId}: source {SourceKbps} kbps exceeds user cap {CapKbps} kbps",
+                            id, effectiveBps / 1000, capKbps.Value);
+                        return StatusCode(StatusCodes.Status403Forbidden,
+                            new { error = "This item exceeds your streaming bitrate limit — use the transcoded stream." });
+                    }
                 }
             }
 

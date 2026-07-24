@@ -137,21 +137,21 @@ function detectAudioCodecs(): string[] {
 }
 
 /**
- * Detect HDR support using CSS color-gamut media query.
- * Note: This checks display capability, not video decode capability.
+ * Detect HDR support.
+ * Note: the display check uses `(video-dynamic-range: high)` ONLY (SR-WI-027).
+ * The old `(color-gamut: p3)` / `(color-gamut: rec2020)` fallback is gone on
+ * purpose: wide gamut is a color-space property, not a dynamic-range one, and
+ * nearly every modern SDR laptop/phone has a P3 panel — the fallback made them
+ * all claim HDR displays, so the server direct-played/remuxed HDR sources onto
+ * SDR screens (washed-out picture) instead of tone-mapping.
+ * Exported for unit tests.
  */
-function detectHdrDetails(): { displaySupportsHdr: boolean, codecSupportsHdr: boolean } {
-    // 1. Check Display Capabilities
+export function detectHdrDetails(): { displaySupportsHdr: boolean, codecSupportsHdr: boolean } {
+    // 1. Check Display Capabilities — the dedicated dynamic-range query is the
+    // only trustworthy signal.
     let displaySupportsHdr = false;
     if (typeof window.matchMedia === 'function') {
-        // Modern standard for detecting HDR display support
-        if (window.matchMedia('(video-dynamic-range: high)').matches) {
-            displaySupportsHdr = true;
-        }
-        // Wide color gamut (P3 or Rec2020) - often synonymous with HDR capability
-        else if (window.matchMedia('(color-gamut: p3)').matches || window.matchMedia('(color-gamut: rec2020)').matches) {
-            displaySupportsHdr = true;
-        }
+        displaySupportsHdr = window.matchMedia('(video-dynamic-range: high)').matches;
     }
 
     // 2. Check Codec Capabilities (Software Check)

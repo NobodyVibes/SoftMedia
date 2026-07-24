@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using SoftMedia.Server.Services.Media;
@@ -95,7 +96,9 @@ public class SubtitleRenditionTests : IDisposable
 
         var runner = new Mock<IProcessRunner>();
         var binaries = new Mock<IBinaryLocationService>();
-        var svc = new SubtitleService(NullLogger<SubtitleService>.Instance, runner.Object, binaries.Object);
+        var env = new Mock<IWebHostEnvironment>();
+        env.SetupGet(e => e.WebRootPath).Returns(_dir);
+        var svc = new SubtitleService(NullLogger<SubtitleService>.Instance, runner.Object, binaries.Object, env.Object);
 
         Assert.True(svc.OffsetWebVttTimestamps(vttPath, 300));
 
@@ -128,7 +131,9 @@ public class SubtitleRenditionTests : IDisposable
 
         var runner = new Mock<IProcessRunner>();
         var binaries = new Mock<IBinaryLocationService>();
-        var svc = new SubtitleService(NullLogger<SubtitleService>.Instance, runner.Object, binaries.Object);
+        var env = new Mock<IWebHostEnvironment>();
+        env.SetupGet(e => e.WebRootPath).Returns(_dir);
+        var svc = new SubtitleService(NullLogger<SubtitleService>.Instance, runner.Object, binaries.Object, env.Object);
 
         Assert.True(svc.OffsetWebVttTimestamps(vttPath, 30));
 

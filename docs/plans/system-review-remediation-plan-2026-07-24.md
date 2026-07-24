@@ -400,7 +400,15 @@ Ordered by leverage per the review's §6 comparison. Each needs its own mini-pla
 | SR-WI-011 | **Complete** (2026-07-24) | `IsMissing`/`MissingSinceUtc` + migration `AddMediaItemMissingFlags`; ~30-site catalog sweep (`ExcludeMissing()`); heal-on-reappear (scan + watcher paths); retention hard-delete (`MissingItemRetentionDays`, 0 = legacy); DTO surfaces `IsMissing` |
 | SR-WI-012 | **Complete** (2026-07-24) | `ReconcileMovedFilesAsync` (unique size+mtime, then unique filename; ambiguous binds nothing) runs pre-processing; watcher single-file lookup now case-insensitive |
 | SR-WI-013 | **Complete** (2026-07-24) | Watcher error→recovery scan; file/dir renames schedule scans; 64 KB buffer; fresh-install scan interval 12h; `EnableFileWatcher` restart note |
-| SR-WI-020..028 | Not started | Session B |
+| SR-WI-020 | **Complete** (2026-07-24) | Append-revival (`ApplyResumeArgs` + `TryReviveSessionAsync`); dormant wake on segment/unpause; exit-code crash detection; progress-gated retry budget; `Failed` state |
+| SR-WI-021 | **Complete** (2026-07-24) | `TranscodeShutdownService` kill sweep (`Kill(entireProcessTree)`); Job Objects deferred (see §12) |
+| SR-WI-022 | **Complete** (2026-07-24) | Exit-code-strict 10-min VTT extraction, partials deleted; persistent unshifted cache under wwwroot/cache/subtitles keyed (path-hash, track, mtime) |
+| SR-WI-023 | **Complete** (2026-07-24) | Software zscale/tonemap chain for non-NVIDIA (Q3: default ON); color metadata on all encodes; PreserveHDR+h264 override; live-verified vs washed-out baseline |
+| SR-WI-024 | **Complete** (2026-07-24) | sid threaded through debug endpoint; `toneMapped` reflects the engaged pipeline |
+| SR-WI-025 | **Complete** (2026-07-24) | Server: stop/dormant paths take the per-key session lock; client: far-seek awaits DELETE (2s cap, generation-guarded) |
+| SR-WI-026 | **Complete** (2026-07-24) | Failed→409 `{"error":"transcode_failed"}` (StreamResultService); client: plan 429/5xx surfaced, capped HLS reconnect w/ indicator, 409 terminal state |
+| SR-WI-027 | **Complete** (2026-07-24) | `displaySupportsHdr` requires `(video-dynamic-range: high)`; P3 fallback removed |
+| SR-WI-028 | **Complete** (2026-07-24) | Trickplay numeric sort + cancel/timeout kill; manifest line-based rewrite (.ts-in-token regression pinned); direct-play cap covers all video + size/duration estimate; capacity reservation gate; playlist poll replaces 3s sleep; disk-pressure suspends live encoders |
 | SR-WI-030..038 | Not started | Session C |
 | SR-WI-040..042 | Not started | Session D |
 | SR-WI-050..054 | Not started | Session D |
@@ -438,3 +446,26 @@ consumes the API.
   "per-library force cleanup action" is realized as the `MaxScanPurgePercent=100` override
   rather than a new endpoint/UI (simpler, uses the existing settings surface; revisit only if
   operators ask). Live verify of the NAS-unmount round-trip deferred to Session 5 as planned.
+- 2026-07-24 — **SESSION B COMPLETE** (SR-WI-020..028). Server suite 1394/0/0 (+59), client
+  282/282 + build green. Implementation notes: (1) Revival APPENDS to the existing playlist —
+  `TranscodeService.ApplyResumeArgs` rebases the builder's literal `-start_number 0` token and
+  adds `append_list`; if the builder ever changes that token, ApplyResumeArgs returns null and
+  revival degrades to a full restart (test-pinned). Revival entry points: master.m3u8
+  existing-session branch (resets an exhausted crash budget — explicit client intent), segment
+  requests + unpause on Dormant (background Task, idempotent under the per-key lock). (2) The
+  crash-retry budget resets ONLY on progress past `LastCrashSegmentIndex + 2` — never on
+  client activity. (3) `TranscodeState.Failed` → `TranscodeFailedException` →
+  StreamResultService maps to 409 `{"error":"transcode_failed"}`; the client's terminal-state
+  handler keys on response code 409 (checked before `fatal`, like the 410 admin-stop). (4)
+  Non-NVIDIA HDR tone mapping forces SOFTWARE decode but keeps qsv/amf ENCODERS (they accept
+  system-memory frames); chain order deinterlace→scale→tonemap mirrors CUDA; a "no path
+  between colorspaces" zscale error means a linear intermediate is missing. (5) Stop-path
+  locking is sync-over-async on the per-key SemaphoreSlim (no thread affinity → no deadlock);
+  `StopSessionInternalAsync` intentionally takes NO lock (always called with it held). (6)
+  Subtitle VTT cache stores UNSHIFTED extractions; each session gets a private copy that
+  `OffsetWebVttTimestamps` mutates in place — never point sessions at the cache file directly.
+  Deviations: Windows Job Objects (hard-crash reaping) deferred — graceful-shutdown sweep
+  covers the common case; existing trickplay manifests keep old ordinal order until
+  regenerated. Session 5 live-verify additions: pause>3min→resume, mid-stream ffmpeg kill →
+  auto-revival, HDR transcode on `HardwareAcceleration=none`, server shutdown leaves no
+  ffmpeg (`tasklist`).

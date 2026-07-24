@@ -80,6 +80,42 @@ public class HlsService : IHlsService
         }
     }
 
+    public HlsPlaylistInfo? GetPlaylistInfo(string sessionDir)
+    {
+        var playlistPath = Path.Combine(sessionDir, "master.m3u8");
+        if (!File.Exists(playlistPath)) return null;
+
+        try
+        {
+            int segments = 0;
+            double total = 0;
+            bool endList = false;
+            foreach (var line in File.ReadAllLines(playlistPath))
+            {
+                if (line.StartsWith("#EXTINF:"))
+                {
+                    segments++;
+                    var durationStr = line.Substring(8).Split(',')[0];
+                    if (double.TryParse(durationStr, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var d))
+                    {
+                        total += d;
+                    }
+                }
+                else if (line.StartsWith("#EXT-X-ENDLIST"))
+                {
+                    endList = true;
+                }
+            }
+            return new HlsPlaylistInfo(segments, total, endList);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse playlist info for {Dir}", sessionDir);
+            return null;
+        }
+    }
+
     public Stream? GetPlaylistStream(string sessionDir)
     {
         var playlistPath = Path.Combine(sessionDir, "master.m3u8");

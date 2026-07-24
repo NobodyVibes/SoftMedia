@@ -5,6 +5,7 @@ using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Scanning;
 using SoftMedia.Server.Services.Transcoding;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace SoftMedia.Server.Services.Transcoding;
 
@@ -79,12 +80,59 @@ public class HlsManifestService : IHlsManifestService
             rewrittenContent.Append(content);
         }
         
-        // Append query string to segments
-        var finalContent = rewrittenContent.ToString()
-            .Replace(".ts", $".ts?{queryString}")
-            .Replace(".m4s", $".m4s?{queryString}")
-            .Replace("init.mp4", $"init.mp4?{queryString}");
-            
+        // SR-WI-028: append the auth query per-URL, line-based. The old blanket
+        // string.Replace(".ts", ...) ran over the WHOLE manifest text — including
+        // the subtitle-playlist URI whose JWT can legitimately contain ".ts" in its
+        // base64url payload/signature (~1 in 2500 tokens), which corrupted every
+        // URL for that playback. Only segment lines and segment URI attributes are
+        // rewritten now.
+        var finalContent = AppendQueryToSegmentUrls(rewrittenContent.ToString(), queryString);
+
         return Encoding.UTF8.GetBytes(finalContent);
     }
+
+    private static readonly Regex UriAttribute = new("URI=\"(?<uri>[^\"]*)\"", RegexOptions.Compiled);
+
+    /// Appends `?queryString` to segment URLs only: non-comment lines that END with a
+    /// segment extension (.ts / .m4s / init.mp4), and URI="..." attributes on tag
+    /// lines (e.g. #EXT-X-MAP:URI="init.mp4") whose path portion is a segment. URIs
+    /// that already carry a query string — like the subtitle rendition playlist with
+    /// its embedded token — are never touched.
+    /// Public so tests can drive it directly (project convention; no InternalsVisibleTo).
+    public static string AppendQueryToSegmentUrls(string manifest, string queryString)
+    {
+        if (string.IsNullOrEmpty(queryString)) return manifest;
+
+        var sb = new StringBuilder(manifest.Length + 256);
+        using var reader = new StringReader(manifest);
+        string? line;
+        while ((line = reader.ReadLine()) != null)
+        {
+            if (line.StartsWith('#'))
+            {
+                line = UriAttribute.Replace(line, m =>
+                {
+                    var uri = m.Groups["uri"].Value;
+                    return !uri.Contains('?') && IsSegmentPath(uri)
+                        ? $"URI=\"{uri}?{queryString}\""
+                        : m.Value;
+                });
+            }
+            else
+            {
+                var trimmed = line.TrimEnd();
+                if (!trimmed.Contains('?') && IsSegmentPath(trimmed))
+                {
+                    line = $"{trimmed}?{queryString}";
+                }
+            }
+            sb.Append(line).Append('\n');
+        }
+        return sb.ToString();
+    }
+
+    private static bool IsSegmentPath(string path) =>
+        path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase)
+        || path.EndsWith(".m4s", StringComparison.OrdinalIgnoreCase)
+        || path.EndsWith("init.mp4", StringComparison.OrdinalIgnoreCase);
 }

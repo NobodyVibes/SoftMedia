@@ -669,6 +669,9 @@ public static class ServiceCollectionExtensions
 
         // Other Background Services
         services.AddHostedService<ThrottleMonitorService>();
+        // SR-WI-021: kills every live ffmpeg during graceful shutdown so child processes
+        // never outlive the host (orphans used to burn CPU and block the boot temp purge).
+        services.AddHostedService<TranscodeShutdownService>();
         services.AddHostedService<RefreshTokenCleanupService>();
         services.AddHostedService<TranscodeSegmentCleanupService>();
         services.AddSingleton<MetadataRefreshService>();

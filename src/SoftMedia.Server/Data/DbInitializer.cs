@@ -77,10 +77,11 @@ public static class DbInitializer
                 "A default 'admin' account was created with the random password below.");
         }
 
-        // Seed Test Library — DEV/TEST ONLY. This points at a nonexistent C:\TestMedia
+        // Seed Test Library — DEVELOPMENT ONLY. This points at a nonexistent C:\TestMedia
         // and writes a dummy media file; it must never ship to a production database
-        // (security audit, WS-1/T1.5). Gated out of Production.
-        if (!env.IsProduction() && !await context.Libraries.AnyAsync())
+        // (security audit, WS-1/T1.5). SR-WI-065 tightened the gate from "not Production"
+        // to Development only: Staging/custom environments no longer get fake data.
+        if (env.IsDevelopment() && !await context.Libraries.AnyAsync())
         {
             logger.LogInformation("Seeding test library...");
             var library = new Library

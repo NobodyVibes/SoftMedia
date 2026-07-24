@@ -426,10 +426,16 @@ Ordered by leverage per the review's §6 comparison. Each needs its own mini-pla
 | SR-WI-052 | **Complete** (2026-07-24) | Home error banner + retry; PersistentPlayer onError toast + auto-advance w/ full-pass stop; session-expired notice + return-path; PlayerPage/MediaDetailPage 404-vs-retry |
 | SR-WI-053 | **Complete** (2026-07-24) | Resume/Play-from-beginning split (progress + next-episode endpoints; ≥95% = no-resume); Album Play disabled-until-loaded |
 | SR-WI-054 | **Complete** (2026-07-24) | Decision only: i18n de-scoped from 1.0 per Q5 (recorded §10) |
-| SR-WI-060..065 | Not started | Session E |
+| SR-WI-060 | **Complete** (2026-07-24) | `UtcDateTimeJsonConverter` in MVC + SignalR JSON options; integration-pinned Z suffixes; no client compensation existed |
+| SR-WI-061 | **Complete** (2026-07-24) | `AddProblemDetails` + global handler (traceId, no empty 500s); 6 controllers/10 sites + middleware migrated; `transcode_failed` survives as extension; client `extractApiError` at 16 catch sites; documented in onboarding §0 |
+| SR-WI-062 | **Complete** (2026-07-24) | `(LibraryId,Type)`, `(Type,DateAdded)`, Title, Year, PARTIAL-unique Path (containers share folder paths) + `(UserId,LastPlayed)`; self-healing dedup keeps the row with user data; verified on a dev-DB copy w/ query plans |
+| SR-WI-063 | **Complete** (2026-07-24) | `Path` removed from DTO (book format via new Container fallback); string `Duration` dropped (shared client `formatRuntime`); Metadata keys frozen + canary-tested |
+| SR-WI-064 | **Complete** (2026-07-24) | Rolling daily file log (ContentRoot/data/logs, 7d retention, Warning+, T6.6 token scrub live-verified); path surfaced on Server & Network page |
+| SR-WI-065 | **Complete** (2026-07-24) | Recent-query SQL rollup (≤limit hydration); backup dirs vs ContentRoot (restore staging deliberately CWD — see agent note); TestMedia seed Development-only; stray artifacts deleted (see §12 inventory); pagination-conventions.md |
 | Phase 7 | Unscheduled | Post-1.0 |
 
-Session order: A → B → C → D → E → native-app plan Session 5 (operator QA + v1.0.0).
+Session order: A → B → C → D → E — **ALL FIVE COMPLETE 2026-07-24**. Remaining: native-app
+plan Session 5 (operator QA + v1.0.0), now the ONLY gate before the tag.
 Sessions B and C are independent of each other and could swap or parallelize if needed;
 D depends on nothing server-side; E's SR-WI-061/063 should land before native-client work
 consumes the API.
@@ -520,3 +526,24 @@ consumes the API.
   session's ownership lists — reviewed and kept. Live-verify additions for Session 5:
   phone-width (375px) nav/search/browse pass; cast still works end-to-end (SDK lazy path);
   offline PWA route navigation after first load.
+- 2026-07-24 — **SESSION E COMPLETE — PLAN CODING SCOPE DONE** (SR-WI-060..065). Server suite
+  1540/0/0 (+58; total +237 over the plan's 1303 baseline), client 382/382 + build green.
+  Migration verified against a COPY of the dev DB: both new migrations apply, query plans use
+  `IX_MediaItems_LibraryId_Type` and `IX_UserMediaInteractions_UserId_LastPlayed`, 1264 rows
+  intact through the dedup pass. Notes: (1) The unique Path index is PARTIAL (excludes
+  Series/Season/Artist/Album/ComicSeries — containers share folder paths by design); dedup
+  keeps the row referenced by PlaybackHistory/UserMediaInteractions. (2) Error contract: RFC
+  7807 everywhere; machine discriminators ride as extensions (`transcode_failed`,
+  `password_change_required`); plain-string 410 admin-stop bodies deliberately unchanged;
+  client reads via `services/apiError.ts` — new client code should use it, not raw
+  `response.data`. (3) `MediaItemDto` no longer carries `Path` (books use the Container
+  fallback — no rescan needed) nor string `Duration`; Metadata keys are a FROZEN contract
+  (canary test enforces). (4) File log: `data/logs/softmedia-yyyyMMdd.log`, Warning+,
+  token-scrubbed (T6.6); ring buffer/viewer unchanged. (5) Restore staging stays CWD-anchored
+  on purpose (SQLite relative Data Source + PendingRestore both resolve CWD — anchoring only
+  backups to ContentRoot). (6) Ops deletion inventory: 0-byte Data\{app,library,softmedia}.db,
+  four softmedia.db.pre-restore-20260602-* snapshots, test_media.mkv — all verified untracked
+  first; `Data\softmedia-pre-2fa-recovery-20260603-074930.db` (12 MB) LEFT for maintainer
+  decision; real backups in Data\backups untouched. Session 5 additions: verify the migration
+  on the live DB during the operator pass (it ran clean on the copy); confirm log file
+  appears and contains no tokens; spot-check error toasts (ProblemDetails) in the UI.

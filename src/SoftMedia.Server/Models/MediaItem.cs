@@ -4,6 +4,19 @@ using Microsoft.EntityFrameworkCore;
 namespace SoftMedia.Server.Models;
 
 [Index(nameof(LibraryId))]
+// SR-WI-062 — catalog hot-path indexes. Every browse endpoint filters
+// (LibraryId, Type); home rows filter Type and sort DateAdded; list sorts use
+// Title/Year. Path is the scanners' primary lookup key; the plain index here
+// serves those lookups. Path uniqueness is enforced by a PARTIAL unique index
+// (fluent config in AppDbContext) covering only file-backed types: container
+// rows (Series/Season/Artist/Album/ComicSeries) share their folder Path by
+// design — e.g. TvScanner.EnsureSeasonAsync sets season.Path = series.Path —
+// so a blanket unique index would break scanning.
+[Index(nameof(LibraryId), nameof(Type))]
+[Index(nameof(Type), nameof(DateAdded))]
+[Index(nameof(Title))]
+[Index(nameof(Year))]
+[Index(nameof(Path))]
 public class MediaItem
 {
     public Guid Id { get; set; } = Guid.NewGuid();

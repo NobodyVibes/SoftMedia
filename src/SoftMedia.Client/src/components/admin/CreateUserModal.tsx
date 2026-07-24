@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { toast } from 'sonner';
+import { extractApiError } from '../../services/apiError';
 import { userService } from '../../services/userService';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../ui/Modal';
@@ -38,8 +39,8 @@ export const CreateUserModal: React.FC<CreateUserModalProps> = ({ isOpen, onClos
             setLastName('');
             setRatings({});
         },
-        onError: (error: any) => {
-            toast.error(error.response?.data || 'Failed to create user');
+        onError: (error: unknown) => {
+            toast.error(extractApiError(error, 'Failed to create user'));
         },
     });
 

@@ -7,6 +7,7 @@ import QualityBadge from '../ui/QualityBadge';
 import { useAudioStore } from '../../store/audioStore';
 import api from '../../services/api';
 import { getGenreGradient, getGenreColors } from '../../lib/genreColors';
+import { formatRuntime } from '../../lib/utils';
 import LoadingImage from '../ui/LoadingImage';
 import { resolveCardPosterUrl } from '../../lib/mediaImageUrl';
 import { AddToPlaylistMenu } from '../playlists/AddToPlaylistMenu';
@@ -190,11 +191,11 @@ export default memo(function MediaCard({ item, libraryType, groupReady, onImageL
                     </div>
 
                     {/* Duration Pill - Bottom Right */}
-                    {item.duration && (
+                    {formatRuntime(item.durationSeconds) && (
                         <div className="absolute bottom-2 right-2 z-20">
                             <div className="flex items-center gap-1 bg-black/70 backdrop-blur-md px-1.5 py-0.5 rounded text-[10px] font-bold text-gray-200 border border-white/5 shadow-lg">
                                 <Clock className="w-2.5 h-2.5 text-gray-400" />
-                                <span>{item.duration}</span>
+                                <span>{formatRuntime(item.durationSeconds)}</span>
                             </div>
                         </div>
                     )}

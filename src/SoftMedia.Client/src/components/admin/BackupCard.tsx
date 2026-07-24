@@ -1,20 +1,15 @@
 import { useRef, useState } from 'react';
-import axios from 'axios';
 import { Database, Download, Save, Upload, Pin, PinOff, RefreshCw, Image, Trash2, Check, X, Pencil } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
 import { adminService, type BackupInfo } from '../../services/adminService';
+import { extractApiError } from '../../services/apiError';
 
-/** Pull the server's error text out of an axios error (string or { message } body). */
+/** Pull the server's error text out of an axios error (string, ProblemDetails, or legacy { message } body). */
 function serverErrorMessage(err: unknown): string | undefined {
-    if (!axios.isAxiosError(err)) return undefined;
-    const data = err.response?.data;
-    if (typeof data === 'string') return data;
-    if (data && typeof data === 'object' && 'message' in data) {
-        return String((data as { message: unknown }).message);
-    }
-    return undefined;
+    const extracted = extractApiError(err, '');
+    return extracted.length > 0 ? extracted : undefined;
 }
 
 /** Make a user-supplied name safe to use as a download filename. */

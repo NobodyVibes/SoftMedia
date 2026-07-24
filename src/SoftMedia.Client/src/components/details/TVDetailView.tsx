@@ -12,6 +12,7 @@ import HorizontalScrollList, { type HorizontalScrollListHandle } from '../ui/Hor
 import CastStripItem from './CastStripItem';
 import { ExtrasSection } from './ExtrasSection';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { formatRuntime } from '../../lib/utils';
 
 interface ScrollToIndexHandle {
     scrollToIndex: (index: number) => void;
@@ -39,17 +40,6 @@ interface TVDetailViewProps {
 }
 
 // --- Pure utility functions (module-scope to avoid re-creation) ---
-
-function parseDurationToSeconds(duration: string | number | undefined): number {
-    if (!duration) return 0;
-    if (typeof duration === 'number') return duration;
-    const hours = duration.match(/(\d+)h/);
-    const minutes = duration.match(/(\d+)m/);
-    const seconds = duration.match(/(\d+)s/);
-    return (hours ? parseInt(hours[1]) * 3600 : 0) +
-        (minutes ? parseInt(minutes[1]) * 60 : 0) +
-        (seconds ? parseInt(seconds[1]) : 0);
-}
 
 function formatTime(seconds: number): string {
     if (!seconds || seconds <= 0) return '0:00';
@@ -88,7 +78,9 @@ function getResolutionBadge(ep: MediaItem): string | null {
 }
 
 function getEpisodeProgress(ep: MediaItem): { resumeSeconds: number; progressPercent: number } {
-    const durationSeconds = parseDurationToSeconds(ep.duration);
+    // SR-WI-063: the formatted `duration` string is gone from the DTO; the raw
+    // seconds field is the single source of truth.
+    const durationSeconds = ep.durationSeconds ?? 0;
     const progressPercent = ep.progress || 0;
     const resumeSeconds = durationSeconds > 0 ? (progressPercent / 100) * durationSeconds : 0;
     return { resumeSeconds, progressPercent };
@@ -186,10 +178,10 @@ function EpisodeCard({ ep, posterSrc, isSelected, onSelect, groupReady, onImageL
                     )}
                 </div>
                 <div className="flex items-center gap-2 mt-1.5 text-xs text-gray-400">
-                    {ep.duration && (
+                    {formatRuntime(ep.durationSeconds) && (
                         <span>
                             {hasProgress && <span className="text-violet-400">{formatTime(resumeSeconds)}</span>}
-                            {hasProgress ? ' / ' : ''}{ep.duration}
+                            {hasProgress ? ' / ' : ''}{formatRuntime(ep.durationSeconds)}
                         </span>
                     )}
                     {ep.userRating && (
@@ -262,10 +254,10 @@ function EpisodeListRow({ ep, posterSrc, isSelected, onSelect, groupReady, onIma
                             <Check className="w-3 h-3" />Watched
                         </span>
                     )}
-                    {ep.duration && (
+                    {formatRuntime(ep.durationSeconds) && (
                         <span className="text-xs text-gray-400">
                             {hasProgress && <span className="text-violet-400">{formatTime(resumeSeconds)} / </span>}
-                            {ep.duration}
+                            {formatRuntime(ep.durationSeconds)}
                         </span>
                     )}
                     {ep.userRating && (

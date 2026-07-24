@@ -27,7 +27,7 @@ const mockedPost = vi.mocked(api.post);
 
 const track: MediaItem = {
     id: 'track-1', title: 'Song', sortTitle: 'Song', dateAdded: '2023-01-01',
-    type: 'Audio', path: '/m/song.mp3', libraryId: 'lib1',
+    type: 'Audio', libraryId: 'lib1',
     metadata: { artist: 'A', album: 'B', duration: 180 },
 };
 

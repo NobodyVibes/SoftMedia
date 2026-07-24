@@ -28,7 +28,7 @@ const mockedToast = vi.mocked(toast);
 
 const makeTrack = (id: string, title: string): MediaItem => ({
     id, title, sortTitle: title, dateAdded: '2023-01-01',
-    type: 'Audio', path: `/m/${id}.mp3`, libraryId: 'lib1',
+    type: 'Audio', libraryId: 'lib1',
     metadata: { artist: 'A', album: 'B', duration: 180 },
 });
 

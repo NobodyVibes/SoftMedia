@@ -407,7 +407,11 @@ public class InteractionController : ControllerBase
         
         if (result == null)
         {
-            return NotFound(new { message = "No episodes found for this series" });
+            // SR-WI-061: RFC 7807 body (was { message }).
+            return Problem(
+                statusCode: StatusCodes.Status404NotFound,
+                title: "Not found",
+                detail: "No episodes found for this series");
         }
         
         return Ok(result);
@@ -530,7 +534,11 @@ public class InteractionController : ControllerBase
         
         if (result == null)
         {
-             return NotFound(new { message = "Episode not found or no next episode" });
+             // SR-WI-061: RFC 7807 body (was { message }).
+             return Problem(
+                 statusCode: StatusCodes.Status404NotFound,
+                 title: "Not found",
+                 detail: "Episode not found or no next episode");
         }
         
         return Ok(result);
@@ -552,7 +560,11 @@ public class InteractionController : ControllerBase
 
         if (result == null)
         {
-             return NotFound(new { message = "Episode not found or no previous episode" });
+             // SR-WI-061: RFC 7807 body (was { message }).
+             return Problem(
+                 statusCode: StatusCodes.Status404NotFound,
+                 title: "Not found",
+                 detail: "Episode not found or no previous episode");
         }
 
         return Ok(result);
@@ -571,7 +583,11 @@ public class InteractionController : ControllerBase
 
         if (result == null)
         {
-            return NotFound(new { message = "Movie not found" });
+            // SR-WI-061: RFC 7807 body (was { message }).
+            return Problem(
+                statusCode: StatusCodes.Status404NotFound,
+                title: "Not found",
+                detail: "Movie not found");
         }
 
         return Ok(result);

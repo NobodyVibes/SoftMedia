@@ -21,11 +21,27 @@ public class StreamResultService : IStreamResultService
     }
 
     /// <summary>
-    /// SR-WI-026: a Failed session (ffmpeg crashed, retries exhausted) surfaces as
-    /// 409 + {"error":"transcode_failed"} — the contract the client's player maps to a
-    /// terminal "Transcoding failed on the server" state instead of retrying forever.
+    /// SR-WI-026: a Failed session (ffmpeg crashed, retries exhausted) surfaces as a 409
+    /// the client's player maps to a terminal "Transcoding failed on the server" state
+    /// instead of retrying forever. SR-WI-061 reshaped the body to RFC 7807, but the
+    /// machine-read discriminator survives as the "error" extension — the serialized JSON
+    /// still contains "error":"transcode_failed" (extensions flatten to top level), so
+    /// both status-keyed and body-keyed consumers keep working.
     /// </summary>
-    private static readonly object TranscodeFailedBody = new { error = "transcode_failed" };
+    private static ConflictObjectResult TranscodeFailedResult()
+    {
+        var problem = new ProblemDetails
+        {
+            Status = StatusCodes.Status409Conflict,
+            Title = "Transcoding failed",
+            Detail = "Transcoding failed on the server. Check the server logs for details.",
+        };
+        problem.Extensions["error"] = "transcode_failed";
+        return new ConflictObjectResult(problem)
+        {
+            ContentTypes = { "application/problem+json" },
+        };
+    }
 
     public async Task<IActionResult> GenerateMasterPlaylistResultAsync(Guid mediaId, Guid userId, int? sub, string? token, string? sid = null)
     {
@@ -36,7 +52,7 @@ public class StreamResultService : IStreamResultService
         }
         catch (TranscodeFailedException)
         {
-            return new ConflictObjectResult(TranscodeFailedBody);
+            return TranscodeFailedResult();
         }
         if (stream == null)
         {
@@ -70,7 +86,7 @@ public class StreamResultService : IStreamResultService
         }
         catch (TranscodeFailedException)
         {
-            return new ConflictObjectResult(TranscodeFailedBody);
+            return TranscodeFailedResult();
         }
         if (stream == null) return new NotFoundResult();
 
@@ -91,7 +107,7 @@ public class StreamResultService : IStreamResultService
         }
         catch (TranscodeFailedException)
         {
-            return new ConflictObjectResult(TranscodeFailedBody);
+            return TranscodeFailedResult();
         }
         if (stream == null)
         {

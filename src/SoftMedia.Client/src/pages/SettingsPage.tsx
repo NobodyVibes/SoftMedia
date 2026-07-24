@@ -4,6 +4,7 @@ import { Settings, Users, Library as LibraryIcon, Save, RefreshCw, Database, Pla
 import { cn, isIntervalHoursEnabled } from '../lib/utils';
 import { Combobox } from '../components/ui/Combobox';
 import { settingsService, mergeSettingsPreservingEdits, type AppSetting } from '../services/settingsService';
+import { extractApiError } from '../services/apiError';
 import { libraryService } from '../services/libraryService';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -308,10 +309,8 @@ export default function SettingsPage() {
             setIsLibraryFormOpen(false);
         },
         onError: (error: unknown) => {
-            const errorMessage = (error as { response?: { data?: string } })?.response?.data
-                || (error as Error)?.message
-                || 'Failed to create library';
-            toast.error(errorMessage);
+            // Understands string, ProblemDetails, and legacy bodies (SR-WI-061).
+            toast.error(extractApiError(error, (error as Error)?.message || 'Failed to create library'));
         }
     });
 

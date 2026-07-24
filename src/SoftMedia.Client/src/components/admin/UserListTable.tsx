@@ -4,6 +4,7 @@ import { userService, type UserDto } from '../../services/userService';
 import { ConfirmationModal } from '../modals/ConfirmationModal';
 import { useAuthStore } from '../../store/authStore';
 import { toast } from 'sonner';
+import { extractApiError } from '../../services/apiError';
 import { CreateUserModal } from './CreateUserModal';
 import { RatingsModal } from '../modals/RatingsModal';
 import { LibraryAccessModal } from '../modals/LibraryAccessModal';
@@ -69,8 +70,8 @@ export const UserListTable: React.FC = () => {
             queryClient.invalidateQueries({ queryKey: ['users'] });
             toast.success('User role updated successfully');
         },
-        onError: (error: any) => {
-            toast.error(error.response?.data || 'Failed to update user role');
+        onError: (error: unknown) => {
+            toast.error(extractApiError(error, 'Failed to update user role'));
         },
     });
 
@@ -81,8 +82,8 @@ export const UserListTable: React.FC = () => {
             queryClient.invalidateQueries({ queryKey: ['users'] });
             toast.success('User status updated successfully');
         },
-        onError: (error: any) => {
-            toast.error(error.response?.data || 'Failed to update user status');
+        onError: (error: unknown) => {
+            toast.error(extractApiError(error, 'Failed to update user status'));
         },
     });
 
@@ -93,8 +94,8 @@ export const UserListTable: React.FC = () => {
             queryClient.invalidateQueries({ queryKey: ['users'] });
             toast.success('User approved successfully');
         },
-        onError: (error: any) => {
-            toast.error(error.response?.data || 'Failed to approve user');
+        onError: (error: unknown) => {
+            toast.error(extractApiError(error, 'Failed to approve user'));
         },
     });
 
@@ -104,8 +105,8 @@ export const UserListTable: React.FC = () => {
             queryClient.invalidateQueries({ queryKey: ['users'] });
             toast.success('User denied successfully');
         },
-        onError: (error: any) => {
-            toast.error(error.response?.data || 'Failed to deny user');
+        onError: (error: unknown) => {
+            toast.error(extractApiError(error, 'Failed to deny user'));
         },
     });
 
@@ -115,8 +116,8 @@ export const UserListTable: React.FC = () => {
             queryClient.invalidateQueries({ queryKey: ['users'] });
             toast.success('User deleted successfully');
         },
-        onError: (error: any) => {
-            toast.error(error.response?.data || 'Failed to delete user');
+        onError: (error: unknown) => {
+            toast.error(extractApiError(error, 'Failed to delete user'));
         },
     });
 
@@ -126,8 +127,8 @@ export const UserListTable: React.FC = () => {
             queryClient.invalidateQueries({ queryKey: ['users'] });
             toast.success('Two-factor authentication removed for user');
         },
-        onError: (error: any) => {
-            toast.error(error.response?.data || 'Failed to remove 2FA');
+        onError: (error: unknown) => {
+            toast.error(extractApiError(error, 'Failed to remove 2FA'));
         },
     });
 

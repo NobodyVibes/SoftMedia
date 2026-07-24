@@ -168,7 +168,14 @@ public class AdminSessionsController : ControllerBase
 
         var key = new TranscodeSessionKey(mediaId, userId, sub, sid);
         var exists = _transcodeService.GetAllSessions().Any(s => s.Key.Equals(key));
-        if (!exists) return NotFound(new { error = "No live transcode session matches that key." });
+        if (!exists)
+        {
+            // SR-WI-061: RFC 7807 body (was { error }).
+            return Problem(
+                statusCode: StatusCodes.Status404NotFound,
+                title: "Session not found",
+                detail: "No live transcode session matches that key.");
+        }
 
         _logger.LogInformation(
             "Admin {Admin} terminated transcode session media={MediaId} user={UserId} sub={Sub} sid={Sid}",

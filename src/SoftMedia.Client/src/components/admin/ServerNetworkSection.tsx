@@ -24,6 +24,8 @@ interface LogEntry {
 interface LogsResponse {
     entries: LogEntry[];
     currentLevel: string;
+    /** SR-WI-064 — directory of the persistent rolling-file sink (daily files, 7-day retention). */
+    logDirectory: string;
 }
 
 const levelColor: Record<string, string> = {
@@ -105,12 +107,20 @@ export function ServerNetworkSection() {
                     </button>
                 </div>
                 <p className="text-xs text-gray-500 mb-3">
-                    The most recent in-memory entries (nothing is written to disk or sent
-                    anywhere). Current verbosity: <span className="text-gray-300">{logs?.currentLevel}</span> —
+                    The most recent in-memory entries.
+                    Current verbosity: <span className="text-gray-300">{logs?.currentLevel}</span> —
                     change it with the Log Level setting above; it applies immediately, and
                     the viewer captures whatever that level allows (set both to Debug to
                     see debug output here).
                 </p>
+                {logs?.logDirectory && (
+                    <p className="text-xs text-gray-500 mb-3">
+                        Warnings and errors are also written to daily log files
+                        (7-day retention) in{' '}
+                        <span className="font-mono text-gray-300 break-all">{logs.logDirectory}</span>
+                        {' '}— useful after a crash, when this in-memory view is gone.
+                    </p>
+                )}
                 <div className="bg-black/40 rounded-lg border border-white/5 max-h-[420px] overflow-y-auto font-mono text-xs leading-relaxed p-3">
                     {(logs?.entries ?? []).length === 0 && (
                         <div className="text-gray-500 italic">No entries at this level yet.</div>

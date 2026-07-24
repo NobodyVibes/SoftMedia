@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
+import { extractApiError } from '../services/apiError';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { SOURCE_CODE_URL } from '../constants/source';
@@ -12,11 +13,10 @@ import axios from 'axios';
 function authErrorMessage(err: unknown, fallback: string): string {
     if (axios.isAxiosError(err)) {
         const status = err.response?.status;
-        // Server may return either a string body or { message } JSON.
-        const data = err.response?.data;
-        const serverMessage = typeof data === 'string'
-            ? data
-            : (data && typeof data === 'object' && 'message' in data ? String((data as { message: unknown }).message) : undefined);
+        // Server may return a string body, RFC 7807 ProblemDetails, or legacy
+        // { message } JSON — extractApiError understands all of them (SR-WI-061).
+        const extracted = extractApiError(err, '');
+        const serverMessage = extracted.length > 0 ? extracted : undefined;
 
         if (status === 429) return 'Too many attempts. Please wait a minute and try again.';
         if (status === 401) return serverMessage || 'Invalid username or password.';

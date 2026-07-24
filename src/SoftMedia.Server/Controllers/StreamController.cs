@@ -156,8 +156,11 @@ public class StreamController : ControllerBase
                         _logger.LogWarning(
                             "Direct play refused for {MediaId}: source {SourceKbps} kbps exceeds user cap {CapKbps} kbps",
                             id, effectiveBps / 1000, capKbps.Value);
-                        return StatusCode(StatusCodes.Status403Forbidden,
-                            new { error = "This item exceeds your streaming bitrate limit — use the transcoded stream." });
+                        // SR-WI-061: RFC 7807 body (was { error }).
+                        return Problem(
+                            statusCode: StatusCodes.Status403Forbidden,
+                            title: "Bitrate limit exceeded",
+                            detail: "This item exceeds your streaming bitrate limit — use the transcoded stream.");
                     }
                 }
             }

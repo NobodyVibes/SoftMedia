@@ -111,7 +111,11 @@ public class ScanController : ControllerBase
         }
         catch (Exception)
         {
-            return BadRequest(new { error = "Invalid path." });
+            // SR-WI-061: RFC 7807 body (was { error }).
+            return Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "Invalid path",
+                detail: "Invalid path.");
         }
 
         var owner = libraries.FirstOrDefault(lib => lib.Paths.Any(root => IsUnderRoot(fullPath, root)));
@@ -120,7 +124,11 @@ public class ScanController : ControllerBase
             // Deliberately vague: don't reveal whether the path exists, which roots
             // are configured, or whether it belongs to a library hidden by ACL.
             _logger.LogWarning("Webhook scan trigger rejected: path outside the caller's library roots");
-            return NotFound(new { error = "Path is not inside any configured library." });
+            // SR-WI-061: RFC 7807 body (was { error }).
+            return Problem(
+                statusCode: StatusCodes.Status404NotFound,
+                title: "Not found",
+                detail: "Path is not inside any configured library.");
         }
 
         var alreadyQueued = _scanQueue.IsLibraryInQueue(owner.Id); // best-effort flag

@@ -52,7 +52,6 @@ public class MediaItemDto
     public Guid LibraryId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string SortTitle { get; set; } = string.Empty;
-    public string Path { get; set; } = string.Empty;
     public int? Year { get; set; }
 
     /// <summary>Full release/capture date (photos: EXIF date taken). Additive — consumers
@@ -63,7 +62,6 @@ public class MediaItemDto
     
     public string? PosterPath { get; set; }
     public string? BackdropPath { get; set; }
-    public string? Duration { get; set; }
     public string? Quality { get; set; }
     public List<string>? Genres { get; set; }
     public string? Rating { get; set; }
@@ -73,6 +71,22 @@ public class MediaItemDto
     public string? VideoCodec { get; set; }
     public string? AudioCodec { get; set; }
     public string? Resolution { get; set; }
+
+    /// <summary>
+    /// Untyped display-context bag. FROZEN CONTRACT (SR-WI-063) — the ONLY keys the
+    /// server may emit are:
+    /// <list type="bullet">
+    /// <item><c>artist</c>, <c>album</c>, <c>seriesTitle</c> — R-WI-017 name context,
+    /// present only when the caller Included the corresponding navigation
+    /// (see <see cref="BuildNameContext"/>).</item>
+    /// <item>Photo items only — the EXIF display fields written by PhotoExifReader
+    /// (via PhotoScanner / ExifMetadataProvider): <c>camera</c>, <c>iso</c>,
+    /// <c>fstop</c>, <c>exposure</c>, <c>dateTaken</c>, <c>gps</c>.</item>
+    /// </list>
+    /// No new keys may be added without a plan-recorded decision; the canary test
+    /// <c>MediaItemDtoMetadataContractTests</c> asserts the emitted key set for each
+    /// media type stays within this list. Full typing is deferred (breaking change).
+    /// </summary>
     public Dictionary<string, object>? Metadata { get; set; }
     
     // Timecode markers for progress bar / skip pills.
@@ -144,13 +158,14 @@ public class MediaItemDto
             LibraryId = item.LibraryId,
             Title = item.Title,
             SortTitle = item.SortTitle,
-            // Security (audit wave-2 H-1): expose only the FILE NAME, never the absolute on-disk
-            // path. The SPA needs the extension (book-format detection in BookReader/BookDetailView);
-            // the server's directory layout is not the client's business and was leaking via every
-            // MediaItemDto (notably the unfiltered recently-added cache).
-            Path = System.IO.Path.GetFileName(item.Path),
             DateAdded = item.DateAdded,
-            Container = item.Container,
+            // SR-WI-063: Path is gone from the DTO entirely (H-1 had already reduced it to the
+            // file name). Its one legitimate consumer was book-format detection in
+            // BookReader/BookDetailView, which now reads Container — books never get Container
+            // from an ffprobe analysis strategy, so derive it from the file extension here.
+            Container = !string.IsNullOrEmpty(item.Container)
+                ? item.Container
+                : ExtensionAsContainer(item.Path),
             VideoCodec = item.VideoCodec,
             AudioCodec = item.AudioCodec,
             Resolution = item.Resolution,
@@ -286,20 +301,6 @@ public class MediaItemDto
             }
 
 
-            // Duration formatting from promoted column
-            if (item.Duration > 0)
-            {
-                var ts = TimeSpan.FromSeconds(item.Duration);
-                if (ts.TotalHours >= 1)
-                {
-                    dto.Duration = $"{(int)ts.TotalHours}h {ts.Minutes}m {ts.Seconds}s";
-                }
-                else
-                {
-                    dto.Duration = $"{ts.Minutes}m {ts.Seconds}s";
-                }
-            }
-
             dto.PosterPath = ResolvePosterPath(item, imageProxyBaseUrl);
             dto.BackdropPath = ResolveBackdropPath(item, imageProxyBaseUrl);
 
@@ -348,6 +349,18 @@ public class MediaItemDto
             }
         }
         return meta;
+    }
+
+    /// <summary>
+    /// SR-WI-063 — container fallback for items no analysis strategy touched (books,
+    /// comics): the lowercased file extension without the dot, or null when the path
+    /// is a folder / has no extension (Series, Artist, Album, ComicSeries rows).
+    /// </summary>
+    private static string? ExtensionAsContainer(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        var ext = System.IO.Path.GetExtension(path);
+        return string.IsNullOrEmpty(ext) ? null : ext.TrimStart('.').ToLowerInvariant();
     }
 
     private static string? ResolvePosterPath(MediaItem item, string? imageProxyBaseUrl)

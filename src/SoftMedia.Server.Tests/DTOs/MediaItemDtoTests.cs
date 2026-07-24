@@ -189,6 +189,47 @@ public class MediaItemDtoTests
         Assert.Equal(5, dto.Cast[0].Id);
     }
 
+    // SR-WI-063 — Path left the DTO; book-format detection reads Container, which the
+    // mapper derives from the file extension when no analysis strategy populated it.
+    [Theory]
+    [InlineData(@"C:\lib\Some Book.EPUB", "epub")]
+    [InlineData("/lib/comics/issue 01.cbz", "cbz")]
+    public void FromMediaItem_DerivesContainerFromExtension_WhenUnset(string path, string expected)
+    {
+        var item = NewItem();
+        item.Type = MediaType.Book;
+        item.Path = path;
+        item.Container = null;
+
+        var dto = MediaItemDto.FromMediaItem(item);
+
+        Assert.Equal(expected, dto.Container);
+    }
+
+    [Fact]
+    public void FromMediaItem_PrefersStoredContainer_OverExtensionFallback()
+    {
+        var item = NewItem();
+        item.Path = "/movies/film.mkv";
+        item.Container = "matroska";
+
+        var dto = MediaItemDto.FromMediaItem(item);
+
+        Assert.Equal("matroska", dto.Container);
+    }
+
+    [Fact]
+    public void FromMediaItem_FolderPath_LeavesContainerNull()
+    {
+        var item = NewItem(); // Series row: Path is a folder
+        item.Path = "/tv/The Show";
+        item.Container = null;
+
+        var dto = MediaItemDto.FromMediaItem(item);
+
+        Assert.Null(dto.Container);
+    }
+
     [Fact]
     public void FromMediaItem_PropagatesIntroCreditsTimecodesAndSources()
     {

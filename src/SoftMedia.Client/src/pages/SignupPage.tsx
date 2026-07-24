@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { ShieldCheck, Loader2, Copy, Check } from 'lucide-react';
 import api from '../services/api';
+import { extractApiError } from '../services/apiError';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 
@@ -59,9 +60,8 @@ export default function SignupPage() {
             setSignupToken(res.data.accessToken);
             setStep('offer');
         } catch (err: unknown) {
-            const data = (err as { response?: { data?: unknown } })?.response?.data;
-            setError(typeof data === 'string' ? data
-                : (data as { message?: string })?.message || 'Failed to create account');
+            // Understands string, ProblemDetails, and legacy { message } bodies (SR-WI-061).
+            setError(extractApiError(err, 'Failed to create account'));
         } finally {
             setIsLoading(false);
         }

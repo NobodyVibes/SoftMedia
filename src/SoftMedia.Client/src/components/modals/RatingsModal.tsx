@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
+import { extractApiError } from '../../services/apiError';
 import { userService, type UserDto } from '../../services/userService';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../ui/Modal';
@@ -32,8 +33,8 @@ export const RatingsModal: React.FC<RatingsModalProps> = ({ isOpen, onClose, use
             toast.success('Ratings updated successfully');
             onClose();
         },
-        onError: (error: any) => {
-            toast.error(error.response?.data || 'Failed to update ratings');
+        onError: (error: unknown) => {
+            toast.error(extractApiError(error, 'Failed to update ratings'));
         },
     });
 

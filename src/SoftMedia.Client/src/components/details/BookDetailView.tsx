@@ -19,7 +19,9 @@ export default function BookDetailView({ item }: BookDetailViewProps) {
 
     const resumePage = progress && progress.position > 0 ? Math.floor(progress.position) : 0;
     const hasEpubResume = !!progress?.bookLocation;
-    const ext = (item.path?.split('.').pop() ?? '').toLowerCase();
+    // SR-WI-063: `path` left the media DTO; the server now guarantees `container`
+    // carries the file extension for book-type items instead.
+    const ext = (item.container ?? '').toLowerCase();
     const showResume = (ext === 'pdf' || ext === 'cbz') ? resumePage > 1 : hasEpubResume;
     const readLabel = !showResume
         ? 'Read Now'

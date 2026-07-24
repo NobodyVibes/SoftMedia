@@ -310,21 +310,12 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     }, [selectedSubtitleTrack]);
 
 
-    // Get actual duration from media item metadata (in seconds)
+    // Get actual duration from media item metadata (in seconds).
+    // SR-WI-063: the formatted `duration` string is gone from the DTO — the raw
+    // seconds field is authoritative, no parsing needed.
     const getActualDuration = useCallback((): number => {
-        if (!item.duration) return 0;
-        if (typeof item.duration === 'number') return item.duration;
-        // Parse formats like "1h 45m" or "1h 45m 30s"
-        const match = item.duration.match(/(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?/);
-        if (match) {
-            const hours = parseInt(match[1] || '0', 10);
-            const minutes = parseInt(match[2] || '0', 10);
-            const seconds = parseInt(match[3] || '0', 10);
-            const totalSeconds = hours * 3600 + minutes * 60 + seconds;
-            return totalSeconds;
-        }
-        return 0;
-    }, [item.duration]);
+        return item.durationSeconds && item.durationSeconds > 0 ? item.durationSeconds : 0;
+    }, [item.durationSeconds]);
 
     const actualDuration = getActualDuration();
 
@@ -388,20 +379,8 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 if (data.position > 0) {
                     // Validate: position must be less than duration (with 5s buffer)
                     // If position exceeds duration, it's corrupted - reset to beginning
-                    // Duration may be a number (seconds) or a formatted string like "24m 46s" or "1h 30m 15s"
-                    let durationSeconds = 0;
-                    if (typeof item.duration === 'number') {
-                        durationSeconds = item.duration;
-                    } else if (typeof item.duration === 'string') {
-                        // Parse formatted duration like "24m 46s" or "1h 30m 15s"
-                        const hours = item.duration.match(/(\d+)h/);
-                        const minutes = item.duration.match(/(\d+)m/);
-                        const seconds = item.duration.match(/(\d+)s/);
-                        durationSeconds =
-                            (hours ? parseInt(hours[1]) * 3600 : 0) +
-                            (minutes ? parseInt(minutes[1]) * 60 : 0) +
-                            (seconds ? parseInt(seconds[1]) : 0);
-                    }
+                    // SR-WI-063: durationSeconds is the only duration field on the DTO.
+                    const durationSeconds = item.durationSeconds ?? 0;
                     // A position past the COMPLETION threshold means the item was finished, not
                     // paused: resuming there drops the viewer into the last few seconds (and, on a
                     // transcode, spins up a session for a sliver of video). Mirror the server's
@@ -411,7 +390,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     const maxValidPosition = durationSeconds > 0
                         ? Math.min(durationSeconds - 5, durationSeconds * 0.95)
                         : Infinity;
-                    console.log(`Resume validation for ${item.id}: position=${data.position}, duration=${item.duration}(parsed=${durationSeconds}s), maxValid=${maxValidPosition}`);
+                    console.log(`Resume validation for ${item.id}: position=${data.position}, duration=${durationSeconds}s, maxValid=${maxValidPosition}`);
                     if (data.position < maxValidPosition) {
                         console.log(`Resuming from saved position: ${data.position}s`);
                         setResumePosition(data.position);
@@ -428,7 +407,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             }
         };
         fetchProgress();
-    }, [item.id, item.duration, forceStartFromBeginning]);
+    }, [item.id, item.durationSeconds, forceStartFromBeginning]);
 
     // Save playback position periodically (every 10 seconds) and on unmount
     useEffect(() => {

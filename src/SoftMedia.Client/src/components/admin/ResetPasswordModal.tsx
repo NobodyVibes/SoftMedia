@@ -3,6 +3,7 @@ import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { userService, type UserDto } from '../../services/userService';
 import { toast } from 'sonner';
+import { extractApiError } from '../../services/apiError';
 import { useMutation } from '@tanstack/react-query';
 import { Modal } from '../ui/Modal';
 
@@ -27,8 +28,8 @@ export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ isOpen, 
             setPassword('');
             setConfirmPassword('');
         },
-        onError: (error: any) => {
-            toast.error(error.response?.data || 'Failed to reset password');
+        onError: (error: unknown) => {
+            toast.error(extractApiError(error, 'Failed to reset password'));
         },
     });
 

@@ -141,6 +141,52 @@ public class BackupServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task BackupDirectory_RelativePath_ResolvesAgainstContentRoot_NotCwd()
+    {
+        // SR-WI-065: the default "./data/backups" (and any relative configured dir) must
+        // anchor to the content root, not wherever the process happened to be started from.
+        var db = new AppDbContext(_options);
+        var settings = new Mock<ISettingsService>();
+        settings.Setup(s => s.GetSettingAsync("Maintenance.BackupDirectory", It.IsAny<string>()))
+                .ReturnsAsync("./data/backups-rel");
+        var env = new Mock<IWebHostEnvironment>();
+        env.Setup(e => e.WebRootPath).Returns(Path.Combine(_tempRoot, "wwwroot"));
+        env.Setup(e => e.ContentRootPath).Returns(_tempRoot);
+        var svc = new BackupService(db, settings.Object, env.Object, NullLogger<BackupService>.Instance);
+
+        SeedUsers(1);
+        var info = await svc.CreateBackupAsync(CancellationToken.None);
+
+        var expectedDir = Path.Combine(_tempRoot, "data", "backups-rel");
+        Assert.True(File.Exists(Path.Combine(expectedDir, info.Id + ".zip")));
+        // And nothing landed in a CWD-relative location.
+        var cwdDir = Path.GetFullPath("./data/backups-rel", Directory.GetCurrentDirectory());
+        Assert.False(Directory.Exists(cwdDir) && Directory.EnumerateFiles(cwdDir, info.Id + "*").Any());
+    }
+
+    [Fact]
+    public async Task BackupDirectory_AbsolutePath_PassesThroughUnchanged()
+    {
+        // An absolute configured directory must be honoured verbatim even when a
+        // content root pointing elsewhere is present.
+        var db = new AppDbContext(_options);
+        var settings = new Mock<ISettingsService>();
+        settings.Setup(s => s.GetSettingAsync("Maintenance.BackupDirectory", It.IsAny<string>()))
+                .ReturnsAsync(_backupDir); // absolute
+        var decoyRoot = Path.Combine(_tempRoot, "decoy-content-root");
+        var env = new Mock<IWebHostEnvironment>();
+        env.Setup(e => e.WebRootPath).Returns(Path.Combine(_tempRoot, "wwwroot"));
+        env.Setup(e => e.ContentRootPath).Returns(decoyRoot);
+        var svc = new BackupService(db, settings.Object, env.Object, NullLogger<BackupService>.Instance);
+
+        SeedUsers(1);
+        var info = await svc.CreateBackupAsync(CancellationToken.None);
+
+        Assert.True(File.Exists(Path.Combine(_backupDir, info.Id + ".zip")));
+        Assert.False(Directory.Exists(decoyRoot));
+    }
+
+    [Fact]
     public async Task CreateBackup_ManifestSha256_MatchesDbEntryBytes()
     {
         SeedUsers(1);

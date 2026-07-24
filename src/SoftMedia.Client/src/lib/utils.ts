@@ -37,6 +37,21 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
+ * Runtime-style label ("2h 15m 3s" / "5m 3s") from raw seconds — the exact format the
+ * server's removed `duration` string used (SR-WI-063), so cards/detail headers render
+ * unchanged from `durationSeconds`. Returns null for missing/zero durations so callers
+ * can conditionally render the pill.
+ */
+export function formatRuntime(seconds: number | null | undefined): string | null {
+    if (!seconds || seconds <= 0) return null;
+    const total = Math.floor(seconds);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return h >= 1 ? `${h}h ${m}m ${s}s` : `${m}m ${s}s`;
+}
+
+/**
  * Whether an interval-hours settings value will actually ENABLE the schedule on the server.
  * The server parses these with int.TryParse and treats anything unparsable (empty string,
  * "2.5", "2e5") or <= 0 as disabled — so the UI hint next to the input must apply the exact

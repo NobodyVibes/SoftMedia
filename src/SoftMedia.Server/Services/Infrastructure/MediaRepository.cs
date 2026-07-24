@@ -218,13 +218,54 @@ public class MediaRepository : IMediaRepository
             query = query.Where(m => libraryIds.Contains(m.LibraryId));
         }
 
-        return await query
-            .Include(m => m.Series)
-            .Include(m => m.Album)
-            .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
-            .OrderByDescending(m => m.DateAdded)
-            .Take(limit * 25)
+        // SR-WI-065 (API-M7): roll episodes/seasons up to their series and audio
+        // tracks up to their album IN the query. The old shape fetched limit*25
+        // fully-hydrated rows (three Includes) so MediaRetrievalService could dedup
+        // in memory — a burst of episodes both hydrated thousands of entities and
+        // could starve other content out of the scan window. Semantics preserved:
+        //  - Episode/Season → representative is the Series row; Audio → the Album row;
+        //    everything else represents itself (incl. Series/Album rows directly).
+        //  - Episodes without a series / tracks without an album are dropped, exactly
+        //    as the old in-memory loop let them fall through every branch.
+        //  - The representative's DateAdded is promoted to the newest underlying
+        //    activity so the client 'NEW' badge fires for new episodes on old series.
+        //  - Visibility (rating/ACL/missing) is decided on the UNDERLYING items;
+        //    rollup parents are then hydrated unfiltered, matching the old code's
+        //    unfiltered `Include(m => m.Series/Album)` navigation loads.
+        // Grouping/CASE both translate on SQLite and evaluate on the InMemory provider.
+        var representatives = await query
+            .Where(m => ((m.Type != MediaType.Episode && m.Type != MediaType.Season) || m.SeriesId != null)
+                     && (m.Type != MediaType.Audio || m.AlbumId != null))
+            .Select(m => new
+            {
+                RepresentativeId =
+                    (m.Type == MediaType.Episode || m.Type == MediaType.Season) ? m.SeriesId!.Value
+                    : m.Type == MediaType.Audio ? m.AlbumId!.Value
+                    : m.Id,
+                m.DateAdded
+            })
+            .GroupBy(x => x.RepresentativeId)
+            .Select(g => new { Id = g.Key, DateAdded = g.Max(x => x.DateAdded) })
+            .OrderByDescending(x => x.DateAdded)
+            .Take(limit)
             .ToListAsync();
+
+        var ids = representatives.Select(r => r.Id).ToList();
+        var hydrated = await _context.MediaItems.AsNoTracking()
+            .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
+            .Where(m => ids.Contains(m.Id))
+            .ToDictionaryAsync(m => m.Id);
+
+        var result = new List<MediaItem>(representatives.Count);
+        foreach (var rep in representatives)
+        {
+            // A dangling parent id (episode kept after its series row vanished)
+            // simply drops out, like the old `item.Series != null` guard.
+            if (!hydrated.TryGetValue(rep.Id, out var item)) continue;
+            item.DateAdded = rep.DateAdded;
+            result.Add(item);
+        }
+        return result;
     }
 
     public async Task<IEnumerable<MediaItem>> GetEpisodesAsync(Guid seriesId)

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
+import { extractApiError } from '../../services/apiError';
 import { userService, type UserDto } from '../../services/userService';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../ui/Modal';
@@ -33,8 +34,8 @@ export const StreamingModal: React.FC<StreamingModalProps> = ({ isOpen, onClose,
             toast.success('Streaming limit updated');
             onClose();
         },
-        onError: (error: any) => {
-            toast.error(error.response?.data || 'Failed to update streaming limit');
+        onError: (error: unknown) => {
+            toast.error(extractApiError(error, 'Failed to update streaming limit'));
         },
     });
 

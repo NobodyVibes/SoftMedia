@@ -334,10 +334,24 @@ public class BackupService : IBackupService
 
     private const string DefaultBackupDir = "./data/backups";
 
+    /// <summary>
+    /// SR-WI-065: anchors a relative path to the application CONTENT ROOT rather
+    /// than the process CWD — a server launched from another directory (service
+    /// manager, scheduled task) must not scatter backups or miss the live DB.
+    /// Absolute paths pass through unchanged (Path.GetFullPath ignores the base).
+    /// </summary>
+    private string ResolveAgainstContentRoot(string path)
+    {
+        var root = !string.IsNullOrEmpty(_env.ContentRootPath)
+            ? _env.ContentRootPath
+            : Directory.GetCurrentDirectory();
+        return Path.GetFullPath(path, root);
+    }
+
     private async Task<string> GetBackupDirectoryAsync()
     {
         var configured = await _settings.GetSettingAsync("Maintenance.BackupDirectory", DefaultBackupDir);
-        var resolved = Path.GetFullPath(configured, Directory.GetCurrentDirectory());
+        var resolved = ResolveAgainstContentRoot(configured);
 
         // Security (audit wave-2 L-20): refuse a backup directory that lives inside the web root.
         // Backups carry the full database (password hashes, encrypted TOTP secrets, recovery-code
@@ -345,7 +359,7 @@ public class BackupService : IBackupService
         // file middleware. Fall back to the safe default rather than honour an unsafe location.
         var webRoot = !string.IsNullOrEmpty(_env.WebRootPath)
             ? _env.WebRootPath
-            : Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
+            : ResolveAgainstContentRoot("wwwroot");
         var webRootFull = Path.GetFullPath(webRoot);
         if (!webRootFull.EndsWith(Path.DirectorySeparatorChar)) webRootFull += Path.DirectorySeparatorChar;
         if ((resolved + Path.DirectorySeparatorChar).StartsWith(webRootFull, StringComparison.OrdinalIgnoreCase))
@@ -353,7 +367,7 @@ public class BackupService : IBackupService
             _logger.LogError(
                 "Configured backup directory {Configured} is inside the web root — it would expose secret-bearing " +
                 "backups for anonymous download. Falling back to {Default}.", resolved, DefaultBackupDir);
-            return Path.GetFullPath(DefaultBackupDir, Directory.GetCurrentDirectory());
+            return ResolveAgainstContentRoot(DefaultBackupDir);
         }
 
         return resolved;
@@ -363,6 +377,11 @@ public class BackupService : IBackupService
     /// Resolves the live SQLite database path from the open connection's DataSource,
     /// NOT from appsettings — dev/prod may override the connection string via env or
     /// user-secrets (the dev DB is actually app.db, not the configured softmedia.db).
+    /// Deliberately CWD-anchored, NOT content-root-anchored (SR-WI-065 reviewed
+    /// this): SQLite itself opens a relative Data Source against the process CWD,
+    /// and Program.cs's boot-time PendingRestore.Apply resolves the same way — the
+    /// staged ".restore-pending" file must land next to the file BOTH of them use,
+    /// or a staged restore would silently never apply.
     /// </summary>
     private string GetLiveDbPath()
     {

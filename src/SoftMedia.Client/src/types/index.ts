@@ -11,14 +11,12 @@ export interface MediaItem {
     libraryId: string;
     title: string;
     sortTitle: string;
-    path?: string; // Added for reader detection
     year?: number;
     dateAdded: string;
     /** Full release/capture date (photos: EXIF date taken). */
     releaseDate?: string;
     posterPath?: string;
     backdropPath?: string;
-    duration?: string | number; // "2h 15m" format or seconds
     quality?: 'SD' | 'HD' | '4K' | 'HDR';
     genres?: string[];
     rating?: string; // "TV-MA", "PG-13", etc. Actually DTO uses this for External Rating now.
@@ -45,7 +43,9 @@ export interface MediaItem {
     albumId?: string;
     trackNumber?: number;
     discNumber?: number;
-    durationSeconds?: number; // Raw duration in seconds (for audio player)
+    // SR-WI-063: the ONLY duration field — the server's formatted `duration` string is
+    // gone. Render with formatRuntime() (lib/utils) where a "2h 15m 3s" label is wanted.
+    durationSeconds?: number; // Raw duration in seconds
 
     // Timecode markers used by skip pills and the progress bar.
     // `*Source` distinguishes embedded chapters (always trusted) from

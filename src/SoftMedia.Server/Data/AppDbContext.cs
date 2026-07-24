@@ -158,6 +158,12 @@ public class AppDbContext : DbContext
             .WithMany()
             .HasForeignKey(umi => umi.MediaItemId);
 
+        // SR-WI-062 — continue-watching sorts a user's interactions by LastPlayed;
+        // the composite PK (UserId, MediaItemId) can seek the user prefix but not
+        // avoid the sort, so give the hot path its own (UserId, LastPlayed) index.
+        modelBuilder.Entity<UserMediaInteraction>()
+            .HasIndex(umi => new { umi.UserId, umi.LastPlayed });
+
         // MediaItem Self-Referencing Relationship (Series -> Episodes)
         modelBuilder.Entity<MediaItem>()
             .HasOne(m => m.Series)
@@ -424,6 +430,27 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<MediaItem>()
             .HasIndex(m => m.CollectionId);
+
+        // SR-WI-062 — Path uniqueness for FILE-BACKED rows only (partial index).
+        // Container types (Series=1, Season=7, Artist=8, Album=9, ComicSeries=10;
+        // see BaseMediaScanner.ContainerTypes) deliberately share their folder
+        // Path — TvScanner creates every Season with Path = series.Path — so a
+        // blanket unique index would reject legitimate rows and break scans.
+        // File identity IS the path (SR-WI-030 closed the duplicate-creation
+        // races), so duplicates among Movie/Episode/Audio/Book/Game/Photo/
+        // ComicIssue rows are corruption and the DB now rejects them.
+        // Collation note: SQLite BINARY collation makes this case-SENSITIVE —
+        // 'C:\a.mkv' and 'c:\A.MKV' both survive. Acceptable: scanner lookups
+        // normalize case-insensitively, so case-variant dupes aren't created.
+        // The plain IX_MediaItems_Path (attribute on the model) serves generic
+        // Path lookups; SQLite only uses a partial index when the query proves
+        // the filter, so both indexes are needed. Empty Path is excluded too:
+        // it is not a file identity (scanners always set a real path; only
+        // test fixtures leave the "" default).
+        modelBuilder.Entity<MediaItem>()
+            .HasIndex(m => m.Path, "IX_MediaItems_Path_UniqueFileBacked")
+            .IsUnique()
+            .HasFilter("\"Type\" NOT IN (1, 7, 8, 9, 10) AND \"Path\" <> ''");
     }
 }
 

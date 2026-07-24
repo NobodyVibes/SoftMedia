@@ -483,7 +483,10 @@ public class TranscodeController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting debug info for {Id}", id);
-            return StatusCode(500, new { error = "Failed to compute debug info. See server logs for details." });
+            // SR-WI-061: RFC 7807 body (was { error }).
+            return Problem(
+                statusCode: StatusCodes.Status500InternalServerError,
+                detail: "Failed to compute debug info. See server logs for details.");
         }
     }
 

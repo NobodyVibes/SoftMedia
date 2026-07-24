@@ -47,7 +47,6 @@ describe('PersistentPlayer', () => {
         sortTitle: 'Test Song',
         dateAdded: '2023-01-01',
         type: 'Audio',
-        path: '/music/test.mp3',
         metadata: {
             artist: 'Test Artist',
             album: 'Test Album',

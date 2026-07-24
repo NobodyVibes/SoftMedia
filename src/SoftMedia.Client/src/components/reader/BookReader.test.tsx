@@ -72,7 +72,7 @@ const cbzItem: MediaItem = {
     id: 'book-1',
     title: 'Test Comic',
     type: MediaType.Book,
-    path: '/lib/comic.cbz',
+    container: 'cbz',
     dateAdded: new Date().toISOString(),
     libraryId: 'lib1',
     sortTitle: 'Test Comic',
@@ -82,7 +82,7 @@ const epubItem: MediaItem = {
     id: 'book-2',
     title: 'Test EPUB',
     type: MediaType.Book,
-    path: '/lib/story.epub',
+    container: 'epub',
     dateAdded: new Date().toISOString(),
     libraryId: 'lib1',
     sortTitle: 'Test EPUB',
@@ -501,7 +501,7 @@ describe('BookReader — in-book search (ER-024)', () => {
             <MemoryRouter>
                 <BookReader item={{
                     id: 'book-pdf', title: 'Test PDF', type: MediaType.Book,
-                    path: '/lib/test.pdf', dateAdded: new Date().toISOString(),
+                    container: 'pdf', dateAdded: new Date().toISOString(),
                     libraryId: 'lib1', sortTitle: 'Test PDF',
                 }} />
             </MemoryRouter>,

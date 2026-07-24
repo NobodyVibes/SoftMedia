@@ -165,7 +165,11 @@ public class AdminController : ControllerBase
         var episodeCount = await db.MediaItems.CountAsync(m => m.SeriesId == seriesId && m.Type == MediaType.Episode);
         if (episodeCount < 2)
         {
-            return BadRequest(new { error = "Series needs at least 2 episodes for cross-episode detection." });
+            // SR-WI-061: RFC 7807 body (was { error }).
+            return Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "Cannot start detection",
+                detail: "Series needs at least 2 episodes for cross-episode detection.");
         }
 
         var job = queue.EnqueueIntroCreditsDetection(series.Id, series.Title);
@@ -512,7 +516,13 @@ public class AdminController : ControllerBase
         if (item == null) return NotFound();
 
         if (item.MetadataLocked)
-            return Conflict(new { message = "Metadata is locked for this item. Unlock it first to refresh." });
+        {
+            // SR-WI-061: RFC 7807 body (was { message }).
+            return Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Metadata locked",
+                detail: "Metadata is locked for this item. Unlock it first to refresh.");
+        }
 
         item.IsRetryExhausted = false;
         var pendingRetries = await db.MetadataRetries.Where(r => r.MediaItemId == itemId).ToListAsync(ct);

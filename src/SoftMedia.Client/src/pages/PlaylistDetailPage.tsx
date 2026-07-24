@@ -166,7 +166,9 @@ export default function PlaylistDetailPage() {
         );
     }
 
-    const totalSeconds = items.reduce((acc, e) => acc + (Number(e.media.duration) || 0), 0);
+    // SR-WI-063: durationSeconds is the only duration field. (The old `Number(e.media.duration)`
+    // silently produced 0 for formatted strings like "3m 45s" — this also fixes that.)
+    const totalSeconds = items.reduce((acc, e) => acc + (e.media.durationSeconds || 0), 0);
     const durationLabel = formatDuration(totalSeconds);
 
     return (

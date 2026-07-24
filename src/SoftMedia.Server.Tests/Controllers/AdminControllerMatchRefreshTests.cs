@@ -111,7 +111,11 @@ public class AdminControllerMatchRefreshTests : IDisposable
 
         var result = await controller.RefreshMetadata(item.Id, _db, _queue.Object, _imageCache.Object, CancellationToken.None);
 
-        Assert.IsType<ConflictObjectResult>(result);
+        // SR-WI-061: 409 now ships as an RFC 7807 ProblemDetails body.
+        var conflict = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
+        var problem = Assert.IsType<ProblemDetails>(conflict.Value);
+        Assert.Equal("Metadata is locked for this item. Unlock it first to refresh.", problem.Detail);
         _imageCache.Verify(c => c.InvalidateCachedImagesAsync(It.IsAny<Guid>()), Times.Never);
         var saved = await _db.MediaItems.SingleAsync(m => m.Id == item.Id);
         Assert.True(saved.IsRetryExhausted);                        // untouched

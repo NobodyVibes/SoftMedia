@@ -8,7 +8,7 @@ import { type MediaItem, MediaType } from '../../types';
 import QualityBadge from '../ui/QualityBadge';
 import MediaQualityInfo from '../ui/MediaQualityInfo';
 import { StarRating } from '../ui/StarRating';
-import { cn } from '../../lib/utils';
+import { cn, formatRuntime } from '../../lib/utils';
 import { toast } from 'sonner';
 import { getGenreColors } from '../../lib/genreColors';
 import { resolveHeroPosterUrl, resolveBackdropUrl } from '../../lib/mediaImageUrl';
@@ -365,8 +365,8 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                         {item.rating}
                                     </span>
                                 )}
-                                {item.duration && (
-                                    <span className="text-lg">{item.duration}</span>
+                                {formatRuntime(item.durationSeconds) && (
+                                    <span className="text-lg">{formatRuntime(item.durationSeconds)}</span>
                                 )}
                                 {item.type !== MediaType.Series && item.rating && (
                                     <span className="px-2 py-0.5 border border-gray-500/30 bg-gray-500/10 rounded text-xs font-bold text-gray-400 uppercase tracking-wider">

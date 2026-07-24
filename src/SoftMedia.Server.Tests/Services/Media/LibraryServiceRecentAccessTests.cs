@@ -93,15 +93,15 @@ public class LibraryServiceRecentAccessTests : IDisposable
     }
 
     [Fact]
-    public async Task UnrestrictedCaller_SeesAll_AndPathIsFileNameOnly()
+    public async Task UnrestrictedCaller_SeesAll()
     {
         var svc = Build(LibraryAccess.Unrestricted, UserRatingCeilings.Unrestricted);
 
         var items = (await svc.GetRecentlyAddedAsync(_libraryId, Guid.NewGuid())).ToList();
 
+        // Audit wave-2 H-1 reduced Path to the file name; SR-WI-063 removed it from the
+        // DTO entirely, so there is no path field left to leak — the compile-time absence
+        // of MediaItemDto.Path is the guarantee this test used to assert at runtime.
         Assert.Equal(2, items.Count);
-        // Audit wave-2 H-1: the DTO must never carry the absolute on-disk path.
-        Assert.All(items, i => Assert.DoesNotContain("/m/", i.Path));
-        Assert.Contains(items, i => i.Path == "kids.mkv");
     }
 }

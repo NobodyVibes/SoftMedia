@@ -576,7 +576,9 @@ export default function BookReader({ item }: BookReaderProps) {
     // re-renders when the token rotates.
     const token = useAuthStore(s => s.mediaToken);
 
-    const ext = (item.path?.split('.').pop() ?? '').toLowerCase();
+    // SR-WI-063: `path` left the media DTO; the server now guarantees `container`
+    // carries the file extension for book-type items instead.
+    const ext = (item.container ?? '').toLowerCase();
     const isPdf = ext === 'pdf';
     const isEpub = ext === 'epub';
     const isCbz = ext === 'cbz';

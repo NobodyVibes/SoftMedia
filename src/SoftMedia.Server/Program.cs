@@ -35,6 +35,23 @@ var logRingBuffer = new SoftMedia.Server.Services.Infrastructure.LogRingBuffer()
 builder.Services.AddSingleton(logRingBuffer);
 builder.Logging.AddProvider(new SoftMedia.Server.Services.Infrastructure.RingBufferLoggerProvider(logRingBuffer));
 
+// SR-WI-064 — persistent log sink: daily rolling files under {ContentRoot}/data/logs
+// (content root, NOT the CWD, so a service-host launch from elsewhere still lands in
+// the app's data directory), 7-day retention, Warning+ by default. The provider-specific
+// filter rule keeps its floor independent of the runtime-adjustable Default level (a
+// provider-scoped rule outranks global rules for this provider), and the provider itself
+// enforces the same floor internally plus the T6.6 ?token= scrub — see RollingFileLogger.cs.
+var fileLogDirectory = Path.Combine(builder.Environment.ContentRootPath, "data", "logs");
+var fileLogLevel = Enum.TryParse<LogLevel>(
+        builder.Configuration["FileLogging:MinimumLevel"], ignoreCase: true, out var configuredFileLevel)
+    ? configuredFileLevel
+    : LogLevel.Warning;
+var fileLogRetentionDays = builder.Configuration.GetValue<int?>("FileLogging:RetentionDays") ?? 7;
+builder.Logging.AddProvider(new SoftMedia.Server.Services.Infrastructure.RollingFileLoggerProvider(
+    fileLogDirectory, fileLogLevel, fileLogRetentionDays));
+builder.Logging.AddFilter<SoftMedia.Server.Services.Infrastructure.RollingFileLoggerProvider>(null, fileLogLevel);
+builder.Services.AddSingleton(new SoftMedia.Server.Services.Infrastructure.FileLogSinkInfo(fileLogDirectory));
+
 // Add services to the container.
 builder.Services.AddMemoryCache();
 
@@ -113,8 +130,15 @@ builder.Services.AddBackgroundServices();
 
 
 
-// SignalR for real-time updates
-builder.Services.AddSignalR();
+// SignalR for real-time updates. The hub JSON protocol serializes with its OWN
+// options (not the MVC AddJsonOptions below), so the SR-WI-060 UTC converter is
+// registered here too — today's hub payloads are strings/ints, but any future
+// DateTime in a hub payload must carry the same explicit-UTC contract as the API.
+builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        options.PayloadSerializerOptions.Converters.Add(new SoftMedia.Server.Helpers.UtcDateTimeJsonConverter());
+    });
 
 // API Configuration
 // Audit L6: reflect-ANY-origin together with AllowCredentials is the CORS spec's forbidden
@@ -164,7 +188,29 @@ builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+        // SR-WI-060: SQLite round-trips stored-UTC DateTimes as Kind=Unspecified, which
+        // serialized without a "Z" and was parsed as LOCAL time by JS clients. This
+        // converter stamps Unspecified as UTC on write (and parses tolerantly on read),
+        // so every DateTime the API emits carries an explicit UTC marker. DateTime? is
+        // covered by the framework's nullable wrapper around the same converter.
+        options.JsonSerializerOptions.Converters.Add(new SoftMedia.Server.Helpers.UtcDateTimeJsonConverter());
     });
+
+// SR-WI-061 — RFC 7807 everywhere. AddProblemDetails backs the parameterless
+// UseExceptionHandler below (unhandled exceptions become application/problem+json
+// instead of empty-body 500s) and stamps a traceId extension on every ProblemDetails
+// the framework writes — MVC's DefaultProblemDetailsFactory ([ApiController] validation
+// responses and controller Problem() helpers) honors CustomizeProblemDetails too.
+// No stack traces are ever included: the handler only emits status/title/traceId.
+builder.Services.AddProblemDetails(options =>
+{
+    options.CustomizeProblemDetails = ctx =>
+    {
+        ctx.ProblemDetails.Extensions.TryAdd(
+            "traceId",
+            System.Diagnostics.Activity.Current?.Id ?? ctx.HttpContext.TraceIdentifier);
+    };
+});
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
@@ -213,6 +259,12 @@ if (!jwtValidation.IsValid)
 }
 
 // Configure the HTTP request pipeline.
+
+// SR-WI-061: outermost exception boundary. With AddProblemDetails registered, the
+// parameterless UseExceptionHandler writes RFC 7807 (500 + title + traceId, never a
+// stack trace) for any unhandled exception in the pipeline — in EVERY environment,
+// so Production no longer returns empty-body 500s and tests see the same shape.
+app.UseExceptionHandler();
 
 // UseForwardedHeaders MUST run before any middleware that reads the client
 // IP (rate limiter, audit logging) or scheme (CORS, cookie Secure flag).
@@ -286,12 +338,21 @@ app.Use(async (context, next) =>
             path.StartsWithSegments("/api/v1/auth/refresh-token");
         if (!allowed)
         {
+            // SR-WI-061: same RFC 7807 envelope as every other error. The machine-read
+            // discriminator lives on as the "error" extension so existing consumers
+            // keying on password_change_required keep working.
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
-            await context.Response.WriteAsJsonAsync(new
+            var problem = new Microsoft.AspNetCore.Mvc.ProblemDetails
             {
-                error = "password_change_required",
-                message = "You must change your password before continuing."
-            });
+                Status = StatusCodes.Status403Forbidden,
+                Title = "Password change required",
+                Detail = "You must change your password before continuing.",
+            };
+            problem.Extensions["error"] = "password_change_required";
+            problem.Extensions["traceId"] =
+                System.Diagnostics.Activity.Current?.Id ?? context.TraceIdentifier;
+            await context.Response.WriteAsJsonAsync(
+                problem, options: null, contentType: "application/problem+json");
             return;
         }
     }
@@ -302,6 +363,16 @@ app.UseStaticFiles();
 
 app.MapControllers();
 app.MapHub<MediaHub>("/hubs/media");
+
+// SR-WI-061 verification hook: a deliberately-unhandled exception route so the
+// global handler's RFC 7807 contract stays integration-testable. Never mapped in
+// Production (Development + the test harness's "Testing" environment only).
+if (!app.Environment.IsProduction())
+{
+    app.MapGet("/api/v1/debug/throw",
+        string () => throw new InvalidOperationException(
+            "Deliberate unhandled exception (non-production SR-WI-061 test endpoint)."));
+}
 
 // Apply any restore staged by the admin restore endpoint on a prior run. This MUST
 // run before DbInitializer opens/migrates the database. The DB path is derived from

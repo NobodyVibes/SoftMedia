@@ -14,7 +14,7 @@ public record ConnectionInfoResponse(
     string RequestHost,
     string? PublishedBaseUrl,
     bool ApiDocsEnabled);
-public record LogsResponse(IReadOnlyList<LogEntry> Entries, string CurrentLevel);
+public record LogsResponse(IReadOnlyList<LogEntry> Entries, string CurrentLevel, string LogDirectory);
 
 /// <summary>
 /// NR-WI-010/011 — server identity and operational introspection. Branding is the one
@@ -29,12 +29,18 @@ public class SystemController : ControllerBase
     private readonly ISettingsService _settings;
     private readonly LogRingBuffer _logBuffer;
     private readonly IRuntimeLogLevel _runtimeLogLevel;
+    private readonly FileLogSinkInfo _fileLogSink;
 
-    public SystemController(ISettingsService settings, LogRingBuffer logBuffer, IRuntimeLogLevel runtimeLogLevel)
+    public SystemController(
+        ISettingsService settings,
+        LogRingBuffer logBuffer,
+        IRuntimeLogLevel runtimeLogLevel,
+        FileLogSinkInfo fileLogSink)
     {
         _settings = settings;
         _logBuffer = logBuffer;
         _runtimeLogLevel = runtimeLogLevel;
+        _fileLogSink = fileLogSink;
     }
 
     /// <summary>
@@ -95,11 +101,12 @@ public class SystemController : ControllerBase
 
     /// <summary>
     /// Most recent server log entries from the in-memory ring buffer (NR-WI-011).
-    /// Read-only; nothing on disk is exposed and the buffer is capped server-side.
+    /// Read-only; file contents are never served — SR-WI-064 adds only the persistent
+    /// sink's DIRECTORY PATH so the admin page can point the operator at the files.
     /// </summary>
     [HttpGet("logs")]
     public ActionResult<LogsResponse> Logs([FromQuery] int take = 200, [FromQuery] string? minLevel = null)
     {
-        return Ok(new LogsResponse(_logBuffer.Snapshot(take, minLevel), _runtimeLogLevel.Current));
+        return Ok(new LogsResponse(_logBuffer.Snapshot(take, minLevel), _runtimeLogLevel.Current, _fileLogSink.Directory));
     }
 }

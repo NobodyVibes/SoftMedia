@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+import { extractApiError } from '../../services/apiError';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Cast, Save, RefreshCw, AlertTriangle } from 'lucide-react';
 import { settingsService, type AppSetting } from '../../services/settingsService';
@@ -57,8 +58,8 @@ export const DlnaSettingsCard: React.FC = () => {
             queryClient.invalidateQueries({ queryKey: ['settings'] });
             toast.success('DLNA settings saved. Enabling or disabling DLNA takes effect after a server restart.');
         },
-        onError: (error: any) => {
-            toast.error(error.response?.data || 'Failed to save DLNA settings');
+        onError: (error: unknown) => {
+            toast.error(extractApiError(error, 'Failed to save DLNA settings'));
         },
     });
 

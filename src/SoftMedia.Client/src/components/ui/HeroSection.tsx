@@ -2,6 +2,7 @@ import { Play, Info, Star } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { type MediaItem, MediaType } from '../../types';
+import { formatRuntime } from '../../lib/utils';
 
 interface HeroSectionProps {
     items: MediaItem[];
@@ -77,7 +78,7 @@ export default function HeroSection({
     const description = currentItem.description || '';
     const year = currentItem.year;
     const rating = currentItem.rating;
-    const duration = currentItem.duration;
+    const duration = formatRuntime(currentItem.durationSeconds);
     const communityRating = currentItem.communityRating;
     const userRating = currentItem.userRating;
 

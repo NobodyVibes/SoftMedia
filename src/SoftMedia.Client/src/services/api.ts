@@ -139,7 +139,9 @@ api.interceptors.response.use(
             if (isRefreshRejectionInvalid(refreshError)) {
                 // eslint-disable-next-line no-console
                 console.warn('[auth] refresh returned 401 — logging out');
-                useAuthStore.getState().logout();
+                // 'expired' lets ProtectedRoute/LoginPage explain the forced logout
+                // ("session expired") instead of silently dumping the user at /login.
+                useAuthStore.getState().logout('expired');
             } else {
                 // eslint-disable-next-line no-console
                 console.warn('[auth] refresh failed transiently — keeping session');

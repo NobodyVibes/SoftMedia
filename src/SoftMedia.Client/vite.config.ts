@@ -33,10 +33,16 @@ export default defineConfig({
         // segments, the image proxy, and the image cache are never precached and —
         // because we declare no runtimeCaching — never runtime-cached either, so they
         // always hit the network fresh.
+        //
+        // This glob deliberately includes the route-split lazy chunks (SR-WI-041):
+        // precaching them keeps EVERY route working offline, not just the shell —
+        // a lazy chunk that 404s offline would strand navigation on the Suspense
+        // fallback. The former `maximumFileSizeToCacheInBytes: 5 MB` override is
+        // gone with the monolith: the largest chunk is now well under workbox's
+        // default 2 MiB cap. If a chunk ever outgrows the cap again, the build
+        // won't fail — workbox just skips precaching it — so treat a "skipped
+        // because it exceeds the maximum size" build warning as a regression.
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
-        // The app-shell JS bundle is ~2.5 MB; raise the precache cap so it's cached
-        // for offline. (A future code-split would shrink this; not in scope here.)
-        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         // SPA navigation fallback to index.html for offline route loads, but NOT for
         // API/media/cache/hub paths (those must reach the network, not the shell).
         navigateFallback: '/index.html',

@@ -1,24 +1,56 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import OfflinePage from './pages/OfflinePage';
 import LoginPage from './pages/LoginPage';
-import SignupPage from './pages/SignupPage';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import { useAuthStore } from './store/authStore';
 import { fetchMediaToken, cancelMediaTokenRenewal } from './services/api';
-import MainLayout from './components/layout/MainLayout';
-import HomePage from './pages/HomePage';
-import LibraryPage from './pages/LibraryPage';
-import BrowsePage from './pages/BrowsePage';
-import PlayerPage from './pages/PlayerPage';
-import ReaderPage from './pages/ReaderPage';
-import SettingsPage from './pages/SettingsPage';
-import MyAccountPage from './pages/MyAccountPage';
-import MediaDetailPage from './pages/MediaDetailPage';
-import PlaylistDetailPage from './pages/PlaylistDetailPage';
-import CollectionDetailPage from './pages/CollectionDetailPage';
-import { PersistentPlayer } from './components/player/PersistentPlayer';
+
+// Route-level code splitting (SR-WI-041). Everything below the login wall is
+// lazy so the initial chunk carries only the entry shell: heavyweights like
+// epubjs/react-pdf (ReaderPage), hls.js (PlayerPage), SignalR (MainLayout's
+// hub) and the admin settings surface load on first navigation, not before
+// the login page can paint. LoginPage and OfflinePage stay eager — they ARE
+// the cold-start screens, and a spinner-behind-a-spinner helps nobody.
+// IMPORTANT: none of these modules may ALSO be imported statically anywhere,
+// or the code lands in both the initial and the lazy chunk.
+const SignupPage = lazy(() => import('./pages/SignupPage'));
+const MainLayout = lazy(() => import('./components/layout/MainLayout'));
+const HomePage = lazy(() => import('./pages/HomePage'));
+const LibraryPage = lazy(() => import('./pages/LibraryPage'));
+const BrowsePage = lazy(() => import('./pages/BrowsePage'));
+const PlayerPage = lazy(() => import('./pages/PlayerPage'));
+const ReaderPage = lazy(() => import('./pages/ReaderPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const MyAccountPage = lazy(() => import('./pages/MyAccountPage'));
+const MediaDetailPage = lazy(() => import('./pages/MediaDetailPage'));
+const PlaylistDetailPage = lazy(() => import('./pages/PlaylistDetailPage'));
+const CollectionDetailPage = lazy(() => import('./pages/CollectionDetailPage'));
+// Rendered unconditionally at the root, so its chunk starts loading right after
+// the shell mounts — but off the critical path, behind a null fallback.
+const PersistentPlayer = lazy(() =>
+  import('./components/player/PersistentPlayer').then((m) => ({ default: m.PersistentPlayer }))
+);
+
+/** Branded chunk-loading fallback, consistent with the app's existing spinners. */
+function RouteFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+    </div>
+  );
+}
+
+/**
+ * Per-route Suspense boundary. Placed on each route element (not just around
+ * <Routes>) so navigating between pages inside MainLayout suspends only the
+ * content area — the sidebar/topbar stay mounted instead of blanking while a
+ * page chunk downloads.
+ */
+function page(node: ReactNode) {
+  return <Suspense fallback={<RouteFallback />}>{node}</Suspense>;
+}
 
 function App() {
   const user = useAuthStore((state: any) => state.user);
@@ -113,38 +145,41 @@ function App() {
     <>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/signup" element={<SignupPage />} />
+        <Route path="/signup" element={page(<SignupPage />)} />
 
         <Route element={<ProtectedRoute />}>
-          <Route element={<MainLayout />}>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/libraries/:id" element={<LibraryPage />} />
+          <Route element={page(<MainLayout />)}>
+            <Route path="/" element={page(<HomePage />)} />
+            <Route path="/libraries/:id" element={page(<LibraryPage />)} />
             {/* Cross-library filtered grid. Criteria ride in the query string
                 (?genre=&decade=&unplayed=), so home rows can hand over their own
                 filter and the resulting view is shareable. */}
-            <Route path="/browse" element={<BrowsePage />} />
+            <Route path="/browse" element={page(<BrowsePage />)} />
             <Route path="/settings" element={
               user?.role === 'Admin'
                 ? <Navigate to="/settings/playback/transcoding" replace />
                 : <Navigate to="/settings/client/general" replace />
             } />
-            <Route path="/settings/:section" element={<SettingsPage />} />
-            <Route path="/settings/:section/:subsection" element={<SettingsPage />} />
-            <Route path="/account" element={<MyAccountPage />} />
-            <Route path="/media/:id" element={<MediaDetailPage />} />
+            <Route path="/settings/:section" element={page(<SettingsPage />)} />
+            <Route path="/settings/:section/:subsection" element={page(<SettingsPage />)} />
+            <Route path="/account" element={page(<MyAccountPage />)} />
+            <Route path="/media/:id" element={page(<MediaDetailPage />)} />
             {/* Playlists index lives inside the Music library as a view-mode
                 tab; we keep only the detail route for direct linking. */}
-            <Route path="/playlists/:id" element={<PlaylistDetailPage />} />
-            <Route path="/collections/:id" element={<CollectionDetailPage />} />
+            <Route path="/playlists/:id" element={page(<PlaylistDetailPage />)} />
+            <Route path="/collections/:id" element={page(<CollectionDetailPage />)} />
           </Route>
           {/* PlayerPage and ReaderPage are full screen - outside MainLayout */}
-          <Route path="/play/:id" element={<PlayerPage />} />
-          <Route path="/read/:id" element={<ReaderPage />} />
+          <Route path="/play/:id" element={page(<PlayerPage />)} />
+          <Route path="/read/:id" element={page(<ReaderPage />)} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      <PersistentPlayer />
+      {/* Fallback null: the player renders nothing until a track plays anyway. */}
+      <Suspense fallback={null}>
+        <PersistentPlayer />
+      </Suspense>
       <Toaster position="top-right" theme="dark" />
     </>
   );

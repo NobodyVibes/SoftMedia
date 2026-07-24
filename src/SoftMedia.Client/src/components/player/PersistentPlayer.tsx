@@ -8,6 +8,7 @@ import {
     List, X, RotateCcw, RotateCw, ChevronUp, ChevronDown,
     Maximize2, Minimize2, ListPlus
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { AddToPlaylistMenu } from '../playlists/AddToPlaylistMenu';
 import api, { API_URL } from '../../services/api';
 import { getUrlToken } from '../../store/authStore';
@@ -42,7 +43,7 @@ export const PersistentPlayer: React.FC = () => {
     useMediaTokenRefresh();
     const {
         currentTrack, isPlaying, volume, isMuted,
-        shuffleMode, repeatMode, queue,
+        shuffleMode, repeatMode, queue, originalQueue,
         pause, resume, next, previous,
         setVolume, toggleMute,
         toggleShuffle, cycleRepeatMode,
@@ -138,6 +139,15 @@ export const PersistentPlayer: React.FC = () => {
     // Prevent multiple rapid transitions
     const isTransitioningRef = useRef(false);
     const crossfadeTriggeredRef = useRef(false);
+
+    // SR-WI-052: a dead source (deleted file, 404, expired token) fires 'error' on the
+    // audio element; with no handler the bar just sat stalled forever. We toast and
+    // auto-advance instead — but count consecutive failures so a queue where EVERY
+    // track is broken stops after one full failed pass rather than advancing forever
+    // (repeat-all would otherwise loop failures endlessly). Reset on any successful
+    // playback (see handleTimeUpdate).
+    const consecutiveErrorsRef = useRef(0);
+    const failedPassLimitRef = useRef<number | null>(null);
 
     // Get auth token for stream URL
     const getStreamUrl = useCallback((track: MediaItem | null) => {
@@ -347,6 +357,12 @@ export const PersistentPlayer: React.FC = () => {
         setProgress(currentTime);
         setDuration(audioDuration);
 
+        // SR-WI-052: real playback progress ends any streak of broken tracks.
+        if (currentTime > 0 && consecutiveErrorsRef.current > 0) {
+            consecutiveErrorsRef.current = 0;
+            failedPassLimitRef.current = null;
+        }
+
         // R-WI-013: throttled listen beat. A track change re-stamps without posting, so the
         // first beat lands after ~10s of actual listening (rapid skips post nothing).
         const nowMs = Date.now();
@@ -418,6 +434,47 @@ export const PersistentPlayer: React.FC = () => {
             next();
         }
     }, [repeatMode, next, activeAudioRef, currentTrackId, reportFinalBeat]);
+
+    // SR-WI-052: the active element failed to load/decode its source. Tell the user
+    // which track broke, then advance through the queue exactly as a finished track
+    // would (next() already honors shuffle — the queue is pre-shuffled — and repeat).
+    const handleAudioError = useCallback(() => {
+        if (!currentTrack) return;
+
+        toast.error(`Couldn't play "${currentTrack.title}"`);
+
+        consecutiveErrorsRef.current += 1;
+        if (failedPassLimitRef.current === null) {
+            // First failure of a streak: a "full pass" is the current track plus every
+            // track auto-advance could still reach. Under repeat-all the queue reloads
+            // from originalQueue when it drains, so the pass must span that too.
+            failedPassLimitRef.current = repeatMode === 'all'
+                ? Math.max(queue.length + 1, originalQueue.length)
+                : queue.length + 1;
+        }
+
+        // Repeat-one would reload the same dead source forever — stop instead.
+        if (repeatMode === 'one') {
+            consecutiveErrorsRef.current = 0;
+            failedPassLimitRef.current = null;
+            pause();
+            return;
+        }
+
+        // A full pass failed: every reachable track is broken. Stop rather than spin.
+        if (consecutiveErrorsRef.current >= failedPassLimitRef.current) {
+            if (failedPassLimitRef.current > 1) {
+                toast.error('Playback stopped — none of the queued tracks could be played.');
+            }
+            consecutiveErrorsRef.current = 0;
+            failedPassLimitRef.current = null;
+            pause();
+            return;
+        }
+
+        // On the LAST track with repeat off, next() stops gracefully (isPlaying=false).
+        next();
+    }, [currentTrack, queue, originalQueue, repeatMode, next, pause]);
 
     // Previous track handler
     const handlePrevious = useCallback(() => {
@@ -585,6 +642,7 @@ export const PersistentPlayer: React.FC = () => {
                 crossOrigin="use-credentials"
                 onTimeUpdate={activePlayer === 0 ? handleTimeUpdate : undefined}
                 onEnded={activePlayer === 0 ? handleEnded : undefined}
+                onError={activePlayer === 0 ? handleAudioError : undefined}
                 onCanPlayThrough={activePlayer === 1 ? handlePreloadReady : undefined}
                 preload="auto"
             />
@@ -598,6 +656,7 @@ export const PersistentPlayer: React.FC = () => {
                 crossOrigin="use-credentials"
                 onTimeUpdate={activePlayer === 1 ? handleTimeUpdate : undefined}
                 onEnded={activePlayer === 1 ? handleEnded : undefined}
+                onError={activePlayer === 1 ? handleAudioError : undefined}
                 onCanPlayThrough={activePlayer === 0 ? handlePreloadReady : undefined}
                 preload="auto"
             />

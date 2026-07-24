@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { ArrowLeft, Play, Heart, Share2, Eye, Star, Clapperboard } from 'lucide-react';
+import { ArrowLeft, Play, Heart, Share2, Eye, Star, Clapperboard, Loader2, RotateCcw } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -26,9 +26,34 @@ interface MediaDetailLayoutProps {
     customMetadata?: React.ReactNode;
     /** Extra icon button(s) rendered in the action row (e.g. admin Fix Match). */
     actionSlot?: ReactNode;
+    /**
+     * SR-WI-053 — saved resume position in seconds. When > 0 (and
+     * `onPlayFromBeginning` is provided) the single Play button becomes a
+     * split control: primary "Resume from H:MM" + secondary "Play from
+     * beginning". Null/undefined/0 keeps the plain Play button.
+     */
+    resumePositionSeconds?: number | null;
+    /** Secondary action of the split control — start playback ignoring the resume position. */
+    onPlayFromBeginning?: () => void;
+    /**
+     * Disables Play with a spinner while a prerequisite of playback is still
+     * loading (e.g. an album's track list) — prevents a silent no-op click.
+     */
+    playPending?: boolean;
 }
 
-export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride, customMetadata, actionSlot }: MediaDetailLayoutProps) {
+/** "Resume from H:MM(:SS)" label — hours only when the position reaches an hour. */
+export function formatResumeTime(seconds: number): string {
+    const total = Math.max(0, Math.floor(seconds));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return h > 0
+        ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+        : `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride, customMetadata, actionSlot, resumePositionSeconds, onPlayFromBeginning, playPending }: MediaDetailLayoutProps) {
     // Media URLs below embed the media token; re-render when it rotates so a
     // stale token can't leave the artwork permanently broken.
     useMediaTokenRefresh();
@@ -69,6 +94,10 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
             queryClient.invalidateQueries({ queryKey: ['continueWatching'], refetchType: 'all' });
         }
     });
+
+    // SR-WI-053 — the split Play control only makes sense when both the resume
+    // position AND the start-over handler exist; otherwise render plain Play.
+    const hasResume = !!onPlayFromBeginning && typeof resumePositionSeconds === 'number' && resumePositionSeconds > 0;
 
     // Use override if provided, otherwise default to item backdrop.
     // Request smaller thumbnails for both backdrop (blurred, doesn't need full res)
@@ -159,13 +188,37 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                             {/* (Photos never reach this sidebar — the whole column is
                                 skipped for them above.) */}
                             {item.type !== MediaType.Artist && item.type !== MediaType.Album && (
-                                <button
-                                    onClick={onPlay}
-                                    className="relative z-50 w-full flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-violet-600 text-white rounded-xl font-bold shadow-lg shadow-violet-500/40 hover:scale-[1.02] active:scale-95 text-lg opacity-100"
-                                >
-                                    <Play className="w-6 h-6 fill-current" />
-                                    Play
-                                </button>
+                                <>
+                                    <button
+                                        onClick={onPlay}
+                                        disabled={playPending}
+                                        className={cn(
+                                            "relative z-50 w-full flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-violet-600 text-white rounded-xl font-bold shadow-lg shadow-violet-500/40 hover:scale-[1.02] active:scale-95 text-lg opacity-100",
+                                            playPending && "opacity-70 cursor-wait hover:scale-100 active:scale-100",
+                                        )}
+                                    >
+                                        {playPending ? (
+                                            <Loader2 className="w-6 h-6 animate-spin" aria-hidden="true" />
+                                        ) : (
+                                            <Play className="w-6 h-6 fill-current" aria-hidden="true" />
+                                        )}
+                                        {hasResume ? `Resume from ${formatResumeTime(resumePositionSeconds ?? 0)}` : 'Play'}
+                                    </button>
+
+                                    {/* SR-WI-053 — start-over escape hatch: only when a resume
+                                        position exists does the second button appear, so the
+                                        default layout stays a single Play. */}
+                                    {hasResume && (
+                                        <button
+                                            onClick={onPlayFromBeginning}
+                                            disabled={playPending}
+                                            className="w-full flex items-center justify-center gap-2 px-8 py-3 min-h-[44px] bg-white/10 hover:bg-white/15 focus-visible:bg-white/15 text-white rounded-xl font-semibold transition-colors disabled:opacity-70 disabled:cursor-wait"
+                                        >
+                                            <RotateCcw className="w-5 h-5" aria-hidden="true" />
+                                            Play from beginning
+                                        </button>
+                                    )}
+                                </>
                             )}
 
                             {/* NR-WI-014 follow-up: the trailer is promoted here from the
@@ -189,7 +242,9 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                     <button
                                         onClick={() => favoriteMutation.mutate(!item.isFavorite)}
                                         className="group flex-1 flex justify-center"
-                                        title="Favorite"
+                                        title={item.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                                        aria-label={item.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                                        aria-pressed={!!item.isFavorite}
                                     >
                                         <div className={cn(
                                             "p-3 rounded-full transition-all group-hover:scale-110 active:scale-95",
@@ -210,6 +265,8 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                             onClick={() => watchedMutation.mutate(!item.watched)}
                                             className="group flex-1 flex justify-center"
                                             title={item.watched ? "Mark as unwatched" : "Mark as watched"}
+                                            aria-label={item.watched ? "Mark as unwatched" : "Mark as watched"}
+                                            aria-pressed={!!item.watched}
                                         >
                                             <div className={cn(
                                                 "p-3 rounded-full transition-all group-hover:scale-110 active:scale-95",
@@ -223,7 +280,19 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                     )}
 
                                 {item.type !== MediaType.Artist && item.type !== MediaType.Album && (
-                                    <button className="group flex-1 flex justify-center" title="Share">
+                                    <button
+                                        onClick={() => {
+                                            // Canonical detail URL — NOT window.location.href: the
+                                            // current URL may carry transient params (?album=, ?highlight=).
+                                            const url = `${window.location.origin}/media/${item.id}`;
+                                            navigator.clipboard?.writeText(url)
+                                                .then(() => toast.success('Link copied to clipboard'))
+                                                .catch(() => toast.error('Could not copy the link'));
+                                        }}
+                                        className="group flex-1 flex justify-center"
+                                        title="Copy link"
+                                        aria-label={`Copy link to ${item.title}`}
+                                    >
                                         <div className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-white transition-all group-hover:scale-110 active:scale-95">
                                             <Share2 className="w-5 h-5" />
                                         </div>

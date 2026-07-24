@@ -418,8 +418,14 @@ Ordered by leverage per the review's §6 comparison. Each needs its own mini-pla
 | SR-WI-036 | **Complete** (2026-07-24) | 4h retry tier reachable (MaxRetries 4); exhaustion cleared on apply/refresh; weekly `MetadataRetryAmnesty` task; All-mode refresh covers 8 types; `POST match/{id}/refresh` + Fix Match UI button |
 | SR-WI-037 | **Complete** (2026-07-24) | Daily `ImageCacheCleanupService` (row-existence orphan criterion — IsMissing art retained); `books` covered; `InvalidateCachedImagesAsync` wired into the refresh endpoint |
 | SR-WI-038 | **Complete** (2026-07-24) | VA compilations (tag + directory heuristic); junk-word list +22; unsafe-name skips on the file-issues dashboard; targeted watcher delete (soft-mark, no full scan) |
-| SR-WI-040..042 | Not started | Session D |
-| SR-WI-050..054 | Not started | Session D |
+| SR-WI-040 | **Complete** (2026-07-24) | Off-canvas drawer <md w/ focus mgmt + backdrop + Escape; desktop pixel-identical; mobile search overlay; TopBar bug batch folded in (admin link, dead menu items, ARIA) |
+| SR-WI-041 | **Complete** (2026-07-24) | All routes lazy; initial chunk 2.65 MB→450 kB (145 kB gzip); Cast SDK lazy-injected; precache override dropped |
+| SR-WI-042 | **Complete** (2026-07-24) | `VirtualMediaGrid` (row-virtualized, bounded DOM); adaptive columns <md; desktop pixel-identical |
+| SR-WI-050 | **Complete** (2026-07-24) | Watchlist key fix (test-pinned); Share copy-link ported; TopBar items in 040 |
+| SR-WI-051 | **Complete** (2026-07-24) | Shared `ui/Modal` (dialog semantics, trap, Escape, focus return) adopted by all six modals; `bg-opacity` backdrop bug fixed; Combobox ARIA + keyboard; a11y ratchet guards |
+| SR-WI-052 | **Complete** (2026-07-24) | Home error banner + retry; PersistentPlayer onError toast + auto-advance w/ full-pass stop; session-expired notice + return-path; PlayerPage/MediaDetailPage 404-vs-retry |
+| SR-WI-053 | **Complete** (2026-07-24) | Resume/Play-from-beginning split (progress + next-episode endpoints; ≥95% = no-resume); Album Play disabled-until-loaded |
+| SR-WI-054 | **Complete** (2026-07-24) | Decision only: i18n de-scoped from 1.0 per Q5 (recorded §10) |
 | SR-WI-060..065 | Not started | Session E |
 | Phase 7 | Unscheduled | Post-1.0 |
 
@@ -494,3 +500,23 @@ consumes the API.
   pass through. Live-verify additions for Session 5: Sonarr-style watcher import creates no
   duplicate series and gets artwork without a manual scan; deleting a file leaves history
   and shows the item back after restore.
+- 2026-07-24 — **SESSION D COMPLETE** (SR-WI-040..042, 050..054). Client-only session:
+  build green, suite 373/373 (+88 over the 285 baseline); server untouched. Notes:
+  (1) Mobile drawer state is transient component state in MainLayout, NOT the persisted
+  uiStore (deliberate); desktop collapse persists as before, and the drawer always renders
+  full-width even when desktop collapse is persisted (`useIsMdUp` gate). (2) The six modals
+  are ratcheted onto `ui/Modal` by a11yGuards — new modals must use it or the guard fails;
+  `bg-opacity-*` is banned repo-wide by the same guard. (3) Route chunks are all precached
+  (93 entries / 2.85 MiB) so offline navigation still works; the 5 MB precache override is
+  gone — a future chunk >2 MiB will FAIL the PWA build (that's the signal to re-split, not
+  to re-raise the cap). (4) Cast SDK loads via `castSdkLoader.ts` on first cast-capable
+  mount; `__onGCastApiAvailable` must be registered BEFORE script injection. (5) Resume
+  position comes from `GET /interaction/{id}/progress` (movies/episodes) and
+  `/series/{id}/next-episode` (series) — the detail DTO deliberately does not carry it
+  (server change would belong to Session E's DTO work if ever wanted). (6) Sequential-reveal
+  cascade applies to the first 30 grid items only (virtualized rows render immediately).
+  Known small follow-ups recorded: AlbumDetailView's own "Play All" wasn't guarded (the
+  MediaDetailPage handler is); `api.ts` gained one line (`logout('expired')`) outside the
+  session's ownership lists — reviewed and kept. Live-verify additions for Session 5:
+  phone-width (375px) nav/search/browse pass; cast still works end-to-end (SDK lazy path);
+  offline PWA route navigation after first load.

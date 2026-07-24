@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useInView } from 'react-intersection-observer';
+import { toast } from 'sonner';
 import api from '../services/api';
-import HoverableMediaCardWrapper from '../components/items/HoverableMediaCardWrapper';
+import VirtualMediaGrid from '../components/library/VirtualMediaGrid';
 import { FilterBar } from '../components/library/FilterBar';
 import PlaylistsView from '../components/playlists/PlaylistsView';
 import PhotoLibraryView from '../components/library/PhotoLibraryView';
@@ -145,29 +146,24 @@ export default function LibraryPage() {
             );
         }
 
+        // Reduced padding below md so phones don't burn ~30% of the viewport
+        // on margins; desktop keeps the original px-8/pt-8 spacing.
         return (
-            <div className="flex-1 px-8 pt-8 pb-10">
-                {/* CSS Grid for fixed positions - prevents reflow on hover */}
-                <div
-                    className="grid"
-                    style={{
-                        gridTemplateColumns: 'repeat(auto-fill, 192px)',
-                        gap: '2rem' // gap-8
-                    }}
-                >
-                    {allItems.map((item: MediaItem, i: number) => (
-                        <HoverableMediaCardWrapper
-                            key={item.id}
-                            item={item}
-                            hoveredId={hoveredId}
-                            setHoveredId={setHoveredId}
-                            libraryType={library?.type}
-                            groupReady={reveal.isRevealed(i)}
-                            onImageLoad={() => reveal.onImageLoad(i)}
-                            onImageError={() => reveal.onImageError(i)}
-                        />
-                    ))}
-                </div>
+            <div className="flex-1 px-4 pt-6 pb-10 md:px-8 md:pt-8">
+                {/* Row-virtualized grid (SR-WI-042): only the viewport's rows are
+                    mounted, so a 10k-item library stays at a bounded node count.
+                    Infinite-scroll fetching is unchanged — the sentinel below sits
+                    after the grid's full-height spacer, so it enters view exactly
+                    when the user nears the end of the fetched pages. */}
+                <VirtualMediaGrid
+                    items={allItems}
+                    libraryType={library?.type}
+                    hoveredId={hoveredId}
+                    setHoveredId={setHoveredId}
+                    isRevealed={reveal.isRevealed}
+                    onImageLoad={reveal.onImageLoad}
+                    onImageError={reveal.onImageError}
+                />
 
                 <div ref={ref} className="h-20 flex justify-center items-center mt-8">
                     {isFetchingNextPage && (
@@ -182,9 +178,12 @@ export default function LibraryPage() {
     const handleRescan = async () => {
         try {
             await api.post(`/libraries/${id}/scan`);
-            // Toast will show automatically via SignalR -> Store -> Toast
+            // Success toast arrives automatically via SignalR -> Store -> Toast
         } catch (error) {
+            // SR-WI-052: a failed kick-off produces NO SignalR progress events,
+            // so without this the button silently does nothing.
             console.error('Failed to start scan:', error);
+            toast.error('Could not start the library scan. Please try again.');
         }
     };
 

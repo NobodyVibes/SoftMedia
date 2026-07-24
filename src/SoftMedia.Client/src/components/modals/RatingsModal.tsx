@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { userService, type UserDto } from '../../services/userService';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Modal } from '../ui/Modal';
 
 interface RatingsModalProps {
     isOpen: boolean;
@@ -52,70 +53,67 @@ export const RatingsModal: React.FC<RatingsModalProps> = ({ isOpen, onClose, use
     if (!isOpen || !user) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
-                <h2 className="text-xl font-bold text-white mb-4">Edit Content Ratings for {user.username}</h2>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                        <label htmlFor="edit-movie-rating" className="block text-sm font-medium text-gray-400 mb-1">Movies (MPAA)</label>
-                        <select
-                            id="edit-movie-rating"
-                            value={ratings['Movie'] || ''}
-                            onChange={(e) => handleRatingChange('Movie', e.target.value)}
-                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-[#007AFF]"
-                        >
-                            <option value="">None (Unrestricted)</option>
-                            {MOVIE_RATINGS.map(r => (
-                                <option key={r} value={r}>{r}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div>
-                        <label htmlFor="edit-tv-rating" className="block text-sm font-medium text-gray-400 mb-1">TV Shows</label>
-                        <select
-                            id="edit-tv-rating"
-                            value={ratings['TV'] || ''}
-                            onChange={(e) => handleRatingChange('TV', e.target.value)}
-                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-[#007AFF]"
-                        >
-                            <option value="">None (Unrestricted)</option>
-                            {TV_RATINGS.map(r => (
-                                <option key={r} value={r}>{r}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div>
-                        <label htmlFor="edit-game-rating" className="block text-sm font-medium text-gray-400 mb-1">Games (ESRB)</label>
-                        <select
-                            id="edit-game-rating"
-                            value={ratings['Game'] || ''}
-                            onChange={(e) => handleRatingChange('Game', e.target.value)}
-                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-[#007AFF]"
-                        >
-                            <option value="">None (Unrestricted)</option>
-                            {GAME_RATINGS.map(r => (
-                                <option key={r} value={r}>{r}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div className="flex justify-end gap-2 pt-4">
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="px-4 py-2 rounded text-gray-300 hover:bg-gray-700 transition-colors"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="submit"
-                            disabled={updateMutation.isPending}
-                            className="px-4 py-2 rounded bg-[#007AFF] hover:bg-[#005BB5] text-white transition-colors disabled:opacity-50"
-                        >
-                            {updateMutation.isPending ? 'Saving...' : 'Save Ratings'}
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
+        <Modal isOpen={isOpen} onClose={onClose} title={`Edit Content Ratings for ${user.username}`}>
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                    <label htmlFor="edit-movie-rating" className="block text-sm font-medium text-gray-400 mb-1">Movies (MPAA)</label>
+                    <select
+                        id="edit-movie-rating"
+                        value={ratings['Movie'] || ''}
+                        onChange={(e) => handleRatingChange('Movie', e.target.value)}
+                        className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-[#007AFF]"
+                    >
+                        <option value="">None (Unrestricted)</option>
+                        {MOVIE_RATINGS.map(r => (
+                            <option key={r} value={r}>{r}</option>
+                        ))}
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="edit-tv-rating" className="block text-sm font-medium text-gray-400 mb-1">TV Shows</label>
+                    <select
+                        id="edit-tv-rating"
+                        value={ratings['TV'] || ''}
+                        onChange={(e) => handleRatingChange('TV', e.target.value)}
+                        className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-[#007AFF]"
+                    >
+                        <option value="">None (Unrestricted)</option>
+                        {TV_RATINGS.map(r => (
+                            <option key={r} value={r}>{r}</option>
+                        ))}
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="edit-game-rating" className="block text-sm font-medium text-gray-400 mb-1">Games (ESRB)</label>
+                    <select
+                        id="edit-game-rating"
+                        value={ratings['Game'] || ''}
+                        onChange={(e) => handleRatingChange('Game', e.target.value)}
+                        className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-[#007AFF]"
+                    >
+                        <option value="">None (Unrestricted)</option>
+                        {GAME_RATINGS.map(r => (
+                            <option key={r} value={r}>{r}</option>
+                        ))}
+                    </select>
+                </div>
+                <div className="flex justify-end gap-2 pt-4">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="px-4 py-2 rounded text-gray-300 hover:bg-gray-700 transition-colors"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="submit"
+                        disabled={updateMutation.isPending}
+                        className="px-4 py-2 rounded bg-[#007AFF] hover:bg-[#005BB5] text-white transition-colors disabled:opacity-50"
+                    >
+                        {updateMutation.isPending ? 'Saving...' : 'Save Ratings'}
+                    </button>
+                </div>
+            </form>
+        </Modal>
     );
 };

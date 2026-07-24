@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Home, Film, Tv, Music, Book, LogOut, Gamepad2, Image, Settings, ChevronRight, ChevronDown, Play, Database, Users, ShieldCheck, User, Globe, type LucideIcon } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
@@ -57,13 +57,74 @@ const settingsNavTree = [
     { id: 'admin', label: 'Admin Dashboard', icon: ShieldCheck, path: '/settings/admin', adminOnly: true },
 ];
 
-export default function Sidebar() {
+/**
+ * Tracks whether the viewport is at or above Tailwind's `md` breakpoint (768px).
+ * Defaults to `true` (desktop) when matchMedia is unavailable (jsdom/tests) so
+ * existing desktop behavior is the fallback.
+ */
+function useIsMdUp(): boolean {
+    const [isMdUp, setIsMdUp] = useState(() =>
+        typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+            ? window.matchMedia('(min-width: 768px)').matches
+            : true
+    );
+
+    useEffect(() => {
+        if (typeof window.matchMedia !== 'function') return;
+        const mql = window.matchMedia('(min-width: 768px)');
+        const onChange = (e: MediaQueryListEvent) => setIsMdUp(e.matches);
+        mql.addEventListener('change', onChange);
+        return () => mql.removeEventListener('change', onChange);
+    }, []);
+
+    return isMdUp;
+}
+
+interface SidebarProps {
+    /** SR-WI-040: below `md`, whether the off-canvas drawer is open. */
+    isMobileOpen?: boolean;
+    /** Called when the drawer should close (Escape key; MainLayout owns backdrop + route close). */
+    onMobileClose?: () => void;
+}
+
+export default function Sidebar({ isMobileOpen = false, onMobileClose }: SidebarProps) {
     const location = useLocation();
     const logout = useAuthStore((state) => state.logout);
     const user = useAuthStore((state) => state.user);
     const { isSidebarCollapsed } = useUIStore();
     const { data: libraries } = useLibraries();
     const { t } = useTranslation();
+    const isMdUp = useIsMdUp();
+
+    // The persisted "collapsed" (icon-only) mode is a desktop concept; the mobile
+    // drawer always renders the full 256px nav with labels.
+    const collapsed = isSidebarCollapsed && isMdUp;
+
+    // Focus management for the mobile drawer: move focus in on open, return it
+    // to the opener (the TopBar hamburger) on close.
+    const drawerRef = useRef<HTMLDivElement>(null);
+    const restoreFocusRef = useRef<HTMLElement | null>(null);
+    useEffect(() => {
+        if (isMobileOpen) {
+            restoreFocusRef.current = document.activeElement instanceof HTMLElement
+                ? document.activeElement
+                : null;
+            drawerRef.current?.focus();
+        } else if (restoreFocusRef.current) {
+            restoreFocusRef.current.focus();
+            restoreFocusRef.current = null;
+        }
+    }, [isMobileOpen]);
+
+    // Escape closes the drawer.
+    useEffect(() => {
+        if (!isMobileOpen || !onMobileClose) return;
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') onMobileClose();
+        };
+        document.addEventListener('keydown', onKeyDown);
+        return () => document.removeEventListener('keydown', onKeyDown);
+    }, [isMobileOpen, onMobileClose]);
 
     const isAdmin = user?.role === 'Admin';
     const isOnSettingsPage = location.pathname.startsWith('/settings');
@@ -107,13 +168,23 @@ export default function Sidebar() {
 
     return (
         <motion.div
+            ref={drawerRef}
+            tabIndex={-1}
+            aria-label="Main navigation"
             initial={false}
-            animate={{ width: isSidebarCollapsed ? 80 : 256 }}
-            className="h-[calc(100vh-4rem)] bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] flex flex-col fixed left-0 top-16 z-40 shadow-2xl overflow-hidden border-r border-white/5"
+            animate={{ width: collapsed ? 80 : 256 }}
+            className={cn(
+                "h-[calc(100vh-4rem)] bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] flex flex-col fixed left-0 top-16 z-40 shadow-2xl overflow-hidden border-r border-white/5 outline-none",
+                // SR-WI-040 mobile drawer: off-canvas below `md` (translate, not
+                // display:none, so the slide transition works). At `md`+ the
+                // transform resets and behavior is exactly the fixed sidebar.
+                "max-md:transition-transform max-md:duration-300 max-md:ease-in-out md:translate-x-0",
+                isMobileOpen ? "max-md:translate-x-0" : "max-md:-translate-x-full"
+            )}
         >
             {/* Navigation */}
             <nav className="flex-1 px-3 py-6 space-y-1.5 overflow-y-auto overflow-x-hidden">
-                {!isSidebarCollapsed && (
+                {!collapsed && (
                     <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
@@ -141,9 +212,9 @@ export default function Sidebar() {
                                     isActive
                                         ? "bg-white/10 text-white shadow-lg"
                                         : "text-gray-400 hover:bg-white/5 hover:text-white",
-                                    isSidebarCollapsed && "justify-center px-2"
+                                    collapsed && "justify-center px-2"
                                 )}
-                                title={isSidebarCollapsed ? item.name : undefined}
+                                title={collapsed ? item.name : undefined}
                             >
                                 {isActive && (
                                     <motion.div
@@ -161,7 +232,7 @@ export default function Sidebar() {
                                         )}
                                     />
                                 </div>
-                                {!isSidebarCollapsed && (
+                                {!collapsed && (
                                     <motion.span
                                         initial={{ opacity: 0, width: 0 }}
                                         animate={{ opacity: 1, width: 'auto' }}
@@ -181,7 +252,7 @@ export default function Sidebar() {
 
                 {/* Settings Section */}
                 <>
-                    {!isSidebarCollapsed && (
+                    {!collapsed && (
                             <motion.div
                                 initial={{ opacity: 0 }}
                                 animate={{ opacity: 1 }}
@@ -205,9 +276,9 @@ export default function Sidebar() {
                                     isOnSettingsPage
                                         ? "bg-white/10 text-white shadow-lg"
                                         : "text-gray-400 hover:bg-white/5 hover:text-white",
-                                    isSidebarCollapsed && "justify-center px-2"
+                                    collapsed && "justify-center px-2"
                                 )}
-                                title={isSidebarCollapsed ? t('Settings') : undefined}
+                                title={collapsed ? t('Settings') : undefined}
                             >
                                 {isOnSettingsPage && (
                                     <motion.div
@@ -221,7 +292,7 @@ export default function Sidebar() {
                                         isOnSettingsPage && "text-primary drop-shadow-[0_0_8px_rgba(99,102,241,0.6)]"
                                     )}
                                 />
-                                {!isSidebarCollapsed && (
+                                {!collapsed && (
                                     <span className={cn(
                                         "font-semibold text-sm whitespace-nowrap",
                                         isOnSettingsPage && "drop-shadow-[0_0_10px_rgba(99,102,241,0.3)]"
@@ -234,7 +305,7 @@ export default function Sidebar() {
 
                         {/* Settings sub-navigation */}
                         <AnimatePresence>
-                            {isOnSettingsPage && !isSidebarCollapsed && (
+                            {isOnSettingsPage && !collapsed && (
                                 <motion.div
                                     initial={{ opacity: 0, height: 0 }}
                                     animate={{ opacity: 1, height: 'auto' }}
@@ -326,12 +397,12 @@ export default function Sidebar() {
                     whileTap={{ scale: 0.98 }}
                     className={cn(
                         "flex items-center gap-4 px-4 py-3 w-full text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all group border border-transparent hover:border-red-500/20",
-                        isSidebarCollapsed && "justify-center px-2"
+                        collapsed && "justify-center px-2"
                     )}
-                    title={isSidebarCollapsed ? t("Sign Out") : undefined}
+                    title={collapsed ? t("Sign Out") : undefined}
                 >
                     <LogOut size={24} className="group-hover:-translate-x-1 transition-transform flex-shrink-0" />
-                    {!isSidebarCollapsed && <span className="font-semibold text-sm whitespace-nowrap">{t('Sign Out')}</span>}
+                    {!collapsed && <span className="font-semibold text-sm whitespace-nowrap">{t('Sign Out')}</span>}
                 </motion.button>
             </div>
         </motion.div>

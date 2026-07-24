@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
 import { Input } from '../components/ui/Input';
@@ -29,9 +29,26 @@ function authErrorMessage(err: unknown, fallback: string): string {
     return fallback;
 }
 
+/** Route state ProtectedRoute attaches when it bounces an unauthenticated user here. */
+interface LoginRouteState {
+    from?: { pathname?: string; search?: string };
+    reason?: string;
+}
+
 export default function LoginPage() {
     const navigate = useNavigate();
+    const location = useLocation();
     const login = useAuthStore((state) => state.login);
+
+    // SR-WI-052: ProtectedRoute passes { from, reason } when it redirects here. After a
+    // forced logout (refresh token rejected) we say so quietly, and a successful re-login
+    // returns to where the user WAS instead of dumping them on the home page.
+    const routeState = (location.state ?? null) as LoginRouteState | null;
+    const sessionExpired = routeState?.reason === 'expired';
+    const fromPathname = routeState?.from?.pathname;
+    const redirectTo = fromPathname && fromPathname !== '/login'
+        ? `${fromPathname}${routeState?.from?.search ?? ''}`
+        : '/';
 
     // NR-WI-010 — server identity. Anonymous endpoint; falls back to "SoftMedia"
     // silently so a fetch failure can never block the login form.
@@ -67,7 +84,7 @@ export default function LoginPage() {
             return;
         }
         login(user, token);
-        navigate('/');
+        navigate(redirectTo, { replace: true });
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -140,7 +157,7 @@ export default function LoginPage() {
             const { accessToken: token, user } = response.data;
 
             login(user, token);
-            navigate('/');
+            navigate(redirectTo, { replace: true });
 
         } catch (err: unknown) {
             console.error(err);
@@ -167,6 +184,14 @@ export default function LoginPage() {
                         {branding?.loginMessage ?? 'Sign in to access your personal media library'}
                     </p>
                 </div>
+
+                {/* SR-WI-052: quiet notice after a forced logout. Suppressed once an
+                    actual submit error takes over the messaging slot. */}
+                {sessionExpired && !error && (
+                    <div className="mb-6 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300 text-sm text-center">
+                        Your session expired — please sign in again.
+                    </div>
+                )}
 
                 {twoFactorChallengeId ? (
                     <form className="space-y-6" onSubmit={handleTwoFactorSubmit}>

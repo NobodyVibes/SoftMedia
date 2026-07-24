@@ -16,8 +16,18 @@ interface AuthState {
     // top-level effect in App.tsx; URLs fall back to `token` until it loads.
     mediaToken: string | null;
     isAuthenticated: boolean;
+    // SR-WI-052: why the last logout happened. 'expired' when the server rejected the
+    // refresh token (forced logout in api.ts) — ProtectedRoute forwards it so LoginPage
+    // can show a "session expired" notice instead of dumping the user with no context.
+    // null for user-initiated logouts and fresh visitors. Deliberately NOT persisted.
+    logoutReason: 'expired' | null;
     login: (user: AuthUser, token: string) => void;
-    logout: () => void;
+    /**
+     * Pass 'expired' when the session was forcibly ended (refresh token rejected).
+     * Any other value — including the DOM event that `onClick={logout}` passes —
+     * is treated as a plain user-initiated logout.
+     */
+    logout: (reason?: unknown) => void;
     setMediaToken: (mediaToken: string | null) => void;
 }
 
@@ -28,9 +38,16 @@ export const useAuthStore = create<AuthState>()(
             token: null,
             mediaToken: null,
             isAuthenticated: false,
-            login: (user, token) => set({ user, token, isAuthenticated: true }),
-            logout: () => {
-                set({ user: null, token: null, mediaToken: null, isAuthenticated: false });
+            logoutReason: null,
+            login: (user, token) => set({ user, token, isAuthenticated: true, logoutReason: null }),
+            logout: (reason) => {
+                set({
+                    user: null,
+                    token: null,
+                    mediaToken: null,
+                    isAuthenticated: false,
+                    logoutReason: reason === 'expired' ? 'expired' : null,
+                });
                 // Account-scoped queries (['contentLimits'], ['apiTokens'], …) are keyed without
                 // a user id — clear the cache so the next login can't briefly see the previous
                 // user's data (R-WI-011 review).

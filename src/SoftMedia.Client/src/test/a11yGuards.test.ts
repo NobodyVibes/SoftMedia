@@ -265,3 +265,88 @@ describe('Universal Client a11y guard', () => {
         expect(violations).toEqual([]);
     });
 });
+
+/**
+ * SR-WI-051 — dialog-semantics guard. The six modals below were migrated to
+ * the shared <Modal> primitive (src/components/ui/Modal.tsx), which supplies
+ * role="dialog", aria-modal, aria-labelledby (wired to the title), focus
+ * trap, Escape-to-close, backdrop dismissal, focus return, and body scroll
+ * lock. These static checks make sure nobody quietly reverts a modal to a
+ * hand-rolled overlay, and that the primitive itself keeps its contract.
+ * Runtime assertions live in components/modals/modalDialogSemantics.test.tsx
+ * and components/ui/Modal.test.tsx.
+ */
+describe('Modal dialog semantics guard (SR-WI-051)', () => {
+    /** One-way ratchet: once a modal adopts <Modal>, it must stay adopted. */
+    const SHARED_MODAL_ADOPTERS = [
+        'modals/ConfirmationModal.tsx',
+        'modals/StreamingModal.tsx',
+        'modals/LibraryAccessModal.tsx',
+        'modals/RatingsModal.tsx',
+        'admin/CreateUserModal.tsx',
+        'admin/ResetPasswordModal.tsx',
+    ];
+
+    it('every migrated modal renders through the shared <Modal> primitive with a title', () => {
+        const violations: string[] = [];
+
+        for (const rel of SHARED_MODAL_ADOPTERS) {
+            const source = readFileSync(join(COMPONENTS_ROOT, rel), 'utf-8');
+
+            if (!/import\s*\{\s*Modal\s*\}\s*from\s*['"]\.{1,2}\/ui\/Modal['"]/.test(source)) {
+                violations.push(`${rel}: does not import { Modal } from ui/Modal`);
+            }
+            if (!/<Modal\b/.test(source)) {
+                violations.push(`${rel}: does not render <Modal>`);
+            }
+            if (!/<Modal\b[\s\S]*?\btitle\s*=/.test(source)) {
+                violations.push(`${rel}: <Modal> is missing the title prop (aria-labelledby source)`);
+            }
+            // A hand-rolled full-screen overlay alongside <Modal> means the
+            // dialog semantics were bypassed for some code path.
+            if (/fixed inset-0/.test(source)) {
+                violations.push(`${rel}: contains a hand-rolled "fixed inset-0" overlay — render through <Modal> instead`);
+            }
+        }
+
+        if (violations.length > 0) {
+            throw new Error(
+                `Modal migration regressions:\n` + violations.map((v) => `  • ${v}`).join('\n')
+            );
+        }
+        expect(violations).toEqual([]);
+    });
+
+    it('the shared Modal primitive keeps its dialog contract', () => {
+        const source = readFileSync(join(COMPONENTS_ROOT, 'ui', 'Modal.tsx'), 'utf-8');
+
+        expect(source).toMatch(/role="dialog"/);
+        expect(source).toMatch(/aria-modal="true"/);
+        expect(source).toMatch(/aria-labelledby=/);
+        expect(source).toMatch(/'Escape'/); // Escape-to-close handler
+        expect(source).toMatch(/'Tab'/); // focus trap
+    });
+
+    it('no Tailwind v3 bg-opacity-* utilities (removed in v4 — backdrop renders opaque)', () => {
+        const violations: string[] = [];
+
+        for (const file of files) {
+            const source = readFileSync(file, 'utf-8');
+            const m = /\bbg-opacity-\d+/.exec(source);
+            if (m) {
+                violations.push(`${relative(COMPONENTS_ROOT, file)}:${lineOf(source, m.index)} (${m[0]})`);
+            }
+        }
+
+        if (violations.length > 0) {
+            throw new Error(
+                `Found ${violations.length} bg-opacity-* usage(s). Tailwind v4 removed ` +
+                    `these utilities, so they silently do nothing (e.g. a "translucent" ` +
+                    `backdrop renders fully opaque). Use slash opacity instead: ` +
+                    `\`bg-black/50\`, not \`bg-black bg-opacity-50\`.\n` +
+                    violations.map((v) => `  • ${v}`).join('\n')
+            );
+        }
+        expect(violations).toEqual([]);
+    });
+});

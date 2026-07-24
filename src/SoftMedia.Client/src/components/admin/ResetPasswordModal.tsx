@@ -4,6 +4,7 @@ import { Input } from '../ui/Input';
 import { userService, type UserDto } from '../../services/userService';
 import { toast } from 'sonner';
 import { useMutation } from '@tanstack/react-query';
+import { Modal } from '../ui/Modal';
 
 interface ResetPasswordModalProps {
     isOpen: boolean;
@@ -12,7 +13,6 @@ interface ResetPasswordModalProps {
 }
 
 export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ isOpen, onClose, user }) => {
-    console.log('ResetPasswordModal rendered. isOpen:', isOpen, 'user:', user?.username);
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
 
@@ -48,44 +48,46 @@ export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ isOpen, 
     if (!isOpen || !user) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <div className="bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 p-6 border border-gray-700">
-                <h2 className="text-xl font-bold text-white mb-4">Reset Password for {user.username}</h2>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div className="space-y-2">
-                        <label htmlFor="new-password" className="text-sm font-medium text-gray-200">New Password</label>
-                        <Input
-                            id="new-password"
-                            type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            className="bg-gray-700 border-gray-600 text-white w-full"
-                            placeholder="Enter new password"
-                            required
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <label htmlFor="confirm-password" className="text-sm font-medium text-gray-200">Confirm Password</label>
-                        <Input
-                            id="confirm-password"
-                            type="password"
-                            value={confirmPassword}
-                            onChange={(e) => setConfirmPassword(e.target.value)}
-                            className="bg-gray-700 border-gray-600 text-white w-full"
-                            placeholder="Confirm new password"
-                            required
-                        />
-                    </div>
-                    <div className="flex justify-end gap-3 mt-6">
-                        <Button type="button" variant="ghost" onClick={onClose} className="text-gray-300 hover:text-white hover:bg-gray-700 focus-visible:text-white focus-visible:bg-gray-700 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none">
-                            Cancel
-                        </Button>
-                        <Button type="submit" disabled={resetMutation.isPending} className="bg-red-600 hover:bg-red-700 focus-visible:bg-red-700 focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:outline-none text-white">
-                            {resetMutation.isPending ? 'Resetting...' : 'Reset Password'}
-                        </Button>
-                    </div>
-                </form>
-            </div>
-        </div>
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title={`Reset Password for ${user.username}`}
+            panelClassName="bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 p-6 border border-gray-700"
+        >
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="space-y-2">
+                    <label htmlFor="new-password" className="text-sm font-medium text-gray-200">New Password</label>
+                    <Input
+                        id="new-password"
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="bg-gray-700 border-gray-600 text-white w-full"
+                        placeholder="Enter new password"
+                        required
+                    />
+                </div>
+                <div className="space-y-2">
+                    <label htmlFor="confirm-password" className="text-sm font-medium text-gray-200">Confirm Password</label>
+                    <Input
+                        id="confirm-password"
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        className="bg-gray-700 border-gray-600 text-white w-full"
+                        placeholder="Confirm new password"
+                        required
+                    />
+                </div>
+                <div className="flex justify-end gap-3 mt-6">
+                    <Button type="button" variant="ghost" onClick={onClose} className="text-gray-300 hover:text-white hover:bg-gray-700 focus-visible:text-white focus-visible:bg-gray-700 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none">
+                        Cancel
+                    </Button>
+                    <Button type="submit" disabled={resetMutation.isPending} className="bg-red-600 hover:bg-red-700 focus-visible:bg-red-700 focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:outline-none text-white">
+                        {resetMutation.isPending ? 'Resetting...' : 'Reset Password'}
+                    </Button>
+                </div>
+            </form>
+        </Modal>
     );
 };

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLibraries, useLibraryRecent, useHeroItems } from '../hooks/useLibrary';
@@ -12,18 +12,36 @@ import { continueWatchingService } from '../services/continueWatchingService';
 import { type Library, type MediaItem, MediaType } from '../types';
 
 /**
+ * SR-WI-052: rows report their query-error state up to the page. Every home row
+ * self-suppresses on error exactly as it does on empty (a server hiccup must not
+ * leave broken skeletons mid-page), but the PAGE shows one shared banner with a
+ * Retry, instead of the old behavior of silently rendering a blank home page.
+ */
+type RowErrorReporter = (rowKey: string, isError: boolean) => void;
+
+function useReportRowError(rowKey: string, isError: boolean, onErrorStateChange: RowErrorReporter) {
+    useEffect(() => {
+        onErrorStateChange(rowKey, isError);
+        // A row that unmounts (e.g. a library disappears) must not leave a stale
+        // failure pinned on the page banner.
+        return () => onErrorStateChange(rowKey, false);
+    }, [rowKey, isError, onErrorStateChange]);
+}
+
+/**
  * Continue Watching — the user's in-progress Movies + TV shows, newest-first. Rendered FIRST in
  * the user-state cluster (directly below the hero). Self-suppresses when empty. TV shows appear as
  * a single show card; MediaCard's play handler resolves a Series to its resume episode, so clicking
  * Play continues from wherever the user left off — never lists individual episodes.
  */
-function ContinueWatchingRow() {
-    const { data: items, isLoading } = useQuery<MediaItem[]>({
+function ContinueWatchingRow({ onErrorStateChange }: { onErrorStateChange: RowErrorReporter }) {
+    const { data: items, isLoading, isError } = useQuery<MediaItem[]>({
         queryKey: ['continueWatching'],
         queryFn: () => continueWatchingService.list(20),
     });
+    useReportRowError('continueWatching', isError, onErrorStateChange);
 
-    if (isLoading) return null;
+    if (isLoading || isError) return null;
     if (!items || items.length === 0) return null;
 
     return (
@@ -101,7 +119,7 @@ function browseLinkFor(filter: HomeRowFilter | null | undefined): string | undef
  * it is written with a single-key PUT — UserPreferencesService upserts per key,
  * so this never disturbs the user's other preferences.
  */
-function PersonalizedRows() {
+function PersonalizedRows({ onErrorStateChange }: { onErrorStateChange: RowErrorReporter }) {
     const queryClient = useQueryClient();
 
     const { data: preferences } = useQuery({
@@ -123,15 +141,18 @@ function PersonalizedRows() {
         },
     });
 
-    const { data: rows, isLoading } = useQuery<HomeRow[]>({
+    const { data: rows, isLoading, isError } = useQuery<HomeRow[]>({
         // Scope is part of the key so each variant caches separately and toggling
         // back is instant rather than a refetch.
         queryKey: ['homeRows', scope],
         queryFn: async () => (await api.get('/media/home-rows', { params: { scope } })).data,
         staleTime: 5 * 60 * 1000, // taste shifts slowly; don't refetch on every focus
     });
+    // Only the rows query feeds the banner — a preferences failure silently degrades
+    // to the 'everyone' default and must not flag the whole page as broken.
+    useReportRowError('homeRows', isError, onErrorStateChange);
 
-    if (isLoading || !rows || rows.length === 0) return null;
+    if (isLoading || isError || !rows || rows.length === 0) return null;
 
     return (
         <>
@@ -163,13 +184,14 @@ function PersonalizedRows() {
  * the watchlist is empty so users without anything saved don't see an
  * empty row.
  */
-function WatchlistRow() {
-    const { data: items, isLoading } = useQuery<MediaItem[]>({
+function WatchlistRow({ onErrorStateChange }: { onErrorStateChange: RowErrorReporter }) {
+    const { data: items, isLoading, isError } = useQuery<MediaItem[]>({
         queryKey: ['watchlist'],
         queryFn: () => watchlistService.list(50),
     });
+    useReportRowError('watchlist', isError, onErrorStateChange);
 
-    if (isLoading) return null;
+    if (isLoading || isError) return null;
     if (!items || items.length === 0) return null;
 
     return (
@@ -184,13 +206,16 @@ function WatchlistRow() {
  * Component to handle fetching and rendering a "Recently Added" row for a specific library.
  */
 function LibraryRecentRow({
-    library
+    library,
+    onErrorStateChange
 }: {
-    library: Library
+    library: Library;
+    onErrorStateChange: RowErrorReporter;
 }) {
-    const { data: recentItems, isLoading } = useLibraryRecent(library.id);
+    const { data: recentItems, isLoading, isError } = useLibraryRecent(library.id);
+    useReportRowError(`libraryRecent:${library.id}`, isError, onErrorStateChange);
 
-    if (isLoading || !recentItems || recentItems.length === 0) return null;
+    if (isLoading || isError || !recentItems || recentItems.length === 0) return null;
 
     return (
         <MediaRow
@@ -212,9 +237,32 @@ function LibraryRecentRow({
 const SUPPORTED_TYPES: Library['type'][] = ['Movie', 'TV', 'Music', 'Book', 'Game'];
 
 export default function HomePage() {
-    const { data: libraries } = useLibraries();
-    const { data: heroItems, isLoading: heroLoading } = useHeroItems();
+    const { data: libraries, isError: librariesError } = useLibraries();
+    const { data: heroItems, isLoading: heroLoading, isError: heroError } = useHeroItems();
     const navigate = useNavigate();
+    const queryClient = useQueryClient();
+
+    // SR-WI-052: which rows currently sit in a query-error state. One page-level
+    // banner (below) covers them all — no per-row error spam, and rows that
+    // succeeded keep rendering normally.
+    const [failedRows, setFailedRows] = useState<Record<string, true>>({});
+
+    const reportRowError = useCallback<RowErrorReporter>((rowKey, isError) => {
+        setFailedRows(prev => {
+            if (Boolean(prev[rowKey]) === isError) return prev;
+            const nextState = { ...prev };
+            if (isError) nextState[rowKey] = true;
+            else delete nextState[rowKey];
+            return nextState;
+        });
+    }, []);
+
+    const hasErrors = heroError || librariesError || Object.keys(failedRows).length > 0;
+
+    // Refetch everything that failed (hero, libraries, and any row) in one go.
+    const retryFailed = useCallback(() => {
+        void queryClient.refetchQueries({ predicate: (query) => query.state.status === 'error' });
+    }, [queryClient]);
 
     // Determine which libraries to show (excluding Photos and unknown types).
     //
@@ -265,13 +313,32 @@ export default function HomePage() {
                 onMoreInfo={handleMoreInfo}
             />
 
+            {/* SR-WI-052: single page-level banner when one or more sections failed to
+                load. Rows that errored self-suppress (no broken skeletons); the rest of
+                the page renders normally around this. */}
+            {hasErrors && (
+                <div
+                    role="alert"
+                    className="mx-6 mb-6 flex items-center justify-between gap-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm"
+                >
+                    <span>Some parts of your home page couldn't be loaded.</span>
+                    <button
+                        type="button"
+                        onClick={retryFailed}
+                        className="shrink-0 px-3 py-1.5 rounded-md border border-red-500/40 font-medium hover:bg-red-500/20 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                    >
+                        Retry
+                    </button>
+                </div>
+            )}
+
             {/* User-state rows: Continue Watching first (directly below the hero), then Watchlist. */}
             <div className="flex flex-col gap-8">
-                <ContinueWatchingRow />
+                <ContinueWatchingRow onErrorStateChange={reportRowError} />
 
                 {/* R-WI-020 — taste-based rows; render nothing without history */}
-                <PersonalizedRows />
-                <WatchlistRow />
+                <PersonalizedRows onErrorStateChange={reportRowError} />
+                <WatchlistRow onErrorStateChange={reportRowError} />
             </div>
 
             {/* Dynamic Recently Added Rows per Library */}
@@ -280,6 +347,7 @@ export default function HomePage() {
                     <LibraryRecentRow
                         key={library.id}
                         library={library}
+                        onErrorStateChange={reportRowError}
                     />
                 ))}
             </div>

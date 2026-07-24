@@ -1,4 +1,5 @@
 import React from 'react';
+import { Modal } from '../ui/Modal';
 
 interface ConfirmationModalProps {
     isOpen: boolean;
@@ -21,31 +22,34 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
     onCancel,
     variant = 'default',
 }) => {
-    if (!isOpen) return null;
-
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-            <div className="bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
-                <h2 className="text-xl font-bold text-white mb-4">{title}</h2>
-                <p className="text-gray-300 mb-6">{message}</p>
-                <div className="flex justify-end gap-3">
-                    <button
-                        onClick={onCancel}
-                        className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors"
-                    >
-                        {cancelText}
-                    </button>
-                    <button
-                        onClick={onConfirm}
-                        className={`px-4 py-2 rounded transition-colors ${variant === 'danger'
-                                ? 'bg-red-600 hover:bg-red-700 text-white'
-                                : 'bg-gradient-to-r from-blue-500 to-violet-600 hover:from-blue-600 hover:to-violet-700 text-white'
-                            }`}
-                    >
-                        {confirmText}
-                    </button>
-                </div>
+        <Modal
+            isOpen={isOpen}
+            onClose={onCancel}
+            title={title}
+            panelClassName="bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 p-6"
+            // Destructive confirmations must not be dismissible by a stray
+            // backdrop click — Escape / Cancel remain available.
+            closeOnBackdrop={variant !== 'danger'}
+        >
+            <p className="text-gray-300 mb-6">{message}</p>
+            <div className="flex justify-end gap-3">
+                <button
+                    onClick={onCancel}
+                    className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors"
+                >
+                    {cancelText}
+                </button>
+                <button
+                    onClick={onConfirm}
+                    className={`px-4 py-2 rounded transition-colors ${variant === 'danger'
+                            ? 'bg-red-600 hover:bg-red-700 text-white'
+                            : 'bg-gradient-to-r from-blue-500 to-violet-600 hover:from-blue-600 hover:to-violet-700 text-white'
+                        }`}
+                >
+                    {confirmText}
+                </button>
             </div>
-        </div>
+        </Modal>
     );
 };

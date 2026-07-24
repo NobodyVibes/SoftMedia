@@ -5,6 +5,7 @@ import { Check, Square, Library as LibraryIcon } from 'lucide-react';
 import { userService, type UserDto } from '../../services/userService';
 import { libraryService } from '../../services/libraryService';
 import type { Library } from '../../types';
+import { Modal } from '../ui/Modal';
 
 interface LibraryAccessModalProps {
     isOpen: boolean;
@@ -93,113 +94,114 @@ export const LibraryAccessModal: React.FC<LibraryAccessModalProps> = ({ isOpen, 
     // Admin guard — the server rejects setting ACL on admins; reflect that in the UI.
     if (user.role === 'Admin') {
         return (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
-                    <h2 className="text-xl font-bold text-white mb-3">Library Access for {user.username}</h2>
-                    <div className="rounded-lg border border-white/5 bg-white/5 px-4 py-6 text-sm text-gray-300">
-                        Admins always have access to all libraries. There is no per-library
-                        restriction to configure.
-                    </div>
-                    <div className="flex justify-end pt-4">
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="px-4 py-2 rounded text-gray-300 hover:bg-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-                        >
-                            Close
-                        </button>
-                    </div>
+            <Modal
+                isOpen={isOpen}
+                onClose={onClose}
+                title={`Library Access for ${user.username}`}
+                titleClassName="text-xl font-bold text-white mb-3"
+            >
+                <div className="rounded-lg border border-white/5 bg-white/5 px-4 py-6 text-sm text-gray-300">
+                    Admins always have access to all libraries. There is no per-library
+                    restriction to configure.
                 </div>
-            </div>
+                <div className="flex justify-end pt-4">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="px-4 py-2 rounded text-gray-300 hover:bg-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                    >
+                        Close
+                    </button>
+                </div>
+            </Modal>
         );
     }
 
     const isLoading = librariesLoading || currentLoading;
 
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
-                <h2 className="text-xl font-bold text-white mb-3">
-                    Library Access for {user.username}
-                </h2>
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title={`Library Access for ${user.username}`}
+            titleClassName="text-xl font-bold text-white mb-3"
+        >
+            <p className="text-sm text-gray-400 mb-4">
+                <span className="font-medium text-white">No selection</span> means this user can
+                see every library (default). Tick only the libraries this user should have access
+                to. Admins always bypass this restriction.
+            </p>
 
-                <p className="text-sm text-gray-400 mb-4">
-                    <span className="font-medium text-white">No selection</span> means this user can
-                    see every library (default). Tick only the libraries this user should have access
-                    to. Admins always bypass this restriction.
-                </p>
-
-                {isLoading ? (
-                    <div className="py-8 text-center text-sm text-gray-400">Loading…</div>
-                ) : (
-                    <form onSubmit={handleSave} className="space-y-3">
-                        <ul className="max-h-64 overflow-y-auto space-y-1 rounded-lg border border-white/5 bg-black/20 p-2">
-                            {libraries.length === 0 && (
-                                <li className="text-sm text-gray-400 px-2 py-3">
-                                    No libraries configured yet.
+            {isLoading ? (
+                <div className="py-8 text-center text-sm text-gray-400">Loading…</div>
+            ) : (
+                <form onSubmit={handleSave} className="space-y-3">
+                    <ul className="max-h-64 overflow-y-auto space-y-1 rounded-lg border border-white/5 bg-black/20 p-2">
+                        {libraries.length === 0 && (
+                            <li className="text-sm text-gray-400 px-2 py-3">
+                                No libraries configured yet.
+                            </li>
+                        )}
+                        {libraries.map(lib => {
+                            const checked = selected.has(lib.id);
+                            return (
+                                <li key={lib.id}>
+                                    <button
+                                        type="button"
+                                        role="checkbox"
+                                        aria-checked={checked}
+                                        onClick={() => toggle(lib.id)}
+                                        className="w-full flex items-center gap-3 px-3 py-2 min-h-[44px] rounded-md text-left text-sm text-gray-200 hover:bg-white/10 focus-visible:outline-none focus-visible:bg-white/10 focus-visible:ring-2 focus-visible:ring-blue-400 transition-colors"
+                                    >
+                                        {checked ? (
+                                            <Check className="w-4 h-4 text-primary flex-shrink-0" />
+                                        ) : (
+                                            <Square className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                                        )}
+                                        <LibraryIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                                        <span className="flex-1 truncate">{lib.name}</span>
+                                        <span className="text-xs text-gray-500">{lib.type}</span>
+                                    </button>
                                 </li>
-                            )}
-                            {libraries.map(lib => {
-                                const checked = selected.has(lib.id);
-                                return (
-                                    <li key={lib.id}>
-                                        <button
-                                            type="button"
-                                            role="checkbox"
-                                            aria-checked={checked}
-                                            onClick={() => toggle(lib.id)}
-                                            className="w-full flex items-center gap-3 px-3 py-2 min-h-[44px] rounded-md text-left text-sm text-gray-200 hover:bg-white/10 focus-visible:outline-none focus-visible:bg-white/10 focus-visible:ring-2 focus-visible:ring-blue-400 transition-colors"
-                                        >
-                                            {checked ? (
-                                                <Check className="w-4 h-4 text-primary flex-shrink-0" />
-                                            ) : (
-                                                <Square className="w-4 h-4 text-gray-500 flex-shrink-0" />
-                                            )}
-                                            <LibraryIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                                            <span className="flex-1 truncate">{lib.name}</span>
-                                            <span className="text-xs text-gray-500">{lib.type}</span>
-                                        </button>
-                                    </li>
-                                );
-                            })}
-                        </ul>
+                            );
+                        })}
+                    </ul>
 
-                        <div className="flex items-center justify-between text-xs">
-                            <span className="text-gray-400">
-                                {isUnrestricted
-                                    ? 'Unrestricted — sees every library.'
-                                    : `Restricted to ${selected.size} ${selected.size === 1 ? 'library' : 'libraries'}.`}
-                            </span>
-                            {selected.size > 0 && (
-                                <button
-                                    type="button"
-                                    onClick={clearAll}
-                                    className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded px-1"
-                                >
-                                    Clear all (unrestricted)
-                                </button>
-                            )}
-                        </div>
-
-                        <div className="flex justify-end gap-2 pt-2">
+                    <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-400">
+                            {isUnrestricted
+                                ? 'Unrestricted — sees every library.'
+                                : `Restricted to ${selected.size} ${selected.size === 1 ? 'library' : 'libraries'}.`}
+                        </span>
+                        {selected.size > 0 && (
                             <button
                                 type="button"
-                                onClick={onClose}
-                                className="px-4 py-2 rounded text-gray-300 hover:bg-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                                onClick={clearAll}
+                                className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded px-1"
                             >
-                                Cancel
+                                Clear all (unrestricted)
                             </button>
-                            <button
-                                type="submit"
-                                disabled={updateMutation.isPending}
-                                className="px-4 py-2 rounded bg-primary hover:bg-primary/90 text-white transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-                            >
-                                {updateMutation.isPending ? 'Saving…' : 'Save'}
-                            </button>
-                        </div>
-                    </form>
-                )}
-            </div>
-        </div>
+                        )}
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="px-4 py-2 rounded text-gray-300 hover:bg-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={updateMutation.isPending}
+                            className="px-4 py-2 rounded bg-primary hover:bg-primary/90 text-white transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                        >
+                            {updateMutation.isPending ? 'Saving…' : 'Save'}
+                        </button>
+                    </div>
+                </form>
+            )}
+        </Modal>
     );
 };

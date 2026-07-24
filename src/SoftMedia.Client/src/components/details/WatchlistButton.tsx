@@ -45,9 +45,16 @@ export function WatchlistButton({ mediaId, isWatchlisted, title, variant = 'deta
             toast.error(err instanceof Error ? err.message : 'Could not update watchlist');
         },
         onSuccess: (_, next) => {
-            // Cache invalidations — both the home-page row and the watchlist page.
-            queryClient.invalidateQueries({ queryKey: ['watchlist'] });
-            queryClient.invalidateQueries({ queryKey: ['media-detail', mediaId] });
+            // Cache invalidations — the home-page row / watchlist page, and the
+            // detail query this page renders from. refetchType 'all' on the list:
+            // toggling changes row MEMBERSHIP, and the (inactive) home query must
+            // refetch now rather than serve stale membership on navigate-back
+            // (same reasoning as continueWatching in MediaDetailLayout).
+            queryClient.invalidateQueries({ queryKey: ['watchlist'], refetchType: 'all' });
+            // The detail page reads ['media', id] (MediaDetailPage). The old key
+            // here ('media-detail') matched NOTHING, so item.isWatchlisted stayed
+            // stale and the sync-back below visually reverted a successful toggle.
+            queryClient.invalidateQueries({ queryKey: ['media', mediaId] });
             const verb = next ? 'Added to watchlist' : 'Removed from watchlist';
             toast.success(title ? `${verb}: ${title}` : verb);
         },

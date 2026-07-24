@@ -1,12 +1,16 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import type { CastState, CastUnavailableReason } from './castReadiness';
+import { injectCastSdk } from '../lib/castSdkLoader';
 
 /**
  * Google Cast Web Sender integration (P3-WI-001).
  *
- * The Cast SDK is loaded by the <script> tag in index.html (cannot use npm).
- * It announces itself via `window.__onGCastApiAvailable`; this hook registers
- * that callback on first mount, then initialises the framework against the
+ * The Cast SDK cannot be npm-installed; it is lazy-injected as a <script>
+ * tag by castSdkLoader the first time this hook mounts (SR-WI-041 — it used
+ * to load unconditionally from index.html for every visitor). The SDK
+ * announces itself via `window.__onGCastApiAvailable`; this hook registers
+ * that callback BEFORE injecting the script (the SDK fires it on load, so
+ * registration must come first), then initialises the framework against the
  * default media receiver. From there it exposes the current session state
  * plus `castNow(...)` / `stopCasting()` for the player to drive.
  *
@@ -80,9 +84,11 @@ export function useCast(): UseCastResult {
     const stateListenerRef = useRef<((event: unknown) => void) | null>(null);
 
     useEffect(() => {
-        // The Cast SDK may load before or after this component mounts. Handle both:
-        // if cast.framework is already on window, init immediately; otherwise hook
-        // __onGCastApiAvailable and wait.
+        // The Cast SDK may already be on window (a previous mount injected it)
+        // or not yet requested at all. Handle both: if cast.framework is
+        // present, init immediately; otherwise hook __onGCastApiAvailable and
+        // THEN inject the script — the SDK fires the callback when it loads,
+        // so the registration must be in place before the request starts.
         const tryInit = () => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const w = window as any;
@@ -148,8 +154,10 @@ export function useCast(): UseCastResult {
             window.__onGCastApiAvailable = (available: boolean) => {
                 prev?.(available);
                 if (available) tryInit();
-                else setSdkUnsupported(true); // browser/page can't run Cast
+                else setSdkUnsupported(true); // browser/page can't run Cast, or script failed to load
             };
+            // Idempotent — StrictMode double-mounts and later remounts are safe.
+            injectCastSdk();
         }
 
         return () => {

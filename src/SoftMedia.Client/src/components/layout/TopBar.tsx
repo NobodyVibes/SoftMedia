@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { Search, Bell, Menu, ChevronDown, User as UserIcon, Settings, AlertCircle, HelpCircle, Users, LogOut, X, AlertTriangle, Info, Loader2 } from 'lucide-react';
+import { Search, Bell, Menu, ChevronDown, User as UserIcon, Settings, AlertCircle, LogOut, X, AlertTriangle, Info, Loader2 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useUIStore } from '../../store/uiStore';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -12,10 +12,17 @@ import { libraryService } from '../../services/libraryService';
 import type { LibraryScanJob } from '../../types';
 import GlobalSearchResults from './GlobalSearchResults';
 
-export default function TopBar() {
+interface TopBarProps {
+    /** SR-WI-040: whether the mobile nav drawer is open (for aria-expanded on the hamburger). */
+    isMobileNavOpen?: boolean;
+    /** SR-WI-040: opens the mobile nav drawer (hamburger below `md`). */
+    onOpenMobileNav?: () => void;
+}
+
+export default function TopBar({ isMobileNavOpen = false, onOpenMobileNav }: TopBarProps) {
     const user = useAuthStore((state) => state.user);
     const logout = useAuthStore((state) => state.logout);
-    const { toggleSidebar } = useUIStore();
+    const { toggleSidebar, isSidebarCollapsed } = useUIStore();
     const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
     const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState(false);
     const navigate = useNavigate();
@@ -24,7 +31,11 @@ export default function TopBar() {
     // Search state
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearchFocused, setIsSearchFocused] = useState(false);
+    // Below `md` the search input collapses to an icon button that expands into
+    // a full-width overlay row across the TopBar (SR-WI-040).
+    const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
     const searchContainerRef = useRef<HTMLDivElement>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
     const notificationContainerRef = useRef<HTMLDivElement>(null);
     const debouncedQuery = useDebounce(searchQuery, 300);
 
@@ -78,6 +89,7 @@ export default function TopBar() {
         const handleClickOutside = (event: MouseEvent) => {
             if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
                 setIsSearchFocused(false);
+                setIsMobileSearchOpen(false);
             }
             if (notificationContainerRef.current && !notificationContainerRef.current.contains(event.target as Node)) {
                 setIsNotificationMenuOpen(false);
@@ -89,7 +101,14 @@ export default function TopBar() {
 
     const handleSearchClose = () => {
         setIsSearchFocused(false);
+        setIsMobileSearchOpen(false);
         setSearchQuery('');
+    };
+
+    const openMobileSearch = () => {
+        setIsMobileSearchOpen(true);
+        // Focus after the overlay renders the (previously hidden) input.
+        requestAnimationFrame(() => searchInputRef.current?.focus());
     };
 
     const showSearchResults = isSearchFocused && debouncedQuery.length >= 2;
@@ -114,26 +133,47 @@ export default function TopBar() {
     };
 
     return (
-        <div className="h-16 bg-[#1a1a1a]/95 backdrop-blur-md border-b border-white/5 flex items-center px-6 fixed top-0 left-0 right-0 z-50">
-            {/* Left Section: Toggle & Logo (Fixed Width matching Sidebar) */}
-            <div className="flex items-center w-64 flex-shrink-0 pr-6">
+        <div className="h-16 bg-[#1a1a1a]/95 backdrop-blur-md border-b border-white/5 flex items-center px-3 md:px-6 fixed top-0 left-0 right-0 z-50">
+            {/* Left Section: Toggle & Logo (fixed width matching sidebar at md+, compact below) */}
+            <div className="flex items-center md:w-64 flex-shrink-0 pr-3 md:pr-6">
+                {/* Below md the hamburger opens the nav drawer; at md+ it toggles
+                    sidebar collapse exactly as before (two buttons, CSS-swapped). */}
+                <button
+                    onClick={onOpenMobileNav}
+                    aria-label="Open navigation menu"
+                    aria-expanded={isMobileNavOpen}
+                    className="md:hidden p-2 hover:bg-white/10 rounded-lg transition-colors text-white mr-2"
+                >
+                    <Menu size={24} />
+                </button>
                 <button
                     onClick={toggleSidebar}
-                    className="p-2 hover:bg-white/10 rounded-lg transition-colors text-white mr-4"
+                    aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                    aria-expanded={!isSidebarCollapsed}
+                    className="hidden md:block p-2 hover:bg-white/10 rounded-lg transition-colors text-white mr-4"
                 >
                     <Menu size={24} />
                 </button>
 
-                <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 tracking-tight drop-shadow-lg whitespace-nowrap">
+                <h1 className="text-xl md:text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 tracking-tight drop-shadow-lg whitespace-nowrap">
                     SoftMedia
                 </h1>
             </div>
 
-            {/* Search Bar */}
-            <div className="flex-1 max-w-2xl" ref={searchContainerRef}>
-                <div className="relative group">
+            {/* Search Bar — inline at md+; below md hidden until the search icon
+                button expands it into a full-width overlay row across the TopBar. */}
+            <div
+                ref={searchContainerRef}
+                className={
+                    isMobileSearchOpen
+                        ? "absolute inset-x-0 top-0 h-16 z-20 flex items-center gap-2 bg-[#1a1a1a] px-3 md:static md:h-auto md:z-auto md:bg-transparent md:px-0 md:flex-1 md:max-w-2xl"
+                        : "hidden md:block md:flex-1 md:max-w-2xl"
+                }
+            >
+                <div className="relative group flex-1">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-primary transition-colors z-10" size={18} />
                     <input
+                        ref={searchInputRef}
                         type="text"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
@@ -154,10 +194,29 @@ export default function TopBar() {
                         )}
                     </AnimatePresence>
                 </div>
+                {isMobileSearchOpen && (
+                    <button
+                        onClick={handleSearchClose}
+                        aria-label="Close search"
+                        className="md:hidden p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors flex-shrink-0"
+                    >
+                        <X size={20} />
+                    </button>
+                )}
             </div>
 
             {/* Right Actions */}
-            <div className="flex items-center gap-4 ml-auto">
+            <div className="flex items-center gap-2 md:gap-4 ml-auto">
+                {/* Mobile search trigger (input is collapsed below md) */}
+                <button
+                    onClick={openMobileSearch}
+                    aria-label="Open search"
+                    aria-expanded={isMobileSearchOpen}
+                    className="md:hidden p-2.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-full transition-colors"
+                >
+                    <Search size={22} />
+                </button>
+
                 {/* Notification Bell - Admin Only */}
                 {isAdmin && (
                     <div className="relative" ref={notificationContainerRef}>
@@ -165,6 +224,8 @@ export default function TopBar() {
                             onClick={() => setIsNotificationMenuOpen(!isNotificationMenuOpen)}
                             whileHover={{ scale: 1.05 }}
                             whileTap={{ scale: 0.95 }}
+                            aria-label={notificationCount > 0 ? `Notifications (${notificationCount})` : 'Notifications'}
+                            aria-expanded={isNotificationMenuOpen}
                             className="relative p-2.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-full transition-colors group"
                         >
                             <Bell size={22} className={notificationCount > 0 ? "text-amber-400" : "group-hover:animate-pulse"} />
@@ -257,7 +318,9 @@ export default function TopBar() {
                                             <button
                                                 onClick={() => {
                                                     setIsNotificationMenuOpen(false);
-                                                    navigate('/settings?tab=admin');
+                                                    // /settings?tab=admin redirected to the role-default
+                                                    // settings page; the admin dashboard is a real route.
+                                                    navigate('/settings/admin');
                                                 }}
                                                 className="w-full text-xs text-primary hover:text-primary/80 text-center"
                                             >
@@ -277,6 +340,8 @@ export default function TopBar() {
                         onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
+                        aria-label="User menu"
+                        aria-expanded={isUserMenuOpen}
                         className="flex items-center gap-3 cursor-pointer group"
                     >
                         <div className="text-right hidden sm:block">
@@ -320,12 +385,18 @@ export default function TopBar() {
                                     </p>
                                 </div>
 
-                                {/* Menu Items */}
+                                {/* Menu Items — the dead "Report Issues"/"Help"/"Switch User"
+                                    placeholders were removed (SR-WI-040/050); "View Profile"
+                                    goes to the account page (the profile/settings route). */}
                                 <div className="py-2">
-                                    <button className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors group">
+                                    <Link
+                                        to="/account"
+                                        onClick={() => setIsUserMenuOpen(false)}
+                                        className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors group"
+                                    >
                                         <UserIcon size={16} className="text-gray-400 group-hover:text-primary transition-colors" />
                                         <span>View Profile</span>
-                                    </button>
+                                    </Link>
                                     <Link
                                         to="/account"
                                         onClick={() => setIsUserMenuOpen(false)}
@@ -334,22 +405,10 @@ export default function TopBar() {
                                         <Settings size={16} className="text-gray-400 group-hover:text-primary transition-colors" />
                                         <span>My Account</span>
                                     </Link>
-                                    <button className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors group">
-                                        <AlertCircle size={16} className="text-gray-400 group-hover:text-primary transition-colors" />
-                                        <span>Report Issues</span>
-                                    </button>
-                                    <button className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors group">
-                                        <HelpCircle size={16} className="text-gray-400 group-hover:text-primary transition-colors" />
-                                        <span>Help</span>
-                                    </button>
                                 </div>
 
-                                {/* Switch User & Sign Out */}
+                                {/* Sign Out */}
                                 <div className="border-t border-white/10 py-2">
-                                    <button className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors group">
-                                        <Users size={16} className="text-gray-400 group-hover:text-primary transition-colors" />
-                                        <span>Switch User</span>
-                                    </button>
                                     <button
                                         onClick={logout}
                                         className="w-full px-4 py-2.5 flex items-center gap-3 text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors group"

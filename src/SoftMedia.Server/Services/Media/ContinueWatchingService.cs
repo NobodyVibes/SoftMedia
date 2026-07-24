@@ -68,7 +68,8 @@ public class ContinueWatchingService : IContinueWatchingService
         var ceilings = await _ratings.GetCurrentAsync();
         var visibleItems = _db.MediaItems.AsNoTracking()
             .ApplyLibraryAccessFilter(access)
-            .ApplyContentRatingFilter(ceilings);
+            .ApplyContentRatingFilter(ceilings)
+            .ExcludeMissing();
 
         // One entry per movie / series, in most-recently-played order. Episodes collapse into a
         // single show card (deduped by series); finished movies and fully-finished series drop out.
@@ -177,6 +178,7 @@ public class ContinueWatchingService : IContinueWatchingService
             .Where(m => cardIds.Contains(m.Id))
             .ApplyLibraryAccessFilter(access)
             .ApplyContentRatingFilter(ceilings)
+            .ExcludeMissing()
             .ToListAsync())
             .ToDictionary(m => m.Id);
 
@@ -185,6 +187,7 @@ public class ContinueWatchingService : IContinueWatchingService
         var resumeIds = entries.Select(e => e.ResumeId).Distinct().ToList();
         var resumeDurations = await _db.MediaItems
             .AsNoTracking()
+            .ExcludeMissing()
             .Where(m => resumeIds.Contains(m.Id))
             .Select(m => new { m.Id, m.Duration })
             .ToDictionaryAsync(x => x.Id, x => x.Duration);

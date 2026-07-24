@@ -149,6 +149,19 @@ public class MediaItem
     public bool IsRetryExhausted { get; set; }
 
     /// <summary>
+    /// SR-WI-011 soft delete: the item's file was not found on disk during a scan.
+    /// Missing items are hidden from catalog surfaces (browse/search/home/DLNA) but keep
+    /// all child rows (play history, interactions, bookmarks, playlist membership) so a
+    /// temporarily unavailable drive never destroys user data. A scan that re-finds the
+    /// path clears the flag ("heal"). Hard delete happens only after the retention window
+    /// (Scanning:MissingItemRetentionDays) or by explicit admin action.
+    /// </summary>
+    public bool IsMissing { get; set; }
+
+    /// <summary>UTC time the item was first marked missing; drives retention hard-delete.</summary>
+    public DateTime? MissingSinceUtc { get; set; }
+
+    /// <summary>
     /// Admin "do not auto-overwrite" flag (P3-WI-003). When true, every metadata
     /// refresh and scan-time enrichment SKIPS this item. Set by manual-edit and
     /// fix-match actions; cleared by the explicit Unlock admin endpoint. The single

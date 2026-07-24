@@ -122,6 +122,7 @@ public class PhotosController : ControllerBase
         if (library == null) return NotFound();
 
         var photos = await _context.MediaItems.AsNoTracking()
+            .ExcludeMissing()
             .Where(m => m.LibraryId == libraryId && m.Type == MediaType.Photo)
             .Select(m => new { m.Id, m.Path, m.ReleaseDate, m.DateAdded })
             .ToListAsync();
@@ -166,6 +167,7 @@ public class PhotosController : ControllerBase
         if (library == null) return NotFound();
 
         var photos = await _context.MediaItems.AsNoTracking()
+            .ExcludeMissing()
             .Where(m => m.LibraryId == libraryId && m.Type == MediaType.Photo)
             .ToListAsync();
 
@@ -232,6 +234,7 @@ public class PhotosController : ControllerBase
         if (library == null) return NotFound();
 
         var photos = await _context.MediaItems.AsNoTracking()
+            .ExcludeMissing()
             .Where(m => m.LibraryId == libraryId && m.Type == MediaType.Photo)
             .Select(m => new { m.ExifJson, m.ReleaseDate, m.DateAdded })
             .ToListAsync();

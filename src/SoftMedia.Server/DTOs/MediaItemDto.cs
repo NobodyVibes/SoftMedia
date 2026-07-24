@@ -131,6 +131,11 @@ public class MediaItemDto
     public bool MetadataLocked { get; set; }
     public DateTime? MetadataLockedAt { get; set; }
 
+    // SR-WI-011 — soft-delete flag: the item's file vanished from disk. Catalog
+    // listings exclude these rows entirely; by-id/detail/playlist consumers get the
+    // flag so they can render an "unavailable" state instead of a playable entry.
+    public bool IsMissing { get; init; }
+
     public static MediaItemDto FromMediaItem(MediaItem item, string? imageProxyBaseUrl = null, UserMediaInteraction? interaction = null)
     {
         var dto = new MediaItemDto
@@ -172,6 +177,9 @@ public class MediaItemDto
             // P3-WI-003 — admin metadata lock.
             MetadataLocked = item.MetadataLocked,
             MetadataLockedAt = item.MetadataLockedAt,
+
+            // SR-WI-011 — surfaced for by-id/detail/playlist consumers.
+            IsMissing = item.IsMissing,
 
             // Phase 2: Extended Quality Metadata
             BitDepth = item.BitDepth,

@@ -57,6 +57,7 @@ public class BrowseService : IBrowseService
             .AsNoTracking()
             .ApplyLibraryAccessFilter(access)
             .ApplyContentRatingFilter(ceilings)
+            .ExcludeMissing()
             .Include(m => m.Series)
             .Include(m => m.Album)
             .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
@@ -140,7 +141,7 @@ public class BrowseService : IBrowseService
                     i.UserId == callerId && i.MediaItemId == m.Id
                     && !i.IsWatched && i.PlaybackPosition != null && i.PlaybackPosition > 0))
                 || (m.Type == MediaType.Series && _context.MediaItems.Any(e =>
-                    e.SeriesId == m.Id && _context.UserMediaInteractions.Any(i =>
+                    e.SeriesId == m.Id && !e.IsMissing && _context.UserMediaInteractions.Any(i =>
                         i.UserId == callerId && i.MediaItemId == e.Id
                         && (i.IsWatched || (i.PlaybackPosition != null && i.PlaybackPosition > 0))))));
         }
@@ -178,7 +179,7 @@ public class BrowseService : IBrowseService
         // Plays land on Movies and EPISODES, so a Series row has none of its own and
         // must sum its children's — mirroring LibraryRepository's TV rollup.
         Expression<Func<MediaItem, int>> playCountKey = m => m.Type == MediaType.Series
-            ? _context.MediaItems.Where(e => e.SeriesId == m.Id).Sum(e => (int?)e.PlayCount) ?? 0
+            ? _context.MediaItems.Where(e => e.SeriesId == m.Id && !e.IsMissing).Sum(e => (int?)e.PlayCount) ?? 0
             : m.PlayCount;
 
         // The caller's OWN plays, matching the Most Watched row's Me scope.
@@ -188,7 +189,7 @@ public class BrowseService : IBrowseService
                 || (h.MediaItem != null && h.MediaItem.SeriesId == m.Id)));
 
         Expression<Func<MediaItem, DateTime?>> lastPlayedKey = m => m.Type == MediaType.Series
-            ? _context.MediaItems.Where(e => e.SeriesId == m.Id).Max(e => (DateTime?)e.LastPlayed)
+            ? _context.MediaItems.Where(e => e.SeriesId == m.Id && !e.IsMissing).Max(e => (DateTime?)e.LastPlayed)
             : m.LastPlayed;
 
         // Ordered by the chosen key, then ALWAYS by title A-Z. The tiebreaker stays
@@ -238,6 +239,7 @@ public class BrowseService : IBrowseService
             .AsNoTracking()
             .ApplyLibraryAccessFilter(access)
             .ApplyContentRatingFilter(ceilings)
+            .ExcludeMissing()
             .Where(m => types.Contains(m.Type))
             .SelectMany(m => m.MediaItemGenres)
             .Where(mg => mg.Genre != null)

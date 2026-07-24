@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Infrastructure;
 using SoftMedia.Server.Services.Metadata;
 
 namespace SoftMedia.Server.Services.Scanning;
@@ -96,12 +97,22 @@ public abstract class BaseMediaScanner : IMediaScanner
 
         try
         {
-            // 0. Read enrichment mode setting once per scan (avoids per-file DB lookup)
+            // 0. Read per-scan settings once (avoids per-file DB lookups)
+            int maxPurgePercent;
+            int missingRetentionDays;
             using (var settingsScope = _scopeFactory.CreateScope())
             {
                 var settingsService = settingsScope.ServiceProvider.GetRequiredService<ISettingsService>();
                 var enrichmentMode = await settingsService.GetSettingAsync("MetadataEnrichmentMode", "Relaxed");
                 _strictEnrichment = enrichmentMode == "Strict";
+
+                // SR-WI-010/011 data-safety knobs. Unparsable values fall back to the seeds.
+                if (!int.TryParse(await settingsService.GetSettingAsync("MaxScanPurgePercent", "25"), out maxPurgePercent))
+                    maxPurgePercent = 25;
+                maxPurgePercent = Math.Clamp(maxPurgePercent, 1, 100);
+                if (!int.TryParse(await settingsService.GetSettingAsync("MissingItemRetentionDays", "30"), out missingRetentionDays))
+                    missingRetentionDays = 30;
+                missingRetentionDays = Math.Clamp(missingRetentionDays, 0, 3650);
             }
 
             _unreadableDirs.Clear();
@@ -174,6 +185,15 @@ public abstract class BaseMediaScanner : IMediaScanner
                 discovered.SelectMany(d => d.Files).Select(f => f.Path),
                 StringComparer.OrdinalIgnoreCase);
 
+            // 2.1. SR-WI-012 — renames/moves: before the processing walk creates brand-new
+            //      items for moved files, re-bind DB rows whose path vanished to discovered
+            //      files that match by (size, mtime) or uniquely by filename. Identity (and
+            //      with it watch history, ratings, playlist membership) survives the move.
+            //      Must run BEFORE processing: afterwards the new path would already have a
+            //      fresh row and the old row would purge with its children.
+            await ReconcileMovedFilesAsync(library, knownFilesCache, seenPaths, discovered,
+                missingRoots.Concat(_unreadableDirs).ToList(), cancellationToken);
+
             var parallelOptions = new ParallelOptions
             {
                 CancellationToken = cancellationToken,
@@ -229,6 +249,16 @@ public abstract class BaseMediaScanner : IMediaScanner
                             else
                             {
                                 existing = tracked.Entity;
+                            }
+
+                            // SR-WI-011 heal-on-reappear: the file is back on disk, so the
+                            // soft-delete flag clears and the item (with all its user data)
+                            // returns to every surface. Runs before ProcessFileAsync so even
+                            // a Skipped (unchanged) result persists the heal.
+                            if (existing.IsMissing)
+                            {
+                                existing.IsMissing = false;
+                                existing.MissingSinceUtc = null;
                             }
                         }
 
@@ -287,7 +317,8 @@ public abstract class BaseMediaScanner : IMediaScanner
                         DisplayName, _unreadableDirs.Count, string.Join(", ", _unreadableDirs.Take(10)));
                 }
                 var shieldedPaths = missingRoots.Concat(_unreadableDirs).ToList();
-                await CleanupOrphansAsync(context, library, knownFilesCache, seenPaths, shieldedPaths, cancellationToken);
+                await CleanupOrphansAsync(context, library, knownFilesCache, seenPaths, shieldedPaths,
+                    totalFiles, maxPurgePercent, missingRetentionDays, cancellationToken);
                 await CleanupEmptyContainersAsync(context, library, cancellationToken);
                 await context.SaveChangesAsync(cancellationToken);
             }
@@ -431,8 +462,20 @@ public abstract class BaseMediaScanner : IMediaScanner
         using var scope = _scopeFactory.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
+        // Case-insensitive to match the full scan's OrdinalIgnoreCase path cache (SR-WI-012):
+        // SQLite's default BINARY collation would miss a casing-only rename on Windows and
+        // mint a duplicate row that the next scan purges along with its history.
+        var lowered = filePath.ToLowerInvariant();
         var existing = await context.MediaItems
-            .FirstOrDefaultAsync(m => m.Path == filePath && m.LibraryId == library.Id, cancellationToken);
+            .FirstOrDefaultAsync(m => m.Path != null && m.Path.ToLower() == lowered && m.LibraryId == library.Id,
+                cancellationToken);
+
+        // SR-WI-011 heal-on-reappear (watcher path): the file is back, restore the item.
+        if (existing is { IsMissing: true })
+        {
+            existing.IsMissing = false;
+            existing.MissingSinceUtc = null;
+        }
 
         var fileInfo = new FileInfo(filePath);
         var fileResult = new FileDiscoveryResult(fileInfo.FullName, fileInfo.Exists ? fileInfo.Length : 0, fileInfo.Exists ? fileInfo.LastWriteTimeUtc : DateTime.UtcNow);
@@ -486,11 +529,163 @@ public abstract class BaseMediaScanner : IMediaScanner
     /// </summary>
     protected virtual bool RootExists(string path) => Directory.Exists(path);
 
+    /// <summary>Container types whose Path is a folder, never a discovered file — always
+    /// excluded from orphan handling (they'd otherwise look orphaned on every scan).</summary>
+    private static readonly MediaType[] ContainerTypes =
+    {
+        MediaType.Series,
+        MediaType.Season,
+        MediaType.Artist,
+        MediaType.Album,
+        MediaType.ComicSeries
+    };
+
+    /// <summary>Minimum newly-missing count before the purge brake can trip (SR-WI-010).
+    /// Below this, even a 100% wipe of a tiny library proceeds — a 3-item library losing
+    /// 2 files is routine housekeeping, not a mount failure.</summary>
+    protected const int PurgeBrakeMinItems = 20;
+
     /// <summary>
-    /// Remove items from database whose file no longer exists on disk, computed as the
-    /// set difference between the paths known at scan start and the paths discovered this
-    /// scan. Containers (Series, Seasons, Artists, Albums, ComicSeries) are excluded —
-    /// their Path is a folder, never a discovered file, so they'd always look orphaned.
+    /// Separator-normalized prefix check with a trailing separator so "/media/tv" can't
+    /// shield "/media/tv2". Shared by reconciliation and orphan handling.
+    /// </summary>
+    private static Func<string, bool> BuildShieldChecker(IReadOnlyList<string> shieldedPaths)
+    {
+        static string NormalizeSeparators(string p) => p.Replace('\\', '/');
+        var prefixes = shieldedPaths
+            .Select(r => NormalizeSeparators(r).TrimEnd('/') + '/')
+            .ToList();
+        return itemPath => prefixes.Any(prefix =>
+            NormalizeSeparators(itemPath).StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// SR-WI-012 — re-bind DB rows whose file vanished to newly discovered files that are
+    /// the same file moved/renamed, so item identity (watch history, ratings, playlist
+    /// membership) survives. Two passes over the (unseen-known × unknown-discovered) sets:
+    /// (1) unique (size, mtime-to-the-second) match — moves and renames preserve both;
+    /// (2) unique filename match — covers files whose content was touched in transit.
+    /// Both passes require uniqueness on BOTH sides: an ambiguous match binds nothing.
+    /// </summary>
+    protected async Task ReconcileMovedFilesAsync(
+        Library library,
+        ConcurrentDictionary<string, MediaItem> knownFilesCache,
+        IReadOnlySet<string> seenPaths,
+        IReadOnlyList<(string Dir, List<FileDiscoveryResult> Files)> discovered,
+        IReadOnlyList<string> shieldedPaths,
+        CancellationToken cancellationToken)
+    {
+        var isShielded = BuildShieldChecker(shieldedPaths);
+
+        var orphanCandidates = knownFilesCache
+            .Where(kv => !seenPaths.Contains(kv.Key)
+                      && !ContainerTypes.Contains(kv.Value.Type)
+                      && !isShielded(kv.Key))
+            .Select(kv => kv.Value)
+            .ToList();
+        if (orphanCandidates.Count == 0) return;
+
+        var newFiles = discovered
+            .SelectMany(d => d.Files)
+            .Where(f => !knownFilesCache.ContainsKey(f.Path))
+            .ToList();
+        if (newFiles.Count == 0) return;
+
+        // mtime quantized to whole seconds: SQLite round-trips full precision, but copies
+        // across filesystems can truncate sub-second precision.
+        static (long Size, long MtimeSeconds) SizeTimeKey(long size, DateTime mtimeUtc) =>
+            (size, mtimeUtc.Ticks / TimeSpan.TicksPerSecond);
+
+        var bindings = new List<(MediaItem Item, FileDiscoveryResult File)>();
+        var boundItemIds = new HashSet<Guid>();
+        var boundFilePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Pass 1: unique (size, mtime) on both sides. Zero-byte files carry no signal.
+        var orphansByKey = orphanCandidates
+            .Where(o => o.Size > 0)
+            .GroupBy(o => SizeTimeKey(o.Size, o.DateModified))
+            .Where(g => g.Count() == 1)
+            .ToDictionary(g => g.Key, g => g.First());
+        foreach (var group in newFiles.Where(f => f.Size > 0).GroupBy(f => SizeTimeKey(f.Size, f.LastWriteUtc)))
+        {
+            if (group.Count() != 1) continue;
+            if (!orphansByKey.TryGetValue(group.Key, out var orphan)) continue;
+            var file = group.First();
+            bindings.Add((orphan, file));
+            boundItemIds.Add(orphan.Id);
+            boundFilePaths.Add(file.Path);
+        }
+
+        // Pass 2: unique filename on both sides, among what pass 1 left unbound.
+        var orphansByName = orphanCandidates
+            .Where(o => !boundItemIds.Contains(o.Id))
+            .GroupBy(o => System.IO.Path.GetFileName(o.Path), StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() == 1)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        foreach (var group in newFiles
+                     .Where(f => !boundFilePaths.Contains(f.Path))
+                     .GroupBy(f => System.IO.Path.GetFileName(f.Path), StringComparer.OrdinalIgnoreCase))
+        {
+            if (group.Count() != 1) continue;
+            if (!orphansByName.TryGetValue(group.Key, out var orphan)) continue;
+            bindings.Add((orphan, group.First()));
+        }
+
+        if (bindings.Count == 0) return;
+
+        using var scope = _scopeFactory.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        int rebound = 0;
+        foreach (var (item, file) in bindings)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var tracked = await context.MediaItems.FirstOrDefaultAsync(m => m.Id == item.Id, cancellationToken);
+            if (tracked == null) continue;
+
+            _logger.LogInformation("[{Scanner}] Re-bound moved/renamed file: '{Old}' -> '{New}'",
+                DisplayName, tracked.Path, file.Path);
+
+            tracked.Path = file.Path;
+            tracked.Size = file.Size;
+            tracked.DateModified = file.LastWriteUtc;
+            tracked.IsMissing = false;
+            tracked.MissingSinceUtc = null;
+            tracked.LastScannedUtc = DateTime.UtcNow;
+
+            // Mirror onto the cached snapshot under its new key so the processing walk
+            // sees an existing, up-to-date item at the new path (no duplicate row).
+            knownFilesCache.TryRemove(item.Path, out _);
+            item.Path = file.Path;
+            item.Size = file.Size;
+            item.DateModified = file.LastWriteUtc;
+            item.IsMissing = false;
+            item.MissingSinceUtc = null;
+            knownFilesCache[file.Path] = item;
+            rebound++;
+        }
+
+        await _dbWriteLock.WaitAsync(cancellationToken);
+        try
+        {
+            await context.SaveChangesAsync(cancellationToken);
+        }
+        finally
+        {
+            _dbWriteLock.Release();
+        }
+
+        _logger.LogInformation("[{Scanner}] Re-bound {Count} moved/renamed files (identity and history preserved)",
+            DisplayName, rebound);
+    }
+
+    /// <summary>
+    /// Handle items whose file no longer exists on disk, computed as the set difference
+    /// between the paths known at scan start and the paths discovered this scan.
+    /// SR-WI-010/011: instead of hard-deleting (which cascades away play history,
+    /// interactions, bookmarks and playlist rows), items are soft-deleted (IsMissing) and
+    /// only hard-deleted after the retention window. A purge brake refuses to mark
+    /// anything when an implausible fraction of the library vanishes at once — the usual
+    /// cause is an unmounted drive or a share that reconnected empty, not real deletions.
     /// Items under a shielded path (unreachable root, unlistable directory) are preserved:
     /// their files weren't discoverable, which says nothing about whether they still exist.
     /// </summary>
@@ -500,63 +695,171 @@ public abstract class BaseMediaScanner : IMediaScanner
         IReadOnlyDictionary<string, MediaItem> knownItemsByPath,
         IReadOnlySet<string> seenPaths,
         IReadOnlyList<string> shieldedPaths,
+        int discoveredFileCount,
+        int maxPurgePercent,
+        int missingRetentionDays,
         CancellationToken cancellationToken)
     {
-        var containerTypes = new[]
-        {
-            MediaType.Series,
-            MediaType.Season,
-            MediaType.Artist,
-            MediaType.Album,
-            MediaType.ComicSeries
-        };
+        var isShielded = BuildShieldChecker(shieldedPaths);
+        bool isInMemory = context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory";
 
-        // Separator-normalized, with a trailing separator so "/media/tv" can't shield "/media/tv2".
-        static string NormalizeSeparators(string p) => p.Replace('\\', '/');
-        var shieldedPrefixes = shieldedPaths
-            .Select(r => NormalizeSeparators(r).TrimEnd('/') + '/')
-            .ToList();
-        bool IsShielded(string itemPath) =>
-            shieldedPrefixes.Any(prefix => NormalizeSeparators(itemPath).StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
-
-        var orphanIds = knownItemsByPath
+        var orphans = knownItemsByPath
             .Where(kv => !seenPaths.Contains(kv.Key)
-                      && !containerTypes.Contains(kv.Value.Type)
-                      && !IsShielded(kv.Key))
-            .Select(kv => kv.Value.Id)
+                      && !ContainerTypes.Contains(kv.Value.Type)
+                      && !isShielded(kv.Key))
+            .Select(kv => kv.Value)
             .ToList();
 
-        if (orphanIds.Count == 0) return;
+        var eligibleKnown = knownItemsByPath.Values.Count(v => !ContainerTypes.Contains(v.Type));
+        var newlyMissing = orphans.Where(o => !o.IsMissing).ToList();
 
-        int deletedCount = 0;
-
-        // ExecuteDeleteAsync is highly performant but unsupported by InMemory test provider
-        if (context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
+        // SR-WI-010 — purge brake. Trips on (a) a previously non-empty library whose scan
+        // discovered zero files (mount point exists but is empty — the classic reconnected
+        // empty share), or (b) an implausible newly-missing fraction. When tripped, NOTHING
+        // is marked or deleted this scan; the admin is alerted and can either fix the mount
+        // and rescan, or raise MaxScanPurgePercent to 100 for one intentional mass removal.
+        string? brakeReason = null;
+        if (maxPurgePercent < 100 && discoveredFileCount == 0 && eligibleKnown > 0)
         {
-            var orphans = await context.MediaItems
-                .Where(m => orphanIds.Contains(m.Id))
-                .ToListAsync(cancellationToken);
+            brakeReason = $"the scan discovered 0 files but the library has {eligibleKnown} known items " +
+                          "(is the drive or network share mounted?)";
+        }
+        else if (maxPurgePercent < 100
+                 && newlyMissing.Count >= PurgeBrakeMinItems
+                 && eligibleKnown > 0
+                 && (long)newlyMissing.Count * 100 >= (long)eligibleKnown * maxPurgePercent)
+        {
+            brakeReason = $"{newlyMissing.Count} of {eligibleKnown} items vanished at once, exceeding the " +
+                          $"{maxPurgePercent}% safety threshold (is a drive or share unavailable?)";
+        }
 
-            if (orphans.Count > 0)
+        if (brakeReason != null)
+        {
+            _logger.LogError(
+                "[{Scanner}] PURGE BRAKE: library '{Library}' cleanup aborted — {Reason}. " +
+                "No items were marked missing or deleted. Fix the storage and rescan, or set " +
+                "Scanning > MaxScanPurgePercent to 100 to override once intentionally.",
+                DisplayName, library.Name, brakeReason);
+            await NotifyPurgeBrakeAsync(library, brakeReason, cancellationToken);
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+
+        // SR-WI-011 — soft-delete newly missing items (or hard-delete immediately when
+        // retention is 0 = legacy behavior).
+        if (newlyMissing.Count > 0)
+        {
+            if (missingRetentionDays == 0)
             {
-                context.MediaItems.RemoveRange(orphans);
-                deletedCount = orphans.Count;
+                await HardDeleteItemsAsync(context, newlyMissing.Select(o => o.Id).ToList(), isInMemory, cancellationToken);
+                _logger.LogInformation("[{Scanner}] Removed {Count} orphans (retention disabled)",
+                    DisplayName, newlyMissing.Count);
             }
+            else
+            {
+                var newlyMissingIds = newlyMissing.Select(o => o.Id).ToList();
+                if (isInMemory)
+                {
+                    var items = await context.MediaItems
+                        .Where(m => newlyMissingIds.Contains(m.Id))
+                        .ToListAsync(cancellationToken);
+                    foreach (var item in items)
+                    {
+                        item.IsMissing = true;
+                        item.MissingSinceUtc = now;
+                    }
+                }
+                else
+                {
+                    foreach (var chunk in newlyMissingIds.Chunk(500))
+                    {
+                        await context.MediaItems
+                            .Where(m => chunk.Contains(m.Id))
+                            .ExecuteUpdateAsync(s => s
+                                .SetProperty(m => m.IsMissing, true)
+                                .SetProperty(m => m.MissingSinceUtc, now), cancellationToken);
+                    }
+                }
+                _logger.LogInformation(
+                    "[{Scanner}] Marked {Count} items missing (files gone from disk); history retained for {Days} days",
+                    DisplayName, newlyMissing.Count, missingRetentionDays);
+            }
+        }
+
+        // Retention: hard-delete items that have stayed missing past the window. Shielded
+        // paths are skipped — an unreadable subtree must not age its items out.
+        var cutoff = now.AddDays(-missingRetentionDays);
+        var expiredCandidates = await context.MediaItems
+            .AsNoTracking()
+            .Where(m => m.LibraryId == library.Id
+                     && m.IsMissing
+                     && m.MissingSinceUtc != null
+                     && m.MissingSinceUtc < cutoff)
+            .Select(m => new { m.Id, m.Path })
+            .ToListAsync(cancellationToken);
+        var expiredIds = expiredCandidates
+            .Where(c => !isShielded(c.Path))
+            .Select(c => c.Id)
+            .ToList();
+        if (expiredIds.Count > 0)
+        {
+            await HardDeleteItemsAsync(context, expiredIds, isInMemory, cancellationToken);
+            _logger.LogInformation(
+                "[{Scanner}] Permanently removed {Count} items missing longer than {Days} days",
+                DisplayName, expiredIds.Count, missingRetentionDays);
+        }
+    }
+
+    /// <summary>
+    /// SR-WI-010 — surface the purge brake on the admin notification bell (DB-backed
+    /// SystemNotifications). Deduped per library so a stuck mount doesn't spam a new
+    /// alert on every scheduled scan. Best-effort: an alert failure must not fail the scan.
+    /// </summary>
+    private async Task NotifyPurgeBrakeAsync(Library library, string reason, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var notifications = scope.ServiceProvider.GetRequiredService<INotificationService>();
+            var type = $"scan_purge_brake:{library.Id}";
+            if (await notifications.HasActiveOfTypeAsync(type)) return;
+            await notifications.CreateAsync(
+                type,
+                "Library cleanup aborted for safety",
+                $"Scanning '{library.Name}' stopped before removing anything: {reason}. " +
+                "Nothing was deleted and watch history is intact. If the storage is fine and the " +
+                "removals were intentional, set Settings > Scanning > MaxScanPurgePercent to 100 and rescan.",
+                "error");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[{Scanner}] Failed to raise purge-brake notification", DisplayName);
+        }
+    }
+
+    private static async Task HardDeleteItemsAsync(
+        AppDbContext context, IReadOnlyList<Guid> ids, bool isInMemory, CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0) return;
+
+        // ExecuteDeleteAsync is highly performant but unsupported by the InMemory test provider
+        if (isInMemory)
+        {
+            var items = await context.MediaItems
+                .Where(m => ids.Contains(m.Id))
+                .ToListAsync(cancellationToken);
+            context.MediaItems.RemoveRange(items);
         }
         else
         {
             // Chunked to stay under SQLite's bound-parameter limit
-            foreach (var chunk in orphanIds.Chunk(500))
+            foreach (var chunk in ids.Chunk(500))
             {
-                deletedCount += await context.MediaItems
+                await context.MediaItems
                     .Where(m => chunk.Contains(m.Id))
                     .ExecuteDeleteAsync(cancellationToken);
             }
-        }
-
-        if (deletedCount > 0)
-        {
-            _logger.LogInformation("[{Scanner}] Bulk removed {Count} orphans", DisplayName, deletedCount);
         }
     }
 

@@ -253,6 +253,7 @@ public class MediaController : ControllerBase
             .AsNoTracking()
             .ApplyLibraryAccessFilter(access)
             .ApplyContentRatingFilter(ceilings)
+            .ExcludeMissing()
             .Include(m => m.Library)
             .Include(m => m.Series) // episode poster fallback + seriesTitle name context
             .Include(m => m.Artist) // track/album subtitle context (metadata.artist)

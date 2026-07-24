@@ -395,8 +395,11 @@ Ordered by leverage per the review's §6 comparison. Each needs its own mini-pla
 | Item | Status | Notes |
 |---|---|---|
 | SR-WI-001 | **Complete** (2026-07-24) | Reverted per Q1; 8/8 extras tests green |
-| SR-WI-002 | Not started | |
-| SR-WI-010..013 | Not started | Session A |
+| SR-WI-002 | **Complete** (2026-07-24) | Debris + dead client files purged, ignore rules added, favicon fixed |
+| SR-WI-010 | **Complete** (2026-07-24) | Purge brake + `MaxScanPurgePercent` setting + admin bell alert; 20-item floor; 100% = override |
+| SR-WI-011 | **Complete** (2026-07-24) | `IsMissing`/`MissingSinceUtc` + migration `AddMediaItemMissingFlags`; ~30-site catalog sweep (`ExcludeMissing()`); heal-on-reappear (scan + watcher paths); retention hard-delete (`MissingItemRetentionDays`, 0 = legacy); DTO surfaces `IsMissing` |
+| SR-WI-012 | **Complete** (2026-07-24) | `ReconcileMovedFilesAsync` (unique size+mtime, then unique filename; ambiguous binds nothing) runs pre-processing; watcher single-file lookup now case-insensitive |
+| SR-WI-013 | **Complete** (2026-07-24) | Watcher error→recovery scan; file/dir renames schedule scans; 64 KB buffer; fresh-install scan interval 12h; `EnableFileWatcher` restart note |
 | SR-WI-020..028 | Not started | Session B |
 | SR-WI-030..038 | Not started | Session C |
 | SR-WI-040..042 | Not started | Session D |
@@ -416,3 +419,22 @@ consumes the API.
   de-scoped, Q6 30d retention). SR-WI-001 executed: ExtrasService + tests reverted via
   `git checkout --`, extras suite 8/8. Working tree now clean except this plan + the review
   report (both untracked, ready to commit). Next: Session A (SR-WI-002, 010–013).
+- 2026-07-24 — **SESSION A COMPLETE** (SR-WI-002, 010, 011, 012, 013). Server suite 1335/0/0
+  (baseline 1303 → +32 net; 2 pre-existing tests updated to the new 12h-default contract),
+  client build green. Implementation notes for future sessions: (1) orphan handling now runs
+  reconcile → brake → soft-delete-mark → retention-delete, all inside
+  `BaseMediaScanner.CleanupOrphansAsync` + `ReconcileMovedFilesAsync`; reconciliation MUST stay
+  before the processing walk (afterwards the moved file already has a fresh row). (2) The brake
+  never trips under 20 newly-missing items and is wholly disabled at `MaxScanPurgePercent=100`
+  (including the empty-discovery trip — deliberate, so an intentionally emptied library can be
+  cleaned). (3) Containers (Series/Season/Artist/Album/ComicSeries) are never marked missing —
+  visibility filters on Series-only queries are pointless; the sweep skipped them on purpose,
+  as well as the BrowseService "unplayed" PlaybackHistory subquery (filtering it would resurrect
+  watched series into Never Played). (4) Missing items still resolve by id
+  (detail/playlists/streams); only catalog listings filter — the client can use the new
+  `MediaItemDto.IsMissing` for "unavailable" badges (Session D candidate, not yet rendered).
+  (5) `SettingsService.InitializeDefaultsAsync` is add-if-missing: existing installs keep their
+  stored scan interval; only fresh DBs get 12. Deviation from item text: SR-WI-010's
+  "per-library force cleanup action" is realized as the `MaxScanPurgePercent=100` override
+  rather than a new endpoint/UI (simpler, uses the existing settings surface; revisit only if
+  operators ask). Live verify of the NAS-unmount round-trip deferred to Session 5 as planned.

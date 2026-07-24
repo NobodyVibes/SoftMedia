@@ -6,6 +6,7 @@ using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Identity;
+using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Security.ContentRating;
 using SoftMedia.Server.Services.Security.LibraryAccess;
 
@@ -86,6 +87,7 @@ public class WatchlistController : ControllerBase
                 && m.Type != MediaType.Artist)
             .ApplyLibraryAccessFilter(access)
             .ApplyContentRatingFilter(ceilings) // audit wave-2 L-1: match the repository's combined gate
+            .ExcludeMissing() // SR-WI-011: interaction row kept; item reappears if the file returns
             .ToListAsync();
 
         // Reorder by the watchlist-stamp ordering and trim to limit.

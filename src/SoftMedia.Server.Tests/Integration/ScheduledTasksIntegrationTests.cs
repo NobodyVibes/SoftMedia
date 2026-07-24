@@ -85,11 +85,11 @@ public class ScheduledTasksIntegrationTests : IntegrationTestBase
         Assert.True(scan!.SupportsManualTrigger);
         Assert.Equal("Scheduled", scan.Schedule);
 
-        // The interval setting must be seeded (off by default) so the UI can edit it.
+        // The interval setting must be seeded (12h by default, SR-WI-013) so the UI can edit it.
         var settings = await client.GetFromJsonAsync<List<AppSetting>>("/api/v1/settings");
         var interval = settings!.SingleOrDefault(s => s.Key == "LibraryScanIntervalHours");
         Assert.NotNull(interval);
-        Assert.Equal("0", interval!.Value);
+        Assert.Equal("12", interval!.Value);
     }
 
     [Fact]

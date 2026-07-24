@@ -46,6 +46,12 @@ public class TestMediaScanner : BaseMediaScanner
     // the subtree is shielded from orphan cleanup.
     public HashSet<string> UnreadableDirs { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+    // Optional per-file (size, mtime) metadata for SR-WI-012 rebind tests. Files without
+    // an entry report size 0 (excluded from the size+mtime rebind pass by design) and a
+    // fixed mtime so discovery results are deterministic.
+    public Dictionary<string, (long Size, DateTime Mtime)> FileMetadata { get; } = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly DateTime DefaultMtime = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
     public TestMediaScanner(
         IServiceScopeFactory scopeFactory,
         ILogger<TestMediaScanner> logger,
@@ -71,7 +77,9 @@ public class TestMediaScanner : BaseMediaScanner
         }
         if (VirtualFileSystem.TryGetValue(dirPath, out var files))
         {
-            return files.Select(f => new FileDiscoveryResult(f, 0, DateTime.UtcNow));
+            return files.Select(f => FileMetadata.TryGetValue(f, out var md)
+                ? new FileDiscoveryResult(f, md.Size, md.Mtime)
+                : new FileDiscoveryResult(f, 0, DefaultMtime));
         }
         return Enumerable.Empty<FileDiscoveryResult>();
     }

@@ -5,6 +5,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Infrastructure;
+using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Security.ContentRating;
 
 namespace SoftMedia.Server.Services.Dlna;
@@ -120,7 +121,8 @@ public class DlnaContentDirectory : IDlnaContentDirectory
         };
 
         // Audit wave-2 M-6: apply the DLNA rating ceiling (gates Movie/Series; Music is ungated).
-        q = q.ApplyContentRatingFilter(await DlnaCeilingsAsync(ct));
+        // SR-WI-011: missing items are hidden from DLNA listings too.
+        q = q.ApplyContentRatingFilter(await DlnaCeilingsAsync(ct)).ExcludeMissing();
 
         var total = await q.CountAsync(ct);
         var page = await q.Skip(skip).Take(take).ToListAsync(ct);
@@ -136,10 +138,10 @@ public class DlnaContentDirectory : IDlnaContentDirectory
                         WriteVideoItem(w, item, $"L:{libraryId}", resBaseUrl);
                         break;
                     case LibraryType.TV:
-                        WriteContainer(w, $"S:{item.Id}", $"L:{libraryId}", item.Title, await _db.MediaItems.CountAsync(m => m.SeriesId == item.Id && m.Type == MediaType.Episode, ct), "object.container.album.videoAlbum");
+                        WriteContainer(w, $"S:{item.Id}", $"L:{libraryId}", item.Title, await _db.MediaItems.CountAsync(m => m.SeriesId == item.Id && m.Type == MediaType.Episode && !m.IsMissing, ct), "object.container.album.videoAlbum");
                         break;
                     case LibraryType.Music:
-                        WriteContainer(w, $"A:{item.Id}", $"L:{libraryId}", item.Title, await _db.MediaItems.CountAsync(m => m.AlbumId == item.Id && m.Type == MediaType.Audio, ct), "object.container.album.musicAlbum");
+                        WriteContainer(w, $"A:{item.Id}", $"L:{libraryId}", item.Title, await _db.MediaItems.CountAsync(m => m.AlbumId == item.Id && m.Type == MediaType.Audio && !m.IsMissing, ct), "object.container.album.musicAlbum");
                         break;
                 }
             }
@@ -152,7 +154,8 @@ public class DlnaContentDirectory : IDlnaContentDirectory
         // Audit M7: only episodes whose library is exposed are listed (guards a guessed series id).
         var q = _db.MediaItems.Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode && exposed.Contains(m.LibraryId))
             .OrderBy(m => m.SeasonNumber).ThenBy(m => m.EpisodeNumber).ThenBy(m => m.SortTitle)
-            .ApplyContentRatingFilter(await DlnaCeilingsAsync(ct)); // audit wave-2 M-6
+            .ApplyContentRatingFilter(await DlnaCeilingsAsync(ct)) // audit wave-2 M-6
+            .ExcludeMissing(); // SR-WI-011
         var total = await q.CountAsync(ct);
         var page = await q.Skip(skip).Take(take).ToListAsync(ct);
 
@@ -166,7 +169,8 @@ public class DlnaContentDirectory : IDlnaContentDirectory
     {
         // Audit M7: only tracks whose library is exposed are listed (guards a guessed album id).
         var q = _db.MediaItems.Where(m => m.AlbumId == albumId && m.Type == MediaType.Audio && exposed.Contains(m.LibraryId))
-            .OrderBy(m => m.DiscNumber).ThenBy(m => m.TrackNumber).ThenBy(m => m.SortTitle);
+            .OrderBy(m => m.DiscNumber).ThenBy(m => m.TrackNumber).ThenBy(m => m.SortTitle)
+            .ExcludeMissing(); // SR-WI-011
         var total = await q.CountAsync(ct);
         var page = await q.Skip(skip).Take(take).ToListAsync(ct);
 
@@ -222,7 +226,7 @@ public class DlnaContentDirectory : IDlnaContentDirectory
 
     private async Task<int> LibraryChildCountAsync(Library lib, CancellationToken ct) => lib.Type switch
     {
-        LibraryType.Movie => await _db.MediaItems.CountAsync(m => m.LibraryId == lib.Id && m.Type == MediaType.Movie, ct),
+        LibraryType.Movie => await _db.MediaItems.CountAsync(m => m.LibraryId == lib.Id && m.Type == MediaType.Movie && !m.IsMissing, ct),
         LibraryType.TV => await _db.MediaItems.CountAsync(m => m.LibraryId == lib.Id && m.Type == MediaType.Series, ct),
         LibraryType.Music => await _db.MediaItems.CountAsync(m => m.LibraryId == lib.Id && m.Type == MediaType.Album, ct),
         _ => 0,

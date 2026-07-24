@@ -318,7 +318,11 @@ public class LibraryWatcher : BackgroundService, IDisposable
             var watcher = new FileSystemWatcher(path)
             {
                 IncludeSubdirectories = true,
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.Size | NotifyFilters.LastWrite
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.Size | NotifyFilters.LastWrite,
+                // SR-WI-013: the 8 KB default overflows during large copies (each event is
+                // ~var-length; a season drop can exceed it), silently losing events. 64 KB is
+                // the documented maximum that stays in the non-paged pool sweet spot.
+                InternalBufferSize = 64 * 1024
             };
 
             // Store libraryId in the watcher's context
@@ -326,7 +330,7 @@ public class LibraryWatcher : BackgroundService, IDisposable
             watcher.Changed += (sender, e) => OnFileChanged(e.FullPath, libraryId);
             watcher.Deleted += (sender, e) => OnFileDeleted(e.FullPath, libraryId);
             watcher.Renamed += (sender, e) => OnFileRenamed(e.OldFullPath, e.FullPath, libraryId);
-            watcher.Error += OnError;
+            watcher.Error += (sender, e) => OnError(e, libraryId);
 
             watcher.EnableRaisingEvents = true;
 
@@ -412,7 +416,7 @@ public class LibraryWatcher : BackgroundService, IDisposable
     private void OnFileRenamed(string oldPath, string newPath, Guid libraryId)
     {
         _pendingFiles.TryRemove(oldPath, out _);
-        
+
         if (IsMediaFile(newPath))
         {
             _pendingFiles[newPath] = new PendingFile
@@ -425,13 +429,30 @@ public class LibraryWatcher : BackgroundService, IDisposable
                 CheckCount = 0
             };
         }
-        
+
+        // SR-WI-013: a rename leaves the OLD path's DB row dangling, and a DIRECTORY rename
+        // (renaming a show/movie folder — IsMediaFile is false for both paths) used to be
+        // ignored entirely, leaving the whole subtree stale until a manual scan. Schedule a
+        // library scan either way: its reconciliation pass (SR-WI-012) re-binds the moved
+        // files so identity and history survive.
+        if (IsMediaFile(oldPath) || Directory.Exists(newPath))
+        {
+            _librariesToScan[libraryId] = DateTime.UtcNow;
+        }
+
         _logger.LogDebug("File renamed: {OldPath} -> {NewPath}", oldPath, newPath);
     }
 
-    private void OnError(object sender, ErrorEventArgs e)
+    private void OnError(ErrorEventArgs e, Guid libraryId)
     {
-        _logger.LogError(e.GetException(), "FileSystemWatcher error");
+        // SR-WI-013: a watcher error (typically InternalBufferSize overflow during a large
+        // copy) means events were LOST — new files may never arrive. A scan of the affected
+        // library is the only way to recover what was missed; logging alone left the library
+        // silently stale.
+        _logger.LogError(e.GetException(),
+            "FileSystemWatcher error for library {LibraryId}; scheduling a recovery scan (events may have been lost)",
+            libraryId);
+        _librariesToScan[libraryId] = DateTime.UtcNow;
     }
 
     private async Task ProcessPendingFilesAsync()

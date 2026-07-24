@@ -5,6 +5,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Identity;
+using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Security.ContentRating;
 using SoftMedia.Server.Services.Security.LibraryAccess;
 
@@ -67,7 +68,7 @@ public class CollectionsController : ControllerBase
             .Select(c => new
             {
                 c.Id, c.Name, c.Overview, c.PosterUrl, c.WikidataId,
-                Items = c.Items.Select(m => new { m.Id, m.LibraryId, m.PosterUrl, m.Type, m.ContentRating }).ToList(),
+                Items = c.Items.Select(m => new { m.Id, m.LibraryId, m.PosterUrl, m.Type, m.ContentRating, m.IsMissing }).ToList(),
             })
             .ToListAsync();
 
@@ -76,6 +77,7 @@ public class CollectionsController : ControllerBase
             {
                 c.Id, c.Name, c.Overview, c.PosterUrl, c.WikidataId,
                 Visible = c.Items.Where(i =>
+                    !i.IsMissing && // SR-WI-011: missing movies don't count toward the >=2-visible threshold
                     (access.IsUnrestricted || access.AllowedLibraryIds.Contains(i.LibraryId)) &&
                     RatingFilterExtensions.IsRatingAllowed(ceilings, i.Type, i.ContentRating)).ToList(),
             })
@@ -112,6 +114,7 @@ public class CollectionsController : ControllerBase
             .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
             .Where(m => m.CollectionId == id && m.Type == MediaType.Movie)
             .ApplyContentRatingFilter(ceilings)
+            .ExcludeMissing()
             .OrderBy(m => m.ReleaseDate)
                 .ThenBy(m => m.Year)
                 .ThenBy(m => m.Title)
@@ -173,6 +176,7 @@ public class CollectionsController : ControllerBase
             .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
             .Where(m => m.CollectionId == movie.CollectionId.Value && m.Type == MediaType.Movie)
             .ApplyContentRatingFilter(ceilings)
+            .ExcludeMissing()
             .OrderBy(m => m.ReleaseDate)
                 .ThenBy(m => m.Year)
                 .ThenBy(m => m.Title)

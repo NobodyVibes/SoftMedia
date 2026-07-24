@@ -3,6 +3,7 @@ using SoftMedia.Server.Data;
 using SoftMedia.Server.DTOs;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Security.ContentRating;
 using SoftMedia.Server.Services.Security.LibraryAccess;
 
@@ -110,6 +111,7 @@ public class LibraryRepository : ILibraryRepository
         var query = _context.MediaItems
             .AsNoTracking()
             .ApplyContentRatingFilter(ceilings)
+            .ExcludeMissing()
             .Include(m => m.Series)
             .Include(m => m.Album)
             .Include(m => m.MediaItemGenres)
@@ -257,11 +259,11 @@ public class LibraryRepository : ILibraryRepository
             "rating" => Order(joinedQuery, x => x.Interaction.Rating, sortDesc),
             "playcount" => isTv
                 ? Order(joinedQuery, x => _context.MediaItems
-                    .Where(e => e.SeriesId == x.Media.Id).Sum(e => (int?)e.PlayCount) ?? 0, sortDesc)
+                    .Where(e => e.SeriesId == x.Media.Id && !e.IsMissing).Sum(e => (int?)e.PlayCount) ?? 0, sortDesc)
                 : Order(joinedQuery, x => x.Media.PlayCount, sortDesc),
             "lastplayed" => isTv
                 ? Order(joinedQuery, x => _context.MediaItems
-                    .Where(e => e.SeriesId == x.Media.Id).Max(e => (DateTime?)e.LastPlayed), sortDesc)
+                    .Where(e => e.SeriesId == x.Media.Id && !e.IsMissing).Max(e => (DateTime?)e.LastPlayed), sortDesc)
                 : Order(joinedQuery, x => x.Media.LastPlayed, sortDesc),
             _ => Order(joinedQuery, x => x.Media.Title, sortDesc),
         };
@@ -297,7 +299,7 @@ public class LibraryRepository : ILibraryRepository
 
         var genres = await _context.MediaItemGenres
             .AsNoTracking()
-            .Where(mg => mg.MediaItem != null && mg.MediaItem.LibraryId == libraryId && mg.Genre != null)
+            .Where(mg => mg.MediaItem != null && mg.MediaItem.LibraryId == libraryId && !mg.MediaItem.IsMissing && mg.Genre != null)
             .Select(mg => mg.Genre!.Name)
             .Distinct()
             .ToListAsync();

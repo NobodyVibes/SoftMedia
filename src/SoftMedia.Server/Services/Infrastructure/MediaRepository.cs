@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
+using SoftMedia.Server.Services.Media;
 using SoftMedia.Server.Services.Security.ContentRating;
 using SoftMedia.Server.Services.Security.LibraryAccess;
 
@@ -204,7 +205,8 @@ public class MediaRepository : IMediaRepository
         var access = await _libraryAccessProvider.GetCurrentAsync();
         IQueryable<MediaItem> query = _context.MediaItems.AsNoTracking()
             .ApplyContentRatingFilter(ceilings)
-            .ApplyLibraryAccessFilter(access);
+            .ApplyLibraryAccessFilter(access)
+            .ExcludeMissing();
 
         if (type.HasValue)
         {
@@ -229,10 +231,14 @@ public class MediaRepository : IMediaRepository
     {
         var ceilings = await _ratingProvider.GetCurrentAsync();
         var access = await _libraryAccessProvider.GetCurrentAsync();
+        // SR-WI-011 — missing episodes are skipped as next-up. All callers are the
+        // next/previous-episode resolvers in RecommendationService, so filtering
+        // here is safe (no detail-page surface reads this method).
         return await _context.MediaItems
             .AsNoTracking()
             .ApplyContentRatingFilter(ceilings)
             .ApplyLibraryAccessFilter(access)
+            .ExcludeMissing()
             .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode)
             .OrderBy(m => m.SeasonNumber)
             .ThenBy(m => m.EpisodeNumber)

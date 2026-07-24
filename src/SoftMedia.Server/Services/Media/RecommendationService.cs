@@ -304,6 +304,7 @@ public class RecommendationService : IRecommendationService
         // Valid types: Movie, Series.
         var top2 = await _context.MediaItems
             .AsNoTracking()
+            .ExcludeMissing()
             .Where(m => m.CommunityRating.HasValue && (m.Type == MediaType.Movie || m.Type == MediaType.Series))
             .OrderByDescending(m => m.CommunityRating)
             .Take(2)
@@ -320,6 +321,7 @@ public class RecommendationService : IRecommendationService
         {
             var sample = await _context.MediaItems
                 .AsNoTracking()
+                .ExcludeMissing()
                 .Where(m => m.Type == type && !excludedIds.Contains(m.Id))
                 .OrderBy(x => EF.Functions.Random()) 
                 .Take(10) 
@@ -383,7 +385,8 @@ public class RecommendationService : IRecommendationService
         var ceilings = await _contentRatingProvider.GetCurrentAsync();
         var visible = _context.MediaItems.AsNoTracking()
             .ApplyLibraryAccessFilter(access)
-            .ApplyContentRatingFilter(ceilings);
+            .ApplyContentRatingFilter(ceilings)
+            .ExcludeMissing();
 
         var source = await visible
             .Where(m => m.Id == movieId && m.Type == MediaType.Movie)
@@ -461,6 +464,7 @@ public class RecommendationService : IRecommendationService
 
                 var rankedIds = ranked.Select(r => r.Id).ToList();
                 var items = (await _context.MediaItems.AsNoTracking()
+                        .ExcludeMissing()
                         .Include(m => m.MediaItemGenres).ThenInclude(mg => mg.Genre)
                         .Where(m => rankedIds.Contains(m.Id))
                         .ToListAsync())
@@ -504,7 +508,8 @@ public class RecommendationService : IRecommendationService
         var ceilings = await _contentRatingProvider.GetCurrentAsync();
         var visible = _context.MediaItems.AsNoTracking()
             .ApplyLibraryAccessFilter(access)
-            .ApplyContentRatingFilter(ceilings);
+            .ApplyContentRatingFilter(ceilings)
+            .ExcludeMissing();
 
         // Taste signal: recent VIDEO plays, newest first; episodes roll up to their
         // series. Music history is excluded (review MED: a heavy listener's window
@@ -735,6 +740,7 @@ public class RecommendationService : IRecommendationService
         var visible = _context.MediaItems.AsNoTracking()
             .ApplyLibraryAccessFilter(access)
             .ApplyContentRatingFilter(ceilings)
+            .ExcludeMissing()
             .Where(m => DTOs.BrowseFilter.BrowsableTypes.Contains(m.Type));
 
         var rows = new List<HomeRowDto>();
@@ -918,6 +924,7 @@ public class RecommendationService : IRecommendationService
             var liveRatings = await _context.MediaItems
                 .AsNoTracking()
                 .ApplyContentRatingFilter(ceilings)
+                .ExcludeMissing()
                 .Where(m => itemIds.Contains(m.Id))
                 .Select(m => new { m.Id, m.InternalRating })
                 .ToDictionaryAsync(x => x.Id, x => x.InternalRating);

@@ -173,7 +173,7 @@ public class ScheduledScanServiceTests
     // --- Setting seed ---
 
     [Fact]
-    public async Task InitializeDefaults_SeedsLibraryScanIntervalHours_DisabledByDefault()
+    public async Task InitializeDefaults_SeedsLibraryScanIntervalHours_TwelveHoursByDefault()
     {
         var ctx = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase($"sched-scan-seed-{Guid.NewGuid()}").Options);
@@ -183,7 +183,7 @@ public class ScheduledScanServiceTests
 
         var seeded = await ctx.Settings.FirstOrDefaultAsync(s => s.Key == ScheduledScanService.IntervalSettingKey);
         Assert.NotNull(seeded);
-        Assert.Equal("0", seeded!.Value);        // off by default — preserves current behaviour
+        Assert.Equal("12", seeded!.Value);       // SR-WI-013: on by default — watcher backstop for NAS shares
         Assert.Equal("Scanning", seeded.Group);  // renders in the Libraries → Scanning section
     }
 }

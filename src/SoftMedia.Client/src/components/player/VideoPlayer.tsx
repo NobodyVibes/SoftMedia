@@ -1034,14 +1034,20 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     }
                 });
 
-                // SR-WI-026: a successfully loaded fragment means the connection
-                // recovered — drop the indicator and refund the retry budget.
-                hls.on(Hls.Events.FRAG_LOADED, () => {
+                // SR-WI-026: a successful load means the connection recovered — drop the
+                // indicator and refund the retry budget. LEVEL_LOADED matters as much as
+                // FRAG_LOADED: while PAUSED no fragments load, so a fragment-only refund
+                // let sporadic playlist-reload blips accumulate across a long pause until
+                // the budget emptied and a false "Connection lost" fired (live-QA
+                // 2026-07-24). Any successful playlist reload proves the server is fine.
+                const refundRetryBudget = () => {
                     if (networkRetryCountRef.current > 0) {
                         networkRetryCountRef.current = 0;
                         setIsReconnecting(false);
                     }
-                });
+                };
+                hls.on(Hls.Events.FRAG_LOADED, refundRetryBudget);
+                hls.on(Hls.Events.LEVEL_LOADED, refundRetryBudget);
 
                 hlsRef.current = hls;
             } else if (video.canPlayType('application/vnd.apple.mpegurl')) {

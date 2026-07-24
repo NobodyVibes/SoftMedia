@@ -402,6 +402,17 @@ public class TranscodeService : ITranscodeService
                                 // Fully transcoded — the finished playlist serves from disk.
                                 existingSession.State = TranscodeState.Completed;
                             }
+                            else if (existingSession.IsPaused)
+                            {
+                                // Parked on purpose (paused / walked away). hls.js reloads
+                                // master.m3u8 periodically EVEN WHILE PAUSED, and reviving on
+                                // those reloads churned ffmpeg endlessly (live-QA 2026-07-24:
+                                // 29 revive→dormant cycles during one long pause, each rewrite
+                                // window bleeding the client's reconnect budget). Serve the
+                                // parked playlist untouched; real resumption revives via
+                                // /resume (SetPaused) or the first segment request
+                                // (UpdateClientPosition), both of which clear IsPaused.
+                            }
                             else
                             {
                                 // A fresh master.m3u8 request is explicit client intent: reset

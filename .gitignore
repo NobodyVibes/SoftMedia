@@ -96,3 +96,16 @@ music_diagnostic.ps1
 /src/SoftMedia.Server/test_media.mkv
 /src/SoftMedia.Server/test_noseek.mp4
 *.log
+
+# System-review hygiene (SR-WI-002, 2026-07-24): scratch/debug artifacts must not return.
+*.stackdump
+/TempITunes/
+/TempVerify/
+/TempDebug/
+/temp-net-test/
+/src/TempDebug/
+/DumpDune.cs
+/dune_search.json
+/debug_args.txt
+/probe_output.json
+/src/SoftMedia.Server/probe_output.json

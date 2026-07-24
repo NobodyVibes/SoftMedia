@@ -1,1 +1,0 @@
--i "input.mkv" -filter_complex "[0:v][0:2]overlay[v]" -map "[v]" -map 0:a:0 -c:v libx264 -profile:v baseline -level 3.1 -pix_fmt yuv420p -preset veryfast -crf 23 -c:a aac -b:a 128k -copyts -f hls -hls_time 6 -hls_list_size 0 -hls_playlist_type event -hls_flags append_list -start_number 0 -hls_segment_filename "output\segment_%03d.ts" "output\master.m3u8"

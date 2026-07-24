@@ -91,7 +91,7 @@ export function ServerNetworkSection() {
                     <Combobox
                         value={minLevel}
                         onChange={setMinLevel}
-                        options={['Information', 'Warning', 'Error']}
+                        options={['Trace', 'Debug', 'Information', 'Warning', 'Error']}
                         placeholder="Min level"
                         className="w-40"
                     />
@@ -107,7 +107,9 @@ export function ServerNetworkSection() {
                 <p className="text-xs text-gray-500 mb-3">
                     The most recent in-memory entries (nothing is written to disk or sent
                     anywhere). Current verbosity: <span className="text-gray-300">{logs?.currentLevel}</span> —
-                    change it with the Log Level setting above; it applies immediately.
+                    change it with the Log Level setting above; it applies immediately, and
+                    the viewer captures whatever that level allows (set both to Debug to
+                    see debug output here).
                 </p>
                 <div className="bg-black/40 rounded-lg border border-white/5 max-h-[420px] overflow-y-auto font-mono text-xs leading-relaxed p-3">
                     {(logs?.entries ?? []).length === 0 && (

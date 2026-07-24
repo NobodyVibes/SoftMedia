@@ -108,10 +108,13 @@ public sealed class RingBufferLoggerProvider : ILoggerProvider
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
-        // Information floor regardless of the global level: the viewer is for operator
-        // triage, and Debug/Trace at ring-buffer granularity would evict the useful
-        // entries in seconds. (Console still honours the runtime level for full detail.)
-        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Information;
+        // No independent floor: the buffer captures whatever the GLOBAL filter passes,
+        // so selecting Debug in settings makes Debug visible in the in-app viewer —
+        // the control's effect is visible where the operator is looking. At the
+        // Information default this is identical to a hard floor; under Debug the
+        // churn is the operator's explicit, temporary choice (and the category pins
+        // keep framework noise out regardless).
+        public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None;
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {

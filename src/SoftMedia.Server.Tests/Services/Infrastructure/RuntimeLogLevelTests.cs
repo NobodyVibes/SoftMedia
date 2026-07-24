@@ -38,6 +38,26 @@ public class RuntimeLogLevelTests
     }
 
     [Fact]
+    public void RingBufferLogger_CapturesDebug_WhenGlobalFilterPassesIt()
+    {
+        // Design decision (2026-07-24): the buffer has NO independent floor — if the
+        // operator selects Debug, Debug must be visible in the in-app viewer. The
+        // provider defers entirely to the global filter chain.
+        var buffer = new LogRingBuffer();
+        using var provider = new RingBufferLoggerProvider(buffer);
+        var logger = provider.CreateLogger("SoftMedia.Test");
+
+        Assert.True(logger.IsEnabled(Microsoft.Extensions.Logging.LogLevel.Debug));
+        Assert.True(logger.IsEnabled(Microsoft.Extensions.Logging.LogLevel.Trace));
+        Assert.False(logger.IsEnabled(Microsoft.Extensions.Logging.LogLevel.None));
+
+        logger.Log(Microsoft.Extensions.Logging.LogLevel.Debug, new Microsoft.Extensions.Logging.EventId(0), "dbg", null, (s, _) => s);
+        Assert.Contains(buffer.Snapshot(10, "debug"), e => e.Message == "dbg" && e.Level == "Debug");
+        // The viewer's own min-level filter still hides it when set higher.
+        Assert.DoesNotContain(buffer.Snapshot(10, "Information"), e => e.Message == "dbg");
+    }
+
+    [Fact]
     public void RingBuffer_CapsEntries_AndFiltersByLevel()
     {
         var buffer = new LogRingBuffer();

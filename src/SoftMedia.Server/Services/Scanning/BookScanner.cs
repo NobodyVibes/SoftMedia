@@ -335,7 +335,19 @@ public class BookScanner : BaseMediaScanner
             };
 
             context.MediaItems.Add(series);
-            await context.SaveChangesAsync(cancellationToken);
+
+            // SR-WI-035 — parent-creation saves run inside the parallel directory walk,
+            // so they must take the scanner-wide write lock like the base class's
+            // end-of-directory saves (SQLite tolerates a single writer).
+            await _dbWriteLock.WaitAsync(cancellationToken);
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
+            }
+            finally
+            {
+                _dbWriteLock.Release();
+            }
 
             _seriesCache.TryAdd(key, series);
             // Mark for deferred metadata enrichment — enqueued after base.ScanLibraryAsync completes

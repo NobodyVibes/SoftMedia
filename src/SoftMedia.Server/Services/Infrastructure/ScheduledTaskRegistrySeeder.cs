@@ -22,6 +22,8 @@ public static class ScheduledTaskRegistrySeeder
         Sched(ScheduledTaskNames.ThrottleMonitor, "Monitors transcode buffers and throttles FFmpeg.");
         Sched(ScheduledTaskNames.Trickplay, "Generates scrubber-preview sprite sheets for videos that lack them.");
         Sched(ScheduledTaskNames.ScheduledLibraryScan, "Scans all libraries for new/changed files on a configurable interval (Settings → Libraries). A backstop for changes the realtime file watcher can miss. Disabled when the interval is 0.", manual: true);
+        Sched(ScheduledTaskNames.MetadataRetryAmnesty, "Weekly: clears the retry-exhausted flag on items whose metadata fetches gave up (e.g. during a provider outage) and re-queues them, so transient failures self-heal. Skips locked items.", manual: true);
+        Sched(SoftMedia.Server.Services.Background.ImageCacheCleanupService.RegisteredTaskName, "Daily: removes cached artwork belonging to items that no longer exist in the database. Artwork for missing-but-recoverable items is kept.", manual: true);
 
         Event(ScheduledTaskNames.LibraryWatcher, "Watches library folders for filesystem changes in real time.");
         Event(ScheduledTaskNames.LibraryScanQueue, "Processes queued library scan jobs.");

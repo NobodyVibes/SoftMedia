@@ -68,20 +68,38 @@ public class MetadataRefreshService : BackgroundService, IManuallyTriggerableTas
 
         List<MediaItem> candidates = new();
 
+        // Locked items are filtered here to avoid queue churn; the metadata queue's
+        // ProcessItemAsync re-checks the lock at processing time regardless (P3-WI-003).
+        // Missing items (SR-WI-011) are skipped: no point spending provider quota on
+        // hidden items — the heal-on-reappear scan re-enqueues them when they return.
         if (string.Equals(mode, "Running", StringComparison.OrdinalIgnoreCase))
         {
              // Since status was previously stored in raw payloads, and we've promoted critical fields,
              // refresh all Series items. The TVMaze provider re-fetches full details anyway,
              // so the cost is minimal and this ensures no running series are missed.
              candidates = await context.MediaItems
-                .Where(m => m.Type == MediaType.Series)
+                .Where(m => m.Type == MediaType.Series && !m.MetadataLocked && !m.IsMissing)
                 .ToListAsync(ct);
         }
-        else if (string.Equals(mode, "Variable", StringComparison.OrdinalIgnoreCase) || 
-                 string.Equals(mode, "All", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(mode, "Variable", StringComparison.OrdinalIgnoreCase))
         {
              candidates = await context.MediaItems
-                .Where(m => (m.Type == MediaType.Series || m.Type == MediaType.Movie))
+                .Where(m => (m.Type == MediaType.Series || m.Type == MediaType.Movie)
+                    && !m.MetadataLocked && !m.IsMissing)
+                .ToListAsync(ct);
+        }
+        else if (string.Equals(mode, "All", StringComparison.OrdinalIgnoreCase))
+        {
+             // SR-WI-036: "All" genuinely means all enrichable types — movies, series,
+             // music artists/albums, books, comics, and games — not just Movies+Series.
+             // Episodes are covered by their series fetch (TvMetadataEnricher) and audio
+             // tracks by their album/artist, so neither is enqueued individually.
+             candidates = await context.MediaItems
+                .Where(m => (m.Type == MediaType.Series || m.Type == MediaType.Movie
+                    || m.Type == MediaType.Artist || m.Type == MediaType.Album
+                    || m.Type == MediaType.Book || m.Type == MediaType.ComicSeries
+                    || m.Type == MediaType.ComicIssue || m.Type == MediaType.Game)
+                    && !m.MetadataLocked && !m.IsMissing)
                 .ToListAsync(ct);
         }
 
@@ -101,7 +119,10 @@ public class MetadataRefreshService : BackgroundService, IManuallyTriggerableTas
             if (ct.IsCancellationRequested) break;
             try
             {
-                var libType = item.Type == MediaType.Movie ? LibraryType.Movie : LibraryType.TV;
+                // SR-WI-036: with "All" now spanning music/books/comics/games, the old
+                // movie-else-TV mapping would misroute those types; derive the library
+                // type from the media type instead.
+                var libType = MediaTypeLibraryMap.ForMediaType(item.Type);
                 await queue.EnqueueMetadataRefreshAsync(item.Id, libType, refreshImages);
                 enqueuedCount++;
             }

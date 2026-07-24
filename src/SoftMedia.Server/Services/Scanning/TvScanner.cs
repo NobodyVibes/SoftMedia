@@ -23,9 +23,19 @@ public class TvScanner : BaseMediaScanner
     public override string[] SupportedExtensions => SoftMedia.Server.Constants.MediaExtensions.Video;
     public override string DisplayName => "TV Scanner";
 
-    // Session caches — ConcurrentDictionary for thread-safe access during parallel scanning
-    private readonly ConcurrentDictionary<string, MediaItem> _seriesCache = new(StringComparer.OrdinalIgnoreCase);
+    // Session caches — ConcurrentDictionary for thread-safe access during parallel scanning.
+    // SR-WI-034: series are keyed by (CleanShowName → Year) so "Doctor Who (1963)" and
+    // "Doctor Who (2005)" stay separate. Year 0 = unknown year (Year is always >= 1900).
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<int, MediaItem>> _seriesCache = new(StringComparer.OrdinalIgnoreCase);
+    private const int UnknownYearKey = 0;
     private readonly ConcurrentDictionary<(Guid SeriesId, int SeasonNum), MediaItem> _seasonCache = new();
+
+    // SR-WI-030: true only while a full library scan is running. Series/seasons created
+    // during a scan defer enrichment to the post-scan drain; series/seasons created outside
+    // one (the watcher's ProcessSingleFileAsync path, e.g. a Sonarr import) enqueue metadata
+    // immediately — there is no post-scan drain on that path, so deferring meant no metadata
+    // until the next full scan.
+    private volatile bool _fullScanActive;
     
     // Track series IDs that need metadata enrichment after the scan completes.
     // Deferred to post-scan so all seasons/episodes exist in the DB before
@@ -34,6 +44,13 @@ public class TvScanner : BaseMediaScanner
 
     // Cache parsed series ProviderMetadataCache (TVMaze payloads) to avoid O(N) re-parsing per episode
     private readonly ConcurrentDictionary<Guid, Dictionary<string, object>?> _parsedSeriesMetadataCache = new();
+
+    /// <summary>
+    /// Test seam (project convention; no InternalsVisibleTo): seeds the parsed TVMaze
+    /// payload cache that <see cref="ScanLibraryAsync"/> normally pre-loads from the DB.
+    /// </summary>
+    protected void SeedParsedSeriesMetadata(Guid seriesId, Dictionary<string, object>? metadata)
+        => _parsedSeriesMetadataCache[seriesId] = metadata;
 
 
 
@@ -63,6 +80,7 @@ public class TvScanner : BaseMediaScanner
         _seasonCache.Clear();
         _seriesNeedingEnrichment.Clear();
         _parsedSeriesMetadataCache.Clear();
+        _fullScanActive = true;
 
         // Bulk pre-load all existing Series for this library
         using (var scope = _scopeFactory.CreateScope())
@@ -75,7 +93,7 @@ public class TvScanner : BaseMediaScanner
                 .ToListAsync(cancellationToken);
 
             foreach (var s in existingSeries)
-                _seriesCache.TryAdd(s.Title, s);
+                CacheSeries(s);
 
             var existingSeasons = await context.MediaItems
                 .AsNoTracking()
@@ -113,33 +131,75 @@ public class TvScanner : BaseMediaScanner
                 existingSeries.Count, existingSeasons.Count, caches.Count, library.Id);
         }
 
-        await base.ScanLibraryAsync(library, progress, cancellationToken);
-
-        // R-WI-014: post-scan local-artwork sweep over every series seen this scan (deferred,
-        // like enrichment below, because cached series entities are detached from the per-file
-        // contexts). Fresh-loads each series, applies poster.jpg/folder.jpg/fanart sidecars
-        // from the series folder, and forces a re-enqueue when a local poster was removed or a
-        // local-postered series hasn't had its one enrichment pass yet (TvScanner otherwise
-        // only enqueues brand-new series). Failure-isolated: artwork trouble must never stop
-        // the deferred enrichment drain below.
         try
         {
-            await ApplyLocalSeriesArtworkAsync(library, cancellationToken);
+            await base.ScanLibraryAsync(library, progress, cancellationToken);
+
+            // R-WI-014: post-scan local-artwork sweep over every series seen this scan (deferred,
+            // like enrichment below, because cached series entities are detached from the per-file
+            // contexts). Fresh-loads each series, applies poster.jpg/folder.jpg/fanart sidecars
+            // from the series folder, and forces a re-enqueue when a local poster was removed or a
+            // local-postered series hasn't had its one enrichment pass yet (TvScanner otherwise
+            // only enqueues brand-new series). Failure-isolated: artwork trouble must never stop
+            // the deferred enrichment drain below.
+            try
+            {
+                await ApplyLocalSeriesArtworkAsync(library, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[TvScanner] Local artwork sweep failed; continuing to enrichment enqueue.");
+            }
+
+            // Deferred metadata enrichment: enqueue ALL series that need enrichment AFTER
+            // the scan completes. This guarantees every season and episode exists in the DB
+            // before FilterToLocalEpisodesAsync runs, so no season images are lost.
+            _logger.LogInformation("[TvScanner] Enqueueing deferred metadata enrichment for {Count} series", _seriesNeedingEnrichment.Count);
+            foreach (var seriesId in _seriesNeedingEnrichment.Keys)
+            {
+                await _metadataQueue.EnqueueMetadataRefreshAsync(seriesId, LibraryType.TV, libraryId: library.Id);
+            }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogWarning(ex, "[TvScanner] Local artwork sweep failed; continuing to enrichment enqueue.");
+            _fullScanActive = false;
+        }
+    }
+
+    /// <summary>All series cached this session, across every (title, year) bucket.</summary>
+    private IEnumerable<MediaItem> CachedSeries => _seriesCache.Values.SelectMany(byYear => byYear.Values);
+
+    /// <summary>
+    /// SR-WI-034 identity lookup. An incoming concrete year matches that exact year first,
+    /// then falls back to a same-title series with unknown year. A null incoming year is a
+    /// wildcard: it matches an existing same-title series regardless of year rather than
+    /// creating a duplicate — the conservative choice (no automatic split of merged rows).
+    /// </summary>
+    private bool TryGetCachedSeries(string title, int? year, out MediaItem series)
+    {
+        series = null!;
+        if (!_seriesCache.TryGetValue(title, out var byYear) || byYear.IsEmpty)
+            return false;
+
+        if (year.HasValue)
+        {
+            if (byYear.TryGetValue(year.Value, out series!)) return true;
+            return byYear.TryGetValue(UnknownYearKey, out series!);
         }
 
-        // Deferred metadata enrichment: enqueue ALL series that need enrichment AFTER
-        // the scan completes. This guarantees every season and episode exists in the DB
-        // before FilterToLocalEpisodesAsync runs, so no season images are lost.
-        _logger.LogInformation("[TvScanner] Enqueueing deferred metadata enrichment for {Count} series", _seriesNeedingEnrichment.Count);
-        foreach (var seriesId in _seriesNeedingEnrichment.Keys)
+        foreach (var kv in byYear)
         {
-            await _metadataQueue.EnqueueMetadataRefreshAsync(seriesId, LibraryType.TV, libraryId: library.Id);
+            series = kv.Value;
+            return true;
         }
+        return false;
+    }
+
+    private void CacheSeries(MediaItem series)
+    {
+        var byYear = _seriesCache.GetOrAdd(series.Title, _ => new ConcurrentDictionary<int, MediaItem>());
+        byYear.TryAdd(series.Year ?? UnknownYearKey, series);
     }
 
     /// <summary>
@@ -150,7 +210,7 @@ public class TvScanner : BaseMediaScanner
     /// </summary>
     private async Task ApplyLocalSeriesArtworkAsync(Library library, CancellationToken cancellationToken)
     {
-        var seriesIds = _seriesCache.Values.Select(s => s.Id).Distinct().ToList();
+        var seriesIds = CachedSeries.Select(s => s.Id).Distinct().ToList();
         if (seriesIds.Count == 0) return;
 
         // A poster.jpg in the LIBRARY ROOT belongs to no particular series — never sweep roots
@@ -168,7 +228,7 @@ public class TvScanner : BaseMediaScanner
         // be skipped — a bare poster.jpg in a shared folder belongs to no one (verifier: the TV
         // analog of the flat-multi-movie bug).
         var resolvedFolders = new Dictionary<Guid, string>();
-        foreach (var s in _seriesCache.Values.DistinctBy(s => s.Id))
+        foreach (var s in CachedSeries.DistinctBy(s => s.Id))
         {
             if (string.IsNullOrEmpty(s.Path)) continue;
             var f = s.Path;
@@ -243,10 +303,6 @@ public class TvScanner : BaseMediaScanner
         var filePath = file.Path;
         try
         {
-            // ... (keep existing parsing logic omitted for brevity, focusing on signature/return) ...
-            // Wait, replace_file_content replaces the BLOCK. I must include the parsing logic or target closely.
-            // I'll target the whole method to be safe relative to the view.
-            
             // Parse episode info from filename
             var parsed = FileNameParser.ParseTvEpisode(filePath);
             var showName = parsed.ShowName;
@@ -267,12 +323,15 @@ public class TvScanner : BaseMediaScanner
             if (string.IsNullOrEmpty(showName))
                 showName = "Unknown Show";
 
+            // SR-WI-034: extract the year BEFORE cleaning — CleanShowName strips a trailing
+            // year ("Doctor Who 2005" -> "Doctor Who"), so extracting afterwards always
+            // returned null and same-title shows from different years merged.
+            var showYear = FileNameParser.ExtractYear(showName);
+
             // Clean the show name
             var cleanedShowName = FileNameParser.CleanShowName(showName);
             if (!string.IsNullOrEmpty(cleanedShowName))
                 showName = cleanedShowName;
-
-            var showYear = FileNameParser.ExtractYear(showName);
 
             // Ensure series exists (Thread Safe)
             var series = await EnsureSeriesAsync(context, showName, showYear, library, filePath, cancellationToken);
@@ -355,7 +414,10 @@ public class TvScanner : BaseMediaScanner
 
     /// <summary>
     /// Get or create a series entity. Uses pre-loaded cache for O(1) lookups,
-    /// falling back to DB + lock only when creating new series.
+    /// falling back to a DB double-check + lock before creating a new series.
+    /// SR-WI-030: the DB double-check matters on the watcher single-file path, which runs
+    /// on a scanner whose session cache was never pre-loaded — without it every watcher
+    /// import (e.g. Sonarr) minted a duplicate Series row.
     /// </summary>
     private async Task<MediaItem> EnsureSeriesAsync(
         AppDbContext context,
@@ -366,15 +428,33 @@ public class TvScanner : BaseMediaScanner
         CancellationToken cancellationToken)
     {
         // Fast path: check pre-loaded cache (thread-safe ConcurrentDictionary)
-        if (_seriesCache.TryGetValue(showName, out var cached))
+        if (TryGetCachedSeries(showName, year, out var cached))
             return cached;
 
-        // Slow path: cache miss — acquire lock and create new series
+        // Slow path: cache miss — acquire lock, double-check DB, then create
         using (await LockParentAsync(showName, cancellationToken))
         {
             // Double-check cache after acquiring lock (another thread may have created it)
-            if (_seriesCache.TryGetValue(showName, out cached))
+            if (TryGetCachedSeries(showName, year, out cached))
                 return cached;
+
+            // Double-check against DB (mirrors BookScanner.EnsureComicSeriesAsync): the cache
+            // is per-scanner-session, but the series may already exist from a previous scan.
+            // Same identity as the cache: (title, year), null year = wildcard.
+            var lowered = showName.ToLowerInvariant();
+            var candidates = await context.MediaItems
+                .Where(m => m.LibraryId == library.Id
+                         && m.Type == MediaType.Series
+                         && m.Title.ToLower() == lowered)
+                .ToListAsync(cancellationToken);
+            var dbSeries = year.HasValue
+                ? candidates.FirstOrDefault(c => c.Year == year.Value) ?? candidates.FirstOrDefault(c => c.Year == null)
+                : candidates.FirstOrDefault();
+            if (dbSeries != null)
+            {
+                CacheSeries(dbSeries);
+                return dbSeries;
+            }
 
             // Create new series
             var series = new MediaItem
@@ -389,22 +469,40 @@ public class TvScanner : BaseMediaScanner
             };
 
             context.MediaItems.Add(series);
-            await context.SaveChangesAsync(cancellationToken);
+
+            // SR-WI-035: this save runs inside the parallel directory walk — route it
+            // through the shared scanner write lock like the base class's end-of-directory
+            // saves, or concurrent writers hit SQLITE_BUSY on first big scans.
+            await _dbWriteLock.WaitAsync(cancellationToken);
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
+            }
+            finally
+            {
+                _dbWriteLock.Release();
+            }
 
             // Add to cache for subsequent lookups
-            _seriesCache.TryAdd(showName, series);
+            CacheSeries(series);
 
-            // Mark for deferred metadata enrichment (runs after scan completes)
-            _seriesNeedingEnrichment.TryAdd(series.Id, 0);
+            // SR-WI-030: during a full scan, defer enrichment to the post-scan drain; on the
+            // watcher single-file path there is no drain, so enqueue immediately.
+            if (_fullScanActive)
+                _seriesNeedingEnrichment.TryAdd(series.Id, 0);
+            else
+                await _metadataQueue.EnqueueMetadataRefreshAsync(series.Id, LibraryType.TV, libraryId: library.Id);
 
-            _logger.LogInformation("[TvScanner] Created series: {ShowName}", showName);
+            _logger.LogInformation("[TvScanner] Created series: {ShowName} ({Year})", showName, year?.ToString() ?? "unknown year");
             return series;
         }
     }
 
     /// <summary>
     /// Get or create a season entity. Uses pre-loaded cache for O(1) lookups,
-    /// falling back to DB + lock only when creating new seasons.
+    /// falling back to a DB double-check + lock before creating a new season.
+    /// SR-WI-030: the DB double-check protects the watcher single-file path, whose
+    /// session cache is never pre-loaded (see <see cref="EnsureSeriesAsync"/>).
     /// </summary>
     private async Task<MediaItem> EnsureSeasonAsync(
         AppDbContext context,
@@ -419,13 +517,26 @@ public class TvScanner : BaseMediaScanner
         if (_seasonCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
-        // Slow path: cache miss — acquire lock and create new season
+        // Slow path: cache miss — acquire lock, double-check DB, then create
         var lockKey = $"{series.Id}-{seasonNum}";
         using (await LockParentAsync(lockKey, cancellationToken))
         {
             // Double-check cache after acquiring lock
             if (_seasonCache.TryGetValue(cacheKey, out cached))
                 return cached;
+
+            // Double-check against DB — the season may already exist from a previous scan
+            // (same identity as the cache key: SeriesId + SeasonNumber).
+            var dbSeason = await context.MediaItems
+                .FirstOrDefaultAsync(m => m.SeriesId == series.Id
+                                       && m.Type == MediaType.Season
+                                       && m.SeasonNumber == seasonNum,
+                    cancellationToken);
+            if (dbSeason != null)
+            {
+                _seasonCache.TryAdd(cacheKey, dbSeason);
+                return dbSeason;
+            }
 
             // Create new season
             var season = new MediaItem
@@ -445,14 +556,29 @@ public class TvScanner : BaseMediaScanner
             PopulateSeasonMetadata(season, series, seasonNum);
 
             context.MediaItems.Add(season);
-            await context.SaveChangesAsync(cancellationToken);
+
+            // SR-WI-035: parallel-walk save — must hold the shared scanner write lock
+            // (see EnsureSeriesAsync).
+            await _dbWriteLock.WaitAsync(cancellationToken);
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
+            }
+            finally
+            {
+                _dbWriteLock.Release();
+            }
 
             // Add to cache for subsequent lookups
             _seasonCache.TryAdd(cacheKey, season);
 
-            // New season discovered — mark series for deferred enrichment so
-            // FilterToLocalEpisodesAsync includes this season's images.
-            _seriesNeedingEnrichment.TryAdd(series.Id, 0);
+            // New season discovered — the series needs (re-)enrichment so
+            // FilterToLocalEpisodesAsync includes this season's images. During a full scan
+            // that's deferred to the post-scan drain; on the watcher path enqueue now.
+            if (_fullScanActive)
+                _seriesNeedingEnrichment.TryAdd(series.Id, 0);
+            else
+                await _metadataQueue.EnqueueMetadataRefreshAsync(series.Id, LibraryType.TV, libraryId: library.Id);
 
             _logger.LogInformation("[TvScanner] Created season: {Show} - Season {Num}", series.Title, seasonNum);
             return season;
@@ -520,27 +646,38 @@ public class TvScanner : BaseMediaScanner
                     if (ep.TryGetProperty("season", out var s) && s.GetInt32() == seasonNum &&
                         ep.TryGetProperty("number", out var n) && n.GetInt32() == episodeNum)
                     {
-                        // Summary
-                        if (ep.TryGetProperty("summary", out var summary))
+                        // SR-WI-031: these are fill-only. Enrichment (TvMetadataEnricher /
+                        // ImageDownloadQueueService) owns updates to already-populated fields;
+                        // re-stamping them on every scan clobbered locally cached values.
+
+                        // Summary — only when missing (enrichment propagation owns refreshes)
+                        if (string.IsNullOrEmpty(episode.Overview)
+                            && ep.TryGetProperty("summary", out var summary))
                         {
                             var summaryText = summary.GetString();
                             if (!string.IsNullOrEmpty(summaryText))
                                 episode.Overview = System.Text.RegularExpressions.Regex.Replace(summaryText, "<.*?>", "");
                         }
 
-                        // Air date
-                        if (ep.TryGetProperty("airdate", out var airdate) && DateTime.TryParse(airdate.GetString(), out var date))
+                        // Air date — only when missing
+                        if (episode.ReleaseDate == null
+                            && ep.TryGetProperty("airdate", out var airdate) && DateTime.TryParse(airdate.GetString(), out var date))
                             episode.ReleaseDate = date;
 
-                        // Still image -> Backdrop (promoted column)
-                        if (ep.TryGetProperty("image", out var img) && img.ValueKind != JsonValueKind.Null)
+                        // Still image -> Backdrop (promoted column). Never overwrite a locally
+                        // cached still (/cache/images/...) written by ImageDownloadQueueService
+                        // with the remote TVMaze URL — that re-broke offline art on every scan.
+                        var hasLocalBackdrop = !string.IsNullOrEmpty(episode.BackdropUrl)
+                            && episode.BackdropUrl.StartsWith("/cache/", StringComparison.OrdinalIgnoreCase);
+                        if (!hasLocalBackdrop
+                            && ep.TryGetProperty("image", out var img) && img.ValueKind != JsonValueKind.Null)
                         {
                              if (img.TryGetProperty("original", out var original))
                                  episode.BackdropUrl = original.GetString();
                              else if (img.TryGetProperty("medium", out var medium))
                                  episode.BackdropUrl = medium.GetString();
                         }
-                        
+
                         break;
                     }
                 }
@@ -550,6 +687,10 @@ public class TvScanner : BaseMediaScanner
 
     /// <summary>
     /// Parse TV info from directory structure.
+    /// SR-WI-033: season-like folders ("Season X", "Specials", "S01", "Season 0") are
+    /// recognized via the same heuristic as the artwork sweep (<see cref="LooksLikeSeasonFolder"/>),
+    /// so a file in "Show\Specials\" resolves to season 0 of "Show" instead of creating a
+    /// series literally named "Specials".
     /// </summary>
     private (string ShowName, int Season) ParseTvInfoFromDirectory(string filePath)
     {
@@ -559,13 +700,9 @@ public class TvScanner : BaseMediaScanner
 
         var dirName = Path.GetFileName(dir);
 
-        // Check for "Season X" folder
-        var seasonMatch = System.Text.RegularExpressions.Regex.Match(
-            dirName ?? "", @"Season\s*(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-        if (seasonMatch.Success)
+        if (TryParseSeasonFolder(dirName, out var season))
         {
-            var season = int.Parse(seasonMatch.Groups[1].Value);
+            // Immediate parent is a season-like folder — the show name lives one level higher.
             var parentDir = Path.GetDirectoryName(dir);
             var showName = parentDir != null ? Path.GetFileName(parentDir) : string.Empty;
             return (showName ?? string.Empty, season);
@@ -573,6 +710,34 @@ public class TvScanner : BaseMediaScanner
 
         // Otherwise, directory name is probably the show name
         return (dirName ?? string.Empty, 1);
+    }
+
+    /// <summary>
+    /// Aligned with <see cref="LooksLikeSeasonFolder"/>: "Season 5"/"S05" parse to that
+    /// season number; "Specials", "Season 0" and "Season 00" parse to season 0. Falls back
+    /// to the historical non-anchored "Season X" match (e.g. "Season 3 - Extended").
+    /// </summary>
+    private static bool TryParseSeasonFolder(string? folderName, out int season)
+    {
+        season = 0;
+        if (string.IsNullOrEmpty(folderName)) return false;
+
+        if (LooksLikeSeasonFolder(folderName))
+        {
+            var digits = System.Text.RegularExpressions.Regex.Match(folderName, @"\d+");
+            season = digits.Success ? int.Parse(digits.Value) : 0; // "Specials" carries no digits -> season 0
+            return true;
+        }
+
+        var seasonMatch = System.Text.RegularExpressions.Regex.Match(
+            folderName, @"Season\s*(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (seasonMatch.Success)
+        {
+            season = int.Parse(seasonMatch.Groups[1].Value);
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>

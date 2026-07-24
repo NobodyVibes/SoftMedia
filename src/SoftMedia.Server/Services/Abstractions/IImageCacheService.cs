@@ -31,5 +31,25 @@ public interface IImageCacheService
     void DeleteImageForMediaItem(Guid mediaItemId, Models.MediaType type);
     void DeleteImagesForLibrary(IEnumerable<(Guid Id, Models.MediaType Type)> mediaItems);
     void DeleteCastImagesForPersonIds(IEnumerable<int> personIds);
+
+    /// <summary>
+    /// SR-WI-037 — delete orphaned cached artwork. The criterion for
+    /// <paramref name="validMediaIds"/> is ROW-EXISTENCE, not visibility: callers MUST pass
+    /// the ids of ALL MediaItems rows INCLUDING soft-deleted (<c>IsMissing</c>) ones — a
+    /// missing item's artwork is retained so it heals when the drive returns. Only ids with
+    /// no DB row at all are orphans. Returns the number of files deleted.
+    /// </summary>
     int CleanupOrphanedImages(HashSet<Guid> validMediaIds);
+
+    /// <summary>
+    /// SR-WI-037 — invalidate an item's cached PROVIDER artwork so the next Cache*Async call
+    /// re-downloads it (otherwise a changed provider poster is served from cache forever).
+    /// Deletes every cached file named "{mediaItemId}_*" across all cache subdirectories
+    /// (tv, movies, music, games, books) EXCEPT local-sidecar copies ("*_local" keys,
+    /// R-WI-014) — those are not provider-refreshable and would dangle until the next scan
+    /// re-ingests them. For episode stills / season posters pass the SERIES id (their cache
+    /// keys are keyed by series id). Intended caller: the per-item metadata-refresh admin
+    /// endpoint (SR-WI-036). Returns the number of files deleted.
+    /// </summary>
+    Task<int> InvalidateCachedImagesAsync(Guid mediaItemId);
 }

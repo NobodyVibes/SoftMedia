@@ -19,7 +19,12 @@ public class MetadataRetryService : BackgroundService, IMetadataRetryService
 {
     private readonly ILogger<MetadataRetryService> _logger;
     private readonly IServiceProvider _serviceProvider;
-    private const int MaxRetries = 3;
+
+    // SR-WI-036: MaxRetries must equal BackoffDelays.Length or the last tier is dead code.
+    // At 3 the 4-hour tier was unreachable (exhaustion fired at previousRetries >= 3 before
+    // index 3 could ever be selected), so a ~40-minute provider outage during an initial scan
+    // permanently exhausted items. Ladder: 1m -> 5m -> 30m -> 4h -> exhausted.
+    private const int MaxRetries = 4;
 
     // Retry delays: 1 min, 5 min, 30 min, 4 hours
     private static readonly TimeSpan[] BackoffDelays =

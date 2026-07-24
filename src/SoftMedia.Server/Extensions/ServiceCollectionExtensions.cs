@@ -682,10 +682,21 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ScheduledScanService>();
         services.AddHostedService(sp => sp.GetRequiredService<ScheduledScanService>());
 
+        // SR-WI-036: weekly retry amnesty — clears IsRetryExhausted so provider outages self-heal.
+        services.AddSingleton<MetadataRetryAmnestyService>();
+        services.AddHostedService(sp => sp.GetRequiredService<MetadataRetryAmnestyService>());
+
+        // SR-WI-037: daily orphaned-artwork sweep (cached images whose MediaItems row no
+        // longer exists; soft-deleted IsMissing rows keep their art).
+        services.AddSingleton<ImageCacheCleanupService>();
+        services.AddHostedService(sp => sp.GetRequiredService<ImageCacheCleanupService>());
+
         // Tasks the admin Background Tasks page can trigger on demand. The trigger endpoint
         // resolves this collection and dispatches by task name (R-WI-008 generalisation).
         services.AddSingleton<IManuallyTriggerableTask>(sp => sp.GetRequiredService<MetadataRefreshService>());
         services.AddSingleton<IManuallyTriggerableTask>(sp => sp.GetRequiredService<ScheduledScanService>());
+        services.AddSingleton<IManuallyTriggerableTask>(sp => sp.GetRequiredService<MetadataRetryAmnestyService>());
+        services.AddSingleton<IManuallyTriggerableTask>(sp => sp.GetRequiredService<ImageCacheCleanupService>());
 
         // Metadata Queue
         services.AddSingleton<MetadataQueueService>();

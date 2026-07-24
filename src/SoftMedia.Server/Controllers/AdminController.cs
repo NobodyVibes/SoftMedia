@@ -429,6 +429,14 @@ public class AdminController : ControllerBase
 
         item.MetadataLocked = true;
         item.MetadataLockedAt = DateTime.UtcNow;
+
+        // SR-WI-036: an explicit admin match supersedes retry exhaustion — clear the flag and
+        // any pending retry row so a later unlock lets auto-refresh work again instead of
+        // being silently blocked by the stale exhausted state.
+        item.IsRetryExhausted = false;
+        var pendingRetries = await db.MetadataRetries.Where(r => r.MediaItemId == itemId).ToListAsync(ct);
+        db.MetadataRetries.RemoveRange(pendingRetries);
+
         await db.SaveChangesAsync(ct);
 
         _logger.LogInformation("Admin {Admin} fix-matched item {ItemId} via {Provider}/{CandidateId}",
@@ -483,6 +491,45 @@ public class AdminController : ControllerBase
         await db.SaveChangesAsync(ct);
         _logger.LogInformation("Admin {Admin} unlocked item {ItemId}", User.Identity?.Name, itemId);
         return Ok();
+    }
+
+    /// <summary>
+    /// SR-WI-036 per-item metadata refresh: clears the retry-exhausted flag and any pending
+    /// retry bookkeeping, then enqueues the item on the central metadata queue (the single
+    /// enrichment chokepoint, so provider rate limits and the metadata lock stay enforced in
+    /// one place). Locked items return 409 — unlock first, mirroring how the queue would skip
+    /// them anyway.
+    /// </summary>
+    [HttpPost("match/{itemId:guid}/refresh")]
+    public async Task<IActionResult> RefreshMetadata(
+        Guid itemId,
+        [FromServices] AppDbContext db,
+        [FromServices] IMetadataQueue metadataQueue,
+        [FromServices] IImageCacheService imageCache,
+        CancellationToken ct)
+    {
+        var item = await db.MediaItems.Include(m => m.Library).FirstOrDefaultAsync(m => m.Id == itemId, ct);
+        if (item == null) return NotFound();
+
+        if (item.MetadataLocked)
+            return Conflict(new { message = "Metadata is locked for this item. Unlock it first to refresh." });
+
+        item.IsRetryExhausted = false;
+        var pendingRetries = await db.MetadataRetries.Where(r => r.MediaItemId == itemId).ToListAsync(ct);
+        db.MetadataRetries.RemoveRange(pendingRetries);
+        await db.SaveChangesAsync(ct);
+
+        // SR-WI-037: drop this item's cached provider artwork so the refresh re-downloads
+        // current images (CacheImageAsync otherwise returns any existing file forever).
+        // Local-sidecar (*_local) copies are retained by design; for series-level art the
+        // caller passes the series id, so an episode id here simply matches nothing.
+        await imageCache.InvalidateCachedImagesAsync(item.Id);
+
+        var libType = item.Library?.Type ?? MediaTypeLibraryMap.ForMediaType(item.Type);
+        await metadataQueue.EnqueueMetadataRefreshAsync(item.Id, libType, refreshImages: true);
+
+        _logger.LogInformation("Admin {Admin} queued a metadata refresh for item {ItemId}", User.Identity?.Name, itemId);
+        return Ok(new { message = "Refresh queued." });
     }
 }
 

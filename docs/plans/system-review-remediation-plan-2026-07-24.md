@@ -409,7 +409,15 @@ Ordered by leverage per the review's §6 comparison. Each needs its own mini-pla
 | SR-WI-026 | **Complete** (2026-07-24) | Failed→409 `{"error":"transcode_failed"}` (StreamResultService); client: plan 429/5xx surfaced, capped HLS reconnect w/ indicator, 409 terminal state |
 | SR-WI-027 | **Complete** (2026-07-24) | `displaySupportsHdr` requires `(video-dynamic-range: high)`; P3 fallback removed |
 | SR-WI-028 | **Complete** (2026-07-24) | Trickplay numeric sort + cancel/timeout kill; manifest line-based rewrite (.ts-in-token regression pinned); direct-play cap covers all video + size/duration estimate; capacity reservation gate; playlist poll replaces 3s sleep; disk-pressure suspends live encoders |
-| SR-WI-030..038 | Not started | Session C |
+| SR-WI-030 | **Complete** (2026-07-24) | DB double-check in Ensure(Series/Season/Artist/Album); watcher-created series enqueue metadata immediately (`_fullScanActive` flag) |
+| SR-WI-031 | **Complete** (2026-07-24) | BackdropUrl `/cache/` guard; sweep also made Overview + ReleaseDate fill-only (were re-clobbered every scan) |
+| SR-WI-032 | **Complete** (2026-07-24) | Parenthesized/bracketed year wins; bare-name behavior pinned unchanged |
+| SR-WI-033 | **Complete** (2026-07-24) | E100+/multi-episode/anime-bracket patterns; Specials→S0 + parent-folder show name; multi-episode SPAN not persisted (result-type constraint, noted) |
+| SR-WI-034 | **Complete** (2026-07-24) | (Title, Year) series identity; also fixed ExtractYear-after-CleanShowName ordering bug (year was always null); null year = wildcard |
+| SR-WI-035 | **Complete** (2026-07-24) | Parent saves under `_dbWriteLock` (Tv/Music/Book); `SqlitePragmaInterceptor` asserts WAL/busy_timeout/synchronous on open |
+| SR-WI-036 | **Complete** (2026-07-24) | 4h retry tier reachable (MaxRetries 4); exhaustion cleared on apply/refresh; weekly `MetadataRetryAmnesty` task; All-mode refresh covers 8 types; `POST match/{id}/refresh` + Fix Match UI button |
+| SR-WI-037 | **Complete** (2026-07-24) | Daily `ImageCacheCleanupService` (row-existence orphan criterion — IsMissing art retained); `books` covered; `InvalidateCachedImagesAsync` wired into the refresh endpoint |
+| SR-WI-038 | **Complete** (2026-07-24) | VA compilations (tag + directory heuristic); junk-word list +22; unsafe-name skips on the file-issues dashboard; targeted watcher delete (soft-mark, no full scan) |
 | SR-WI-040..042 | Not started | Session D |
 | SR-WI-050..054 | Not started | Session D |
 | SR-WI-060..065 | Not started | Session E |
@@ -469,3 +477,20 @@ consumes the API.
   regenerated. Session 5 live-verify additions: pause>3min→resume, mid-stream ffmpeg kill →
   auto-revival, HDR transcode on `HardwareAcceleration=none`, server shutdown leaves no
   ffmpeg (`tasklist`).
+- 2026-07-24 — **SESSION C COMPLETE** (SR-WI-030..038). Server suite 1482/0/0 (+88), client
+  285/285 + build green. Notes for future sessions: (1) Watcher-path metadata enqueue uses a
+  `_fullScanActive` flag on TvScanner because `BaseMediaScanner.ProcessSingleFileAsync` is not
+  virtual — if the base ever gains an override seam, fold the flag away. (2) VA compilations:
+  per-track performer display needs a schema column (`TrackArtist` string) the model lacks —
+  tracks attach to the "Various Artists" artist for now; known follow-up, do NOT repurpose
+  Director/Studio, and remember empty-container cleanup would purge a VA artist left with no
+  track FKs. (3) Multi-episode files parse to their PRIMARY episode only — the parser result
+  tuple has no span field; a deliberate result-type change is needed to carry it. (4) The
+  image-cache cleanup's orphan criterion is ROW-EXISTENCE (raw DbSet), never a filtered
+  surface — IsMissing items keep their art; `tv/cast` is excluded by design (int person-id
+  keys). `InvalidateCachedImagesAsync` retains `*_local` sidecar copies; series-level art is
+  keyed by series id. (5) Anime absolute numbering = season 1 by convention (comment in
+  parser). (6) `SqlitePragmaInterceptor` guards on connection type name so InMemory tests
+  pass through. Live-verify additions for Session 5: Sonarr-style watcher import creates no
+  duplicate series and gets artwork without a manual scan; deleting a file leaves history
+  and shows the item back after restore.

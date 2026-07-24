@@ -6,32 +6,59 @@ public static class FileNameParser
 {
     private static readonly Regex[] MoviePatterns = new[]
     {
+        // SR-WI-032: the parenthesized/bracketed-year pattern MUST be tried before the
+        // bare "Title Year" pattern. When a name contains both a mid-string 4-digit
+        // number and an explicit (Year)/[Year], the explicit one is the release year and
+        // the number stays in the title: "Blade Runner 2049 (2017)" → Title "Blade
+        // Runner 2049", Year 2017. Names with no parenthesized year keep the old
+        // behavior (bare trailing 4-digit in range is treated as the year).
+        new Regex(@"(?i)^(?<Title>.*?)[ ._-]*[\(\[]\b(?<Year>\d{4})\b[\)\]]", RegexOptions.Compiled), // Title (Year) / Title [Year]
         new Regex(@"(?i)^(?<Title>.*?)[ ._-]+(?<Year>\d{4})(?=[ ._-]|$)", RegexOptions.Compiled), // Title Year
-        new Regex(@"(?i)^(?<Title>.*?)[ ._-]*\(\b(?<Year>\d{4})\b\)", RegexOptions.Compiled), // Title (Year)
         new Regex(@"(?i)^(?<Year>\d{4})[ ._-]+(?<Title>.*?)$", RegexOptions.Compiled), // Year Title
         new Regex(@"(?i)^(?<Title>.*?)[ ._-]+(?<Quality>1080p|720p|2160p|4k|bluray|web-dl|webrip)", RegexOptions.Compiled) // Title Quality
     };
 
     private static readonly Regex[] TvPatterns = new[]
     {
-        new Regex(@"(?i)^(?:(.*?)[ ._-]+)?S(\d{1,2})E(\d{1,2})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled), // Show S01E01 Title
-        new Regex(@"(?i)^(?:(.*?)[ ._-]+)?(\d{1,2})x(\d{1,2})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled),   // Show 1x01 Title
-        new Regex(@"(?i)^(?:(.*?)[ ._-]+)?Season[ ._-]*(\d{1,2})[ ._-]+Episode[ ._-]*(\d{1,2})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled), // Show Season 1 Episode 1 Title
+        // SR-WI-033: episode digits widened to \d{1,3} (S01E100 etc.). The optional
+        // (?:(?:-?E|-)\d{1,3})* chunk consumes multi-episode suffixes (S01E01E02,
+        // S01E01-E02, S01E01-02) so they parse as the primary episode instead of
+        // falling through to "episode 0". The span end is consumed but NOT returned —
+        // the result tuple has no field for it and existing consumers deconstruct it
+        // positionally.
+        new Regex(@"(?i)^(?:(.*?)[ ._-]+)?S(\d{1,2})E(\d{1,3})(?:(?:-?E|-)\d{1,3})*(?:[ ._-]+(.*?))?$", RegexOptions.Compiled), // Show S01E01 Title
+        new Regex(@"(?i)^(?:(.*?)[ ._-]+)?(\d{1,2})x(\d{1,3})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled),   // Show 1x01 Title
+        new Regex(@"(?i)^(?:(.*?)[ ._-]+)?Season[ ._-]*(\d{1,2})[ ._-]+Episode[ ._-]*(\d{1,3})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled), // Show Season 1 Episode 1 Title
         // Mini-series patterns (no season, episode only)
-        new Regex(@"(?i)^Episode[ ._-]*(\d{1,2})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled), // Episode 1 or Episode 01
-        new Regex(@"(?i)^E(\d{1,2})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled), // E1 or E01
-        new Regex(@"(?i)^Part[ ._-]*(\d{1,2})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled), // Part 1 or Part 01
-        new Regex(@"^(\d{1,2})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled) // Just "01" or "1" at start
+        new Regex(@"(?i)^Episode[ ._-]*(\d{1,3})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled), // Episode 1 or Episode 01
+        new Regex(@"(?i)^E(\d{1,3})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled), // E1 or E01
+        new Regex(@"(?i)^Part[ ._-]*(\d{1,3})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled), // Part 1 or Part 01
+        new Regex(@"^(\d{1,3})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled) // Just "01" or "1" at start
     };
-    
+
     // Patterns that return just episode number (Season defaults to 1)
     private static readonly Regex[] MiniSeriesPatterns = new[]
     {
-        new Regex(@"(?i)^Episode[ ._-]*(\d{1,2})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled),
-        new Regex(@"(?i)^E(\d{1,2})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled),
-        new Regex(@"(?i)^Part[ ._-]*(\d{1,2})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled),
-        new Regex(@"^(\d{1,2})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled)
+        new Regex(@"(?i)^Episode[ ._-]*(\d{1,3})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled),
+        new Regex(@"(?i)^E(\d{1,3})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled),
+        new Regex(@"(?i)^Part[ ._-]*(\d{1,3})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled),
+        new Regex(@"^(\d{1,3})(?:[ ._-]+(.*?))?$", RegexOptions.Compiled)
     };
+
+    // SR-WI-033: one or more [ReleaseGroup]-style bracket tags at the very start of
+    // the filename (anime convention). Stripped before pattern matching so the tags
+    // never leak into the show name.
+    private static readonly Regex LeadingBracketGroups =
+        new(@"^(?:\[[^\]]*\][ ._-]*)+", RegexOptions.Compiled);
+
+    // SR-WI-033: anime absolute numbering — "Show Name - 05" (after leading [group]
+    // tags were stripped). A bare 2-3 digit episode number with a dash separator;
+    // trailing [quality]/(quality) tags are consumed so they stay out of the title.
+    // Absolute numbering is deliberately treated as season 1 — the parser has no
+    // season information for these files, and season 1 is what the scanners expect
+    // for un-seasoned content.
+    private static readonly Regex AnimeAbsolutePattern =
+        new(@"^(?<Show>.+?)[ ._]*-[ ._]*(?<Ep>\d{2,3})(?:[ ._-]*(?:\[[^\]]*\]|\([^\)]*\)))*[ ._-]*$", RegexOptions.Compiled);
 
     public static (string Title, int? Year) ParseMovie(string fileName)
     {
@@ -59,7 +86,16 @@ public static class FileNameParser
     public static (string ShowName, int Season, int Episode, string EpisodeTitle) ParseTvEpisode(string fileName)
     {
         var cleanName = Path.GetFileNameWithoutExtension(fileName);
-        
+
+        // SR-WI-033: strip leading [ReleaseGroup] tags (anime convention) before
+        // matching, so "[Group] Show S01E05" parses show as "Show", not "Group Show".
+        var bracketMatch = LeadingBracketGroups.Match(cleanName);
+        var hadLeadingBrackets = bracketMatch.Success;
+        if (hadLeadingBrackets)
+        {
+            cleanName = cleanName.Substring(bracketMatch.Length);
+        }
+
         // First try standard patterns (with show name and season)
         for (int i = 0; i < 3; i++) // First 3 patterns have 4 groups: show, season, episode, title
         {
@@ -71,11 +107,26 @@ public static class FileNameParser
                 var episode = int.Parse(match.Groups[3].Value);
                 var rawTitle = match.Groups.Count > 4 && match.Groups[4].Success ? match.Groups[4].Value : string.Empty;
                 var episodeTitle = CleanName(rawTitle);
-                
+
                 return (showName, season, episode, episodeTitle);
             }
         }
-        
+
+        // SR-WI-033: anime absolute numbering ("[SubsGroup] Show Name - 05 [1080p]").
+        // Only attempted when the file actually carried a leading [group] tag, so
+        // plain "Title - 05" names keep their previous behavior. Season defaults to
+        // 1 (absolute numbering treated as season 1 — see AnimeAbsolutePattern).
+        if (hadLeadingBrackets)
+        {
+            var animeMatch = AnimeAbsolutePattern.Match(cleanName);
+            if (animeMatch.Success)
+            {
+                var showName = CleanName(animeMatch.Groups["Show"].Value);
+                var episode = int.Parse(animeMatch.Groups["Ep"].Value);
+                return (showName, 1, episode, string.Empty);
+            }
+        }
+
         // Try mini-series patterns (episode only, season defaults to 1, show name from directory)
         foreach (var pattern in MiniSeriesPatterns)
         {
@@ -537,8 +588,14 @@ public static class FileNameParser
         var words = cleaned.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var resultWords = new System.Collections.Generic.List<string>();
         
-        // Enhanced junk patterns
-        var junkPatterns = new Regex(@"^(1080p|720p|2160p|480p|4k|web|web-dl|webrip|bluray|bdrip|dvdrip|h264|h265|x264|x265|hevc|aac|ac3|ddp\d*|dsnp|eztv|flux|lazycunts|hdtv|proper|repack|truehd|dts|dts-hd|atmos|\d{3,4}x\d{3,4})$", RegexOptions.IgnoreCase);
+        // Enhanced junk patterns (SR-WI-038: extended with common release groups —
+        // yts/yify/rarbg/etc. — and qualifiers — remux/extended/unrated/imax/hybrid/
+        // av1/dd5 — that the original list missed).
+        var junkPatterns = new Regex(
+            @"^(1080p|720p|2160p|480p|4k|web|web-dl|webrip|bluray|bdrip|dvdrip|remux|proper|repack|extended|unrated|imax|hybrid" +
+            @"|h264|h265|x264|x265|hevc|av1|aac|ac3|ddp\d*|dd5|dts|dts-hd|truehd|atmos|dsnp|hdtv" +
+            @"|eztv|flux|lazycunts|yts|yify|rarbg|ettv|tgx|galaxytv|sparks|amiable|geckos|drones|evo|fgt|ntb|minx|successfulcrab" +
+            @"|\d{3,4}x\d{3,4})$", RegexOptions.IgnoreCase);
 
         foreach (var word in words)
         {

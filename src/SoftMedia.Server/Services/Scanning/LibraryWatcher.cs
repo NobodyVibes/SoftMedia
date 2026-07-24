@@ -55,6 +55,31 @@ public class LibraryWatcher : BackgroundService, IDisposable
     
     /// <summary>Clears a specific file issue.</summary>
     public bool ClearIssue(string path) => _fileIssues.TryRemove(path, out _);
+
+    /// <summary>
+    /// SR-WI-038: scanners report files skipped for unsafe names (ffmpeg-injection guard)
+    /// here so they show on the admin dashboard instead of only in a log line. Not
+    /// retryable — the fix is renaming the file on disk.
+    /// </summary>
+    public void ReportUnsafeFilename(string path)
+    {
+        _fileIssues.AddOrUpdate(path,
+            _ => new FileWatcherIssue
+            {
+                Path = path,
+                Status = FileWatcherIssueStatus.UnsafeName,
+                FirstSeen = DateTime.UtcNow,
+                LastChecked = DateTime.UtcNow,
+                CanRetry = false
+            },
+            (_, existing) =>
+            {
+                existing.Status = FileWatcherIssueStatus.UnsafeName;
+                existing.LastChecked = DateTime.UtcNow;
+                existing.CanRetry = false;
+                return existing;
+            });
+    }
     
     /// <summary>Retries a file by adding it back to pending queue.</summary>
     public bool RetryFile(string path)
@@ -406,11 +431,47 @@ public class LibraryWatcher : BackgroundService, IDisposable
     {
         // Remove from pending if it was there
         _pendingFiles.TryRemove(fullPath, out _);
-        
-        // Schedule library scan to clean up orphans
-        _librariesToScan[libraryId] = DateTime.UtcNow;
-        _logger.LogDebug("Detected file deletion: {Path}", fullPath);
+
+        // SR-WI-038: a single media-file delete used to schedule a FULL library scan just
+        // to clean up one row. Soft-mark the row missing directly instead (SR-WI-011
+        // semantics: hidden but history kept; retention hard-deletes later; a re-appearing
+        // file heals it). Non-media paths may be deleted DIRECTORIES (the event carries no
+        // type and the path no longer exists to check) — those still get the full scan,
+        // whose reconciliation/soft-delete handles the whole subtree.
+        if (IsMediaFile(fullPath))
+        {
+            _ = Task.Run(() => MarkFileMissingAsync(fullPath, libraryId));
+        }
+        else
+        {
+            _librariesToScan[libraryId] = DateTime.UtcNow;
+        }
         _logger.LogInformation("File deleted: {Path}", fullPath);
+    }
+
+    /// <summary>SR-WI-038: targeted soft-delete for a single watched file deletion.</summary>
+    private async Task MarkFileMissingAsync(string path, Guid libraryId)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var lowered = path.ToLowerInvariant();
+            var item = await context.MediaItems.FirstOrDefaultAsync(m =>
+                m.LibraryId == libraryId && m.Path != null && m.Path.ToLower() == lowered);
+            if (item == null || item.IsMissing) return;
+
+            item.IsMissing = true;
+            item.MissingSinceUtc = DateTime.UtcNow;
+            await context.SaveChangesAsync();
+            _logger.LogInformation("Marked deleted file missing (history retained): {Path}", path);
+        }
+        catch (Exception ex)
+        {
+            // Fall back to the scan the old code always did.
+            _logger.LogWarning(ex, "Failed targeted missing-mark for {Path}; scheduling a library scan", path);
+            _librariesToScan[libraryId] = DateTime.UtcNow;
+        }
     }
 
     private void OnFileRenamed(string oldPath, string newPath, Guid libraryId)

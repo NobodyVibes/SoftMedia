@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Lock, Unlock, Wand2, X, Loader2, Edit3 } from 'lucide-react';
+import { isAxiosError } from 'axios';
+import { Lock, Unlock, Wand2, X, Loader2, Edit3, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { adminService, type MetadataSearchCandidate } from '../../services/adminService';
 import { type MediaItem } from '../../types';
@@ -84,6 +85,23 @@ export function FixMatchCard({ item }: { item: MediaItem }) {
         onError: () => toast.error('Unlock failed'),
     });
 
+    // SR-WI-036 — per-item metadata refresh: clears the server's retry-exhausted state and
+    // re-queues the item for enrichment. Locked items are rejected server-side with 409.
+    const refreshMutation = useMutation({
+        mutationFn: () => adminService.refreshMatch(item.id),
+        onSuccess: () => {
+            toast.success('Metadata refresh queued');
+            closeModal();
+        },
+        onError: (err) => {
+            if (isAxiosError(err) && err.response?.status === 409) {
+                toast.error('Metadata is locked — unlock it first to refresh');
+            } else {
+                toast.error('Refresh failed');
+            }
+        },
+    });
+
     const openEdit = () => {
         setEditTitle(item.title ?? '');
         // The overview shown on the detail page lives in `description` on MediaItem —
@@ -159,6 +177,10 @@ export function FixMatchCard({ item }: { item: MediaItem }) {
                                     </button>
                                     <button type="button" onClick={openEdit} className={btnGhost}>
                                         <Edit3 size={18} /> Edit fields
+                                    </button>
+                                    <button type="button" onClick={() => refreshMutation.mutate()} disabled={refreshMutation.isPending} className={btnGhost + ' disabled:opacity-50'}>
+                                        {refreshMutation.isPending ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
+                                        Refresh metadata
                                     </button>
                                     {item.metadataLocked && (
                                         <button type="button" onClick={() => unlockMutation.mutate()} disabled={unlockMutation.isPending}

@@ -25,6 +25,20 @@ public class MusicScanner : BaseMediaScanner
     private readonly ConcurrentDictionary<string, MediaItem> _artistCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<(Guid ArtistId, string AlbumName), MediaItem> _albumCache = new();
 
+    // SR-WI-038 — canonical artist name for VA compilations, plus the tag spellings that
+    // should collapse onto it. A compilation tagged "VA" and one tagged "Various Artists"
+    // must land under the same artist row.
+    private const string VariousArtistsName = "Various Artists";
+    private static readonly HashSet<string> VariousArtistsAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Various Artists", "VA"
+    };
+
+    // SR-WI-038 — per-directory VA verdicts. A directory is probed at most once per scanner
+    // instance (each directory is walked by a single worker, so races only cost a duplicate
+    // probe, never a wrong answer). Cleared at scan start alongside the parent caches.
+    private readonly ConcurrentDictionary<string, bool> _vaDirectoryCache = new(StringComparer.OrdinalIgnoreCase);
+
     // Local cover art filenames to check (in priority order)
     private static readonly string[] LocalCoverNames =
     {
@@ -70,6 +84,7 @@ public class MusicScanner : BaseMediaScanner
         // Clear session caches
         _artistCache.Clear();
         _albumCache.Clear();
+        _vaDirectoryCache.Clear();
 
         // Bulk pre-load all existing Artists and Albums for this library
         using (var scope = _scopeFactory.CreateScope())
@@ -127,9 +142,29 @@ public class MusicScanner : BaseMediaScanner
             using var tagFile = TagLib.File.Create(filePath);
             var tag = tagFile.Tag;
 
-            var artistName = GetFirstOrDefault(tag.AlbumArtists)
-                ?? GetFirstOrDefault(tag.Performers)
-                ?? "Unknown Artist";
+            // SR-WI-038 — album-artist resolution. An explicit AlbumArtist tag wins; a VA
+            // spelling ("Various Artists"/"VA", any casing) collapses onto the canonical
+            // Various Artists artist. When the tag is absent, a per-directory probe detects
+            // compilations (same album, differing performers) so they group under Various
+            // Artists instead of exploding into one single-track album per performer.
+            // The common single-artist path (AlbumArtist present, or all tracks share a
+            // performer) is behaviorally unchanged.
+            var albumArtistTag = GetFirstOrDefault(tag.AlbumArtists);
+            string artistName;
+            if (albumArtistTag != null)
+            {
+                artistName = VariousArtistsAliases.Contains(albumArtistTag)
+                    ? VariousArtistsName
+                    : albumArtistTag;
+            }
+            else if (IsVariousArtistsDirectory(Path.GetDirectoryName(filePath)))
+            {
+                artistName = VariousArtistsName;
+            }
+            else
+            {
+                artistName = GetFirstOrDefault(tag.Performers) ?? "Unknown Artist";
+            }
             // Multi-disc releases often tag each disc's Album as "Name (CD1)" /
             // "Name - CD 2: subtitle", which would otherwise split one album into
             // several. Normalize to the canonical album name for grouping and keep
@@ -217,6 +252,23 @@ public class MusicScanner : BaseMediaScanner
             if (_artistCache.TryGetValue(artistName, out cached))
                 return cached;
 
+            // SR-WI-030 — double-check against the DB before creating. The watcher
+            // single-file path runs on a fresh scanner whose session caches are empty,
+            // so without this every import would mint a duplicate artist row. Matched
+            // case-insensitively, the same identity the session cache uses.
+            var loweredArtist = artistName.ToLowerInvariant();
+            var dbArtist = await context.MediaItems
+                .FirstOrDefaultAsync(
+                    m => m.LibraryId == library.Id
+                         && m.Type == MediaType.Artist
+                         && m.Title.ToLower() == loweredArtist,
+                    cancellationToken);
+            if (dbArtist != null)
+            {
+                _artistCache.TryAdd(artistName, dbArtist);
+                return dbArtist;
+            }
+
             // Create new artist
             var artist = new MediaItem
             {
@@ -246,7 +298,19 @@ public class MusicScanner : BaseMediaScanner
             }
 
             context.MediaItems.Add(artist);
-            await context.SaveChangesAsync(cancellationToken);
+
+            // SR-WI-035 — parent-creation saves run inside the parallel directory walk,
+            // so they must take the scanner-wide write lock like the base class's
+            // end-of-directory saves (SQLite tolerates a single writer).
+            await _dbWriteLock.WaitAsync(cancellationToken);
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
+            }
+            finally
+            {
+                _dbWriteLock.Release();
+            }
 
             // Queue for metadata enrichment (image/bio)
             await _metadataQueue.EnqueueMetadataRefreshAsync(artist.Id, LibraryType.Music, libraryId: artist.LibraryId);
@@ -286,6 +350,22 @@ public class MusicScanner : BaseMediaScanner
             if (_albumCache.TryGetValue(cacheKey, out cached))
                 return cached;
 
+            // SR-WI-030 — double-check against the DB before creating (watcher path runs
+            // with empty session caches; see EnsureArtistAsync). Exact-title match — the
+            // album cache key uses default (ordinal) string comparison.
+            var dbAlbum = await context.MediaItems
+                .FirstOrDefaultAsync(
+                    m => m.LibraryId == library.Id
+                         && m.Type == MediaType.Album
+                         && m.ArtistId == artist.Id
+                         && m.Title == albumName,
+                    cancellationToken);
+            if (dbAlbum != null)
+            {
+                _albumCache.TryAdd(cacheKey, dbAlbum);
+                return dbAlbum;
+            }
+
             // Create new album. For multi-disc releases the track sits in a
             // "CD1"/"Disc 2" subfolder; use the real release folder (its parent) so
             // local cover-art lookup finds the album cover, not a per-disc folder.
@@ -306,7 +386,17 @@ public class MusicScanner : BaseMediaScanner
             await ResolveAlbumCoverAsync(album, albumDir, tagFile, cancellationToken);
 
             context.MediaItems.Add(album);
-            await context.SaveChangesAsync(cancellationToken);
+
+            // SR-WI-035 — same write-lock discipline as EnsureArtistAsync.
+            await _dbWriteLock.WaitAsync(cancellationToken);
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
+            }
+            finally
+            {
+                _dbWriteLock.Release();
+            }
 
             // Queue for metadata enrichment
             await _metadataQueue.EnqueueMetadataRefreshAsync(album.Id, LibraryType.Music, libraryId: album.LibraryId);
@@ -317,6 +407,87 @@ public class MusicScanner : BaseMediaScanner
             _logger.LogInformation("[MusicScanner] Created album: {AlbumName} by {ArtistName}",
                 albumName, artist.Title);
             return album;
+        }
+    }
+
+    /// <summary>
+    /// SR-WI-038 — cached per-directory Various Artists verdict. Only consulted for tracks
+    /// that carry no AlbumArtist tag; well-tagged libraries never pay the probe cost, and
+    /// unchanged files short-circuit before artist resolution entirely.
+    /// </summary>
+    private bool IsVariousArtistsDirectory(string? directory)
+    {
+        if (string.IsNullOrEmpty(directory))
+            return false;
+        return _vaDirectoryCache.GetOrAdd(directory, ProbeDirectoryForVariousArtists);
+    }
+
+    /// <summary>
+    /// Decide whether a directory holds a VA compilation: every readable audio file lacks a
+    /// (non-VA) AlbumArtist tag, they all share one non-empty normalized album name, and at
+    /// least two distinct performers appear. Anything ambiguous (mixed albums, untagged
+    /// albums, an explicit per-artist AlbumArtist, a single performer) is NOT a compilation,
+    /// which keeps the common single-artist path's behavior unchanged.
+    /// </summary>
+    private bool ProbeDirectoryForVariousArtists(string directory)
+    {
+        try
+        {
+            if (!Directory.Exists(directory))
+                return false;
+
+            string? sharedAlbum = null;
+            var performers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int probed = 0;
+
+            foreach (var siblingPath in Directory.EnumerateFiles(directory))
+            {
+                var ext = Path.GetExtension(siblingPath).TrimStart('.').ToLowerInvariant();
+                if (!SupportedExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
+                    continue;
+
+                try
+                {
+                    using var sibling = TagLib.File.Create(siblingPath);
+                    var siblingTag = sibling.Tag;
+
+                    var siblingAlbumArtist = GetFirstOrDefault(siblingTag.AlbumArtists);
+                    if (siblingAlbumArtist != null && !VariousArtistsAliases.Contains(siblingAlbumArtist))
+                        return false; // an explicit per-artist AlbumArtist — trust the tag
+
+                    var (siblingAlbum, _) = MusicNaming.NormalizeAlbumName(siblingTag.Album);
+                    if (string.IsNullOrWhiteSpace(siblingAlbum))
+                        return false; // untagged album — can't claim a shared compilation
+
+                    if (sharedAlbum == null)
+                        sharedAlbum = siblingAlbum;
+                    else if (!string.Equals(sharedAlbum, siblingAlbum, StringComparison.OrdinalIgnoreCase))
+                        return false; // multiple albums in one folder — not one compilation
+
+                    var performer = GetFirstOrDefault(siblingTag.Performers);
+                    if (performer != null)
+                        performers.Add(performer);
+                    probed++;
+                }
+                catch
+                {
+                    // Unreadable sibling (mid-copy, corrupt) carries no signal either way.
+                }
+            }
+
+            var isVa = probed >= 2 && performers.Count >= 2;
+            if (isVa)
+            {
+                _logger.LogInformation(
+                    "[MusicScanner] Directory detected as Various Artists compilation ({Performers} performers): {Directory}",
+                    performers.Count, directory);
+            }
+            return isVa;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[MusicScanner] VA probe failed for directory {Directory}; assuming single-artist", directory);
+            return false;
         }
     }
 

@@ -107,6 +107,7 @@ public static class ScheduledTaskNames
     public const string LibraryScanQueue = "Library Scan Queue";
     public const string MetadataQueue = "Metadata Queue";
     public const string MetadataRetry = "Metadata Retry";
+    public const string MetadataRetryAmnesty = "Metadata Retry Amnesty";
     public const string ImageDownloadQueue = "Image Download Queue";
     public const string ThrottleMonitor = "Transcode Throttle Monitor";
     public const string Trickplay = "Trickplay Generation";

@@ -230,4 +230,12 @@ export const adminService = {
     async unlockMatch(itemId: string): Promise<void> {
         await api.post(`/admin/match/${itemId}/unlock`);
     },
+
+    /**
+     * SR-WI-036 — per-item metadata refresh: clears the server-side retry-exhausted state
+     * and re-queues the item for enrichment. Locked items are rejected with 409.
+     */
+    async refreshMatch(itemId: string): Promise<void> {
+        await api.post(`/admin/match/${itemId}/refresh`);
+    },
 };

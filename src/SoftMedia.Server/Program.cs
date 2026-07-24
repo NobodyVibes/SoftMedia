@@ -100,7 +100,10 @@ builder.Services.AddResponseCompression(options =>
     });
 });
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection"))
+        // SR-WI-035: WAL/busy_timeout/synchronous asserted on every open, not left to
+        // whatever mode the DB file happens to carry.
+        .AddInterceptors(new SqlitePragmaInterceptor()));
 
 // Register Application Services via Extensions
 builder.Services.AddIdentityServices(builder.Configuration);

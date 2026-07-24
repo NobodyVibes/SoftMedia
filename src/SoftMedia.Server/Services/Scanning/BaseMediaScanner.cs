@@ -504,6 +504,15 @@ public abstract class BaseMediaScanner : IMediaScanner
         if (Helpers.MediaPathSafety.HasArgumentInjectionRisk(filePath))
         {
             _logger.LogWarning("[{Scanner}] Skipping file with unsafe characters in path: {FilePath}", DisplayName, filePath);
+            // SR-WI-038: surface the skip on the admin file-issues dashboard — a log line
+            // alone meant the file just silently never appeared in the library. Rare path
+            // (unsafe names), so the scope resolution here is not a hot-path cost.
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                scope.ServiceProvider.GetService<LibraryWatcher>()?.ReportUnsafeFilename(filePath);
+            }
+            catch { /* best-effort reporting only */ }
             return false;
         }
 

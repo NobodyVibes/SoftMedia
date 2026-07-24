@@ -327,17 +327,28 @@ public class ImageCacheService : IImageCacheService
     }
     
     /// <summary>
-    /// Clean up orphaned cached images (files that don't correspond to any media item).
+    /// Every cache subdirectory whose files are keyed by a MediaItem guid ("{id}_kind.ext").
+    /// tv/cast is deliberately absent: it is keyed by int person ids and cleaned separately
+    /// via <see cref="DeleteCastImagesForPersonIds"/> (and the top-level scans below are
+    /// non-recursive, so it is never touched by accident).
+    /// </summary>
+    private static readonly string[] MediaCacheSubdirectories = { "tv", "movies", "music", "games", "books" };
+
+    /// <summary>
+    /// Clean up orphaned cached images (files whose guid corresponds to NO MediaItems row).
+    /// SR-WI-037: the contract for <paramref name="validMediaIds"/> is ROW-EXISTENCE, not
+    /// visibility — callers must pass the ids of ALL MediaItems rows INCLUDING soft-deleted
+    /// (IsMissing) ones, whose artwork is RETAINED so it heals when the drive returns.
     /// Returns count of deleted files.
     /// </summary>
     public int CleanupOrphanedImages(HashSet<Guid> validMediaIds)
     {
         int deletedCount = 0;
-        
+
         try
         {
-            // Check each subdirectory
-            foreach (var subDir in new[] { "tv", "movies", "music", "games" })
+            // Check each subdirectory (SR-WI-037 added "books" — covers were never cleaned)
+            foreach (var subDir in MediaCacheSubdirectories)
             {
                 var dirPath = Path.Combine(_basePath, subDir);
                 if (!Directory.Exists(dirPath)) continue;
@@ -383,6 +394,46 @@ public class ImageCacheService : IImageCacheService
         
         return deletedCount;
     }
+
+    /// <inheritdoc />
+    public Task<int> InvalidateCachedImagesAsync(Guid mediaItemId) => Task.Run(() =>
+    {
+        var deleted = 0;
+        foreach (var subDir in MediaCacheSubdirectories)
+        {
+            var dirPath = Path.Combine(_basePath, subDir);
+            if (!Directory.Exists(dirPath)) continue;
+
+            // Keys are "{id}_<kind>"; a series id also prefixes its season posters and
+            // episode stills, so invalidating a series drops those too (desired for a
+            // series-level refresh).
+            foreach (var file in Directory.GetFiles(dirPath, $"{mediaItemId}_*"))
+            {
+                // R-WI-014 local-sidecar copies ("{id}_poster_local.jpg") are NOT
+                // provider-refreshable — deleting them would leave the DB's /cache URL
+                // dangling until the next scan re-ingests the sidecar. Retain them.
+                var name = Path.GetFileNameWithoutExtension(file);
+                if (name.EndsWith("_local", StringComparison.OrdinalIgnoreCase)) continue;
+
+                try
+                {
+                    File.Delete(file);
+                    deleted++;
+                    _logger.LogDebug("Invalidated cached image: {Path}", file);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to invalidate cached image {Path}", file);
+                }
+            }
+        }
+
+        if (deleted > 0)
+        {
+            _logger.LogInformation("Invalidated {Count} cached image(s) for media item {Id}", deleted, mediaItemId);
+        }
+        return deleted;
+    });
 
     private async Task<string> CacheImageAsync(string relativePath, string url)
     {

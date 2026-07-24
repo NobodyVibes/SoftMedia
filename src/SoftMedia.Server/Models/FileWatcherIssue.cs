@@ -23,4 +23,8 @@ public static class FileWatcherIssueStatus
     public const string Locked = "File locked - unable to access";
     public const string Stalled = "Download stalled - no progress";
     public const string Timeout = "Maximum wait time exceeded";
+    /// <summary>SR-WI-038: scanners skip files whose names could inject ffmpeg arguments
+    /// (quotes/control chars). Previously only a log line — now surfaced here so the file
+    /// doesn't just silently vanish from the library. Fix: rename the file.</summary>
+    public const string UnsafeName = "Skipped - rename needed (unsafe characters in file name)";
 }

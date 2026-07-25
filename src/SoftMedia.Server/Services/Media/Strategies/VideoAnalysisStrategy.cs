@@ -153,12 +153,6 @@ public class VideoAnalysisStrategy : IMediaAnalysisStrategy
             }).ToList();
         }
 
-        // Write credits start to promoted column
-        if (probe.CreditsStart.HasValue)
-        {
-            item.CreditsStart = probe.CreditsStart.Value;
-        }
-
         // Write chapters to relational table
         if (probe.Chapters != null && probe.Chapters.Count > 0)
         {
@@ -171,6 +165,43 @@ public class VideoAnalysisStrategy : IMediaAnalysisStrategy
                     Title = ch.Title ?? string.Empty
                 });
             }
+        }
+
+        // CM-WI-002: map chapter markers onto intro/credits timecodes. Invariant:
+        // Chapter-sourced columns MIRROR the file's current chapters (written on match,
+        // cleared when a previously chapter-sourced value no longer has a matching
+        // chapter — e.g. the file was replaced with a different cut). Detected-sourced
+        // columns belong to the fingerprint pipeline and are never touched here; the
+        // TryWrite* guards in IntroCreditsDetectionService enforce the reverse
+        // precedence (detection never overwrites Chapter). Chapter beats Detected:
+        // the file's own authoring is ground truth.
+        var markers = Detection.ChapterMarkerMapper.Map(
+            probe.Chapters ?? new List<(double StartTime, string Title)>(), probe.Duration);
+
+        if (markers.Intro is { } intro)
+        {
+            item.IntroStart = intro.Start;
+            item.IntroEnd = intro.End;
+            item.IntroSource = DetectionSource.Chapter;
+        }
+        else if (item.IntroSource == DetectionSource.Chapter)
+        {
+            item.IntroStart = null;
+            item.IntroEnd = null;
+            item.IntroSource = null;
+        }
+
+        if (markers.Credits is { } credits)
+        {
+            item.CreditsStart = credits.Start;
+            item.CreditsEnd = credits.End;
+            item.CreditsSource = DetectionSource.Chapter;
+        }
+        else if (item.CreditsSource == DetectionSource.Chapter)
+        {
+            item.CreditsStart = null;
+            item.CreditsEnd = null;
+            item.CreditsSource = null;
         }
     }
 }

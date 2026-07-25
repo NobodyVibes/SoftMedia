@@ -43,3 +43,21 @@ job resumes where it stopped instead of redoing the series.
 - Broken source files (e.g. zero-byte downloads) fail fast and are stamped so they are not
   retried on every scan; the log names the file.
 - Disable via settings keys `AutoDetectIntros` / `AutoDetectCredits`.
+
+## Embedded chapter markers beat detection
+
+If a file ships chapter markers whose titles identify the intro or credits (the ones VLC
+shows — "Intro", "Opening Credits", "Credits", "Outro", plus common Italian variants like
+"Sigla"/"Titoli di coda"), SoftMedia uses those **chapter timecodes as the authoritative
+skip segments** and fingerprint detection never overrides them. Detection still runs for —
+and only fills — episodes whose files carry no usable chapters, so chapterless libraries
+lose nothing.
+
+- Title matching is conservative on purpose: generic names ("Chapter 1", "Scene 1",
+  "Recap") never match, and post/mid-credits *scene* chapters are treated as content — in
+  fact they bound the credits segment, so "Skip Credits" lands exactly on the post-credits
+  scene.
+- Implausible chapter authoring (an "intro" spanning 8 minutes because the file's chapter
+  list skipped an entry) is rejected rather than trusted; detection fills the gap instead.
+- Already-scanned items are upgraded automatically by a boot-time sweep — no rescan needed.
+  New/changed files pick chapters up at scan time.

@@ -189,22 +189,25 @@ public class MediaProbeService : IMediaProbeService
                 }
             }
 
-            // Parse chapters to find credits start time
+            // Parse chapters. Marker semantics (which chapter is an intro/credits and the
+            // resulting timecodes) live in ChapterMarkerMapper — CM-WI-002 retired the
+            // inline credits-title matching that used to happen here so the scan path and
+            // the boot-time backfill share one implementation.
             if (doc.RootElement.TryGetProperty("chapters", out var chapters))
             {
                 result.Chapters = new List<(double StartTime, string Title)>();
-                
+
                 foreach (var chapter in chapters.EnumerateArray())
                 {
                     double startTime = 0;
                     string title = "";
-                    
+
                     // Get start time (in seconds)
                     if (chapter.TryGetProperty("start_time", out var startTimeEl))
                     {
                         double.TryParse(startTimeEl.GetString(), out startTime);
                     }
-                    
+
                     // Get title from tags
                     if (chapter.TryGetProperty("tags", out var tags))
                     {
@@ -213,18 +216,8 @@ public class MediaProbeService : IMediaProbeService
                             title = titleEl.GetString() ?? "";
                         }
                     }
-                    
+
                     result.Chapters.Add((startTime, title));
-                    
-                    // Check if this is a credits chapter
-                    var lowerTitle = title.ToLowerInvariant();
-                    if (lowerTitle.Contains("credit") || 
-                         lowerTitle.Contains("end credits") ||
-                         lowerTitle.Contains("outro") ||
-                         lowerTitle.Contains("ending"))
-                    {
-                        result.CreditsStart = startTime;
-                    }
                 }
             }
 
@@ -393,7 +386,6 @@ public class MediaProbeResult
     public string? VideoCodec { get; set; }
     public string? AudioCodec { get; set; }
     public string? Resolution { get; set; }
-    public double? CreditsStart { get; set; }  // Start time of credits chapter (if found)
     public string? PixelFormat { get; set; }
     public string? ColorTransfer { get; set; }
 

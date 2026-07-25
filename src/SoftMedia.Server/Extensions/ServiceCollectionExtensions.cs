@@ -726,6 +726,10 @@ public static class ServiceCollectionExtensions
         // backup couldn't restore.
         services.AddHostedService<ArtworkRepairOnRestoreService>();
 
+        // CM-WI-003: applies chapter-derived intro/credits markers to already-scanned items
+        // at boot (idempotent; the scan path keeps them current from then on).
+        services.AddHostedService<ChapterMarkerBackfillService>();
+
         // Outbound webhooks (P2-WI-004): singleton in-memory queue + drain worker.
         services.AddSingleton<IWebhookDispatcher, WebhookDispatcher>();
         services.AddHostedService<WebhookDispatchWorker>();

@@ -5,6 +5,13 @@ using SoftMedia.Server.Services.Infrastructure;
 namespace SoftMedia.Server.Services.Media;
 
 /// <summary>
+/// Outcome of one <see cref="ITrickplayService.GenerateAsync"/> call: success flag plus
+/// the ffmpeg CPU/wall cost actually spent (BG-WI-004 — both attempts summed when the
+/// keyframe-only pass fell back to a full decode). Zero cost when generation was skipped.
+/// </summary>
+public sealed record TrickplayGenerationResult(bool Success, double CpuSeconds, double WallSeconds);
+
+/// <summary>
 /// Generates and serves pre-baked trickplay sprite sheets (P2-WI-001): a tiled JPEG
 /// of evenly-spaced thumbnails plus a JSON manifest, so the scrubber shows instant
 /// previews from one cached image instead of spawning an FFmpeg process per scrub.
@@ -17,9 +24,10 @@ public interface ITrickplayService
     /// True if a manifest already exists for the item.
     bool HasTrickplay(Guid itemId);
 
-    /// Generates the sprite sheet(s) + manifest for the given source video. Returns
-    /// false on failure (logged). Safe to call repeatedly — skips if already present.
-    Task<bool> GenerateAsync(Guid itemId, string sourcePath, CancellationToken ct);
+    /// Generates the sprite sheet(s) + manifest for the given source video. Failures are
+    /// logged and reported via <see cref="TrickplayGenerationResult.Success"/>. Safe to
+    /// call repeatedly — skips if already present.
+    Task<TrickplayGenerationResult> GenerateAsync(Guid itemId, string sourcePath, CancellationToken ct);
 
     /// Absolute path to the item's manifest.json, or null if absent.
     string? GetManifestPath(Guid itemId);
@@ -104,13 +112,13 @@ public class TrickplayService : ITrickplayService
         return dash >= 0 && int.TryParse(stem.AsSpan(dash + 1), out var n) ? n : int.MaxValue;
     }
 
-    public async Task<bool> GenerateAsync(Guid itemId, string sourcePath, CancellationToken ct)
+    public async Task<TrickplayGenerationResult> GenerateAsync(Guid itemId, string sourcePath, CancellationToken ct)
     {
-        if (HasTrickplay(itemId)) return true;
+        if (HasTrickplay(itemId)) return new TrickplayGenerationResult(true, 0, 0);
         if (!File.Exists(sourcePath))
         {
             _logger.LogWarning("Trickplay: source missing for {ItemId}: {Path}", itemId, sourcePath);
-            return false;
+            return new TrickplayGenerationResult(false, 0, 0);
         }
 
         var interval = Math.Max(1, await _settings.GetSettingAsync("TrickplayIntervalSeconds", 10));
@@ -119,104 +127,180 @@ public class TrickplayService : ITrickplayService
 
         var dir = ItemDir(itemId);
         var tmpDir = dir + ".tmp";
+        double cpuTotal = 0, wallTotal = 0;
         try
         {
-            if (Directory.Exists(tmpDir)) Directory.Delete(tmpDir, recursive: true);
-            Directory.CreateDirectory(tmpDir);
-
             var ffmpeg = _binaryLocation.ResolveFFmpegPath();
             var sheetPattern = Path.Combine(tmpDir, "sheet-%d.jpg");
             // fps=1/interval samples one frame per `interval` seconds; tile packs them
             // into a Columns x Rows grid per output image; -start_number 0 → sheet-0.jpg.
             var vf = $"fps=1/{interval},scale={width}:{height},tile={Columns}x{Rows}";
-            var args = $"-y -i \"{sourcePath}\" -vf \"{vf}\" -an -start_number 0 -q:v 5 \"{sheetPattern}\"";
 
-            var psi = new ProcessStartInfo
+            // BG-WI-001: decode keyframes only on the first attempt — measured ~110x
+            // cheaper than a full decode on real content, and the fps filter duplicates
+            // sparse keyframes to hold the tile cadence, so partial starvation cannot
+            // occur. The only real failure modes are a nonzero exit or zero sheets;
+            // those fall back to one full-decode attempt. `-threads 2` applies to both:
+            // unbounded frame-threading multiplied total CPU ~9x at high decode speed.
+            for (var attempt = 0; attempt < 2; attempt++)
             {
-                FileName = ffmpeg,
-                Arguments = args,
-                UseShellExecute = false,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
+                var keyframesOnly = attempt == 0;
+                if (Directory.Exists(tmpDir)) Directory.Delete(tmpDir, recursive: true);
+                Directory.CreateDirectory(tmpDir);
 
-            using var proc = Process.Start(psi);
-            if (proc == null) { _logger.LogError("Trickplay: failed to start FFmpeg"); return false; }
-            var stderrTask = proc.StandardError.ReadToEndAsync();
+                var inputFlags = keyframesOnly ? "-threads 2 -skip_frame nokey" : "-threads 2";
+                var args = $"-y {inputFlags} -i \"{sourcePath}\" -vf \"{vf}\" -an -start_number 0 -q:v 5 \"{sheetPattern}\"";
 
-            // SR-WI-028: WaitForExitAsync throws on cancellation WITHOUT killing the
-            // child (and Dispose doesn't either), which leaked a full-speed FFmpeg;
-            // a stuck source also had no ceiling at all. Kill the whole process tree
-            // on cancellation or timeout.
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(GenerationTimeout);
-            try
-            {
-                await proc.WaitForExitAsync(timeoutCts.Token);
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                // Timeout (not caller cancellation): log and fail this item instead of
-                // surfacing a cancellation the caller never requested.
-                _logger.LogWarning("Trickplay FFmpeg timed out after {Timeout} for {ItemId}; killing process tree",
-                    GenerationTimeout, itemId);
-                return false;
-            }
-            finally
-            {
-                if (!proc.HasExited)
+                var run = await RunFfmpegAsync(ffmpeg, args, itemId, keyframesOnly, ct);
+                cpuTotal += run.CpuSeconds;
+                wallTotal += run.WallSeconds;
+
+                if (run.Failed)
                 {
-                    try { proc.Kill(entireProcessTree: true); } catch { /* exited between check and kill */ }
+                    // A start failure or timeout must not retry: the retry would double
+                    // a 30-minute ceiling on a stuck source for no plausible gain.
+                    return new TrickplayGenerationResult(false, cpuTotal, wallTotal);
                 }
+
+                if (run.ExitCode != 0)
+                {
+                    if (keyframesOnly)
+                    {
+                        _logger.LogWarning("Trickplay keyframe-only FFmpeg exit {Code} for {ItemId}; retrying with full decode: {Err}",
+                            run.ExitCode, itemId, run.StderrTail);
+                        continue;
+                    }
+                    _logger.LogWarning("Trickplay FFmpeg exit {Code} for {ItemId}: {Err}",
+                        run.ExitCode, itemId, run.StderrTail);
+                    return new TrickplayGenerationResult(false, cpuTotal, wallTotal);
+                }
+
+                var sheets = SortSheets(Directory.GetFiles(tmpDir, "sheet-*.jpg")
+                    .Select(Path.GetFileName)
+                    .Where(f => f != null)
+                    .Select(f => f!));
+                if (sheets.Count == 0)
+                {
+                    if (keyframesOnly)
+                    {
+                        _logger.LogWarning("Trickplay keyframe-only decode produced no sheets for {ItemId}; retrying with full decode", itemId);
+                        continue;
+                    }
+                    _logger.LogWarning("Trickplay produced no sheets for {ItemId}", itemId);
+                    return new TrickplayGenerationResult(false, cpuTotal, wallTotal);
+                }
+
+                var manifest = new
+                {
+                    version = 1,
+                    interval,
+                    tileWidth = width,
+                    tileHeight = height,
+                    columns = Columns,
+                    rows = Rows,
+                    tilesPerSheet = TilesPerSheet,
+                    sheets,
+                };
+                await File.WriteAllTextAsync(Path.Combine(tmpDir, "manifest.json"),
+                    JsonSerializer.Serialize(manifest), ct);
+
+                // Atomic publish: swap tmp dir into place.
+                if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+                Directory.Move(tmpDir, dir);
+
+                _logger.LogInformation("Trickplay generated for {ItemId}: {Sheets} sheet(s)", itemId, sheets.Count);
+                return new TrickplayGenerationResult(true, cpuTotal, wallTotal);
             }
 
-            if (proc.ExitCode != 0)
-            {
-                _logger.LogWarning("Trickplay FFmpeg exit {Code} for {ItemId}: {Err}",
-                    proc.ExitCode, itemId, (await stderrTask).Split('\n').LastOrDefault());
-                return false;
-            }
-
-            var sheets = SortSheets(Directory.GetFiles(tmpDir, "sheet-*.jpg")
-                .Select(Path.GetFileName)
-                .Where(f => f != null)
-                .Select(f => f!));
-            if (sheets.Count == 0)
-            {
-                _logger.LogWarning("Trickplay produced no sheets for {ItemId}", itemId);
-                return false;
-            }
-
-            var manifest = new
-            {
-                version = 1,
-                interval,
-                tileWidth = width,
-                tileHeight = height,
-                columns = Columns,
-                rows = Rows,
-                tilesPerSheet = TilesPerSheet,
-                sheets,
-            };
-            await File.WriteAllTextAsync(Path.Combine(tmpDir, "manifest.json"),
-                JsonSerializer.Serialize(manifest), ct);
-
-            // Atomic publish: swap tmp dir into place.
-            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
-            Directory.Move(tmpDir, dir);
-
-            _logger.LogInformation("Trickplay generated for {ItemId}: {Sheets} sheet(s)", itemId, sheets.Count);
-            return true;
+            return new TrickplayGenerationResult(false, cpuTotal, wallTotal); // both attempts exhausted
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Trickplay generation failed for {ItemId}", itemId);
-            return false;
+            return new TrickplayGenerationResult(false, cpuTotal, wallTotal);
         }
         finally
         {
             try { if (Directory.Exists(tmpDir)) Directory.Delete(tmpDir, recursive: true); } catch { }
         }
+    }
+
+    /// <summary>Outcome of a single ffmpeg attempt. <see cref="Failed"/> covers the
+    /// non-retryable cases (start failure, timeout); a nonzero <see cref="ExitCode"/>
+    /// is retryable by the caller.</summary>
+    private sealed record FfmpegRun(bool Failed, int ExitCode, double CpuSeconds, double WallSeconds, string? StderrTail);
+
+    private async Task<FfmpegRun> RunFfmpegAsync(string ffmpeg, string args, Guid itemId, bool keyframesOnly, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = ffmpeg,
+            Arguments = args,
+            UseShellExecute = false,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+
+        var sw = Stopwatch.StartNew();
+        using var proc = Process.Start(psi);
+        if (proc == null)
+        {
+            _logger.LogError("Trickplay: failed to start FFmpeg");
+            return new FfmpegRun(Failed: true, 0, 0, 0, null);
+        }
+
+        // BG-WI-002: background decode must always lose scheduling contests against
+        // live playback/transcodes. Best-effort — the process may already have exited.
+        try { proc.PriorityClass = ProcessPriorityClass.BelowNormal; }
+        catch { /* exited or not permitted; priority is a safety net, not a contract */ }
+
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+
+        // SR-WI-028: WaitForExitAsync throws on cancellation WITHOUT killing the
+        // child (and Dispose doesn't either), which leaked a full-speed FFmpeg;
+        // a stuck source also had no ceiling at all. Kill the whole process tree
+        // on cancellation or timeout.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(GenerationTimeout);
+        var timedOut = false;
+        try
+        {
+            await proc.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Timeout (not caller cancellation): log and fail this item instead of
+            // surfacing a cancellation the caller never requested.
+            timedOut = true;
+            _logger.LogWarning("Trickplay FFmpeg timed out after {Timeout} for {ItemId}; killing process tree",
+                GenerationTimeout, itemId);
+        }
+        finally
+        {
+            if (!proc.HasExited)
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { /* exited between check and kill */ }
+            }
+        }
+
+        sw.Stop();
+        double cpu = 0;
+        int exitCode = -1;
+        try { proc.WaitForExit(); cpu = proc.TotalProcessorTime.TotalSeconds; exitCode = proc.ExitCode; }
+        catch { /* process handle unusable — keep defaults */ }
+
+        // BG-WI-004: per-spawn cost line so a future "100% CPU" report is attributable
+        // from logs alone (the 2026-07-24 investigation had to reconstruct this live).
+        _logger.LogInformation("Trickplay ffmpeg: {ItemId} cpu={Cpu:F1}s wall={Wall:F1}s exit={Exit} keyframesOnly={KeyframesOnly}{TimedOut}",
+            itemId, cpu, sw.Elapsed.TotalSeconds, exitCode, keyframesOnly, timedOut ? " TIMED OUT" : "");
+
+        if (timedOut) return new FfmpegRun(Failed: true, exitCode, cpu, sw.Elapsed.TotalSeconds, null);
+
+        string? stderrTail = null;
+        try { stderrTail = (await stderrTask).Split('\n').LastOrDefault(l => !string.IsNullOrWhiteSpace(l))?.Trim(); }
+        catch { /* stderr unavailable */ }
+
+        return new FfmpegRun(Failed: false, exitCode, cpu, sw.Elapsed.TotalSeconds, stderrTail);
     }
 }

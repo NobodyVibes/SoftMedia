@@ -17,10 +17,12 @@ function relativeTime(iso: string | null): string {
 
 function ResultBadge({ result }: { result: string | null }) {
     if (!result) return <span className="text-gray-500 text-xs">never run</span>;
-    if (result === 'Success')
-        return <span className="inline-flex items-center gap-1 text-green-400 text-xs"><CheckCircle size={14} /> Success</span>;
-    if (result === 'Failed')
-        return <span className="inline-flex items-center gap-1 text-red-400 text-xs"><XCircle size={14} /> Failed</span>;
+    // Prefix match: services may append run details to the base status (e.g. the
+    // trickplay sweep reports "Success — 3 generated, 1.2s ffmpeg CPU", BG-WI-004).
+    if (result.startsWith('Success'))
+        return <span className="inline-flex items-center gap-1 text-green-400 text-xs"><CheckCircle size={14} /> {result}</span>;
+    if (result.startsWith('Failed'))
+        return <span className="inline-flex items-center gap-1 text-red-400 text-xs"><XCircle size={14} /> {result}</span>;
     return <span className="text-gray-400 text-xs">{result}</span>;
 }
 

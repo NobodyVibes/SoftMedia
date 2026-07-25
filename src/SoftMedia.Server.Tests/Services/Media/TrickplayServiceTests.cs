@@ -165,6 +165,9 @@ public class TrickplayServiceTests : IDisposable
         await AssertHeartbeatStopsAsync(alivePath);
     }
 
+    // BG-WI-001: a timeout must NOT trigger the full-decode fallback — a stuck source
+    // would burn a second 30-minute ceiling. The heartbeat-stability assertion below
+    // doubles as the no-retry proof: a retried fake ffmpeg would resume the heartbeat.
     [Fact]
     public async Task GenerateAsync_Timeout_ReturnsFalse_AndKillsFfmpegProcessTree()
     {
@@ -173,10 +176,101 @@ public class TrickplayServiceTests : IDisposable
         var (sourcePath, alivePath) = SeedFakeFfmpeg();
         _svc.GenerationTimeout = TimeSpan.FromMilliseconds(700);
 
-        var ok = await _svc.GenerateAsync(Guid.NewGuid(), sourcePath, CancellationToken.None);
+        var result = await _svc.GenerateAsync(Guid.NewGuid(), sourcePath, CancellationToken.None);
 
-        Assert.False(ok);
+        Assert.False(result.Success);
         Assert.True(AliveLength(alivePath) > 0, "fake ffmpeg never started");
         await AssertHeartbeatStopsAsync(alivePath);
+    }
+
+    // ---- BG-WI-001: keyframe-only decode with one full-decode fallback. The fake
+    // ffmpeg logs each invocation's arguments so the tests can assert the attempt
+    // sequence and flag placement without shelling the real binary.
+
+    private (string sourcePath, string argsLog) SeedArgCapturingFfmpeg(int exitCode, bool createSheet = false)
+    {
+        var sourcePath = Path.Combine(_webRoot, "source.mp4");
+        File.WriteAllBytes(sourcePath, new byte[] { 0, 0, 0, 0 });
+
+        var argsLog = Path.Combine(_webRoot, "args.log");
+        var scriptPath = Path.Combine(_webRoot, "fake-ffmpeg-args.cmd");
+        // When createSheet is set, materialize sheet-0.jpg at the output pattern (the
+        // last argument, with %d substituted) so the attempt looks successful.
+        var createLine = createSheet
+            ? "setlocal enabledelayedexpansion\r\n" +
+              "for %%A in (%*) do set \"LAST=%%~A\"\r\n" +
+              "set \"OUT=!LAST:%%d=0!\"\r\n" +
+              "copy nul \"!OUT!\" > nul\r\n"
+            : "";
+        File.WriteAllText(scriptPath,
+            "@echo off\r\n" +
+            $"echo %* >> \"{argsLog}\"\r\n" +
+            createLine +
+            $"exit /b {exitCode}\r\n");
+        _binary.Setup(b => b.ResolveFFmpegPath()).Returns(scriptPath);
+        return (sourcePath, argsLog);
+    }
+
+    private static string[] Attempts(string argsLog) =>
+        File.ReadAllLines(argsLog).Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
+
+    [Fact]
+    public async Task GenerateAsync_TriesKeyframesOnlyFirst_ThenFallsBackToFullDecode()
+    {
+        if (!OperatingSystem.IsWindows()) return; // fake ffmpeg is a Windows .cmd
+
+        // Exit 0 but no sheets produced → keyframe-only attempt is judged starved and
+        // the single full-decode fallback runs (also produces nothing → overall failure).
+        var (sourcePath, argsLog) = SeedArgCapturingFfmpeg(exitCode: 0);
+
+        var result = await _svc.GenerateAsync(Guid.NewGuid(), sourcePath, CancellationToken.None);
+
+        Assert.False(result.Success);
+        var attempts = Attempts(argsLog);
+        Assert.Equal(2, attempts.Length);
+
+        // Attempt 1: keyframe-only decode; both input flags must precede -i.
+        Assert.Contains("-skip_frame nokey", attempts[0]);
+        Assert.Contains("-threads 2", attempts[0]);
+        Assert.True(
+            attempts[0].IndexOf("-skip_frame nokey", StringComparison.Ordinal)
+                < attempts[0].IndexOf("-i \"", StringComparison.Ordinal),
+            "-skip_frame nokey must be an input option (before -i)");
+        Assert.True(
+            attempts[0].IndexOf("-threads 2", StringComparison.Ordinal)
+                < attempts[0].IndexOf("-i \"", StringComparison.Ordinal),
+            "-threads 2 must be an input option (before -i)");
+
+        // Attempt 2 (fallback): full decode, still thread-capped.
+        Assert.DoesNotContain("-skip_frame", attempts[1]);
+        Assert.Contains("-threads 2", attempts[1]);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_FallsBackOnce_WhenKeyframeAttemptExitsNonZero()
+    {
+        if (!OperatingSystem.IsWindows()) return; // fake ffmpeg is a Windows .cmd
+
+        var (sourcePath, argsLog) = SeedArgCapturingFfmpeg(exitCode: 3);
+
+        var result = await _svc.GenerateAsync(Guid.NewGuid(), sourcePath, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Equal(2, Attempts(argsLog).Length); // exactly one fallback, no loop
+    }
+
+    [Fact]
+    public async Task GenerateAsync_NoFallback_WhenKeyframeAttemptProducesSheets()
+    {
+        if (!OperatingSystem.IsWindows()) return; // fake ffmpeg is a Windows .cmd
+
+        var id = Guid.NewGuid();
+        var (sourcePath, argsLog) = SeedArgCapturingFfmpeg(exitCode: 0, createSheet: true);
+
+        var result = await _svc.GenerateAsync(id, sourcePath, CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Single(Attempts(argsLog)); // keyframe-only attempt sufficed
+        Assert.True(_svc.HasTrickplay(id), "manifest must be published from the keyframe-only attempt");
     }
 }

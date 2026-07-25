@@ -85,6 +85,7 @@ public class ChromaprintFingerprintExtractor : IFingerprintExtractor
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(DefaultTimeout);
 
+        var sw = Stopwatch.StartNew();
         try
         {
             if (!process.Start())
@@ -92,6 +93,11 @@ public class ChromaprintFingerprintExtractor : IFingerprintExtractor
                 _logger.LogError("[Fingerprint] Failed to start FFmpeg for {Path}", filePath);
                 return null;
             }
+
+            // BG-WI-002: fingerprinting is a background job — it must always lose
+            // scheduling contests against live playback/transcodes. Best-effort.
+            try { process.PriorityClass = ProcessPriorityClass.BelowNormal; }
+            catch { /* exited or not permitted; priority is a safety net, not a contract */ }
 
             // Drain both pipes WITHOUT a cancellation token: their lifetime is tied to the
             // process. Cancelling the drains directly stopped the reads while ffmpeg kept
@@ -118,6 +124,13 @@ public class ChromaprintFingerprintExtractor : IFingerprintExtractor
             // 30s guard is a last resort for an unkillable process — it surfaces as the
             // generic failure path below instead of a permanent hang.
             await Task.WhenAll(stdoutTask, stderrTask).WaitAsync(TimeSpan.FromSeconds(30));
+
+            // BG-WI-004: per-spawn cost line so a future "100% CPU" report is
+            // attributable from logs alone. Measured baseline: ~0.3s CPU per window.
+            double cpuSeconds = 0;
+            try { cpuSeconds = process.TotalProcessorTime.TotalSeconds; } catch { /* unusable handle */ }
+            _logger.LogInformation("[Fingerprint] ffmpeg: {File} cpu={Cpu:F1}s wall={Wall:F1}s{TimedOut}",
+                Path.GetFileName(filePath), cpuSeconds, sw.Elapsed.TotalSeconds, interrupted ? " TIMED OUT" : "");
 
             // Genuine cancellation (shutdown, or detection preempted by a scan) must
             // PROPAGATE so the caller stops instead of moving on to the next episode.

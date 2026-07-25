@@ -24,7 +24,11 @@ public class TrickplayWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TrickplayWorker> _logger;
     private readonly IScheduledTaskRegistry _registry;
-    private readonly SemaphoreSlim _gate = new(2, 2); // at most 2 concurrent generations
+    // BG-WI-003: one generation at a time. Keyframe-only decode (BG-WI-001) made a
+    // generation sub-second CPU, so concurrency no longer buys throughput — it only
+    // doubled worst-case pressure (the measured 2026-07-24 saturation was 2 unbounded
+    // decodes running concurrently). The sweep cadence still clears a season per cycle.
+    private readonly SemaphoreSlim _gate = new(1, 1);
 
     public TrickplayWorker(
         IServiceScopeFactory scopeFactory,
@@ -102,6 +106,7 @@ public class TrickplayWorker : BackgroundService
         }
 
         var generated = 0;
+        long cpuMs = 0; // BG-WI-004: ffmpeg CPU actually burned this sweep (successes and failures)
         var tasks = candidates.Select(async item =>
         {
             await _gate.WaitAsync(ct);
@@ -109,14 +114,18 @@ public class TrickplayWorker : BackgroundService
             {
                 using var scope = _scopeFactory.CreateScope();
                 var trickplay = scope.ServiceProvider.GetRequiredService<ITrickplayService>();
-                if (await trickplay.GenerateAsync(item.Id, item.Path, ct))
+                var result = await trickplay.GenerateAsync(item.Id, item.Path, ct);
+                Interlocked.Add(ref cpuMs, (long)(result.CpuSeconds * 1000));
+                if (result.Success)
                     Interlocked.Increment(ref generated);
             }
             finally { _gate.Release(); }
         });
         await Task.WhenAll(tasks);
 
-        _logger.LogInformation("Trickplay sweep generated {Count} sheet sets", generated);
-        _registry.Report(ScheduledTaskNames.Trickplay, "Success", sw.ElapsedMilliseconds);
+        _logger.LogInformation("Trickplay sweep generated {Count} sheet sets ({CpuSeconds:F1}s ffmpeg CPU)",
+            generated, cpuMs / 1000.0);
+        _registry.Report(ScheduledTaskNames.Trickplay,
+            $"Success — {generated} generated, {cpuMs / 1000.0:F1}s ffmpeg CPU", sw.ElapsedMilliseconds);
     }
 }

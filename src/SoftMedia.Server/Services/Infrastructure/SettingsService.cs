@@ -185,6 +185,10 @@ public class SettingsService : ISettingsService
             // because skip behavior is a personal device preference, not a server config.
             new() { Key = "AutoDetectIntros", Value = "true", Group = "Playback", Description = "Run cross-episode fingerprint detection to find episode intros. Disabling skips the head-window CPU cost on scan." },
             new() { Key = "AutoDetectCredits", Value = "true", Group = "Playback", Description = "Run cross-episode fingerprint detection to find end credits. Disabling skips the tail-window CPU cost on scan." },
+            // BG-WI-008: detection is audio-only and BelowNormal priority, so it is CPU-safe
+            // alongside streams on any hardware; the only real contention is its sequential
+            // full-speed disk reads. Default ON; HDD/NAS operators can disable.
+            new() { Key = "DetectionDuringPlayback", Value = "true", Group = "Playback", Description = "Run intro/credits detection while people are streaming. Detection is audio-only and low-priority; turn this off on HDD/NAS setups if its disk reads compete with playback." },
 
             // Trickplay — pre-generated scrubber preview sprite sheets (P2-WI-001).
             new() { Key = "TrickplayEnabled", Value = "true", Group = "Playback", Description = "Generate scrubber-preview sprite sheets for videos. Disabling skips background generation; the player falls back to on-demand frames." },

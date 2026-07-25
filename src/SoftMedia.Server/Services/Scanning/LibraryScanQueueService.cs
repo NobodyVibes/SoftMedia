@@ -540,6 +540,24 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
     }
 
     /// <summary>
+    /// BG-WI-005/008: should a queued detection job stay parked because someone is
+    /// watching? False fast when playback is idle; when active, consult the
+    /// DetectionDuringPlayback setting (default true = run alongside streams — detection
+    /// is audio-only and BelowNormal, so only HDD disk contention justifies pausing).
+    /// SettingsService caches reads (60 s TTL), so polling this from the 500 ms queue
+    /// loop is cheap; the scope is only created while playback is actually active.
+    /// </summary>
+    private async Task<bool> ShouldDeferDetectionForPlaybackAsync()
+    {
+        if (_playbackActivity == null || !_playbackActivity.IsPlaybackActive) return false;
+
+        using var scope = _scopeFactory.CreateScope();
+        var settings = scope.ServiceProvider.GetService<ISettingsService>();
+        if (settings == null) return false; // no settings source → behave like the default (run)
+        return !await settings.GetSettingAsync("DetectionDuringPlayback", true);
+    }
+
+    /// <summary>
     /// Cancel the currently-running detection job, if any. Safe to call from any thread;
     /// the race where the job finishes (and disposes its CTS) concurrently is benign.
     /// </summary>
@@ -599,13 +617,15 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
                 // file walk ended and started fingerprinting alongside it.
                 // BG-WI-005: detection additionally waits for playback to go idle —
                 // fingerprinting is deferrable housekeeping, viewers are not.
+                // BG-WI-008: gated by the DetectionDuringPlayback setting (default on =
+                // run alongside streams; detection is audio-only and BelowNormal).
                 LibraryScanJob? job = null;
                 if (_queue.TryDequeue(out var primaryJob))
                 {
                     job = primaryJob;
                 }
                 else if (!AnyPrimaryJobActive()
-                    && !(_playbackActivity?.IsPlaybackActive ?? false)
+                    && !await ShouldDeferDetectionForPlaybackAsync()
                     && _detectionQueue.TryDequeue(out var detectionJob))
                 {
                     job = detectionJob;
@@ -804,6 +824,8 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
                 // BG-WI-005: a viewer pressing Play mid-detection preempts it exactly
                 // like a scan would — same CTS, same requeue, same checkpoint-resume.
                 // Polling (5s) is fine: the cost being deferred is minutes long.
+                // BG-WI-008: the shared helper also consults DetectionDuringPlayback
+                // per poll (cached reads), so flipping the setting mid-run takes effect.
                 Task? playbackWatch = null;
                 if (_playbackActivity != null)
                 {
@@ -815,7 +837,7 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
                             while (!watchToken.IsCancellationRequested)
                             {
                                 await Task.Delay(DetectionPlaybackPollInterval, watchToken);
-                                if (_playbackActivity.IsPlaybackActive)
+                                if (await ShouldDeferDetectionForPlaybackAsync())
                                 {
                                     _logger.LogInformation("Playback became active; deferring intro/credits detection");
                                     try { preemptCts.Cancel(); }

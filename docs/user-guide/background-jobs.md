@@ -6,9 +6,13 @@ invisible to viewers (BG-WI-001..005, plan: `docs/plans/background-ffmpeg-cpu-pl
 - **Low priority.** Every background ffmpeg process runs at Windows `BelowNormal` priority, so
   live playback and transcodes always win CPU scheduling contests, whatever the job costs.
 - **Playback-aware.** While anyone is actively watching a *transcoded* stream, the trickplay
-  sweep defers its remaining items to the next cycle, and intro/credits detection pauses and
-  re-queues itself (resuming later from its per-episode checkpoints). Direct-play streaming is
-  not gated — it is plain file serving with no decode cost.
+  sweep defers its remaining items to the next cycle. Intro/credits detection runs alongside
+  streams by default (it is audio-only and low-priority, so it is CPU-safe on any hardware);
+  operators on HDD/NAS storage — where its sequential disk reads can compete with playback —
+  can turn the **"Run intro/credits detection while people are streaming"** setting off
+  (Settings → Libraries → Playback Detection), which makes detection pause and re-queue
+  itself while anyone streams, resuming later from its per-episode checkpoints. Direct-play
+  streaming is never gated — it is plain file serving with no decode cost.
 - **Accounted.** Every ffmpeg spawn logs one line with its actual CPU and wall time
   (`Trickplay ffmpeg: … cpu=0.3s wall=3.9s exit=0`, `[Fingerprint] ffmpeg: …`), and the
   trickplay row on the admin Scheduled Tasks card shows the aggregate per sweep

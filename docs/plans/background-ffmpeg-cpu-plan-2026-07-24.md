@@ -223,6 +223,7 @@ trade-off (previews keyframe-aligned) and the per-item regeneration recipe.
 | BG-WI-005 playback gate | 2 | done (2026-07-24) |
 | BG-WI-006 whole-scenario live QA | 3 | done (2026-07-25, operator-confirmed) |
 | BG-WI-007 docs | 3 | done (2026-07-24, docs/user-guide/background-jobs.md) |
+| BG-WI-008 DetectionDuringPlayback setting | post-plan | done (2026-07-25) |
 
 ## 8. Session log
 
@@ -283,6 +284,19 @@ trade-off (previews keyframe-aligned) and the per-item regeneration recipe.
   keys off transcode sessions, so client type is irrelevant to it, and direct-play/DLNA
   clients are deliberately ungated; device-matrix QA belongs to the native-app plan's
   Session 5.
+- 2026-07-25 — BG-WI-008 (post-plan, maintainer-requested): the detection playback gate is
+  now governed by a `DetectionDuringPlayback` setting (Playback group, **default ON** = run
+  alongside streams — maintainer's choice, justified by the F1 measurements: audio-only +
+  BelowNormal makes detection CPU-safe anywhere; only HDD disk contention argues for
+  pausing, and those operators can turn it off). Amends §6 Q2's "no setting" default with
+  an explicit maintainer decision. Implementation: seeded settings default (merges into
+  existing installs on boot; UI renders automatically via the Playback settings group —
+  no client change), a `ShouldDeferDetectionForPlaybackAsync` helper consulted by both the
+  dequeue gate and the mid-run watcher (per-poll, so flipping the setting mid-run takes
+  effect; SettingsService caches reads at 60 s TTL). The TRICKPLAY gate is unchanged and
+  unconditional — full-video decode should always yield. Tests: the two BG-WI-005 gate
+  tests now set the setting off explicitly; +1 test proving detection runs during active
+  playback under the default.
   - Suite after Phase 1: server 1543/0/0 (baseline 1540 + 3).
   - Live verification (real library): deleted trickplay for Futurama S01E09, server sweep
     regenerated it — 2 sheets, `cpu=0.3s wall=3.9s exit=0 keyframesOnly=True` (was 9–54 s

@@ -70,6 +70,15 @@ public class LibraryScanQueueServiceTests
         public bool IsPlaybackActive => Active;
     }
 
+    /// BG-WI-008: the gate only pauses detection when DetectionDuringPlayback is OFF
+    /// (default is ON = run alongside streams). Gate tests must set it explicitly.
+    private void SetDetectionDuringPlayback(bool allowed)
+    {
+        var settings = new Mock<ISettingsService>();
+        settings.Setup(s => s.GetSettingAsync("DetectionDuringPlayback", true)).ReturnsAsync(allowed);
+        _mockServiceProvider.Setup(x => x.GetService(typeof(ISettingsService))).Returns(settings.Object);
+    }
+
     [Fact]
     public async Task EnqueueScan_RunsScanViaOrchestrator()
     {
@@ -288,6 +297,7 @@ public class LibraryScanQueueServiceTests
     {
         var playback = new FakePlaybackActivity { Active = true };
         var service = CreateService(playbackActivity: playback);
+        SetDetectionDuringPlayback(allowed: false); // BG-WI-008: gate only applies when off
         var seriesId = Guid.NewGuid();
 
         int detectCalls = 0;
@@ -330,6 +340,7 @@ public class LibraryScanQueueServiceTests
     {
         var playback = new FakePlaybackActivity { Active = false };
         var service = CreateService(playbackActivity: playback);
+        SetDetectionDuringPlayback(allowed: false); // BG-WI-008: gate only applies when off
         service.DetectionPlaybackPollInterval = TimeSpan.FromMilliseconds(50);
         var seriesId = Guid.NewGuid();
 
@@ -372,6 +383,43 @@ public class LibraryScanQueueServiceTests
 
         Assert.True(completed, "Deferred detection was not re-run to completion.");
         Assert.True(detectCalls >= 2, "Detection was not re-invoked after the playback deferral.");
+    }
+
+    // BG-WI-008: with DetectionDuringPlayback ON (the default), active playback must NOT
+    // hold detection back — it runs alongside the stream (audio-only, BelowNormal).
+    [Fact]
+    public async Task Detection_RunsDuringPlayback_WhenSettingAllows()
+    {
+        var playback = new FakePlaybackActivity { Active = true };
+        var service = CreateService(playbackActivity: playback);
+        SetDetectionDuringPlayback(allowed: true);
+        service.DetectionPlaybackPollInterval = TimeSpan.FromMilliseconds(50);
+        var seriesId = Guid.NewGuid();
+
+        int detectCalls = 0;
+        var detector = new Mock<IIntroCreditsDetectionService>();
+        detector
+            .Setup(d => d.DetectAsync(seriesId, It.IsAny<CancellationToken>()))
+            .Returns((Guid _, CancellationToken _) =>
+            {
+                Interlocked.Increment(ref detectCalls);
+                return Task.FromResult(new IntroCreditsDetectionResult(EpisodesProcessed: 2, IntrosFound: 1, CreditsFound: 1, FailureReason: null));
+            });
+        _mockServiceProvider
+            .Setup(x => x.GetService(typeof(IIntroCreditsDetectionService)))
+            .Returns(detector.Object);
+
+        using var cts = new CancellationTokenSource();
+        await service.StartAsync(cts.Token);
+
+        var job = service.EnqueueIntroCreditsDetection(seriesId, "Some Show");
+
+        var completed = await WaitForConditionAsync(() =>
+            service.GetJobStatus(job.Id)?.Status == LibraryScanStatus.Completed, retries: 60);
+        cts.Cancel();
+
+        Assert.True(completed, "Detection did not run despite DetectionDuringPlayback being enabled.");
+        Assert.Equal(1, detectCalls);
     }
 
     [Fact]

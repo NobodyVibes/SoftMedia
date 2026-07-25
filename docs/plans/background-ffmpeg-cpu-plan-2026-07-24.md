@@ -221,7 +221,7 @@ trade-off (previews keyframe-aligned) and the per-item regeneration recipe.
 | BG-WI-003 serialize trickplay worker | 1 | done (2026-07-24) |
 | BG-WI-004 per-spawn CPU telemetry | 1 | done (2026-07-24, see deviation note in §8) |
 | BG-WI-005 playback gate | 2 | done (2026-07-24) |
-| BG-WI-006 whole-scenario live QA | 3 | **remaining — operator-present** (needs a human watching streams for stutter) |
+| BG-WI-006 whole-scenario live QA | 3 | done (2026-07-25, operator-confirmed) |
 | BG-WI-007 docs | 3 | done (2026-07-24, docs/user-guide/background-jobs.md) |
 
 ## 8. Session log
@@ -270,6 +270,19 @@ trade-off (previews keyframe-aligned) and the per-item regeneration recipe.
     keyframe-only trade-off, per-item regeneration recipe, disable switches).
   - BG-WI-006 remains: operator-present QA (watch a transcoded + a direct-play stream
     during a post-scan convergence window; check stutter + telemetry sums).
+- 2026-07-25 — BG-WI-006 done; **plan complete.** Operator ran the post-scan convergence
+  window with live streams and confirmed smooth playback. Server log
+  (softmedia-20260725.log) shows every gate path firing in production:
+  - 04:51 sweep deferred all 25 pending items at 0.0 s CPU ("25 deferred, playback active");
+  - 04:54 playback arrived mid-detection → watcher preempted and re-queued the job;
+  - 05:04–05:06 detection re-ran to completion once idle — full Futurama
+    (178 eps / 11 seasons → 159 intros, 137 credits) plus remaining series;
+  - 05:08 sweep generated 24 sheet sets for **12.3 s ffmpeg CPU total** (~0.5 s/episode;
+    a single episode cost 9–54 s pre-plan).
+  Not covered (and not required by this plan): third-party playback devices — the gate
+  keys off transcode sessions, so client type is irrelevant to it, and direct-play/DLNA
+  clients are deliberately ungated; device-matrix QA belongs to the native-app plan's
+  Session 5.
   - Suite after Phase 1: server 1543/0/0 (baseline 1540 + 3).
   - Live verification (real library): deleted trickplay for Futurama S01E09, server sweep
     regenerated it — 2 sheets, `cpu=0.3s wall=3.9s exit=0 keyframesOnly=True` (was 9–54 s

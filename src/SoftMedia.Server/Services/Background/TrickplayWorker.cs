@@ -24,6 +24,7 @@ public class TrickplayWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TrickplayWorker> _logger;
     private readonly IScheduledTaskRegistry _registry;
+    private readonly Services.Transcoding.IPlaybackActivityService _playback;
     // BG-WI-003: one generation at a time. Keyframe-only decode (BG-WI-001) made a
     // generation sub-second CPU, so concurrency no longer buys throughput — it only
     // doubled worst-case pressure (the measured 2026-07-24 saturation was 2 unbounded
@@ -33,11 +34,13 @@ public class TrickplayWorker : BackgroundService
     public TrickplayWorker(
         IServiceScopeFactory scopeFactory,
         ILogger<TrickplayWorker> logger,
-        IScheduledTaskRegistry registry)
+        IScheduledTaskRegistry registry,
+        Services.Transcoding.IPlaybackActivityService playback)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _registry = registry;
+        _playback = playback;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -107,11 +110,22 @@ public class TrickplayWorker : BackgroundService
 
         var generated = 0;
         long cpuMs = 0; // BG-WI-004: ffmpeg CPU actually burned this sweep (successes and failures)
+        var deferred = 0; // BG-WI-005: items skipped because someone is watching
         var tasks = candidates.Select(async item =>
         {
             await _gate.WaitAsync(ct);
             try
             {
+                // BG-WI-005: yield to live playback. Skipped items are naturally picked
+                // up by the next sweep (they still have no manifest), so "defer" is just
+                // "don't generate now" — no state to track.
+                if (_playback.IsPlaybackActive)
+                {
+                    if (Interlocked.Increment(ref deferred) == 1)
+                        _logger.LogInformation("Trickplay sweep deferring: playback active; remaining items run next cycle");
+                    return;
+                }
+
                 using var scope = _scopeFactory.CreateScope();
                 var trickplay = scope.ServiceProvider.GetRequiredService<ITrickplayService>();
                 var result = await trickplay.GenerateAsync(item.Id, item.Path, ct);
@@ -123,9 +137,10 @@ public class TrickplayWorker : BackgroundService
         });
         await Task.WhenAll(tasks);
 
-        _logger.LogInformation("Trickplay sweep generated {Count} sheet sets ({CpuSeconds:F1}s ffmpeg CPU)",
-            generated, cpuMs / 1000.0);
+        _logger.LogInformation("Trickplay sweep generated {Count} sheet sets ({CpuSeconds:F1}s ffmpeg CPU, {Deferred} deferred)",
+            generated, cpuMs / 1000.0, deferred);
+        var deferredSuffix = deferred > 0 ? $", {deferred} deferred (playback active)" : "";
         _registry.Report(ScheduledTaskNames.Trickplay,
-            $"Success — {generated} generated, {cpuMs / 1000.0:F1}s ffmpeg CPU", sw.ElapsedMilliseconds);
+            $"Success — {generated} generated, {cpuMs / 1000.0:F1}s ffmpeg CPU{deferredSuffix}", sw.ElapsedMilliseconds);
     }
 }

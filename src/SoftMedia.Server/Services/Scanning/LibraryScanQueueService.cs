@@ -140,6 +140,15 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
     private readonly IMetadataQueue? _metadataQueue;
     private readonly IImageDownloadQueue? _imageQueue;
 
+    // BG-WI-005: optional so existing tests (and any headless composition) run ungated;
+    // production DI always supplies it.
+    private readonly Services.Transcoding.IPlaybackActivityService? _playbackActivity;
+
+    /// <summary>BG-WI-005: how often a running detection job checks for newly-active
+    /// playback. Settable so tests can exercise the preemption path without real 5 s
+    /// waits (project convention; no InternalsVisibleTo).</summary>
+    public TimeSpan DetectionPlaybackPollInterval { get; set; } = TimeSpan.FromSeconds(5);
+
     public LibraryScanQueueService(
         IServiceScopeFactory scopeFactory,
         ILogger<LibraryScanQueueService> logger,
@@ -147,7 +156,8 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
         IScheduledTaskRegistry? registry = null,
         IMediaNotificationService? notifications = null,
         IMetadataQueue? metadataQueue = null,
-        IImageDownloadQueue? imageQueue = null)
+        IImageDownloadQueue? imageQueue = null,
+        Services.Transcoding.IPlaybackActivityService? playbackActivity = null)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
@@ -156,6 +166,7 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
         _notifications = notifications;
         _metadataQueue = metadataQueue;
         _imageQueue = imageQueue;
+        _playbackActivity = playbackActivity;
     }
 
     /// <summary>
@@ -586,12 +597,16 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
                 // "Running" to the user while enrichment/artwork drains). Without
                 // that check the loop considered itself idle the moment a scan's
                 // file walk ended and started fingerprinting alongside it.
+                // BG-WI-005: detection additionally waits for playback to go idle —
+                // fingerprinting is deferrable housekeeping, viewers are not.
                 LibraryScanJob? job = null;
                 if (_queue.TryDequeue(out var primaryJob))
                 {
                     job = primaryJob;
                 }
-                else if (!AnyPrimaryJobActive() && _detectionQueue.TryDequeue(out var detectionJob))
+                else if (!AnyPrimaryJobActive()
+                    && !(_playbackActivity?.IsPlaybackActive ?? false)
+                    && _detectionQueue.TryDequeue(out var detectionJob))
                 {
                     job = detectionJob;
                 }
@@ -785,6 +800,34 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
                 {
                     preemptCts.Cancel();
                 }
+
+                // BG-WI-005: a viewer pressing Play mid-detection preempts it exactly
+                // like a scan would — same CTS, same requeue, same checkpoint-resume.
+                // Polling (5s) is fine: the cost being deferred is minutes long.
+                Task? playbackWatch = null;
+                if (_playbackActivity != null)
+                {
+                    var watchToken = preemptCts.Token;
+                    playbackWatch = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            while (!watchToken.IsCancellationRequested)
+                            {
+                                await Task.Delay(DetectionPlaybackPollInterval, watchToken);
+                                if (_playbackActivity.IsPlaybackActive)
+                                {
+                                    _logger.LogInformation("Playback became active; deferring intro/credits detection");
+                                    try { preemptCts.Cancel(); }
+                                    catch (ObjectDisposedException) { /* job just finished */ }
+                                    return;
+                                }
+                            }
+                        }
+                        catch (OperationCanceledException) { /* job finished or was preempted */ }
+                    }, CancellationToken.None);
+                }
+
                 try
                 {
                     var result = await detector.DetectAsync(job.TargetSeriesId.Value, preemptCts.Token);
@@ -792,10 +835,10 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
                 }
                 catch (OperationCanceledException) when (preemptCts.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
                 {
-                    // Preempted by a scan/refresh: not a failure. Re-queue the SAME job
-                    // (batch counters untouched — it's still one pending series) so it
-                    // resumes once the primary queue drains; already-fingerprinted
-                    // episodes are skipped on the re-run.
+                    // Preempted by a scan/refresh (or active playback, BG-WI-005): not a
+                    // failure. Re-queue the SAME job (batch counters untouched — it's
+                    // still one pending series) so it resumes once the queue is idle
+                    // again; already-fingerprinted episodes are skipped on the re-run.
                     lock (_enqueueLock)
                     {
                         job.Status = LibraryScanStatus.Queued;
@@ -803,11 +846,15 @@ public class LibraryScanQueueService : BackgroundService, ILibraryScanQueueServi
                         _detectionQueue.Enqueue(job);
                         UpdateQueuePositions();
                     }
-                    _logger.LogInformation("Preempted intro/credits detection for {Name}; re-queued behind primary jobs", job.LibraryName);
+                    _logger.LogInformation("Preempted intro/credits detection for {Name}; re-queued behind primary jobs/playback", job.LibraryName);
                 }
                 finally
                 {
                     _detectionPreemptCts = null;
+                    // Unblock the playback watcher's Task.Delay BEFORE disposing the CTS —
+                    // disposing first would freeze the token and leak the watcher loop.
+                    try { preemptCts.Cancel(); } catch { /* already cancelled/disposed */ }
+                    if (playbackWatch != null) { try { await playbackWatch; } catch { /* watcher never throws */ } }
                     preemptCts.Dispose();
                 }
             }

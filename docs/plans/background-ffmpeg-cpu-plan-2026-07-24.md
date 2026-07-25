@@ -220,9 +220,9 @@ trade-off (previews keyframe-aligned) and the per-item regeneration recipe.
 | BG-WI-002 BelowNormal background ffmpeg | 1 | done (2026-07-24) |
 | BG-WI-003 serialize trickplay worker | 1 | done (2026-07-24) |
 | BG-WI-004 per-spawn CPU telemetry | 1 | done (2026-07-24, see deviation note in §8) |
-| BG-WI-005 playback gate | 2 | not started |
-| BG-WI-006 whole-scenario live QA | 3 | not started |
-| BG-WI-007 docs | 3 | not started |
+| BG-WI-005 playback gate | 2 | done (2026-07-24) |
+| BG-WI-006 whole-scenario live QA | 3 | **remaining — operator-present** (needs a human watching streams for stutter) |
+| BG-WI-007 docs | 3 | done (2026-07-24, docs/user-guide/background-jobs.md) |
 
 ## 8. Session log
 
@@ -249,6 +249,27 @@ trade-off (previews keyframe-aligned) and the per-item regeneration recipe.
   - Scope addition: client `ScheduledTasksCard.ResultBadge` now prefix-matches
     Success/Failed (the enriched sweep string would otherwise lose its green badge);
     `npm run build` green.
+- 2026-07-24 — Phase 2 + BG-WI-007 implemented.
+  - BG-WI-005: new `IPlaybackActivityService`/`PlaybackActivityService`
+    (Services/Transcoding, singleton; depends on `ITranscodeSessionManager` for
+    mockability). Active = session in Transcoding/Throttled with client activity within
+    90 s (mirrors `ThrottleMonitorService.ClientInactivityTimeoutSeconds`).
+    TrickplayWorker checks per item and defers the sweep remainder (registry string gains
+    ", N deferred (playback active)"). **Design refinement vs. plan text:** detection is
+    gated at the QUEUE level, not inside `DetectAsync` — a dequeue gate holds detection
+    jobs Queued while playback is active, and a 5 s watcher cancels the existing
+    `preemptCts` when playback arrives mid-run, so playback deferral rides the exact
+    scan-preemption path (same requeue, same checkpoint resume) with zero new coupling
+    between the detection service and transcoding. Poll interval is settable
+    (`DetectionPlaybackPollInterval`) for tests. Queue ctor param is optional — tests and
+    headless composition run ungated; production DI supplies it.
+  - Tests: +10 cases (PlaybackActivityService activity-definition matrix; 2 queue tests —
+    gate holds job Queued until idle, mid-run playback arrival requeues then completes).
+    Suite after Phase 2: server 1553/0/0.
+  - BG-WI-007: docs/user-guide/background-jobs.md (priority, gating, telemetry,
+    keyframe-only trade-off, per-item regeneration recipe, disable switches).
+  - BG-WI-006 remains: operator-present QA (watch a transcoded + a direct-play stream
+    during a post-scan convergence window; check stutter + telemetry sums).
   - Suite after Phase 1: server 1543/0/0 (baseline 1540 + 3).
   - Live verification (real library): deleted trickplay for Futurama S01E09, server sweep
     regenerated it — 2 sheets, `cpu=0.3s wall=3.9s exit=0 keyframesOnly=True` (was 9–54 s

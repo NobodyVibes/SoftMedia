@@ -415,6 +415,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IHlsService, HlsService>();
         services.AddSingleton<TranscodeService>();
         services.AddSingleton<ITranscodeService>(sp => sp.GetRequiredService<TranscodeService>());
+        services.AddSingleton<IPlaybackActivityService, PlaybackActivityService>(); // BG-WI-005: background jobs yield to live playback
         services.AddScoped<ITranscodeSessionService, TranscodeSessionService>();
         services.AddSingleton<Services.Sessions.IActiveStreamRegistry, Services.Sessions.ActiveStreamRegistry>(); // R-WI-016: direct-play liveness for the admin dashboard
         services.AddSingleton<Services.Sessions.ITerminatedSessionRegistry, Services.Sessions.TerminatedSessionRegistry>(); // admin Stop must stay stopped (client auto-recovery restarts it otherwise)

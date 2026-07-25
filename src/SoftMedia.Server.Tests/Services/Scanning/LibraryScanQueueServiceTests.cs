@@ -48,7 +48,8 @@ public class LibraryScanQueueServiceTests
 
     private LibraryScanQueueService CreateService(
         SoftMedia.Server.Services.Metadata.IMetadataQueue? metadataQueue = null,
-        IImageDownloadQueue? imageQueue = null)
+        IImageDownloadQueue? imageQueue = null,
+        SoftMedia.Server.Services.Transcoding.IPlaybackActivityService? playbackActivity = null)
     {
         // Real in-memory dispatcher; tests don't assert webhook delivery here.
         return new LibraryScanQueueService(
@@ -58,7 +59,15 @@ public class LibraryScanQueueServiceTests
             registry: null,
             notifications: null,
             metadataQueue: metadataQueue,
-            imageQueue: imageQueue);
+            imageQueue: imageQueue,
+            playbackActivity: playbackActivity);
+    }
+
+    /// BG-WI-005: mutable playback signal for gate tests.
+    private sealed class FakePlaybackActivity : SoftMedia.Server.Services.Transcoding.IPlaybackActivityService
+    {
+        public volatile bool Active;
+        public bool IsPlaybackActive => Active;
     }
 
     [Fact]
@@ -270,6 +279,99 @@ public class LibraryScanQueueServiceTests
 
         Assert.True(detectionCompleted, "Preempted detection was not re-run to completion.");
         Assert.True(detectCalls >= 2, "Detection was not re-invoked after preemption.");
+    }
+
+    // BG-WI-005: detection must not START while someone is watching — the dequeue gate
+    // holds the job Queued until playback goes idle.
+    [Fact]
+    public async Task Detection_WaitsForPlaybackIdle_BeforeRunning()
+    {
+        var playback = new FakePlaybackActivity { Active = true };
+        var service = CreateService(playbackActivity: playback);
+        var seriesId = Guid.NewGuid();
+
+        int detectCalls = 0;
+        var detector = new Mock<IIntroCreditsDetectionService>();
+        detector
+            .Setup(d => d.DetectAsync(seriesId, It.IsAny<CancellationToken>()))
+            .Returns((Guid _, CancellationToken _) =>
+            {
+                Interlocked.Increment(ref detectCalls);
+                return Task.FromResult(new IntroCreditsDetectionResult(EpisodesProcessed: 2, IntrosFound: 1, CreditsFound: 1, FailureReason: null));
+            });
+        _mockServiceProvider
+            .Setup(x => x.GetService(typeof(IIntroCreditsDetectionService)))
+            .Returns(detector.Object);
+
+        using var cts = new CancellationTokenSource();
+        await service.StartAsync(cts.Token);
+
+        var job = service.EnqueueIntroCreditsDetection(seriesId, "Some Show");
+
+        // Give the 500ms idle loop several chances to (wrongly) dequeue past the gate.
+        await Task.Delay(1200);
+        Assert.Equal(0, Volatile.Read(ref detectCalls));
+        Assert.Equal(LibraryScanStatus.Queued, service.GetJobStatus(job.Id)?.Status);
+
+        // Playback stops → detection proceeds normally.
+        playback.Active = false;
+        var completed = await WaitForConditionAsync(() =>
+            service.GetJobStatus(job.Id)?.Status == LibraryScanStatus.Completed, retries: 60);
+        cts.Cancel();
+
+        Assert.True(completed, "Detection did not run after playback went idle.");
+        Assert.Equal(1, detectCalls);
+    }
+
+    // BG-WI-005: a viewer pressing Play MID-detection preempts via the same CTS/requeue
+    // path a scan uses; the job resumes (from fingerprint checkpoints) once idle again.
+    [Fact]
+    public async Task PlaybackArrival_PreemptsRunningDetection_WhichRequeuesAndCompletes()
+    {
+        var playback = new FakePlaybackActivity { Active = false };
+        var service = CreateService(playbackActivity: playback);
+        service.DetectionPlaybackPollInterval = TimeSpan.FromMilliseconds(50);
+        var seriesId = Guid.NewGuid();
+
+        int detectCalls = 0;
+        var firstCallStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var detector = new Mock<IIntroCreditsDetectionService>();
+        detector
+            .Setup(d => d.DetectAsync(seriesId, It.IsAny<CancellationToken>()))
+            .Returns(async (Guid _, CancellationToken ct) =>
+            {
+                if (Interlocked.Increment(ref detectCalls) == 1)
+                {
+                    firstCallStarted.TrySetResult(true);
+                    await Task.Delay(Timeout.Infinite, ct); // held until the playback watcher cancels
+                }
+                return new IntroCreditsDetectionResult(EpisodesProcessed: 2, IntrosFound: 1, CreditsFound: 1, FailureReason: null);
+            });
+        _mockServiceProvider
+            .Setup(x => x.GetService(typeof(IIntroCreditsDetectionService)))
+            .Returns(detector.Object);
+
+        using var cts = new CancellationTokenSource();
+        await service.StartAsync(cts.Token);
+
+        var job = service.EnqueueIntroCreditsDetection(seriesId, "Some Show");
+        await firstCallStarted.Task.WaitAsync(TimeSpan.FromSeconds(5)); // detection is mid-run
+
+        // Someone presses Play: the watcher must cancel and requeue (not fail) the job;
+        // the dequeue gate then holds it Queued for as long as playback stays active.
+        playback.Active = true;
+        var requeued = await WaitForConditionAsync(() =>
+            service.GetJobStatus(job.Id)?.Status == LibraryScanStatus.Queued, retries: 60);
+        Assert.True(requeued, "Detection was not requeued when playback became active.");
+
+        // Playback stops → the re-run completes.
+        playback.Active = false;
+        var completed = await WaitForConditionAsync(() =>
+            service.GetJobStatus(job.Id)?.Status == LibraryScanStatus.Completed, retries: 60);
+        cts.Cancel();
+
+        Assert.True(completed, "Deferred detection was not re-run to completion.");
+        Assert.True(detectCalls >= 2, "Detection was not re-invoked after the playback deferral.");
     }
 
     [Fact]

@@ -92,6 +92,36 @@ describe('resume / start-over split control', () => {
     });
 });
 
+// Books are read, not played: the primary button under the cover art IS the
+// reader entry point (BookDetailView no longer renders a duplicate read link).
+describe('playLabel override', () => {
+    it('labels the primary button "Read Now" for books and still fires onPlay', () => {
+        const onPlay = vi.fn();
+        renderLayout({
+            item: { ...movie, type: MediaType.Book } as unknown as MediaItem,
+            onPlay,
+            playLabel: 'Read Now',
+        });
+
+        expect(screen.queryByRole('button', { name: /^Play$/ })).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: 'Read Now' }));
+        expect(onPlay).toHaveBeenCalledTimes(1);
+    });
+
+    it('carries the resume wording a book supplies', () => {
+        renderLayout({
+            item: { ...movie, type: MediaType.Book } as unknown as MediaItem,
+            playLabel: 'Continue from page 42',
+        });
+        expect(screen.getByRole('button', { name: 'Continue from page 42' })).toBeInTheDocument();
+    });
+
+    it('leaves video untouched — no label means Play', () => {
+        renderLayout();
+        expect(screen.getByRole('button', { name: /^Play$/ })).toBeInTheDocument();
+    });
+});
+
 // SR-WI-050 (CLI-L) — Play must not be a silent no-op while a prerequisite
 // (e.g. album tracks) is still loading: disabled + spinner instead.
 describe('playPending', () => {

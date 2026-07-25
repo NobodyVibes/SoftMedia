@@ -41,6 +41,15 @@ interface MediaDetailLayoutProps {
      * loading (e.g. an album's track list) — prevents a silent no-op click.
      */
     playPending?: boolean;
+    /**
+     * Overrides the primary action's wording for media that isn't "played".
+     * Books use it for "Read Now" / "Continue Reading" so the reader has ONE
+     * entry point (this button) instead of a duplicate link in the body.
+     * Ignored when a video resume label applies.
+     */
+    playLabel?: string;
+    /** Icon paired with {@link playLabel} (e.g. an open book instead of ▶). */
+    playIcon?: ReactNode;
 }
 
 /** "Resume from H:MM(:SS)" label — hours only when the position reaches an hour. */
@@ -54,7 +63,7 @@ export function formatResumeTime(seconds: number): string {
         : `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride, customMetadata, actionSlot, resumePositionSeconds, onPlayFromBeginning, playPending }: MediaDetailLayoutProps) {
+export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride, customMetadata, actionSlot, resumePositionSeconds, onPlayFromBeginning, playPending, playLabel, playIcon }: MediaDetailLayoutProps) {
     // Media URLs below embed the media token; re-render when it rotates so a
     // stale token can't leave the artwork permanently broken.
     useMediaTokenRefresh();
@@ -197,9 +206,11 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                         {playPending ? (
                                             <Loader2 className="w-6 h-6 animate-spin" aria-hidden="true" />
                                         ) : (
-                                            <Play className="w-6 h-6 fill-current" aria-hidden="true" />
+                                            playIcon ?? <Play className="w-6 h-6 fill-current" aria-hidden="true" />
                                         )}
-                                        {hasResume ? `Resume from ${formatResumeTime(resumePositionSeconds ?? 0)}` : 'Play'}
+                                        {hasResume
+                                            ? `Resume from ${formatResumeTime(resumePositionSeconds ?? 0)}`
+                                            : playLabel ?? 'Play'}
                                     </button>
 
                                     {/* SR-WI-053 — start-over escape hatch: only when a resume

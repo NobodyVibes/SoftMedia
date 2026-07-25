@@ -21,6 +21,9 @@ import { MediaType } from '../types';
 import { useMediaHub } from '../hooks/useMediaHub';
 import { Clock, User, Disc, ArrowLeft, RefreshCw } from 'lucide-react';
 import { formatDuration } from '../lib/utils';
+import { bookReadLabel } from '../lib/bookReadLabel';
+import { getProgress as getBookProgress } from '../services/bookService';
+import { BookOpen } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export default function MediaDetailPage() {
@@ -169,6 +172,17 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
             return response.data;
         },
         enabled: isResumableVideo,
+    });
+
+    // Books have no "Play" — the primary button IS the reader entry point (there is no
+    // second read link in the body). Same query key BookDetailView used, so this is the
+    // one fetch that labels the button.
+    const isBook = item.type === MediaType.Book;
+    const { data: bookProgress } = useQuery({
+        queryKey: ['book-progress', item.id],
+        queryFn: () => getBookProgress(item.id),
+        staleTime: 30_000,
+        enabled: isBook,
     });
 
     const { data: nextEpisode } = useQuery({
@@ -413,6 +427,8 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
             onPlayFromBeginning={handlePlayFromBeginning}
             resumePositionSeconds={resumePositionSeconds}
             playPending={playPending}
+            playLabel={isBook ? bookReadLabel(item.container, bookProgress) : undefined}
+            playIcon={isBook ? <BookOpen className="w-6 h-6" aria-hidden="true" /> : undefined}
             qualityItem={qualityItem}
             backdropOverride={backdropOverride}
             customMetadata={customMetadata}

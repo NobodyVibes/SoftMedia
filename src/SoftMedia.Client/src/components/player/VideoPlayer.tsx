@@ -20,6 +20,7 @@ import { useTrickplay, type SpriteFrame } from '../../hooks/useTrickplay';
 import { useCast } from '../../hooks/useCast';
 import { useMediaSession } from '../../hooks/useMediaSession';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { playerBackTarget } from '../../lib/backNavigation';
 import { computeCueShift, applyCueShift, clampUserOffset } from './subtitleSync';
 import { buildCueCss } from './subtitleStyle';
 import { describeCastReadiness } from '../../hooks/castReadiness';
@@ -1266,16 +1267,14 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         setShowMovieEndOverlay(false);
     }, []);
 
-    // Immersive player's back control: return to wherever playback was launched from when
-    // there's in-app history (react-router stamps history.state.idx), else — a deep link or
-    // fresh tab — fall back to the media's detail page.
+    // Immersive player's back control: ALWAYS the media's detail page (for an episode,
+    // the series page), never browser history — see lib/backNavigation.ts for the full
+    // rationale. History-back was entry-dependent (quick-play from a library card landed
+    // back in the library while detail-page plays landed on the detail page) and, after
+    // Play-Next episode hops, walked back through every previously played episode.
     const handleBack = useCallback(() => {
-        if (typeof window.history.state?.idx === 'number' && window.history.state.idx > 0) {
-            navigate(-1);
-        } else {
-            navigate(`/media/${item.id}`);
-        }
-    }, [navigate, item.id]);
+        navigate(playerBackTarget(item));
+    }, [navigate, item]);
 
     // Every way OFF the player from the movie overlay (countdown, Back to Library, a
     // recommendation card): stop the transcode session, then navigate.

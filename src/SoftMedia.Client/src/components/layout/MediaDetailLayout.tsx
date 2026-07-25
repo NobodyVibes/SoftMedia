@@ -9,6 +9,7 @@ import QualityBadge from '../ui/QualityBadge';
 import MediaQualityInfo from '../ui/MediaQualityInfo';
 import { StarRating } from '../ui/StarRating';
 import { cn, formatRuntime } from '../../lib/utils';
+import { detailBackTarget } from '../../lib/backNavigation';
 import { toast } from 'sonner';
 import { getGenreColors } from '../../lib/genreColors';
 import { resolveHeroPosterUrl, resolveBackdropUrl } from '../../lib/mediaImageUrl';
@@ -129,16 +130,12 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
             <div className="relative z-10 w-full px-4 lg:px-6 pt-4 lg:pt-6 pb-12">
                 <button
                     onClick={() => {
-                        // Photos: Back means "back to the album", NOT browser history —
-                        // after paging through 20 photos, history-back would replay all
-                        // 20. The album key rides on the photo URL, and PhotoLibraryView
-                        // reads the same ?album= param to open that album directly.
-                        if (item.type === MediaType.Photo && item.libraryId) {
-                            const albumKey = searchParams.has('album') ? searchParams.get('album')! : null;
-                            navigate(`/libraries/${item.libraryId}${albumKey !== null ? `?album=${encodeURIComponent(albumKey)}` : ''}`);
-                            return;
-                        }
-                        navigate(-1);
+                        // Back is HIERARCHICAL, never browser history — the player's own
+                        // back lands here, so history-back would bounce straight back INTO
+                        // the player. detailBackTarget walks one level up the containment
+                        // chain (photo→album, episode→series, track→album, album→artist,
+                        // else→library); see lib/backNavigation.ts.
+                        navigate(detailBackTarget(item, searchParams.get('album')));
                     }}
                     className="mb-8 flex items-center gap-2 text-gray-300 hover:text-white transition-colors group"
                 >

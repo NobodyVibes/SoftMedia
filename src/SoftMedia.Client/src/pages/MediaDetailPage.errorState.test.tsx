@@ -41,12 +41,15 @@ beforeEach(() => vi.clearAllMocks());
 // SR-WI-050/052 (detail-page slice) — the error state was a bare "Error loading
 // media" string: no retry, no 404 distinction. Pin the split behavior.
 describe('MediaDetailPage error state', () => {
-    it('distinguishes 404 as a gone item with a Go back action (no futile retry)', async () => {
+    it('distinguishes 404 as a gone item with a Go home action (no futile retry)', async () => {
         mockedGet.mockRejectedValue(axiosError(404));
         renderPage();
 
         expect(await screen.findByText('This item no longer exists')).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: 'Go back' })).toBeInTheDocument();
+        // "Go home", not history-back: the previous history entry may be the
+        // player for this same now-deleted item (back-buttons plan: hierarchical
+        // navigation everywhere, never navigate(-1)).
+        expect(screen.getByRole('button', { name: 'Go home' })).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     });
 
@@ -56,7 +59,7 @@ describe('MediaDetailPage error state', () => {
 
         expect(await screen.findByText('Could not load this item')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: 'Go back' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Go home' })).toBeNull();
     });
 
     it('Retry refetches the detail query', async () => {

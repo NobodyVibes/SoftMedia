@@ -66,11 +66,15 @@ export default function MediaDetailPage() {
                 {notFound ? (
                     <button
                         type="button"
-                        onClick={() => navigate(-1)}
+                        // The item is gone, so no parent page can be derived from it —
+                        // home is the one destination that always exists. (Never browser
+                        // history: the previous entry may be the player for this same
+                        // now-deleted item.)
+                        onClick={() => navigate('/')}
                         className="inline-flex items-center gap-2 px-5 py-2.5 min-h-[44px] rounded-lg bg-white/10 hover:bg-white/15 text-white font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
                     >
                         <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-                        Go back
+                        Go home
                     </button>
                 ) : (
                     <button

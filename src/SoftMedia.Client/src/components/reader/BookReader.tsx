@@ -40,6 +40,7 @@ import ShortcutHelpSheet from './ShortcutHelpSheet';
 import TtsNowPlayingBar, { type SleepTimerMode } from './TtsNowPlayingBar';
 import { useSwipe } from '../../hooks/useSwipe';
 import { useTts, chunkTextForTts, type TtsSegment } from '../../hooks/useTts';
+import { playerBackTarget } from '../../lib/backNavigation';
 import {
     useReaderStore,
     useSpread,
@@ -2502,7 +2503,9 @@ export default function BookReader({ item }: BookReaderProps) {
                     toggleImmersive();
                     return;
                 }
-                navigate(-1);
+                // Last Escape layer leaves the reader — to the book's detail page,
+                // never browser history (same rule as the Close button above).
+                navigate(playerBackTarget(item));
                 return;
             }
 
@@ -2531,7 +2534,7 @@ export default function BookReader({ item }: BookReaderProps) {
         return () => window.removeEventListener('keydown', handler);
     }, [
         isPdf, isCbz, isEpub, changePage, navigate, epubNext, epubPrev,
-        immersive, toggleImmersive, rtl, addBookmarkAtCurrent,
+        immersive, toggleImmersive, rtl, addBookmarkAtCurrent, item.id,
         // ER-054 deps
         tocItems.length, toggleFullscreen, readerTheme, setReaderTheme,
         fontSize, setFontSize, zoom, setZoom,
@@ -2761,7 +2764,10 @@ export default function BookReader({ item }: BookReaderProps) {
                     <button
                         type="button"
                         aria-label="Close reader"
-                        onClick={() => navigate(-1)}
+                        // Always the book's detail page, never browser history — the
+                        // reader is launched from home rows, search, and the detail page
+                        // alike, so history-back is entry-dependent (lib/backNavigation.ts).
+                        onClick={() => navigate(playerBackTarget(item))}
                         className="min-w-[44px] min-h-[44px] p-2 hover:bg-gray-700 rounded-full text-white transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
                     >
                         <X size={24} />

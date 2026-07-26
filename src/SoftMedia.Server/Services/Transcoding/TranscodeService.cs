@@ -46,6 +46,16 @@ public class TranscodeService : ITranscodeService
     public const int HlsSegmentDurationSeconds = 6;      // Target segment duration (actual varies)
     public const int MaxCrashRetries = 3;
 
+    // Startup runway: how much of the playlist the FIRST master.m3u8 response should carry.
+    // ffmpeg publishes master.m3u8 as soon as segment 0 closes, so serving "the playlist
+    // exists" hands the player a 6s runway — and a player can only discover later segments
+    // when it RELOADS the playlist, which hls.js does up to 2x target duration (~12s) after
+    // the initial load. The runway must therefore outlast a reload cycle or playback stalls
+    // a few seconds in even though ffmpeg already wrote minutes of output (live-QA 2026-07-25:
+    // a 25x-realtime NVENC session had 168s on disk while the player starved on 6s).
+    public const int StartupRunwaySegments = 4;                    // ~24s of media
+    public static readonly TimeSpan StartupRunwayGrace = TimeSpan.FromSeconds(3);
+
     // Support both .ts (MPEG-TS) and .m4s (fMP4) segment extensions
     private static readonly Regex SegmentPattern = new(@"^seg_(\d+)\.(ts|m4s)$", RegexOptions.Compiled);
 
@@ -164,13 +174,36 @@ public class TranscodeService : ITranscodeService
         _hlsService.GetActualPlaylistDuration(sessionDir, segmentCount);
 
     /// <summary>
-    /// Calculate buffer in seconds
+    /// Calculate buffer in seconds — how much finished output sits between the client's
+    /// playhead and the newest segment on disk. TRANSCODE segments really are ~6s each
+    /// (keyframes are forced on that cadence), but a REMUX (-c copy) can only cut on
+    /// SOURCE keyframes, so its real durations drift far from hls_time: with a 2s-GOP
+    /// source the old (count × 6) estimate called 40s of media "120s", eroding the
+    /// suspend/resume margins to a third of their design size. Sum the playlist's actual
+    /// EXTINF durations instead; the 6s estimate remains the fallback while the playlist
+    /// is missing or lags the segments on disk.
     /// </summary>
     public int CalculateBufferSeconds(TranscodeSession session)
     {
         var bufferSegments = session.LatestSegmentIndex - session.ClientSegmentIndex;
-        return Math.Max(0, bufferSegments) * HlsSegmentDurationSeconds;
+        if (bufferSegments <= 0) return 0;
+
+        // Cumulative duration through seg_latest minus cumulative through seg_client
+        // = the media between the end of the client's segment and the end of the newest.
+        var buffered = GetActualPlaylistDuration(session.SessionDirectory, session.LatestSegmentIndex + 1)
+                     - GetActualPlaylistDuration(session.SessionDirectory, session.ClientSegmentIndex + 1);
+        return BufferSecondsWithFallback(buffered, bufferSegments);
     }
+
+    /// <summary>The fallback rule for <see cref="CalculateBufferSeconds"/>: a non-positive
+    /// playlist-derived value means the playlist lags the segments on disk (or was caught
+    /// mid-rewrite) — estimate from segment count rather than reporting an empty buffer,
+    /// which would spuriously resume a correctly-throttled encoder.
+    /// Public so tests can drive it directly (project convention; no InternalsVisibleTo).</summary>
+    public static int BufferSecondsWithFallback(double playlistDerivedSeconds, int bufferSegments) =>
+        playlistDerivedSeconds > 0
+            ? (int)Math.Round(playlistDerivedSeconds)
+            : Math.Max(0, bufferSegments) * HlsSegmentDurationSeconds;
 
     /// <summary>
     /// Update client position when a segment is requested
@@ -489,7 +522,12 @@ public class TranscodeService : ITranscodeService
                             return existingSession;
                         }
 
-                        return existingSession;
+                        // Only the bitmap burn-in branch reaches here — its session was just
+                        // stopped and deregistered, so control MUST fall through to the fresh-
+                        // session creation below. A `return existingSession` here (the original
+                        // code) handed the controller a corpse whose directory was deleted: the
+                        // playlist request 503'd and the client burned a retry cycle before a
+                        // reload created the burn-in session it could have had immediately.
                         } // end !needsFullRestart
                     }
                 }
@@ -633,13 +671,23 @@ public class TranscodeService : ITranscodeService
             // SR-WI-028: wait for the playlist to appear instead of a fixed 3s sleep —
             // fast starts (remux, hw encode) return in a few hundred ms, slow ones get
             // up to 15s before we hand back a session whose playlist may 404 briefly.
+            // Once it appears, keep waiting BRIEFLY for a startup runway (see
+            // StartupRunwaySegments): the grace window is capped so an encoder that simply
+            // cannot produce those segments yet never has its time-to-first-frame held
+            // hostage — it serves whatever exists, exactly as before.
             var playlistPath = Path.Combine(sessionDir, "master.m3u8");
             var pollDeadline = DateTime.UtcNow.AddSeconds(15);
+            DateTime? runwayDeadline = null;
             while (DateTime.UtcNow < pollDeadline)
             {
                 try
                 {
-                    if (File.Exists(playlistPath) && new FileInfo(playlistPath).Length > 0) break;
+                    if (File.Exists(playlistPath) && new FileInfo(playlistPath).Length > 0)
+                    {
+                        runwayDeadline ??= DateTime.UtcNow + StartupRunwayGrace;
+                        var published = _hlsService.GetPlaylistInfo(sessionDir);
+                        if (StartupRunwayReady(published, DateTime.UtcNow >= runwayDeadline)) break;
+                    }
                 }
                 catch (IOException) { /* transient — keep polling */ }
                 if (process.HasExited) break; // startup failure — no point waiting out the clock
@@ -660,6 +708,19 @@ public class TranscodeService : ITranscodeService
             }
         }
     }
+
+    /// <summary>
+    /// Is the freshly published playlist good enough to hand to a player? Ready when it
+    /// carries a full startup runway, when the stream is already fully transcoded, or when
+    /// the grace window expired (a slow encoder serves what it has rather than delaying the
+    /// first frame). <paramref name="published"/> is null while the playlist is unreadable
+    /// mid-rewrite — that is "no runway yet", never "ready".
+    /// Public so tests can drive it directly (project convention; no InternalsVisibleTo).
+    /// </summary>
+    public static bool StartupRunwayReady(HlsPlaylistInfo? published, bool graceExpired) =>
+        published is { HasEndList: true }
+        || published?.SegmentCount >= StartupRunwaySegments
+        || graceExpired;
 
     /// <summary>
     /// Suspend the FFmpeg process for a session (throttle when buffer is full).

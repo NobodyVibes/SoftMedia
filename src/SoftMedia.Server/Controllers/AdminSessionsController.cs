@@ -22,9 +22,6 @@ namespace SoftMedia.Server.Controllers;
 [Route("api/v1/admin/sessions")]
 public class AdminSessionsController : ControllerBase
 {
-    /// <summary>Matches ffmpeg's <c>-hls_time 6</c> — used to estimate the transcode playhead.</summary>
-    private const double SegmentSeconds = 6;
-
     private readonly ITranscodeService _transcodeService;
     private readonly IActiveStreamRegistry _streamRegistry;
     private readonly ITerminatedSessionRegistry _terminatedSessions;
@@ -105,11 +102,15 @@ public class AdminSessionsController : ControllerBase
                 UserName: u?.Username ?? "(deleted user)",
                 MediaId: s.Key.MediaId,
                 MediaTitle: m?.Title ?? "(removed item)",
-                // Playhead estimate: the session's start offset plus the segments the
-                // CLIENT has actually requested (LatestSegmentIndex is how far ffmpeg
-                // got, not how far the viewer is). Clamped into [0, duration] — near
-                // the end the estimate can overshoot by the client's prefetch buffer.
-                PositionSeconds: ClampPosition((s.SeekPosition ?? 0) + s.ClientSegmentIndex * SegmentSeconds, m?.Duration ?? 0),
+                // Playhead estimate: the session's start offset plus the playlist duration
+                // through the segments the CLIENT has actually requested (LatestSegmentIndex
+                // is how far ffmpeg got, not how far the viewer is). Actual EXTINF durations,
+                // not index × 6 — remux segments cut on source keyframes and drift far from
+                // hls_time. Clamped into [0, duration] — near the end the estimate can
+                // overshoot by the client's prefetch buffer.
+                PositionSeconds: ClampPosition(
+                    (s.SeekPosition ?? 0) + _transcodeService.GetActualPlaylistDuration(s.SessionDirectory, s.ClientSegmentIndex),
+                    m?.Duration ?? 0),
                 DurationSeconds: m?.Duration ?? 0,
                 StartedAt: s.SessionStartTime,
                 Resolution: s.TargetResolution,

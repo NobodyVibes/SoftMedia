@@ -319,7 +319,13 @@ public class TranscodeController : ControllerBase
             var audioCodec = storedPlan?.AudioCodec;
             var audioChannels = storedPlan?.AudioChannels ?? 0;
 
-            _logger.LogInformation("Starting {Method} for media {Id} (user={UserId}){Restored}",
+            // Debug, not Information: this fires on EVERY master.m3u8 request — hls.js
+            // reloads the EVENT playlist every ~3s (even while paused), and a wall of
+            // "Starting transcode" lines for reloads that merely re-serve the existing
+            // session reads like a restart storm (it derailed the 2026-07-25 stall
+            // diagnosis). Real starts are logged at Information by TranscodeService
+            // ("Created new transcode session" / "Starting FFmpeg" with full args).
+            _logger.LogDebug("Ensuring {Method} for media {Id} (user={UserId}){Restored}",
                 remux ? "remux" : "transcode", id, userId, storedPlan != null ? " [plan restored]" : "");
 
             await _transcodeService.StartTranscodeAsync(id, userId, mediaItem.Path, sub, seek, resolution, codec: codec, preserveHdr: hdr, audioTrack: audio, maxBitrate: bitrate, burnSubtitles: burnSubtitles, sid: sid, remux: remux, audioCopy: audioCopy, audioCodec: audioCodec, audioChannels: audioChannels);
@@ -327,6 +333,12 @@ public class TranscodeController : ControllerBase
             // Stamp the playing client on the freshly-started session so the admin dashboard has
             // a device/IP from the first row it renders (segments keep it refreshed thereafter).
             _sessionService.SetClientDevice(id, userId, sub, sid, Request.GetClientDevice());
+
+            // The playlist GROWS for the life of the session — every reload is how the player
+            // discovers newly transcoded segments. A cached copy (browser heuristic caching
+            // applies: this response carries no validators) would freeze that discovery and
+            // present as a stall. Segments themselves stay cacheable; only this must not be.
+            Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
 
             var token = Request.GetToken();
             return await _streamResultService.GenerateMasterPlaylistResultAsync(id, userId, sub, token, sid);

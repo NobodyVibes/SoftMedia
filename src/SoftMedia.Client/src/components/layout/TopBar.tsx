@@ -7,6 +7,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useDebounce } from '../../hooks/useDebounce';
 import { searchService } from '../../services/searchService';
+import { playlistService } from '../../services/playlistService';
 import { notificationService, type SystemNotification } from '../../services/notificationService';
 import { libraryService } from '../../services/libraryService';
 import type { LibraryScanJob } from '../../types';
@@ -44,6 +45,25 @@ export default function TopBar({ isMobileNavOpen = false, onOpenMobileNav }: Top
         queryKey: ['globalSearch', debouncedQuery],
         queryFn: () => searchService.globalSearch(debouncedQuery),
         enabled: debouncedQuery.length >= 2,
+        staleTime: 30000,
+    });
+
+    // Playlists are searched separately: they are not media items and belong to no
+    // library, so /media/search has nowhere to put them. Its own query so a slow or
+    // failed playlist lookup never holds back or blanks the library results.
+    const { data: playlistResults = [] } = useQuery({
+        queryKey: ['playlistSearch', debouncedQuery],
+        queryFn: () => playlistService.search(debouncedQuery),
+        enabled: debouncedQuery.length >= 2,
+        staleTime: 30000,
+    });
+
+    // Library-name matching happens client-side: the list is tiny, already
+    // ACL-filtered by the server, and cached app-wide under this key (the
+    // sidebar keeps it warm), so finding "Test" the LIBRARY costs nothing.
+    const { data: allLibraries = [] } = useQuery({
+        queryKey: ['libraries'],
+        queryFn: libraryService.getAll,
         staleTime: 30000,
     });
 
@@ -188,6 +208,9 @@ export default function TopBar({ isMobileNavOpen = false, onOpenMobileNav }: Top
                         {showSearchResults && (
                             <GlobalSearchResults
                                 results={searchResults}
+                                playlists={playlistResults}
+                                libraries={allLibraries}
+                                query={debouncedQuery}
                                 isLoading={isSearching}
                                 onClose={handleSearchClose}
                             />

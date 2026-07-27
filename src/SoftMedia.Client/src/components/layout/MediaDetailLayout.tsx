@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
-import { ArrowLeft, Play, Heart, Share2, Eye, Star, Clapperboard, Loader2, RotateCcw } from 'lucide-react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Play, Heart, Share2, Eye, Star, Clapperboard, Loader2, RotateCcw } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { getGenreColors } from '../../lib/genreColors';
 import { resolveHeroPosterUrl, resolveBackdropUrl } from '../../lib/mediaImageUrl';
 import { WatchlistButton } from '../details/WatchlistButton';
+import { BackButton } from '../ui/BackButton';
 import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 import { useExtras, findTrailer } from '../../hooks/useExtras';
 import { ExtraPlayerModal } from '../details/ExtraPlayerModal';
@@ -36,6 +37,12 @@ interface MediaDetailLayoutProps {
     resumePositionSeconds?: number | null;
     /** Secondary action of the split control — start playback ignoring the resume position. */
     onPlayFromBeginning?: () => void;
+    /**
+     * Names what Resume actually resumes, rendered as the button's second line.
+     * A series' Resume plays an episode, not the show, so it says which one
+     * ("S2 E4 · The You You Are"). Only used alongside a resume position.
+     */
+    resumeCaption?: string;
     /**
      * Disables Play with a spinner while a prerequisite of playback is still
      * loading (e.g. an album's track list) — prevents a silent no-op click.
@@ -63,11 +70,10 @@ export function formatResumeTime(seconds: number): string {
         : `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride, customMetadata, actionSlot, resumePositionSeconds, onPlayFromBeginning, playPending, playLabel, playIcon }: MediaDetailLayoutProps) {
+export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride, customMetadata, actionSlot, resumePositionSeconds, onPlayFromBeginning, resumeCaption, playPending, playLabel, playIcon }: MediaDetailLayoutProps) {
     // Media URLs below embed the media token; re-render when it rotates so a
     // stale token can't leave the artwork permanently broken.
     useMediaTokenRefresh();
-    const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const queryClient = useQueryClient();
 
@@ -137,22 +143,12 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
 
             {/* Content */}
             <div className="relative z-10 w-full px-4 lg:px-6 pt-4 lg:pt-6 pb-12">
-                <button
-                    onClick={() => {
-                        // Back is HIERARCHICAL, never browser history — the player's own
-                        // back lands here, so history-back would bounce straight back INTO
-                        // the player. detailBackTarget walks one level up the containment
-                        // chain (photo→album, episode→series, track→album, album→artist,
-                        // else→library); see lib/backNavigation.ts.
-                        navigate(detailBackTarget(item, searchParams.get('album')));
-                    }}
-                    className="mb-8 flex items-center gap-2 text-gray-300 hover:text-white transition-colors group"
-                >
-                    <div className="p-2 rounded-full bg-black/20 group-hover:bg-black/40 transition-colors">
-                        <ArrowLeft className="w-5 h-5" />
-                    </div>
-                    <span className="font-medium">Back</span>
-                </button>
+                {/* Back is HIERARCHICAL, never browser history — the player's own
+                    back lands here, so history-back would bounce straight back INTO
+                    the player. detailBackTarget walks one level up the containment
+                    chain (photo→album, episode→series, track→album, album→artist,
+                    else→library); see lib/backNavigation.ts. */}
+                <BackButton to={detailBackTarget(item, searchParams.get('album'))} />
 
                 <div className="flex flex-col lg:flex-row gap-8 lg:gap-12">
                     {/* Photos skip the WHOLE sidebar column: the detail view IS the photo
@@ -208,9 +204,24 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                         ) : (
                                             playIcon ?? <Play className="w-6 h-6 fill-current" aria-hidden="true" />
                                         )}
-                                        {hasResume
-                                            ? `Resume from ${formatResumeTime(resumePositionSeconds ?? 0)}`
-                                            : playLabel ?? 'Play'}
+                                        {/* With a caption the control goes two-line: the action on
+                                            top, what it will actually play underneath. On a series
+                                            Resume plays an episode, and which one shouldn't be a
+                                            guess — keeping it inside the button ties the answer to
+                                            the thing it describes. Long titles ellipsize rather
+                                            than wrapping the sidebar. */}
+                                        {hasResume && resumeCaption ? (
+                                            <span className="flex min-w-0 flex-col items-start leading-tight">
+                                                <span>Resume from {formatResumeTime(resumePositionSeconds ?? 0)}</span>
+                                                <span className="max-w-full truncate text-xs font-medium text-white/75">
+                                                    {resumeCaption}
+                                                </span>
+                                            </span>
+                                        ) : hasResume ? (
+                                            `Resume from ${formatResumeTime(resumePositionSeconds ?? 0)}`
+                                        ) : (
+                                            playLabel ?? 'Play'
+                                        )}
                                     </button>
 
                                     {/* SR-WI-053 — start-over escape hatch: only when a resume

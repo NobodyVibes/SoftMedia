@@ -129,6 +129,10 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const [bufferedTime, setBufferedTime] = useState(0);
     const [volume, setVolume] = useState(1);
     const [isMuted, setIsMuted] = useState(false);
+    const [showVolumeSlider, setShowVolumeSlider] = useState(false);
+    const volumeHideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const volumeDraggingRef = useRef(false);
+    const volumePointerInsideRef = useRef(false);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [showControls, setShowControls] = useState(true);
     const [playbackSpeed, setPlaybackSpeed] = useState(1);
@@ -510,6 +514,45 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             resetControlsTimeout();
         }
     };
+
+    // Volume popup visibility is driven by state rather than CSS :hover so the slider
+    // survives two situations plain group-hover cannot: the trip from the mute button up
+    // into the popup, and a drag whose pointer wanders outside the popup box (the range
+    // input keeps pointer capture, but mouseleave still fires on the wrapper).
+    const openVolumeSlider = () => {
+        if (volumeHideTimeoutRef.current) {
+            clearTimeout(volumeHideTimeoutRef.current);
+            volumeHideTimeoutRef.current = null;
+        }
+        setShowVolumeSlider(true);
+        handleMenuInteraction(true);
+    };
+
+    const closeVolumeSlider = () => {
+        if (volumeDraggingRef.current) return; // reasserted on pointerup instead
+        handleMenuInteraction(false);
+        if (volumeHideTimeoutRef.current) clearTimeout(volumeHideTimeoutRef.current);
+        volumeHideTimeoutRef.current = setTimeout(() => {
+            volumeHideTimeoutRef.current = null;
+            setShowVolumeSlider(false);
+        }, 250);
+    };
+
+    const handleVolumeDragStart = () => {
+        volumeDraggingRef.current = true;
+        const endDrag = () => {
+            window.removeEventListener('pointerup', endDrag);
+            window.removeEventListener('pointercancel', endDrag);
+            volumeDraggingRef.current = false;
+            if (!volumePointerInsideRef.current) closeVolumeSlider();
+        };
+        window.addEventListener('pointerup', endDrag);
+        window.addEventListener('pointercancel', endDrag);
+    };
+
+    useEffect(() => () => {
+        if (volumeHideTimeoutRef.current) clearTimeout(volumeHideTimeoutRef.current);
+    }, []);
 
     // Helper to get storage key for "Last Used" track
     // MOVED usage to hook, but we still use LAST USED logic? 
@@ -2225,7 +2268,13 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         {/* Right: Settings controls */}
                         <div className="flex items-center gap-2 flex-1 justify-end">
                             {/* Volume */}
-                            <div className="relative group/volume">
+                            <div
+                                className="relative"
+                                onMouseEnter={() => { volumePointerInsideRef.current = true; openVolumeSlider(); }}
+                                onMouseLeave={() => { volumePointerInsideRef.current = false; closeVolumeSlider(); }}
+                                onFocus={openVolumeSlider}
+                                onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) closeVolumeSlider(); }}
+                            >
                                 <button type="button" onClick={toggleMute} aria-label={isMuted || volume === 0 ? 'Unmute' : 'Mute'} className="text-white/70 hover:text-white transition-colors p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" title="Mute (M)">
                                     {isMuted || volume === 0 ? (
                                         <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -2237,9 +2286,13 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                         </svg>
                                     )}
                                 </button>
-                                {/* Vertical volume slider popup */}
-                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 opacity-0 scale-y-0 origin-bottom group-hover/volume:opacity-100 group-hover/volume:scale-y-100 pointer-events-none group-hover/volume:pointer-events-auto transition-all duration-200 ease-out">
-                                    <div className="bg-black/90 rounded-lg px-3 py-4 flex flex-col items-center shadow-xl border border-white/10">
+                                {/* Vertical volume slider popup. The bottom padding (not margin) is the
+                                    hover bridge: it keeps the popup's hit area flush with the button so
+                                    the cursor never crosses dead space on its way up to the slider. */}
+                                <div className={`absolute bottom-full left-1/2 -translate-x-1/2 pb-2 origin-bottom transition-all duration-200 ease-out ${showVolumeSlider ? 'opacity-100 scale-y-100 pointer-events-auto' : 'opacity-0 scale-y-0 pointer-events-none'}`}>
+                                    {/* Fixed width so the box does not resize (and re-centre) as the
+                                        percentage swings between 1 and 3 digits. */}
+                                    <div className="w-16 bg-black/90 rounded-lg px-3 py-4 flex flex-col items-center shadow-xl border border-white/10">
                                         <input
                                             type="range"
                                             min="0"
@@ -2247,10 +2300,12 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                             step="0.05"
                                             value={isMuted ? 0 : volume}
                                             onChange={handleVolumeChange}
+                                            onPointerDown={handleVolumeDragStart}
+                                            aria-label="Volume"
                                             className="h-24 accent-blue-500 cursor-pointer"
                                             style={{ writingMode: 'vertical-lr', transform: 'rotate(180deg)' }}
                                         />
-                                        <span className="text-white/70 text-xs mt-2">{Math.round((isMuted ? 0 : volume) * 100)}%</span>
+                                        <span className="text-white/70 text-xs mt-2 tabular-nums">{Math.round((isMuted ? 0 : volume) * 100)}%</span>
                                     </div>
                                 </div>
                             </div>

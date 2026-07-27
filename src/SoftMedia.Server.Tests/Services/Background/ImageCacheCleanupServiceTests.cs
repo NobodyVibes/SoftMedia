@@ -128,6 +128,67 @@ public class ImageCacheCleanupServiceTests : IDisposable
         Assert.False(File.Exists(b));
     }
 
+    /// A row left pointing at the provider while its poster is already cached on disk is
+    /// re-fetched through /api/v1/image/proxy on every library view, and nothing else ever
+    /// rewrites the column (the item looks complete to MetadataEnrichmentPolicy). The sweep
+    /// adopts the cached file instead.
+    [Fact]
+    public async Task RunOnce_PointsRemotePosterRowsAtArtworkAlreadyCachedOnDisk()
+    {
+        var (liveId, _) = SeedRows();
+        Touch("movies", $"{liveId}_poster.jpg");
+
+        using (var scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var item = await db.MediaItems.FirstAsync(m => m.Id == liveId);
+            item.PosterUrl = "https://m.media-amazon.com/images/M/poster.jpg";
+            db.LibraryRecentCaches.Add(new LibraryRecentCache
+            {
+                LibraryId = item.LibraryId,
+                CachedJson = "[]",
+                LastUpdated = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await _worker.RunOnceAsync();
+
+        using (var scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var item = await db.MediaItems.FirstAsync(m => m.Id == liveId);
+            Assert.Equal($"/cache/images/movies/{liveId}_poster.jpg", item.PosterUrl);
+            Assert.Empty(await db.LibraryRecentCaches.ToListAsync());
+        }
+    }
+
+    /// Sidecar copies ("_poster_local") and season posters are owned by other columns/flags —
+    /// adopting them under the item's own PosterUrl would mis-attribute the art.
+    [Fact]
+    public async Task RunOnce_DoesNotAdoptSidecarOrSeasonKeys()
+    {
+        var (liveId, _) = SeedRows();
+        Touch("movies", $"{liveId}_poster_local.jpg");
+        Touch("tv", $"{liveId}_season01_poster.jpg");
+
+        const string remote = "https://m.media-amazon.com/images/M/poster.jpg";
+        using (var scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            (await db.MediaItems.FirstAsync(m => m.Id == liveId)).PosterUrl = remote;
+            await db.SaveChangesAsync();
+        }
+
+        await _worker.RunOnceAsync();
+
+        using (var scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Equal(remote, (await db.MediaItems.FirstAsync(m => m.Id == liveId)).PosterUrl);
+        }
+    }
+
     [Fact]
     public void Constructor_RegistersAdminVisibleManuallyTriggerableTask()
     {

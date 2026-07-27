@@ -237,6 +237,7 @@ export default memo(function MediaCard({ item, libraryType, groupReady, onImageL
                             {isTrackCard && (
                                 <button
                                     type="button"
+                                    data-add-to-playlist-trigger
                                     aria-label={`Add ${item.title ?? 'track'} to playlist`}
                                     aria-haspopup="menu"
                                     aria-expanded={showPlaylistMenu}

@@ -534,6 +534,9 @@ namespace SoftMedia.Server.Migrations
                     b.Property<bool>("IsRetryExhausted")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Isbn")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("LastIntroDetectionUtc")
                         .HasColumnType("TEXT");
 
@@ -563,6 +566,9 @@ namespace SoftMedia.Server.Migrations
 
                     b.Property<string>("Overview")
                         .HasColumnType("TEXT");
+
+                    b.Property<int?>("PageCount")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Path")
                         .IsRequired()
@@ -797,6 +803,10 @@ namespace SoftMedia.Server.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("CoverImagePath")
+                        .HasMaxLength(400)
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
@@ -807,12 +817,19 @@ namespace SoftMedia.Server.Migrations
                     b.Property<bool>("IsPublic")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("Kind")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(120)
                         .HasColumnType("TEXT");
 
                     b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SmartRules")
+                        .HasMaxLength(2000)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("UpdatedAt")

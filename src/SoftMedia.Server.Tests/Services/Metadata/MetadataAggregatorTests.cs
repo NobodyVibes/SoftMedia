@@ -133,6 +133,106 @@ public class MetadataAggregatorTests : IDisposable
         Assert.Equal("mb-id-123", savedItem.MusicBrainzId);
     }
 
+    // ──────────────────────────────────────────────────────── book metadata
+
+    [Fact]
+    public async Task EnrichMediaItemAsync_ShouldPersistBookPublisherIsbnAndPageCount()
+    {
+        // These three used to be read off MetadataResult by nobody: there were no columns to
+        // put them in, so OpenLibrary's answer was fetched and then dropped, which is why
+        // every book showed Publisher/ISBN/Pages as blank.
+        var aggregator = CreateAggregator();
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "The Shining", Type = MediaType.Book };
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Book))
+            .ReturnsAsync(new MetadataResult
+            {
+                Title = "The Shining",
+                Publisher = "Doubleday",
+                Isbn = "978-0-385-12167-5",
+                PageCount = 447
+            });
+
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Book);
+
+        var saved = await _dbContext.MediaItems.FindAsync(item.Id);
+        Assert.Equal("Doubleday", saved!.Studio);
+        Assert.Equal("9780385121675", saved.Isbn);   // normalised on the way in
+        Assert.Equal(447, saved.PageCount);
+    }
+
+    [Fact]
+    public async Task EnrichMediaItemAsync_ShouldNotOverwriteFileSourcedIsbnAndPageCount()
+    {
+        // The scanner already read these out of the file itself, which describes the exact
+        // edition on disk. A provider result describes the work and may be a different
+        // printing, so it must fill gaps only — never displace a PDF's real page count.
+        var aggregator = CreateAggregator();
+        var item = new MediaItem
+        {
+            Id = Guid.NewGuid(),
+            Title = "The Shining",
+            Type = MediaType.Book,
+            Isbn = "0385121679",
+            PageCount = 512
+        };
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Book))
+            .ReturnsAsync(new MetadataResult
+            {
+                Title = "The Shining",
+                Isbn = "9780385121675",
+                PageCount = 447
+            });
+
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Book);
+
+        var saved = await _dbContext.MediaItems.FindAsync(item.Id);
+        Assert.Equal("0385121679", saved!.Isbn);
+        Assert.Equal(512, saved.PageCount);
+    }
+
+    [Fact]
+    public async Task EnrichMediaItemAsync_ShouldPreferExplicitStudioOverPublisher()
+    {
+        // Studio is the shared producing-organisation column; Publisher is the book-flavoured
+        // alias that only fills it when nothing better arrived.
+        var aggregator = CreateAggregator();
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Book", Type = MediaType.Book };
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Book))
+            .ReturnsAsync(new MetadataResult { Studio = "Scribner", Publisher = "Fallback Press" });
+
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Book);
+
+        var saved = await _dbContext.MediaItems.FindAsync(item.Id);
+        Assert.Equal("Scribner", saved!.Studio);
+    }
+
+    [Fact]
+    public async Task EnrichMediaItemAsync_ShouldRejectJunkIsbnFromProvider()
+    {
+        var aggregator = CreateAggregator();
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Book", Type = MediaType.Book };
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Book))
+            .ReturnsAsync(new MetadataResult { Isbn = "OL12345W", PageCount = 0 });
+
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Book);
+
+        var saved = await _dbContext.MediaItems.FindAsync(item.Id);
+        Assert.Null(saved!.Isbn);
+        Assert.Null(saved.PageCount);   // a zero page count is worse than no page count
+    }
+
     [Fact]
     public async Task EnrichMediaItemAsync_ShouldCallImageExtractor_ForSeriesWithSeasons()
     {
@@ -250,6 +350,84 @@ public class MetadataAggregatorTests : IDisposable
         // Assert — existing PosterUrl should be preserved
         var savedItem = await _dbContext.MediaItems.FindAsync(item.Id);
         Assert.Equal("http://example.com/existing-poster.jpg", savedItem!.PosterUrl);
+    }
+
+    /// <summary>
+    /// Lost-update regression: ImageDownloadQueueService caches the poster and writes
+    /// "/cache/images/…" back on its OWN DbContext, often within milliseconds of the enqueue.
+    /// If this context still had PosterUrl marked modified, MetadataQueueService's
+    /// post-enrichment SaveChanges would carry the stale provider URL and clobber that path —
+    /// which is exactly why movie posters were re-fetched through /api/v1/image/proxy on every
+    /// library view even though the file sat in wwwroot/cache/images/movies. The promotion must
+    /// therefore be flushed BEFORE the extractor hands the URL to the queue.
+    /// </summary>
+    [Fact]
+    public async Task EnrichMediaItemAsync_FlushesPromotedPosterUrl_BeforeQueueingImageDownloads()
+    {
+        var aggregator = CreateAggregator();
+        var item = new MediaItem { Id = Guid.NewGuid(), Title = "Race Movie", Type = MediaType.Movie };
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        bool? posterStillModifiedAtEnqueue = null;
+        _mockImageExtractor
+            .Setup(x => x.ExtractAndQueueAsync(It.IsAny<MediaItem>(), It.IsAny<MetadataResult>()))
+            .Callback(() => posterStillModifiedAtEnqueue =
+                _dbContext.Entry(item).Property(m => m.PosterUrl).IsModified)
+            .ReturnsAsync(true);
+
+        _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Movie))
+            .ReturnsAsync(new MetadataResult
+            {
+                Title = "Race Movie",
+                PosterUrl = "http://example.com/race-poster.jpg"
+            });
+
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie);
+
+        Assert.False(posterStillModifiedAtEnqueue,
+            "PosterUrl must be persisted before the image queue is handed the URL, otherwise "
+            + "the caller's later SaveChanges overwrites the queue's cached /cache/images path.");
+        Assert.Equal("http://example.com/race-poster.jpg", item.PosterUrl);
+    }
+
+    /// <summary>
+    /// Once the art is cached on disk the column owns the "/cache/images/…" path: re-stamping
+    /// the provider URL on the next enrichment would flip the library back onto the image proxy
+    /// (and re-download the identical bytes into cache/images/proxy) until the queue caught up.
+    /// The download is still queued — the extractor reads MetadataResult, not this column — so a
+    /// cache file that went missing still heals under the same key.
+    /// </summary>
+    [Fact]
+    public async Task EnrichMediaItemAsync_KeepsCachedPosterPath_WhenProviderReturnsRemoteUrl()
+    {
+        var aggregator = CreateAggregator();
+        var cachedPath = "/cache/images/movies/" + Guid.NewGuid() + "_poster.jpg";
+        var item = new MediaItem
+        {
+            Id = Guid.NewGuid(),
+            Title = "Cached Movie",
+            Type = MediaType.Movie,
+            PosterUrl = cachedPath
+        };
+        _dbContext.MediaItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        _mockRouter.Setup(x => x.FetchMetadataAsync(item, LibraryType.Movie))
+            .ReturnsAsync(new MetadataResult
+            {
+                Title = "Cached Movie",
+                PosterUrl = "http://example.com/provider-poster.jpg"
+            });
+
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie);
+
+        var savedItem = await _dbContext.MediaItems.FindAsync(item.Id);
+        Assert.Equal(cachedPath, savedItem!.PosterUrl);
+        _mockImageExtractor.Verify(x => x.ExtractAndQueueAsync(
+            It.Is<MediaItem>(m => m.Id == item.Id),
+            It.Is<MetadataResult>(r => r.PosterUrl == "http://example.com/provider-poster.jpg")),
+            Times.Once);
     }
 
     [Fact]

@@ -24,6 +24,16 @@ export interface MediaItem {
     progress?: number; // 0-100 for continue watching
     playbackPosition?: number; // Resume position in seconds
     description?: string;
+    /** Producing organisation: studio/network for video, **publisher** for books. */
+    studio?: string;
+    /** Primary creator: director for video, **author** for books. Multi-author books also
+     *  list every author in `cast` with the character "Author". */
+    director?: string;
+    /** Books only. Normalised to digits (no hyphens). */
+    isbn?: string;
+    /** Books only — display figure. Page navigation in the reader uses `BookInfo.pageCount`
+     *  from `/books/{id}/info`, which counts the real document, not this. */
+    pageCount?: number;
     container?: string;
     videoCodec?: string;
     audioCodec?: string;

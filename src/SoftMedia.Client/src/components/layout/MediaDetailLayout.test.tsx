@@ -85,6 +85,24 @@ describe('resume / start-over split control', () => {
         expect(onPlayFromBeginning).toHaveBeenCalledTimes(1);
     });
 
+    it('carries the episode caption as the Resume button\'s second line', () => {
+        renderLayout({
+            onPlayFromBeginning: () => {},
+            resumePositionSeconds: 900,
+            resumeCaption: 'S2 E4 · The You You Are',
+        });
+
+        const resume = screen.getByRole('button', { name: /Resume from 15:00/ });
+        expect(resume).toHaveTextContent('S2 E4 · The You You Are');
+        // Not a separate control — clicking anywhere on the block resumes.
+        expect(screen.getAllByRole('button', { name: /The You You Are/ })).toHaveLength(1);
+    });
+
+    it('hides the caption when there is nothing to resume', () => {
+        renderLayout({ resumeCaption: 'S2 E4 · The You You Are' });
+        expect(screen.queryByText('S2 E4 · The You You Are')).toBeNull();
+    });
+
     it('stays a single Play when a position exists but no start-over handler is wired', () => {
         renderLayout({ resumePositionSeconds: 120 });
         expect(screen.getByRole('button', { name: /^Play$/ })).toBeInTheDocument();

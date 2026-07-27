@@ -1,6 +1,7 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Layers, Sparkles, Loader2 } from 'lucide-react';
+import { Layers, Sparkles, Loader2 } from 'lucide-react';
+import { BackButton } from '../components/ui/BackButton';
 import { collectionService, type CollectionEntry } from '../services/collectionService';
 import { resolveCardPosterUrl, resolveHeroPosterUrl } from '../lib/mediaImageUrl';
 import { useMediaTokenRefresh } from '../hooks/useMediaTokenRefresh';
@@ -42,13 +43,7 @@ export default function CollectionDetailPage() {
     return (
         <div className="min-h-screen bg-gradient-to-br from-[#0a0a0a] via-[#121212] to-[#1a1a1a] p-6 text-white">
             <div className="max-w-6xl mx-auto">
-                <Link
-                    to={data.items[0] ? `/media/${data.items[0].media.id}` : '/'}
-                    className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-white focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded mb-6 px-2 py-1"
-                >
-                    <ArrowLeft className="w-4 h-4" />
-                    Back
-                </Link>
+                <BackButton to={data.items[0] ? `/media/${data.items[0].media.id}` : '/'} />
 
                 <header className="flex flex-col sm:flex-row sm:items-end gap-6 mb-8">
                     <div className="w-32 h-48 sm:w-40 sm:h-60 rounded-xl overflow-hidden bg-brand-gradient flex items-center justify-center shrink-0 shadow-2xl">

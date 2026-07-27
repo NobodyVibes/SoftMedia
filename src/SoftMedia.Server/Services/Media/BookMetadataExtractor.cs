@@ -115,8 +115,8 @@ public sealed class BookMetadataExtractor : IBookMetadataExtractor
         // <dc:identifier opf:scheme="ISBN">978-...</dc:identifier>
         var isbn = opf.Descendants()
             .Where(e => e.Name.LocalName.Equals("identifier", StringComparison.OrdinalIgnoreCase))
-            .Select(e => e.Value?.Trim() ?? string.Empty)
-            .FirstOrDefault(v => LooksLikeIsbn(v));
+            .Select(e => IsbnNormalizer.Normalize(e.Value))
+            .FirstOrDefault(v => v != null);
 
         return new BookFileMetadata(
             Title: string.IsNullOrWhiteSpace(title) ? null : title,
@@ -124,9 +124,64 @@ public sealed class BookMetadataExtractor : IBookMetadataExtractor
             Year: year,
             Publisher: string.IsNullOrWhiteSpace(publisher) ? null : publisher,
             Description: string.IsNullOrWhiteSpace(description) ? null : StripHtml(description),
-            Isbn: string.IsNullOrWhiteSpace(isbn) ? null : NormalizeIsbn(isbn),
-            Language: string.IsNullOrWhiteSpace(language) ? null : language
+            Isbn: isbn,
+            Language: string.IsNullOrWhiteSpace(language) ? null : language,
+            PageCount: ExtractEpubPageCount(opf)
         );
+    }
+
+    /// <summary>
+    /// EPUB is reflowable, so there is no page count to compute — but publishers that also
+    /// ship a print edition often declare it, and Calibre stamps it when a conversion knew
+    /// the source pagination. We read only those explicit declarations. Deriving a number
+    /// from the spine (chapter files) or the character count would produce a figure that
+    /// matches no edition of the book and silently contradicts the provider's, so when
+    /// nothing is declared we return null and let OpenLibrary supply the print figure.
+    /// </summary>
+    private static int? ExtractEpubPageCount(XDocument opf)
+    {
+        foreach (var meta in opf.Descendants().Where(e =>
+                     e.Name.LocalName.Equals("meta", StringComparison.OrdinalIgnoreCase)))
+        {
+            // EPUB 3: <meta property="schema:numberOfPages">304</meta>
+            var property = meta.Attribute("property")?.Value?.Trim();
+            if (IsPageCountKey(property) && TryParsePageCount(meta.Value, out var fromProperty))
+                return fromProperty;
+
+            // EPUB 2 / Calibre: <meta name="calibre:page_count" content="304"/>
+            var name = meta.Attribute("name")?.Value?.Trim();
+            if (IsPageCountKey(name) && TryParsePageCount(meta.Attribute("content")?.Value, out var fromName))
+                return fromName;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Exact-match allowlist of the metadata keys that genuinely mean "pages". A looser
+    /// "contains page" test would catch <c>calibre:page_progression</c> and
+    /// <c>rendition:pagespreadcenter</c>, neither of which is a count.
+    /// </summary>
+    private static bool IsPageCountKey(string? key) => key is not null && key.Trim() switch
+    {
+        "schema:numberOfPages" => true,
+        "numberOfPages" => true,
+        "calibre:page_count" => true,
+        "page_count" => true,
+        _ => false,
+    };
+
+    private static bool TryParsePageCount(string? raw, out int pages)
+    {
+        pages = 0;
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        if (!int.TryParse(raw.Trim(), System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+            return false;
+        // Guard against a "0" placeholder and against absurd values from a mis-typed field —
+        // either would render as a confidently wrong "Pages" on the detail page.
+        if (parsed <= 0 || parsed > 100_000) return false;
+        pages = parsed;
+        return true;
     }
 
     // ──────────────────────────────────────────────────────────────────────── PDF
@@ -136,12 +191,17 @@ public sealed class BookMetadataExtractor : IBookMetadataExtractor
         // PdfPig is strictly synchronous and can throw on encrypted / malformed PDFs.
         // The outer try/catch in ExtractAsync handles those.
         using var doc = PdfDocument.Open(filePath);
-        var info = doc.Information;
-        if (info == null) return null;
 
-        var title = string.IsNullOrWhiteSpace(info.Title) ? null : info.Title.Trim();
-        var author = NormalizeCreator(info.Author);
-        int? year = ExtractYear(info.CreationDate);
+        // The page tree is the one field every PDF has, and it is the true page count of
+        // the file on disk. Read it before touching Information so a PDF with an empty or
+        // absent Info dictionary — scanner output, most public-domain rips — still
+        // contributes its page count instead of falling out of the null-return below.
+        int? pageCount = doc.NumberOfPages > 0 ? doc.NumberOfPages : null;
+
+        var info = doc.Information;
+        var title = string.IsNullOrWhiteSpace(info?.Title) ? null : info.Title.Trim();
+        var author = NormalizeCreator(info?.Author);
+        int? year = ExtractYear(info?.CreationDate);
 
         // Reject the common "default" titles that stock PDF writers stamp in — those
         // are worse than the filename because they trick the downstream provider
@@ -151,7 +211,7 @@ public sealed class BookMetadataExtractor : IBookMetadataExtractor
             title = null;
         }
 
-        if (title == null && author == null && !year.HasValue)
+        if (title == null && author == null && !year.HasValue && !pageCount.HasValue)
             return null;
 
         return new BookFileMetadata(
@@ -161,7 +221,8 @@ public sealed class BookMetadataExtractor : IBookMetadataExtractor
             Publisher: null,
             Description: null,
             Isbn: null,
-            Language: null
+            Language: null,
+            PageCount: pageCount
         );
     }
 
@@ -219,18 +280,6 @@ public sealed class BookMetadataExtractor : IBookMetadataExtractor
         if (m.Success && int.TryParse(m.Value, out var y) && y >= 1900 && y <= 2100)
             return y;
         return null;
-    }
-
-    private static bool LooksLikeIsbn(string value)
-    {
-        var digits = new string(value.Where(char.IsDigit).ToArray());
-        return digits.Length == 10 || digits.Length == 13;
-    }
-
-    private static string NormalizeIsbn(string value)
-    {
-        var digits = new string(value.Where(c => char.IsDigit(c) || c == 'X' || c == 'x').ToArray());
-        return digits;
     }
 
     private static string StripHtml(string html)

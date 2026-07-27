@@ -24,6 +24,14 @@ const VIRTUALIZATION_THRESHOLD = 50;
 const VIRTUAL_CARD_WIDTH_PX = 304;   // w-72 (288px) + gap-4 (16px)
 const VIRTUAL_CARD_HEIGHT_PX = 290;
 const VIRTUAL_LIST_ROW_HEIGHT_PX = 122;
+// Frames the resume reveal keeps retrying for (~10 frames ≈ 160ms), and how long
+// it keeps re-issuing a virtualized scroll while the virtualizer measures itself.
+const REVEAL_MAX_FRAMES = 10;
+const VIRTUAL_SCROLL_SETTLE_FRAMES = 3;
+// How long the episode list waits for the resume lookup before giving up and
+// showing season 1. Long enough to avoid the season-1-then-jump flicker, short
+// enough that a stalled request can't leave the list stuck on a skeleton.
+const RESUME_WAIT_MS = 1500;
 
 interface Season {
     number: number;
@@ -35,6 +43,12 @@ interface Season {
 interface TVDetailViewProps {
     item: MediaItem;
     selectedEpisodeId?: string | null;
+    /** Episode the Play button would resume (server next-episode resolver), or null for none. */
+    resumeEpisodeId?: string | null;
+    /** True while that lookup is still in flight, so the strips can hold off on defaulting to season 1. */
+    resumeEpisodePending?: boolean;
+    /** Whether that episode has a saved playback position (as opposed to being simply next up). */
+    resumeHasPosition?: boolean;
     onEpisodeSelect?: (episode: MediaItem) => void;
     onDefaultQualityItemFound?: (episode: MediaItem) => void;
 }
@@ -86,6 +100,31 @@ function getEpisodeProgress(ep: MediaItem): { resumeSeconds: number; progressPer
     return { resumeSeconds, progressPercent };
 }
 
+/**
+ * Brings an auto-selected season/episode into view by nudging the scroller it
+ * lives in — and nothing else. Deliberately not `scrollIntoView`: the strips
+ * usually sit below the fold on load, and a resume selection must never yank
+ * the page around on arrival. `boundary` (the section wrapper) stops the walk
+ * short of the page scroller, so a strip that doesn't overflow simply does
+ * nothing instead of scrolling the document to it.
+ */
+export function scrollSelectionIntoView(el: HTMLElement, boundary: HTMLElement) {
+    for (let c = el.parentElement; c && c !== boundary; c = c.parentElement) {
+        const horizontal = c.scrollWidth > c.clientWidth + 1;
+        const vertical = c.scrollHeight > c.clientHeight + 1;
+        if (!horizontal && !vertical) continue;
+
+        const er = el.getBoundingClientRect();
+        const cr = c.getBoundingClientRect();
+        if (horizontal) {
+            c.scrollLeft += (er.left - cr.left) - (cr.width - er.width) / 2;
+        } else {
+            c.scrollTop += (er.top - cr.top) - (cr.height - er.height) / 2;
+        }
+        return;
+    }
+}
+
 const resBadgeClass = (badge: string | null) => {
     if (!badge) return '';
     switch (badge) {
@@ -117,6 +156,7 @@ function EpisodeCard({ ep, posterSrc, isSelected, onSelect, groupReady, onImageL
 
     return (
         <div
+            data-episode-id={ep.id}
             role="button"
             tabIndex={0}
             aria-label={`Episode ${ep.episodeNumber}: ${ep.title}`}
@@ -202,6 +242,7 @@ function EpisodeListRow({ ep, posterSrc, isSelected, onSelect, groupReady, onIma
 
     return (
         <div
+            data-episode-id={ep.id}
             role="button"
             tabIndex={0}
             aria-label={`Episode ${ep.episodeNumber}: ${ep.title}`}
@@ -344,7 +385,7 @@ function VirtualizedEpisodeList({ episodes, selectedEpisodeId, onEpisodeSelect, 
 
 // --- Main component ---
 
-export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect, onDefaultQualityItemFound }: TVDetailViewProps) {
+export default function TVDetailView({ item, selectedEpisodeId, resumeEpisodeId, resumeEpisodePending, resumeHasPosition, onEpisodeSelect, onDefaultQualityItemFound }: TVDetailViewProps) {
     const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
     const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards');
     const { isSidebarCollapsed } = useUIStore();
@@ -387,11 +428,121 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
         [seasons]
     );
 
+    // --- Resume-aware initial selection ---
+    //
+    // A show you're partway through should open on the season and episode the
+    // Play button would resume, not on season 1 episode 1. The target is the
+    // server's next-episode resolver (the same one Play uses), so the highlight
+    // and the button can never point at different episodes.
+
+    // A manual click pins the selection: a late-arriving next-episode response
+    // must not yank the strips out from under the user.
+    const [userPinnedSelection, setUserPinnedSelection] = useState(false);
+    const appliedResumeIdRef = useRef<string | null>(null);
+    // What the auto-selection still needs to scroll into view. State, not a ref:
+    // the reveal below has to re-run when a target is requested, and the resume
+    // season is often the one already selected (single-season shows), so a
+    // selectedSeason change can't be the trigger.
+    const [revealRequest, setRevealRequest] = useState<{ season: number; episodeId: string } | null>(null);
+    const [resumeWaitExpired, setResumeWaitExpired] = useState(false);
+
     useEffect(() => {
-        if (seasonNumbers.length > 0 && selectedSeason === null) {
+        if (!resumeEpisodePending) return;
+        const timer = setTimeout(() => setResumeWaitExpired(true), RESUME_WAIT_MS);
+        return () => clearTimeout(timer);
+    }, [resumeEpisodePending]);
+
+    // Reset when the page swaps to a different series (this component stays
+    // mounted). Change only, never the mount run — see the matching guard in
+    // MediaDetailPage for why a reset that also fires on mount is a hazard here.
+    const previousItemIdRef = useRef(item.id);
+    useEffect(() => {
+        if (previousItemIdRef.current === item.id) return;
+        previousItemIdRef.current = item.id;
+        setSelectedSeason(null);
+        setUserPinnedSelection(false);
+        setRevealRequest(null);
+        setResumeWaitExpired(false);
+        appliedResumeIdRef.current = null;
+    }, [item.id]);
+
+    const resumeEpisode = useMemo(
+        () => (resumeEpisodeId ? episodes?.find(e => e.id === resumeEpisodeId) ?? null : null),
+        [episodes, resumeEpisodeId]
+    );
+
+    // The one case to skip is the untouched series: the resolver hands back
+    // episode 1 of season 1 for a show nobody has started, and highlighting it
+    // there would be a phantom "you were here". Everything else — a saved
+    // position, a target past the first episode, or progress on the target
+    // itself — is a genuine resume.
+    //
+    // Deliberately decided from the resolver's own answer rather than inferred
+    // from the episode list's progress fields: the server only fills Progress in
+    // when it knows the episode's duration, so a library whose durations never
+    // probed reports no progress anywhere and would silently lose the selection
+    // while the Resume button (which reads the raw position) still worked.
+    const shouldAutoSelect = useMemo(() => {
+        if (!resumeEpisode) return false;
+        if (resumeHasPosition || resumeEpisode.watched || (resumeEpisode.progress ?? 0) > 0) return true;
+        const firstEpisodeId = seasonNumbers.length > 0 ? seasons[seasonNumbers[0]]?.[0]?.id : undefined;
+        return resumeEpisode.id !== firstEpisodeId;
+    }, [resumeEpisode, resumeHasPosition, seasons, seasonNumbers]);
+
+    useEffect(() => {
+        if (userPinnedSelection || seasonNumbers.length === 0) return;
+
+        if (shouldAutoSelect && resumeEpisode && appliedResumeIdRef.current !== resumeEpisode.id) {
+            appliedResumeIdRef.current = resumeEpisode.id;
+            const season = resumeEpisode.seasonNumber ?? seasonNumbers[0];
+            const target = seasonNumbers.includes(season) ? season : seasonNumbers[0];
+            setSelectedSeason(target);
+            setRevealRequest({ season: target, episodeId: resumeEpisode.id });
+            onEpisodeSelect?.(resumeEpisode);
+            return;
+        }
+
+        // Fall back to the first season — but wait for the resume lookup to
+        // settle first, so the strips don't snap to season 1 and then jump to
+        // season 4 a moment later. (The parent reports pending only for a real
+        // series query, so this can never wait forever.)
+        //
+        // The applied-ref check is what keeps this branch off the resume's back.
+        // `selectedSeason` here is the value from the render this effect closed
+        // over, so it still reads null on any re-run that happens before the
+        // state lands — StrictMode's double-invoked mount effect being the case
+        // that bit: run 1 selects season 4, run 2 sees a stale null and would
+        // reset the strip to season 1. The ref updates synchronously, so it is
+        // the only honest record of "a resume selection has been made".
+        if (selectedSeason === null && appliedResumeIdRef.current === null && (!resumeEpisodePending || resumeWaitExpired)) {
             setSelectedSeason(seasonNumbers[0]);
         }
-    }, [seasonNumbers, selectedSeason]);
+    }, [seasonNumbers, selectedSeason, resumeEpisode, resumeEpisodePending, resumeWaitExpired, shouldAutoSelect, userPinnedSelection, onEpisodeSelect]);
+
+    // A manual click also cancels any reveal still in flight, so the strips
+    // never scroll out from under the hand that just moved them.
+    const handleSeasonSelect = (seasonNum: number) => {
+        setUserPinnedSelection(true);
+        setRevealRequest(null);
+        setSelectedSeason(seasonNum);
+
+        // Season posters are tall, so the row you just filtered usually sits
+        // below the fold — bring it up. Click only: the resume auto-selection
+        // deliberately leaves the page where it is on arrival.
+        episodeAreaRef.current?.scrollIntoView?.({
+            block: 'start',
+            behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+        });
+    };
+
+    const handleEpisodeSelect = useCallback((ep: MediaItem) => {
+        setUserPinnedSelection(true);
+        setRevealRequest(null);
+        onEpisodeSelect?.(ep);
+    }, [onEpisodeSelect]);
+
+    const seasonStripRef = useRef<HTMLDivElement>(null);
+    const episodeAreaRef = useRef<HTMLDivElement>(null);
 
     const currentEpisodes = useMemo(
         () => (selectedSeason !== null ? seasons[selectedSeason] || [] : []),
@@ -472,6 +623,68 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
         setJumpInput('');
     }, [selectedSeason]);
 
+    // Bring the auto-selected season and episode into view. This runs on frame
+    // boundaries rather than at commit time because neither target is reliably
+    // scrollable the moment it renders: a virtualized episode scroller drops a
+    // scrollToIndex issued before it has measured its viewport, and the strips
+    // are still being laid out on the commit that first reveals them. Each
+    // target retries until it lands, then stops — so a manual click, which
+    // leaves nothing pending, never moves the strips.
+    useEffect(() => {
+        if (!revealRequest) return;
+
+        let frame = 0;
+        let attempts = 0;
+        let seasonDone = false;
+        let episodeDone = false;
+
+        const tick = () => {
+            attempts += 1;
+
+            const strip = seasonStripRef.current;
+            if (!seasonDone && strip) {
+                const el = strip.querySelector<HTMLElement>(`[data-season="${revealRequest.season}"]`);
+                if (el) {
+                    seasonDone = true;
+                    scrollSelectionIntoView(el, strip);
+                }
+            }
+
+            if (!episodeDone) {
+                const idx = currentEpisodes.findIndex(e => e.id === revealRequest.episodeId);
+                if (shouldVirtualize) {
+                    if (idx !== -1) {
+                        const scroller = viewMode === 'cards' ? cardScrollerRef.current : listScrollerRef.current;
+                        scroller?.scrollToIndex(idx);
+                        // Re-issued for a few frames: the first call lands before the
+                        // virtualizer has measured anything and is simply ignored.
+                        episodeDone = attempts >= VIRTUAL_SCROLL_SETTLE_FRAMES;
+                    }
+                } else if (episodeAreaRef.current) {
+                    const area = episodeAreaRef.current;
+                    const el = area.querySelector<HTMLElement>(`[data-episode-id="${revealRequest.episodeId}"]`);
+                    if (el) {
+                        episodeDone = true;
+                        scrollSelectionIntoView(el, area);
+                    }
+                }
+            }
+
+            if (seasonDone && episodeDone) {
+                setRevealRequest(null);
+            } else if (attempts < REVEAL_MAX_FRAMES) {
+                frame = requestAnimationFrame(tick);
+            } else {
+                // Out of retries — drop the request rather than let it fire late
+                // (e.g. on a view-mode toggle minutes from now).
+                setRevealRequest(null);
+            }
+        };
+
+        frame = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(frame);
+    }, [revealRequest, currentEpisodes, shouldVirtualize, viewMode]);
+
     const handleJumpToEpisode = () => {
         const target = parseInt(jumpInput, 10);
         if (Number.isNaN(target)) return;
@@ -510,7 +723,7 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
 
             <div className="space-y-6 relative z-10">
                 {/* Seasons */}
-                <div>
+                <div ref={seasonStripRef}>
                     <h3 className="text-lg font-bold text-white mb-4">Seasons</h3>
                     <HorizontalScrollList className="py-3 px-20 -mx-14 -my-3">
                         {seasonNumbers.map((seasonNum, idx) => {
@@ -521,7 +734,8 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
                             return (
                                 <button
                                     key={seasonNum}
-                                    onClick={() => setSelectedSeason(seasonNum)}
+                                    data-season={seasonNum}
+                                    onClick={() => handleSeasonSelect(seasonNum)}
                                     className={`flex-shrink-0 w-36 group transition-all ${isSelected ? 'scale-105' : 'opacity-80 hover:opacity-100'}`}
                                 >
                                     <div className={`relative rounded-xl overflow-hidden border-2 transition-all ${isSelected ? 'border-violet-500 shadow-lg shadow-violet-500/30' : 'border-transparent hover:border-white/30'}`}>
@@ -556,8 +770,9 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
                     </HorizontalScrollList>
                 </div>
 
-                {/* Episodes */}
-                <div>
+                {/* Episodes — scroll-mt keeps a sliver of the season row visible
+                    when a click scrolls this section to the top. */}
+                <div ref={episodeAreaRef} className="scroll-mt-4">
                     <div className="flex items-center justify-between mb-4">
                         <h3 className="text-lg font-bold text-white flex items-center gap-2">
                             <span>Episodes</span>
@@ -620,7 +835,10 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
                         </div>
                     </div>
 
-                    {isLoading ? (
+                    {/* `selectedSeason === null` covers the window where the episodes have
+                        loaded but the resume lookup hasn't landed yet — keep the skeleton
+                        rather than flashing "No episodes found." */}
+                    {isLoading || selectedSeason === null ? (
                         <div className="flex gap-4 overflow-x-auto pb-4">
                             {[1, 2, 3, 4, 5].map(i => (
                                 <div key={i} className="w-64 h-44 rounded-xl bg-white/5 animate-pulse flex-shrink-0" />
@@ -645,7 +863,7 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
                                             ep={ep}
                                             posterSrc={getEpisodePoster(ep)}
                                             isSelected={selectedEpisodeId === ep.id}
-                                            onSelect={() => onEpisodeSelect?.(ep)}
+                                            onSelect={() => handleEpisodeSelect(ep)}
                                             groupReady={true}
                                             onImageLoad={() => {}}
                                             onImageError={() => {}}
@@ -661,7 +879,7 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
                                         ep={ep}
                                         posterSrc={getEpisodePoster(ep)}
                                         isSelected={selectedEpisodeId === ep.id}
-                                        onSelect={() => onEpisodeSelect?.(ep)}
+                                        onSelect={() => handleEpisodeSelect(ep)}
                                         groupReady={episodeReveal.isRevealed(i)}
                                         onImageLoad={() => episodeReveal.onImageLoad(i)}
                                         onImageError={() => episodeReveal.onImageError(i)}
@@ -674,7 +892,7 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
                             ref={listScrollerRef}
                             episodes={currentEpisodes}
                             selectedEpisodeId={selectedEpisodeId}
-                            onEpisodeSelect={onEpisodeSelect}
+                            onEpisodeSelect={handleEpisodeSelect}
                             getPoster={(ep) => getEpisodePoster(ep, 250)}
                         />
                     ) : (
@@ -685,7 +903,7 @@ export default function TVDetailView({ item, selectedEpisodeId, onEpisodeSelect,
                                     ep={ep}
                                     posterSrc={getEpisodePoster(ep, 250)}
                                     isSelected={selectedEpisodeId === ep.id}
-                                    onSelect={() => onEpisodeSelect?.(ep)}
+                                    onSelect={() => handleEpisodeSelect(ep)}
                                     groupReady={episodeReveal.isRevealed(i)}
                                     onImageLoad={() => episodeReveal.onImageLoad(i)}
                                     onImageError={() => episodeReveal.onImageError(i)}

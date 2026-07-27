@@ -286,6 +286,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMediaService, MediaService>();
         services.AddScoped<ITranscodeDebugService, TranscodeDebugService>();
         services.AddScoped<IVideoPreviewService, VideoPreviewService>();
+        services.AddScoped<Services.Media.ISmartPlaylistEvaluator, Services.Media.SmartPlaylistEvaluator>();
+        services.AddScoped<Services.Media.IPlaylistCoverService, Services.Media.PlaylistCoverService>();
 
         // DLNA / UPnP media server (P4-004). Opt-in + LAN-only; see DlnaController.
         services.AddSingleton<Services.Dlna.DlnaServerInfo>();

@@ -133,12 +133,32 @@ public class BookScanner : BaseMediaScanner
             // policy still runs so incomplete items keep getting queued.
             if (existing != null && existing.Size == file.Size && existing.DateModified == file.LastWriteUtc)
             {
+                // Backfill for books indexed before Isbn/PageCount were promoted columns —
+                // without it those two fields would stay blank forever on an existing
+                // library, since nothing else reopens an unchanged file. The guard is
+                // self-limiting: a PDF always yields a page count on the first pass and is
+                // never reopened after, and EPUB extraction is one small zip plus two XML
+                // entries, so the handful of files that genuinely declare neither field
+                // stay cheap to retry.
+                var backfilled = false;
+                if (existing.Isbn == null && existing.PageCount == null)
+                {
+                    var refreshed = await _bookMetadataExtractor.ExtractAsync(filePath, cancellationToken);
+                    backfilled = ApplyEmbeddedIdentifiers(existing, refreshed);
+                    if (backfilled)
+                    {
+                        _logger.LogDebug(
+                            "[BookScanner] Backfilled embedded identifiers (unchanged file): {Path}", filePath);
+                    }
+                }
+
                 if (MetadataEnrichmentPolicy.NeedsEnrichment(existing, _strictEnrichment))
                 {
                     _logger.LogDebug("[BookScanner] Queued metadata enrichment (unchanged file): {Path}", filePath);
                     return new ScanOperationResult(ScanResult.Updated, existing.Id, EnqueueMetadata: true);
                 }
-                return new ScanOperationResult(ScanResult.Skipped, existing.Id, EnqueueMetadata: false);
+                return new ScanOperationResult(
+                    backfilled ? ScanResult.Updated : ScanResult.Skipped, existing.Id, EnqueueMetadata: false);
             }
 
             // Option B: embedded metadata first (EPUB OPF package / PDF Info dict).
@@ -188,6 +208,7 @@ public class BookScanner : BaseMediaScanner
                     book.Studio = embedded.Publisher;
                 if (!string.IsNullOrWhiteSpace(embedded.Description) && string.IsNullOrEmpty(book.Overview))
                     book.Overview = embedded.Description;
+                ApplyEmbeddedIdentifiers(book, embedded);
             }
 
             if (isNew)
@@ -217,6 +238,33 @@ public class BookScanner : BaseMediaScanner
             _logger.LogWarning(ex, "[BookScanner] Error processing book file: {Path}", filePath);
             return new ScanOperationResult(ScanResult.Skipped, Guid.Empty, false);
         }
+    }
+
+    /// <summary>
+    /// Copies the two identifier fields the file itself can prove — ISBN and the real page
+    /// count — onto the item, never overwriting a value that is already there. The
+    /// file-embedded ISBN identifies the exact edition on disk and the page count is the
+    /// physical document, so both outrank anything a provider later returns for the work;
+    /// <c>MetadataAggregator</c> honours that by only filling these when still null.
+    /// Returns true when something was actually written, so the unchanged-file fast path
+    /// can report the row as updated instead of skipped.
+    /// </summary>
+    private static bool ApplyEmbeddedIdentifiers(MediaItem book, BookFileMetadata? embedded)
+    {
+        if (embedded == null) return false;
+
+        var changed = false;
+        if (!string.IsNullOrWhiteSpace(embedded.Isbn) && string.IsNullOrEmpty(book.Isbn))
+        {
+            book.Isbn = embedded.Isbn;
+            changed = true;
+        }
+        if (embedded.PageCount.HasValue && !book.PageCount.HasValue)
+        {
+            book.PageCount = embedded.PageCount;
+            changed = true;
+        }
+        return changed;
     }
 
     // ─────────────────────────────────────────────────────────────── Comic pipeline

@@ -52,6 +52,40 @@ export function formatRuntime(seconds: number | null | undefined): string | null
 }
 
 /**
+ * Coarse "how long ago" label for timestamps whose exact value doesn't matter to
+ * the reader (a playlist's last edit, say). Deliberately stops at weeks and falls
+ * back to a locale date beyond that — "37 weeks ago" is harder to place than the
+ * date itself. Returns null for missing or unparsable input so callers can drop
+ * the label rather than render "Invalid Date".
+ */
+export function formatRelativeTime(timestamp: string | null | undefined): string | null {
+    if (!timestamp) return null;
+    const then = new Date(timestamp);
+    const ms = then.getTime();
+    if (Number.isNaN(ms)) return null;
+
+    // Future timestamps (clock skew between server and client) read as "just now"
+    // rather than a negative interval.
+    const seconds = Math.max(0, (Date.now() - ms) / 1000);
+    if (seconds < 60) return 'just now';
+
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+
+    const days = Math.floor(hours / 24);
+    if (days === 1) return 'yesterday';
+    if (days < 7) return `${days} days ago`;
+
+    const weeks = Math.floor(days / 7);
+    if (weeks < 5) return weeks === 1 ? 'last week' : `${weeks} weeks ago`;
+
+    return then.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
  * Whether an interval-hours settings value will actually ENABLE the schedule on the server.
  * The server parses these with int.TryParse and treats anything unparsable (empty string,
  * "2.5", "2e5") or <= 0 as disabled — so the UI hint next to the input must apply the exact

@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useInView } from 'react-intersection-observer';
 import { toast } from 'sonner';
@@ -11,6 +11,7 @@ import PhotoLibraryView from '../components/library/PhotoLibraryView';
 import { type MediaItem, type PagedResult, type Library } from '../types';
 import { useMediaHub } from '../hooks/useMediaHub';
 import useSequentialReveal from '../hooks/useSequentialReveal';
+import { LIBRARY_VIEW_PARAM } from '../lib/backNavigation';
 
 export default function LibraryPage() {
     const { ref, inView } = useInView();
@@ -41,7 +42,21 @@ export default function LibraryPage() {
     const [minRating, setMinRating] = useState<number | null>(null);
     const [isFavorite, setIsFavorite] = useState<boolean | null>(null);
     const [watched, setWatched] = useState<boolean | null>(null);
-    const [viewMode, setViewMode] = useState('artists'); // Default to artists for Music
+    // View mode lives in the URL, not component state, so the tab is linkable —
+    // the playlist detail page's "All playlists" back link deep-links the
+    // Playlists tab, and there is no standalone /playlists route to send it to.
+    // Other params (e.g. PhotoLibraryView's ?album=) are preserved on change.
+    const [searchParams, setSearchParams] = useSearchParams();
+    const viewMode = searchParams.get(LIBRARY_VIEW_PARAM) ?? 'artists'; // Default to artists for Music
+
+    const setViewMode = useCallback((mode: string) => {
+        const nextParams = new URLSearchParams(searchParams);
+        if (mode === 'artists') nextParams.delete(LIBRARY_VIEW_PARAM);
+        else nextParams.set(LIBRARY_VIEW_PARAM, mode);
+        // replace: switching tabs shouldn't stack history entries — this app
+        // navigates hierarchically, never with browser back.
+        setSearchParams(nextParams, { replace: true });
+    }, [searchParams, setSearchParams]);
 
     // Playlists are user-owned (not part of the library item set), so the
     // library-items query is skipped when the Playlists tab is active. The
@@ -113,7 +128,9 @@ export default function LibraryPage() {
         // data unrelated to the library's media items, so we render a
         // dedicated grid here instead of the standard card layout.
         if (isPlaylistsView) {
-            return <PlaylistsView />;
+            // The FilterBar's search box is always mounted, so it has to reach the
+            // playlists too — otherwise typing in it on this tab does nothing.
+            return <PlaylistsView libraryId={id} searchQuery={search} />;
         }
 
         if (isLoading) {

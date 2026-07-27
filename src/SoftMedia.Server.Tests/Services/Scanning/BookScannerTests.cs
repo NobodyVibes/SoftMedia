@@ -425,6 +425,191 @@ public class BookScannerTests : IDisposable
         }
     }
 
+    // ──────────────────────────────────────────── embedded identifiers (ISBN / pages)
+
+    /// <summary>
+    /// Extractor stub that always reports the same embedded fields and counts how many times
+    /// it was asked. The call count is the point of the fast-path tests: reopening every book
+    /// on every rescan was the cost the unchanged-file short-circuit exists to avoid.
+    /// </summary>
+    private sealed class StubBookMetadataExtractor : IBookMetadataExtractor
+    {
+        private readonly BookFileMetadata? _result;
+        public int Calls { get; private set; }
+
+        public StubBookMetadataExtractor(BookFileMetadata? result) => _result = result;
+
+        public Task<BookFileMetadata?> ExtractAsync(string filePath, CancellationToken ct = default)
+        {
+            Calls++;
+            return Task.FromResult(_result);
+        }
+    }
+
+    private static BookFileMetadata EmbeddedFor(string? isbn, int? pageCount) => new(
+        Title: "Dune", Author: "Frank Herbert", Year: 1965, Publisher: "Chilton",
+        Description: null, Isbn: isbn, Language: "en", PageCount: pageCount);
+
+    private (Library Library, FileInfo File, string Path) NewBookFile(string name)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"softmedia-{Guid.NewGuid():N}-{name}");
+        File.WriteAllText(path, "dummy content");
+        return (new Library { Id = Guid.NewGuid(), Name = "Books", Type = LibraryType.Book },
+                new FileInfo(path), path);
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_PersistsEmbeddedIsbnAndPageCount_ForNewBook()
+    {
+        var extractor = new StubBookMetadataExtractor(EmbeddedFor("9780441013593", 412));
+        var scanner = new TestableBookScanner(
+            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object,
+            _mockMediaAnalysis.Object, _mockQueue.Object, extractor);
+
+        var (library, _, path) = NewBookFile("Dune.epub");
+        try
+        {
+            await scanner.ProcessFileAsync(_dbContext, path, null, library, CancellationToken.None);
+            await _dbContext.SaveChangesAsync();
+
+            var book = await _dbContext.MediaItems.FirstAsync();
+            Assert.Equal("9780441013593", book.Isbn);
+            Assert.Equal(412, book.PageCount);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_BackfillsIdentifiers_OnUnchangedFileScannedBeforeTheColumnsExisted()
+    {
+        // Nothing else reopens an unchanged file, so without this a library indexed before
+        // Isbn/PageCount were promoted columns would show a blank ISBN and page count forever.
+        var extractor = new StubBookMetadataExtractor(EmbeddedFor("9780441013593", 412));
+        var scanner = new TestableBookScanner(
+            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object,
+            _mockMediaAnalysis.Object, _mockQueue.Object, extractor);
+
+        var (library, info, path) = NewBookFile("Dune.epub");
+        try
+        {
+            var existing = new MediaItem
+            {
+                Id = Guid.NewGuid(),
+                LibraryId = library.Id,
+                Path = info.FullName,
+                Title = "Dune",
+                Type = MediaType.Book,
+                Size = info.Length,
+                DateModified = info.LastWriteTimeUtc,
+                PosterUrl = "http://example.com/poster.jpg",
+                MetadataHash = "already-enriched",
+                Isbn = null,
+                PageCount = null
+            };
+            _dbContext.MediaItems.Add(existing);
+            await _dbContext.SaveChangesAsync();
+
+            var result = await scanner.ProcessFileAsync(
+                _dbContext, info.FullName, existing, library, CancellationToken.None);
+            await _dbContext.SaveChangesAsync();
+
+            Assert.Equal(1, extractor.Calls);
+            // Reported as updated, not skipped, so the row actually gets written back.
+            Assert.Equal(ScanResult.Updated, result.Result);
+            Assert.Equal("9780441013593", existing.Isbn);
+            Assert.Equal(412, existing.PageCount);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_DoesNotReopenUnchangedFile_OnceIdentifiersArePresent()
+    {
+        // The backfill guard has to be self-limiting, or every rescan pays to reopen the
+        // whole library — the exact cost the unchanged-file fast path was added to remove.
+        var extractor = new StubBookMetadataExtractor(EmbeddedFor("9780441013593", 412));
+        var scanner = new TestableBookScanner(
+            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object,
+            _mockMediaAnalysis.Object, _mockQueue.Object, extractor);
+
+        var (library, info, path) = NewBookFile("Dune.epub");
+        try
+        {
+            var existing = new MediaItem
+            {
+                Id = Guid.NewGuid(),
+                LibraryId = library.Id,
+                Path = info.FullName,
+                Title = "Dune",
+                Type = MediaType.Book,
+                Size = info.Length,
+                DateModified = info.LastWriteTimeUtc,
+                PosterUrl = "http://example.com/poster.jpg",
+                MetadataHash = "already-enriched",
+                PageCount = 412
+            };
+            _dbContext.MediaItems.Add(existing);
+            await _dbContext.SaveChangesAsync();
+
+            var result = await scanner.ProcessFileAsync(
+                _dbContext, info.FullName, existing, library, CancellationToken.None);
+
+            Assert.Equal(0, extractor.Calls);
+            Assert.Equal(ScanResult.Skipped, result.Result);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_DoesNotOverwriteExistingIdentifiers()
+    {
+        // A rescan of a changed file must not clobber a value the metadata provider supplied
+        // for a field the file itself doesn't declare.
+        var extractor = new StubBookMetadataExtractor(EmbeddedFor("9780441013593", 412));
+        var scanner = new TestableBookScanner(
+            _mockScopeFactory.Object, _mockLogger.Object, _mockNotification.Object,
+            _mockMediaAnalysis.Object, _mockQueue.Object, extractor);
+
+        var (library, info, path) = NewBookFile("Dune.epub");
+        try
+        {
+            var existing = new MediaItem
+            {
+                Id = Guid.NewGuid(),
+                LibraryId = library.Id,
+                Path = info.FullName,
+                Title = "Dune",
+                Type = MediaType.Book,
+                Size = 1,                       // differs => full re-process path
+                DateModified = DateTime.UtcNow.AddDays(-1),
+                PosterUrl = "http://example.com/poster.jpg",
+                Isbn = "0441013597",
+                PageCount = 896
+            };
+            _dbContext.MediaItems.Add(existing);
+            await _dbContext.SaveChangesAsync();
+
+            await scanner.ProcessFileAsync(_dbContext, info.FullName, existing, library, CancellationToken.None);
+            await _dbContext.SaveChangesAsync();
+
+            Assert.Equal("0441013597", existing.Isbn);
+            Assert.Equal(896, existing.PageCount);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     public void Dispose()
     {
         _dbContext.Dispose();

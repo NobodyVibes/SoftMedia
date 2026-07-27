@@ -1,8 +1,10 @@
 import { Play, Info, Star } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { type MediaItem, MediaType } from '../../types';
 import { formatRuntime } from '../../lib/utils';
+import { resolveBackdropUrl, resolveHeroPosterUrl } from '../../lib/mediaImageUrl';
+import { useAuthStore } from '../../store/authStore';
 
 interface HeroSectionProps {
     items: MediaItem[];
@@ -17,6 +19,53 @@ export default function HeroSection({
     onPlay,
     onMoreInfo
 }: HeroSectionProps) {
+    // Hooks must run on EVERY render, before any early return — the loading and
+    // empty branches below used to sit above them, so the first render after
+    // `isLoading` flipped changed the hook count and React threw.
+    const [currentIndex, setCurrentIndex] = useState(0);
+
+    // The media token is what `resolve*Url` embeds in `/api/v1/*` image URLs
+    // (browsers can't send an Authorization header on a background-image or
+    // <img> load). Subscribe so a token rotation re-renders and rebuilds the
+    // URLs — otherwise the hero keeps a stale token and 401s until reload.
+    const mediaToken = useAuthStore((s) => s.mediaToken);
+
+    const count = items?.length ?? 0;
+
+    useEffect(() => {
+        if (count <= 1) return;
+
+        const interval = setInterval(() => {
+            setCurrentIndex((prev) => (prev + 1) % count);
+        }, 10000); // Cycle every 10 seconds
+
+        return () => clearInterval(interval);
+    }, [count]); // Remove currentIndex from dependencies
+
+    // A shorter items array (library removed, hero cache refreshed) would otherwise
+    // leave the index pointing past the end and blank the whole section.
+    const currentIdx = count > 0 ? currentIndex % count : 0;
+    const currentItem: MediaItem | undefined = count > 0 ? items[currentIdx] : undefined;
+
+    const rawBackdrop = currentItem?.backdropPath;
+    const rawPoster = currentItem?.posterPath;
+
+    // Backdrops stay remote (only posters are downloaded to /cache), so they
+    // resolve to the authenticated /api/v1/image/proxy route; album covers and
+    // photos resolve to their own /api/v1 endpoints. Every one of those needs the
+    // query-string token attached — which is why only series, whose local /cache
+    // poster needs no auth, used to render here.
+    const { imageUrl, posterUrl, hasBackdrop } = useMemo(() => {
+        const backdropOk = !!rawBackdrop && !rawBackdrop.includes('poster');
+        const poster = resolveHeroPosterUrl(rawPoster) || '';
+        return {
+            imageUrl: (backdropOk ? resolveBackdropUrl(rawBackdrop) : poster) || poster,
+            posterUrl: poster,
+            hasBackdrop: backdropOk,
+        };
+        // mediaToken is a real dependency: it is baked into the URLs above.
+    }, [rawBackdrop, rawPoster, mediaToken]);
+
     if (isLoading) {
         return (
             <div className="relative w-full h-[500px] mb-12 overflow-hidden bg-background/50 animate-pulse border-b border-white/5 flex items-center justify-center">
@@ -52,27 +101,18 @@ export default function HeroSection({
         );
     }
 
-    const [currentIndex, setCurrentIndex] = useState(0);
+    if (!currentItem) return null;
 
-    useEffect(() => {
-        if (items.length <= 1) return;
-
-        const interval = setInterval(() => {
-            setCurrentIndex((prev) => (prev + 1) % items.length);
-        }, 10000); // Cycle every 10 seconds
-
-        return () => clearInterval(interval);
-    }, [items.length]); // Remove currentIndex from dependencies
-
-    if (!items || items.length === 0) return null;
-
-    const currentItem = items[currentIndex];
-
-    // Fallback image logic
-    const imageUrl = currentItem.backdropPath || currentItem.posterPath || '';
-    const posterUrl = currentItem.posterPath || '';
-    const hasBackdrop = !!currentItem.backdropPath && !currentItem.backdropPath.includes('poster');
     const showPosterCard = !hasBackdrop && !!posterUrl;
+
+    // Music art is a square cover, not a 2:3 poster — cropping an album sleeve to
+    // poster shape lops off the top and bottom of the artwork. Same type set as
+    // the detail-page sidebar (MediaDetailLayout) and MediaCard.
+    const isSquareArt =
+        currentItem.type === MediaType.Album ||
+        currentItem.type === MediaType.Artist ||
+        currentItem.type === MediaType.Audio ||
+        currentItem.type === MediaType.Track;
 
     const title = currentItem.title;
     const description = currentItem.description || '';
@@ -97,7 +137,7 @@ export default function HeroSection({
                     {/* Background Layer */}
                     <motion.div
                         className={`absolute inset-0 bg-cover bg-center scale-105 ${!hasBackdrop ? 'blur-3xl opacity-40' : ''}`}
-                        style={{ backgroundImage: `url(${imageUrl})` }}
+                        style={imageUrl ? { backgroundImage: `url("${imageUrl}")` } : undefined}
                         initial={{ scale: 1.05 }}
                         animate={{ scale: 1.08 }}
                         transition={{ duration: 10, repeat: Infinity, repeatType: "reverse" }}
@@ -113,7 +153,7 @@ export default function HeroSection({
                             {/* Sharp Poster Card Overlay */}
                             {showPosterCard && (
                                 <motion.div
-                                    className="hidden md:block w-64 aspect-[2/3] shrink-0 rounded-2xl overflow-hidden shadow-2xl border border-white/10 relative z-10"
+                                    className={`hidden md:block w-64 ${isSquareArt ? 'aspect-square' : 'aspect-[2/3]'} shrink-0 rounded-2xl overflow-hidden shadow-2xl border border-white/10 relative z-10`}
                                     initial={{ opacity: 0, x: -20 }}
                                     animate={{ opacity: 1, x: 0 }}
                                     transition={{ delay: 0.2 }}
@@ -257,7 +297,7 @@ export default function HeroSection({
                     <button
                         key={idx}
                         onClick={() => setCurrentIndex(idx)}
-                        className={`h-1.5 transition-all duration-500 rounded-full ${idx === currentIndex ? 'w-8 bg-white' : 'w-2 bg-white/30'
+                        className={`h-1.5 transition-all duration-500 rounded-full ${idx === currentIdx ? 'w-8 bg-white' : 'w-2 bg-white/30'
                             }`}
                     />
                 ))}

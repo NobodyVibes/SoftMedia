@@ -30,8 +30,15 @@ interface PhotoFacets {
 const ALL_CAMERAS = 'All cameras';
 const ALL_YEARS = 'All years';
 
+/** Hover growth for photo cards, matching the movie/TV grid
+ *  (HoverableMediaCardWrapper): same spring, same scale. */
+const HOVER_GROW = { scale: 1.15 };
+const HOVER_SPRING = { type: 'spring', stiffness: 400, damping: 30 } as const;
+
 /** Square photo tile with a heart overlay. The heart is a SIBLING button (never
- *  nested inside the open button — invalid HTML and an a11y trap). */
+ *  nested inside the open button — invalid HTML and an a11y trap).
+ *  The reveal animation and the hover growth live on SEPARATE elements so the
+ *  staggered reveal delay can't leak into the shrink-back on mouse-out. */
 function PhotoTile({ photo, delay, onOpen, onToggleFavorite }: {
     photo: MediaItem;
     delay: number;
@@ -43,31 +50,37 @@ function PhotoTile({ photo, delay, onOpen, onToggleFavorite }: {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.2, delay }}
-            className="group relative aspect-square rounded-lg overflow-hidden bg-white/5"
+            className="relative aspect-square hover:z-50"
         >
-            <img
-                src={resolveCardPosterUrl(photo.posterPath) ?? undefined}
-                alt={photo.title}
-                loading="lazy"
-                className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-            />
-            <button
-                onClick={onOpen}
-                aria-label={photo.title}
-                className="absolute inset-0 hover:ring-2 hover:ring-primary/70 focus-visible:ring-2 focus-visible:ring-primary rounded-lg transition-shadow"
-            />
-            <button
-                onClick={onToggleFavorite}
-                aria-label={photo.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-                className={cn(
-                    'absolute top-1.5 right-1.5 z-10 p-2.5 min-w-[40px] min-h-[40px] flex items-center justify-center rounded-full transition-all',
-                    photo.isFavorite
-                        ? 'text-red-500 bg-black/40 opacity-100'
-                        : 'text-white bg-black/40 opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
-                )}
+            <motion.div
+                whileHover={HOVER_GROW}
+                transition={HOVER_SPRING}
+                className="group absolute inset-0 rounded-lg overflow-hidden bg-white/5 shadow-lg hover:shadow-2xl"
             >
-                <Heart className={cn('w-4 h-4', photo.isFavorite && 'fill-current')} />
-            </button>
+                <img
+                    src={resolveCardPosterUrl(photo.posterPath) ?? undefined}
+                    alt={photo.title}
+                    loading="lazy"
+                    className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
+                <button
+                    onClick={onOpen}
+                    aria-label={photo.title}
+                    className="absolute inset-0 hover:ring-2 hover:ring-primary/70 focus-visible:ring-2 focus-visible:ring-primary rounded-lg transition-shadow"
+                />
+                <button
+                    onClick={onToggleFavorite}
+                    aria-label={photo.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                    className={cn(
+                        'absolute top-1.5 right-1.5 z-10 p-2.5 min-w-[40px] min-h-[40px] flex items-center justify-center rounded-full transition-all',
+                        photo.isFavorite
+                            ? 'text-red-500 bg-black/40 opacity-100'
+                            : 'text-white bg-black/40 opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+                    )}
+                >
+                    <Heart className={cn('w-4 h-4', photo.isFavorite && 'fill-current')} />
+                </button>
+            </motion.div>
         </motion.div>
     );
 }
@@ -186,8 +199,12 @@ export default function PhotoLibraryView({ libraryId, libraryName, onRescan }: {
         }
     }
 
+    // Gap must clear the hover growth or a magnified tile sits on top of its
+    // neighbours: scale 1.15 overhangs 7.5% of the tile width on each side, and
+    // auto-fill/minmax keeps tiles near 160–250px here, so ~20px is the floor.
+    // (The movie/TV grid works the same way: 192px cards, 32px gap.)
     const photoGrid = (items: MediaItem[], baseIndex = 0) => (
-        <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
+        <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
             {items.map((photo, i) => (
                 <PhotoTile
                     key={photo.id}
@@ -341,27 +358,33 @@ export default function PhotoLibraryView({ libraryId, libraryName, onRescan }: {
                 ) : (
                     <div className="grid gap-6" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
                         {albums.map((a, i) => (
-                            <motion.button
+                            <motion.div
                                 key={a.key}
                                 initial={{ opacity: 0, y: 12 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ duration: 0.25, delay: Math.min(i * 0.03, 0.3) }}
-                                onClick={() => openAlbumByKey(a)}
-                                className="group relative aspect-square rounded-xl overflow-hidden bg-white/5 border border-white/10 text-left hover:border-white/25 focus-visible:border-white/25 transition-colors"
+                                className="relative aspect-square hover:z-50"
                             >
-                                <img
-                                    src={attachAuthToApiUrl(`/api/v1/photos/${a.coverPhotoId}/image?width=480`)}
-                                    alt={a.name}
-                                    loading="lazy"
-                                    className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                />
-                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent pt-10 pb-3 px-4">
-                                    <div className="text-white font-semibold truncate">{a.name}</div>
-                                    <div className="text-gray-400 text-xs">
-                                        {a.photoCount} photos{a.latestDate ? ` · ${albumDate(a.latestDate)}` : ''}
+                                <motion.button
+                                    whileHover={HOVER_GROW}
+                                    transition={HOVER_SPRING}
+                                    onClick={() => openAlbumByKey(a)}
+                                    className="group absolute inset-0 rounded-xl overflow-hidden bg-white/5 border border-white/10 text-left shadow-lg hover:shadow-2xl hover:border-white/25 focus-visible:border-white/25 transition-colors"
+                                >
+                                    <img
+                                        src={attachAuthToApiUrl(`/api/v1/photos/${a.coverPhotoId}/image?width=480`)}
+                                        alt={a.name}
+                                        loading="lazy"
+                                        className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                    />
+                                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent pt-10 pb-3 px-4">
+                                        <div className="text-white font-semibold truncate">{a.name}</div>
+                                        <div className="text-gray-400 text-xs">
+                                            {a.photoCount} photos{a.latestDate ? ` · ${albumDate(a.latestDate)}` : ''}
+                                        </div>
                                     </div>
-                                </div>
-                            </motion.button>
+                                </motion.button>
+                            </motion.div>
                         ))}
                     </div>
                 )

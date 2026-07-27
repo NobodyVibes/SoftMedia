@@ -41,6 +41,9 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const animationFrameRef = useRef<number>(0);
     const dimensionsRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+    // getComputedStyle forces a style recalc, so the palette is sampled about
+    // once a second instead of on all 60 frames.
+    const themeRef = useRef<{ colors: ReturnType<typeof getThemeColors>; readAt: number } | null>(null);
     const { isEnabled, activeVisualizer } = useVisualizerStore();
 
     // Handle canvas resize - store display dimensions separately
@@ -78,8 +81,12 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
         return () => resizeObserver.disconnect();
     }, [isEnabled]); // Re-run when visualizer is enabled to ensure dimensions are captured
 
-    // Animation loop
+    // Animation loop. The next frame is queued FIRST so a renderer that throws
+    // (an unsupported colour string, a zero-sized canvas) drops one frame instead
+    // of killing the loop — a dead loop looks exactly like a frozen visualizer.
     const animate = useCallback(() => {
+        animationFrameRef.current = requestAnimationFrame(animate);
+
         const canvas = canvasRef.current;
         if (!canvas || !isEnabled || !isReady) return;
 
@@ -89,14 +96,19 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
+        // Use stored display dimensions (CSS pixels, not canvas buffer size)
+        const { width, height } = dimensionsRef.current;
+        if (width <= 0 || height <= 0) return; // ResizeObserver hasn't measured yet
+
         // Get current renderer
         const renderer = VISUALIZERS[activeVisualizer] || VISUALIZERS.bars;
 
         // Get theme colors
-        const colors = getThemeColors();
-
-        // Use stored display dimensions (CSS pixels, not canvas buffer size)
-        const { width, height } = dimensionsRef.current;
+        const now = performance.now();
+        if (!themeRef.current || now - themeRef.current.readAt > 1000) {
+            themeRef.current = { colors: getThemeColors(), readAt: now };
+        }
+        const colors = themeRef.current.colors;
 
         // Create context for renderer
         const visualizerContext: VisualizerContext = {
@@ -114,10 +126,11 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
         ctx.clearRect(0, 0, width, height);
 
         // Render visualization
-        renderer(visualizerContext);
-
-        // Continue animation loop
-        animationFrameRef.current = requestAnimationFrame(animate);
+        try {
+            renderer(visualizerContext);
+        } catch (error) {
+            console.error('[Visualizer] Render failed:', error);
+        }
     }, [frequencyData, timeDomainData, isEnabled, isReady, activeVisualizer, updateData]);
 
     // Start/stop animation based on enabled state

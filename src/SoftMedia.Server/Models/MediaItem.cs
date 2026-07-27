@@ -79,8 +79,38 @@ public class MediaItem
     public string? Overview { get; set; }
     public double? CommunityRating { get; set; }
     public string? ContentRating { get; set; }
+    /// <summary>
+    /// Producing organisation. Movies/TV: the studio or network. Books: the PUBLISHER —
+    /// books deliberately reuse this column rather than owning a parallel one, so there is
+    /// a single source of truth per item and no dual-write drift between them. The
+    /// book-facing label is applied at the presentation layer (BookDetailView).
+    /// </summary>
     public string? Studio { get; set; }
+
+    /// <summary>
+    /// Primary creator. Movies/TV: the director. Books: the AUTHOR (see <see cref="Studio"/>
+    /// for why the column is shared). Multi-author books additionally get one
+    /// <see cref="MediaItemCast"/> row per author with Character = "Author"; this column
+    /// holds the single creator the scanner read out of the file.
+    /// </summary>
     public string? Director { get; set; }
+
+    /// <summary>
+    /// Book ISBN, normalised to digits (plus a trailing 'X' check digit) with hyphens and
+    /// spaces stripped — see <see cref="Services.Media.IsbnNormalizer"/>. Sourced from the
+    /// EPUB OPF &lt;dc:identifier&gt; when the file carries one, otherwise from the metadata
+    /// provider. The file-embedded value wins: it identifies the exact edition on disk.
+    /// </summary>
+    public string? Isbn { get; set; }
+
+    /// <summary>
+    /// Book page count for DISPLAY. Prefers the real page count of the file on disk (PDF
+    /// page tree, EPUB numberOfPages metadata) and falls back to the provider's edition
+    /// page count. Deliberately NOT the reader's pagination source — BookInfoDto.PageCount
+    /// serves that and is computed from the actual archive/document at request time, so a
+    /// provider's print-edition figure can never desynchronise the reader.
+    /// </summary>
+    public int? PageCount { get; set; }
 
     /// <summary>
     /// Start time (in seconds) of the credits chapter, used for progress bar markers.

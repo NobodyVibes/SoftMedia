@@ -396,6 +396,40 @@ public class ImageCacheService : IImageCacheService
     }
 
     /// <inheritdoc />
+    public IReadOnlyDictionary<Guid, string> GetCachedPosterPaths()
+    {
+        var found = new Dictionary<Guid, string>();
+
+        foreach (var subDir in MediaCacheSubdirectories)
+        {
+            var dirPath = Path.Combine(_basePath, subDir);
+            if (!Directory.Exists(dirPath)) continue;
+
+            try
+            {
+                // "*_poster.*" already excludes "{id}_poster_local.jpg" / "_poster_nfo.jpg"
+                // (the literal "_poster." must precede the extension); "{id}_season01_poster"
+                // survives the glob but fails the guid parse below.
+                foreach (var file in Directory.GetFiles(dirPath, "*_poster.*"))
+                {
+                    var name = Path.GetFileNameWithoutExtension(file);
+                    var guidPart = name[..^"_poster".Length];
+                    if (Guid.TryParse(guidPart, out var mediaId))
+                    {
+                        found[mediaId] = $"/cache/images/{subDir}/{Path.GetFileName(file)}";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to enumerate cached posters in {Dir}", dirPath);
+            }
+        }
+
+        return found;
+    }
+
+    /// <inheritdoc />
     public Task<int> InvalidateCachedImagesAsync(Guid mediaItemId) => Task.Run(() =>
     {
         var deleted = 0;

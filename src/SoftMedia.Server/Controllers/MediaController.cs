@@ -220,9 +220,7 @@ public class MediaController : ControllerBase
         if (query.Length > 100) query = query[..100];
         var escaped = query.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
         var searchPattern = $"%{escaped}%";
-        var prefixPattern = $"{escaped}%";
         const string Esc = "\\";
-        var globalLimit = limit * 5; // Bounded global search to prevent explosive memory allocation
 
         // Wave C — apply per-user library ACL before any other narrowing so
         // pagination/limit math operates on the user's visible set only.
@@ -233,28 +231,91 @@ public class MediaController : ControllerBase
         // that to cast and descriptions).
         var ceilings = await _ratingProvider.GetCurrentAsync();
 
-        // Episodes must not become a side door around a series-level ceiling: an
-        // episode row can carry its OWN (permissive) rating while the parent series
-        // is above the caller's ceiling — the row-level filter passes it, but the
-        // series page it belongs to is blocked (review MED-LOW). Gate episode hits
-        // on the parent series ALSO passing the rating filter.
+        var matchQuery = BuildSearchMatchQuery(searchPattern, access, ceilings);
+
+        // Per-library top hits instead of one global Take. The old flat cap
+        // (limit * 5 across the whole server) let one strong library push every
+        // other library's hits past the cutoff, so those libraries VANISHED from
+        // the dropdown — indistinguishable from having no matches. One bounded
+        // query per matching library guarantees every library with hits shows its
+        // best few; on a personal server that's a handful of small indexed
+        // queries, not a fan-out.
+        var matchingLibraryIds = await matchQuery
+            .Select(m => m.LibraryId)
+            .Distinct()
+            .ToListAsync();
+
+        var libraries = await _context.Libraries
+            .AsNoTracking()
+            .Where(l => matchingLibraryIds.Contains(l.Id))
+            .OrderBy(l => l.Order)
+            .Take(20) // defensive bound; a personal server has nowhere near 20 libraries
+            .ToListAsync();
+
+        var results = new List<GlobalSearchResultDto>();
+        foreach (var library in libraries)
+        {
+            var items = await matchQuery
+                .Where(m => m.LibraryId == library.Id)
+                // Ranking within the library: title-prefix first, then any title
+                // match, then other-field matches; title tiebreak keeps re-runs stable.
+                .OrderBy(m => EF.Functions.Like(m.Title, $"{escaped}%", Esc) ? 0
+                            : EF.Functions.Like(m.Title, searchPattern, Esc) ? 1 : 2)
+                .ThenBy(m => m.Title)
+                .Take(limit)
+                .ToListAsync();
+
+            if (items.Count == 0) continue; // raced a delete; skip rather than emit an empty group
+
+            results.Add(new GlobalSearchResultDto
+            {
+                LibraryId = library.Id,
+                LibraryName = library.Name,
+                LibraryType = library.Type.ToString(),
+                Items = items.Select(i => MediaItemDto.FromMediaItem(i, "/api/v1/image/proxy")).ToList(),
+                BestMatchTier = items.Min(i => TitleMatchTier(i.Title, query)),
+                MatchReasons = BuildMatchReasons(items, query),
+            });
+        }
+
+        await ResolveCastMatchReasonsAsync(results, query, searchPattern);
+
+        // Group order is match quality, then the library's configured position.
+        // This used to fall out of GroupBy's first-appearance order over a flat
+        // item sort — the same outcome, but by accident; now it's stated.
+        return Ok(results
+            .OrderBy(r => r.BestMatchTier)
+            .ThenBy(r => libraries.First(l => l.Id == r.LibraryId).Order)
+            .ToList());
+    }
+
+    /// <summary>
+    /// The search population: every item the caller may see whose fields match.
+    ///
+    /// R-WI-017 multi-field matching (LIKE-over-joins per the plan — FTS5 is an
+    /// explicit follow-up). Field breadth is tiered by type to keep results sane:
+    /// - top-level items (movies/series/albums/…): title, description, genre,
+    ///   cast/person, and for albums the artist name;
+    /// - tracks: title + artist/album names (genre/description would return every
+    ///   track of every matching album);
+    /// - episodes: title only (inherited metadata would flood results), gated on
+    ///   the parent series also passing the rating ceiling so an episode row with
+    ///   its own permissive rating is not a side door (review MED-LOW);
+    /// - comic issues: title only (B-06 — issues inherit series metadata);
+    /// - Seasons excluded: "Season 1" matches every show and carries no
+    ///   information the series hit doesn't.
+    /// </summary>
+    private IQueryable<MediaItem> BuildSearchMatchQuery(
+        string searchPattern, LibraryAccess access, UserRatingCeilings ceilings)
+    {
+        const string Esc = "\\";
         var ratedSeries = _context.MediaItems.ApplyContentRatingFilter(ceilings);
 
-        // R-WI-017 multi-field matching (LIKE-over-joins per the plan — FTS5 is an
-        // explicit follow-up). Field breadth is tiered by type to keep results sane:
-        // - top-level items (movies/series/albums/…): title, description, genre,
-        //   cast/person, and for albums the artist name;
-        // - tracks: title + artist/album names (genre/description would return every
-        //   track of every matching album);
-        // - episodes: title only (inherited metadata would flood results);
-        // - Seasons are newly EXCLUDED (previously title-searchable): "Season 1"
-        //   matches every show and carries no information the series hit doesn't.
-        var matchingItems = await _context.MediaItems
+        return _context.MediaItems
             .AsNoTracking()
             .ApplyLibraryAccessFilter(access)
             .ApplyContentRatingFilter(ceilings)
             .ExcludeMissing()
-            .Include(m => m.Library)
             .Include(m => m.Series) // episode poster fallback + seriesTitle name context
             .Include(m => m.Artist) // track/album subtitle context (metadata.artist)
             .Include(m => m.Album)  // track subtitle context (metadata.album)
@@ -266,10 +327,6 @@ public class MediaController : ControllerBase
                     || m.MediaItemGenres.Any(mg => mg.Genre != null && EF.Functions.Like(mg.Genre.Name, searchPattern, Esc))
                     || m.MediaItemCasts.Any(mc => mc.Person != null && EF.Functions.Like(mc.Person.Name, searchPattern, Esc))
                     || (m.Artist != null && EF.Functions.Like(m.Artist.Title, searchPattern, Esc))))
-                // B-06: comic issues match on TITLE only, like episodes — issues
-                // inherit their series' genre/description, so a genre query would
-                // flood with every individual issue (they're hidden from library
-                // browse for the same reason; the series hit is the right result).
                 || (m.Type == MediaType.ComicIssue && EF.Functions.Like(m.Title, searchPattern, Esc))
                 || (m.Type == MediaType.Audio && (
                     EF.Functions.Like(m.Title, searchPattern, Esc)
@@ -277,31 +334,86 @@ public class MediaController : ControllerBase
                     || (m.Album != null && EF.Functions.Like(m.Album.Title, searchPattern, Esc))))
                 || (m.Type == MediaType.Episode
                     && EF.Functions.Like(m.Title, searchPattern, Esc)
-                    && ratedSeries.Any(s => s.Id == m.SeriesId)))
-            // Ranking: title-prefix first, then any title match, then other-field matches.
-            .OrderBy(m => EF.Functions.Like(m.Title, prefixPattern, Esc) ? 0
-                        : EF.Functions.Like(m.Title, searchPattern, Esc) ? 1 : 2)
-            .ThenBy(m => m.Library!.Order)
-            .ThenBy(m => m.Title)
-            .Take(globalLimit)
+                    && ratedSeries.Any(s => s.Id == m.SeriesId)));
+    }
+
+    /// <summary>
+    /// In-memory mirror of the SQL ranking cases: 0 title-prefix, 1 title-contains,
+    /// 2 matched via some other field. OrdinalIgnoreCase approximates SQLite's
+    /// ASCII-only LIKE case folding closely enough for a rank signal.
+    /// </summary>
+    private static int TitleMatchTier(string title, string query)
+        => title.StartsWith(query, StringComparison.OrdinalIgnoreCase) ? 0
+         : title.Contains(query, StringComparison.OrdinalIgnoreCase) ? 1
+         : 2;
+
+    /// <summary>
+    /// "Why is this here?" labels for items whose title did NOT match. Resolved
+    /// from data the search query already loads (overview, genres, artist,
+    /// album); cast matches — the one field that would need another join — are
+    /// filled in afterwards by <see cref="ResolveCastMatchReasonsAsync"/>.
+    /// </summary>
+    private static Dictionary<string, string> BuildMatchReasons(List<MediaItem> items, string query)
+    {
+        var reasons = new Dictionary<string, string>();
+        foreach (var item in items)
+        {
+            if (TitleMatchTier(item.Title, query) != 2) continue;
+
+            var genre = item.MediaItemGenres
+                .Select(mg => mg.Genre?.Name)
+                .FirstOrDefault(n => n != null && n.Contains(query, StringComparison.OrdinalIgnoreCase));
+
+            string? reason =
+                item.Artist?.Title.Contains(query, StringComparison.OrdinalIgnoreCase) == true
+                    ? $"Matched artist: {item.Artist.Title}"
+                : item.Album?.Title.Contains(query, StringComparison.OrdinalIgnoreCase) == true
+                    ? $"Matched album: {item.Album.Title}"
+                : genre != null
+                    ? $"Matched genre: {genre}"
+                : item.Overview?.Contains(query, StringComparison.OrdinalIgnoreCase) == true
+                    ? "Matched description"
+                : null; // cast — resolved by the follow-up query
+
+            if (reason != null) reasons[item.Id.ToString()] = reason;
+        }
+        return reasons;
+    }
+
+    /// <summary>
+    /// Fills in "Matched cast: X" for tier-2 items no loaded field explained.
+    /// One bounded query across all groups rather than an Include on the search
+    /// itself — cast lists are large and only a handful of items ever need this.
+    /// </summary>
+    private async Task ResolveCastMatchReasonsAsync(
+        List<GlobalSearchResultDto> results, string query, string searchPattern)
+    {
+        const string Esc = "\\";
+        var unexplained = results
+            .SelectMany(r => r.Items
+                .Where(i => TitleMatchTier(i.Title, query) == 2)
+                .Select(i => (Group: r, i.Id)))
+            .Where(x => !x.Group.MatchReasons.ContainsKey(x.Id.ToString()))
+            .ToList();
+        if (unexplained.Count == 0) return;
+
+        var ids = unexplained.Select(x => x.Id).ToList();
+        var castHits = await _context.MediaItemCasts
+            .AsNoTracking()
+            .Where(mc => ids.Contains(mc.MediaItemId)
+                && mc.Person != null
+                && EF.Functions.Like(mc.Person.Name, searchPattern, Esc))
+            .Select(mc => new { mc.MediaItemId, mc.Person!.Name })
             .ToListAsync();
 
-        // Group by the library ID, not the entity: plain AsNoTracking materializes a
-        // DISTINCT Library instance per row, so reference-keyed grouping put every
-        // item in its own single-item group (duplicate library headers in the search
-        // dropdown — found live once multi-field matching made result sets bigger).
-        var results = matchingItems
-            .Where(m => m.Library != null)
-            .GroupBy(m => m.LibraryId)
-            .Select(g => new GlobalSearchResultDto
-            {
-                LibraryId = g.Key,
-                LibraryName = g.First().Library!.Name,
-                LibraryType = g.First().Library!.Type.ToString(),
-                Items = g.Take(limit).Select(i => MediaItemDto.FromMediaItem(i, "/api/v1/image/proxy")).ToList()
-            })
-            .ToList();
+        var nameByItem = castHits
+            .GroupBy(c => c.MediaItemId)
+            .ToDictionary(g => g.Key, g => g.First().Name);
 
-        return Ok(results);
+        foreach (var (group, id) in unexplained)
+        {
+            if (nameByItem.TryGetValue(id, out var name))
+                group.MatchReasons[id.ToString()] = $"Matched cast: {name}";
+        }
     }
 }

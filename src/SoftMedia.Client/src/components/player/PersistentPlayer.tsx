@@ -51,8 +51,8 @@ export const PersistentPlayer: React.FC = () => {
     } = useAudioStore();
 
     // Dual audio elements for true gapless playback
-    const audioARef = useRef<HTMLAudioElement>(null);
-    const audioBRef = useRef<HTMLAudioElement>(null);
+    const audioARef = useRef<HTMLAudioElement | null>(null);
+    const audioBRef = useRef<HTMLAudioElement | null>(null);
 
     // Track which audio element is currently active (0 = A, 1 = B)
     const [activePlayer, setActivePlayer] = useState<0 | 1>(0);
@@ -64,6 +64,21 @@ export const PersistentPlayer: React.FC = () => {
     // Audio Element State (for Visualizer Hook Reactivity)
     const [audioAElement, setAudioAElement] = useState<HTMLAudioElement | null>(null);
     const [audioBElement, setAudioBElement] = useState<HTMLAudioElement | null>(null);
+
+    // Stable callback refs. An inline arrow ref gets a fresh identity on every
+    // render, so React detaches it (calls it with null) and re-attaches it on
+    // every single commit — and mirroring that into state made each commit
+    // schedule another one, blanking the page with "Maximum update depth
+    // exceeded". useCallback with no deps means these fire only when the
+    // elements genuinely mount or unmount.
+    const attachAudioA = useCallback((el: HTMLAudioElement | null) => {
+        audioARef.current = el;
+        setAudioAElement(el);
+    }, []);
+    const attachAudioB = useCallback((el: HTMLAudioElement | null) => {
+        audioBRef.current = el;
+        setAudioBElement(el);
+    }, []);
 
 
     const [showQueue, setShowQueue] = useState(false);
@@ -99,10 +114,12 @@ export const PersistentPlayer: React.FC = () => {
 
     // Visualizer state
     const { isEnabled: visualizerEnabled, toggle: toggleVisualizer } = useVisualizerStore();
+    // Both elements are tapped at once — a gapless crossfade overlaps them, so
+    // gating the analyser on `activePlayer` would flatline it mid-transition
+    // (and silenced the incoming track until the swap).
     const { frequencyData, timeDomainData, isReady: visualizerReady, updateData, setGlobalVolume } = useAudioAnalyser(
         audioAElement,
-        audioBElement,
-        activePlayer
+        audioBElement
     );
     const [isPreloaded, setIsPreloaded] = useState(false);
     const [preloadedTrackId, setPreloadedTrackId] = useState<string | null>(null);
@@ -633,12 +650,7 @@ export const PersistentPlayer: React.FC = () => {
         <>
             {/* Persistent Audio Elements - outside conditionals to prevent re-mounting */}
             <audio
-                ref={(el) => {
-                    // Update Ref for imperative logic
-                    if (audioARef) (audioARef as any).current = el;
-                    // Update State for hook reactivity
-                    if (el !== audioAElement) setAudioAElement(el);
-                }}
+                ref={attachAudioA}
                 crossOrigin="use-credentials"
                 onTimeUpdate={activePlayer === 0 ? handleTimeUpdate : undefined}
                 onEnded={activePlayer === 0 ? handleEnded : undefined}
@@ -647,12 +659,7 @@ export const PersistentPlayer: React.FC = () => {
                 preload="auto"
             />
             <audio
-                ref={(el) => {
-                    // Update Ref for imperative logic
-                    if (audioBRef) (audioBRef as any).current = el;
-                    // Update State for hook reactivity
-                    if (el !== audioBElement) setAudioBElement(el);
-                }}
+                ref={attachAudioB}
                 crossOrigin="use-credentials"
                 onTimeUpdate={activePlayer === 1 ? handleTimeUpdate : undefined}
                 onEnded={activePlayer === 1 ? handleEnded : undefined}
@@ -732,6 +739,7 @@ export const PersistentPlayer: React.FC = () => {
                                     <div className="relative">
                                         <button
                                             type="button"
+                                            data-add-to-playlist-trigger
                                             onClick={() => setShowPlaylistMenu(v => !v)}
                                             aria-label="Add current track to a playlist"
                                             aria-haspopup="menu"
@@ -968,7 +976,9 @@ export const PersistentPlayer: React.FC = () => {
                                             <h3 className="text-white font-semibold">Up Next</h3>
                                             <span className="text-gray-400 text-sm">{queue.length} tracks</span>
                                         </div>
-                                        <div className="flex-1 overflow-y-auto flex flex-col">
+                                        {/* QueueList owns its own scroll region so its
+                                            pager can stay pinned below the list. */}
+                                        <div className="flex-1 min-h-0 flex flex-col">
                                             <QueueList />
                                         </div>
                                     </div>
@@ -982,20 +992,30 @@ export const PersistentPlayer: React.FC = () => {
             {/* Queue Drawer (collapsed mode only) */}
             <AnimatePresence>
                 {showQueue && !isExpanded && (
+                    // `flex flex-col` is what lets the body below claim the leftover
+                    // height. Without it the queue was clipped at max-height with no
+                    // way to scroll to the rest of it.
                     <motion.div
                         initial={{ opacity: 0, y: 50, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 50, scale: 0.95 }}
                         transition={{ duration: 0.2 }}
-                        className="fixed bottom-20 right-4 w-80 max-h-96 bg-gray-900 border border-gray-700 rounded-lg shadow-2xl z-50 overflow-hidden"
+                        className="fixed bottom-20 right-4 w-80 max-h-[70vh] bg-gray-900 border border-gray-700 rounded-lg shadow-2xl z-50 overflow-hidden flex flex-col"
                     >
-                        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-                            <h3 className="text-white font-semibold">Up Next</h3>
-                            <button onClick={() => setShowQueue(false)} className="text-gray-400 hover:text-white">
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 shrink-0">
+                            <div className="flex items-center gap-2 min-w-0">
+                                <h3 className="text-white font-semibold">Up Next</h3>
+                                <span className="text-gray-400 text-xs tabular-nums">{queue.length}</span>
+                            </div>
+                            <button
+                                onClick={() => setShowQueue(false)}
+                                aria-label="Close queue"
+                                className="text-gray-400 hover:text-white focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
+                            >
                                 <X size={18} />
                             </button>
                         </div>
-                        <div className="flex-1 overflow-hidden flex flex-col">
+                        <div className="flex-1 min-h-0 flex flex-col">
                             <QueueList />
                         </div>
                     </motion.div>
@@ -1171,6 +1191,7 @@ export const PersistentPlayer: React.FC = () => {
                             <div className="relative">
                                 <button
                                     type="button"
+                                    data-add-to-playlist-trigger
                                     onClick={() => setShowPlaylistMenu(v => !v)}
                                     aria-label="Add current track to a playlist"
                                     aria-haspopup="menu"

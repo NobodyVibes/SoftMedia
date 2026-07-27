@@ -1,44 +1,32 @@
 import { type MediaItem } from '../../types';
 import { BookOpen } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { getProgress } from '../../services/bookService';
 
 interface BookDetailViewProps {
     item: MediaItem;
 }
 
 export default function BookDetailView({ item }: BookDetailViewProps) {
-    const metadata = item.metadata || {};
+    // Authors come from two places and the richer one wins. OpenLibrary writes every author
+    // of a work into `cast` tagged with the character "Author", so co-authored books list all
+    // of them; the scanner's embedded read (EPUB dc:creator / PDF Info) yields a single name
+    // and lands in `director`, the shared primary-creator field. Books that were never
+    // enriched still show their embedded author this way.
+    const castAuthors = (item.cast ?? [])
+        .filter((member) => member.characters?.some((c) => c.toLowerCase() === 'author'))
+        .map((member) => member.name)
+        .filter(Boolean);
+    const author = castAuthors.length > 0 ? castAuthors.join(', ') : item.director;
 
-    const { data: progress } = useQuery({
-        queryKey: ['book-progress', item.id],
-        queryFn: () => getProgress(item.id),
-        staleTime: 30_000,
-    });
-
-    const resumePage = progress && progress.position > 0 ? Math.floor(progress.position) : 0;
-    const hasEpubResume = !!progress?.bookLocation;
-    // SR-WI-063: `path` left the media DTO; the server now guarantees `container`
-    // carries the file extension for book-type items instead.
-    const ext = (item.container ?? '').toLowerCase();
-    const showResume = (ext === 'pdf' || ext === 'cbz') ? resumePage > 1 : hasEpubResume;
-    const readLabel = !showResume
-        ? 'Read Now'
-        : ext === 'epub'
-            ? 'Continue Reading'
-            : `Continue from page ${resumePage}`;
-
-    // Extract author: prefer direct "author" key (from BookScanner), fall back to cast array (from OpenLibrary)
-    let author = metadata.author as string | undefined;
-    if (!author && Array.isArray(metadata.cast)) {
-        const authorEntry = metadata.cast.find(
-            (c: { character?: string }) => c.character === 'Author'
-        );
-        if (authorEntry && typeof authorEntry === 'object' && 'name' in authorEntry) {
-            author = (authorEntry as { name: string }).name;
-        }
-    }
+    // Only render the fields we actually have. A grid of "Unknown" reads as a broken page,
+    // and for most of these there is genuinely nothing to say — a reflowable EPUB has no page
+    // count, and plenty of public-domain files carry no ISBN at all.
+    const details: { label: string; value: string; mono?: boolean }[] = [
+        author ? { label: castAuthors.length > 1 ? 'Authors' : 'Author', value: author } : null,
+        item.studio ? { label: 'Publisher', value: item.studio } : null,
+        item.isbn ? { label: 'ISBN', value: item.isbn, mono: true } : null,
+        item.pageCount ? { label: 'Pages', value: item.pageCount.toLocaleString() } : null,
+        item.year ? { label: 'First Published', value: String(item.year) } : null,
+    ].filter((d): d is { label: string; value: string; mono?: boolean } => d !== null);
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -51,36 +39,24 @@ export default function BookDetailView({ item }: BookDetailViewProps) {
                 )}
 
                 {/* Book Info */}
-                <div className="bg-white/5 rounded-xl p-6 border border-white/10">
-                    <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-                        <BookOpen className="w-5 h-5 text-primary" />
-                        Book Details
-                    </h2>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                        <div>
-                            <span className="block text-gray-400 mb-1">Author</span>
-                            <span className="text-white font-medium">{author || 'Unknown'}</span>
-                        </div>
-                        <div>
-                            <span className="block text-gray-400 mb-1">Publisher</span>
-                            <span className="text-white font-medium">{(metadata.publisher as string) || (metadata.studio as string) || 'Unknown'}</span>
-                        </div>
-                        <div>
-                            <span className="block text-gray-400 mb-1">ISBN</span>
-                            <span className="text-white font-medium">{(metadata.isbn as string) || 'N/A'}</span>
-                        </div>
-                        <div>
-                            <span className="block text-gray-400 mb-1">Pages</span>
-                            <span className="text-white font-medium">{metadata.pageCount ? String(metadata.pageCount) : 'Unknown'}</span>
-                        </div>
-                        {item.year && (
-                            <div>
-                                <span className="block text-gray-400 mb-1">First Published</span>
-                                <span className="text-white font-medium">{item.year}</span>
-                            </div>
-                        )}
+                {details.length > 0 && (
+                    <div className="bg-white/5 rounded-xl p-6 border border-white/10">
+                        <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                            <BookOpen className="w-5 h-5 text-primary" />
+                            Book Details
+                        </h2>
+                        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                            {details.map(({ label, value, mono }) => (
+                                <div key={label}>
+                                    <dt className="text-gray-400 mb-1">{label}</dt>
+                                    <dd className={`text-white font-medium ${mono ? 'font-mono tracking-tight' : ''}`}>
+                                        {value}
+                                    </dd>
+                                </div>
+                            ))}
+                        </dl>
                     </div>
-                </div>
+                )}
 
                 {/* Genres */}
                 {item.genres && item.genres.length > 0 && (
@@ -96,13 +72,9 @@ export default function BookDetailView({ item }: BookDetailViewProps) {
                     </div>
                 )}
 
-                {/* Read Button */}
-                <Link
-                    to={`/read/${item.id}`}
-                    className="inline-flex items-center justify-center w-full py-3 bg-primary hover:bg-primary/90 text-white rounded-lg font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-                >
-                    {readLabel}
-                </Link>
+                {/* The read action is NOT duplicated here: the detail page's primary
+                    button (under the cover art) is the reader's single entry point,
+                    labelled by lib/bookReadLabel. */}
             </div>
 
             {/* Sidebar / Additional Info */}

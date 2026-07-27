@@ -1,4 +1,4 @@
-import { MediaType, type MediaItem } from '../types';
+import { MediaType, type Library, type MediaItem } from '../types';
 
 /**
  * Back-navigation targets are HIERARCHICAL, never browser history (`navigate(-1)`).
@@ -38,4 +38,54 @@ export function detailBackTarget(
     if (item.artistId && item.type === MediaType.Album) return `/media/${item.artistId}`;
     if (item.libraryId) return `/libraries/${item.libraryId}`;
     return '/';
+}
+
+/** Query param LibraryPage reads to open a non-default view-mode tab. */
+export const LIBRARY_VIEW_PARAM = 'view';
+
+/**
+ * Query param carrying the library a playlist was opened from. Playlists are not
+ * owned by a library, so containment can't be derived from the playlist itself —
+ * the origin rides on the URL instead, the same way a photo's album key does (see
+ * detailBackTarget). That keeps back deep-linkable and refresh-proof without
+ * touching browser history.
+ */
+export const PLAYLIST_ORIGIN_PARAM = 'from';
+
+/** URL of a Music library's Playlists tab. */
+function playlistsTabHref(libraryId: string): string {
+    return `/libraries/${libraryId}?${LIBRARY_VIEW_PARAM}=playlists`;
+}
+
+/**
+ * Where a playlist detail page's "All playlists" lands.
+ *
+ * There is NO `/playlists` route: the index is a view-mode tab inside the Music
+ * library, because playlists are music-only in v1 (see PlaylistsView). Linking
+ * to `/playlists` therefore matched nothing and App's catch-all `<Navigate to="/">`
+ * bounced the user to the home page. Resolve the Music library and deep-link its
+ * tab instead.
+ *
+ * With several Music libraries, `originLibraryId` (from PLAYLIST_ORIGIN_PARAM)
+ * returns the user to the one they actually came from; it's validated against the
+ * library list so a stale or hand-edited id can't strand them on a dead library
+ * page. Falls back to the first Music library, then to home — the latter only
+ * when no Music library exists, in which case there is nowhere else to go.
+ */
+export function playlistsIndexTarget(
+    libraries: readonly Pick<Library, 'id' | 'type'>[] | undefined,
+    originLibraryId?: string | null,
+): string {
+    const music = libraries?.filter(l => l.type === 'Music');
+
+    if (originLibraryId) {
+        // While the library list is still loading there is nothing to validate
+        // against, and the id came from our own link — trust it so the href
+        // doesn't flicker to a fallback and back.
+        if (!music || music.some(l => l.id === originLibraryId)) {
+            return playlistsTabHref(originLibraryId);
+        }
+    }
+
+    return music?.[0] ? playlistsTabHref(music[0].id) : '/';
 }

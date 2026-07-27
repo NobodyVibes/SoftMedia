@@ -436,6 +436,21 @@ Ordered by leverage per the review's §6 comparison. Each needs its own mini-pla
 
 Session order: A → B → C → D → E — **ALL FIVE COMPLETE 2026-07-24**. Remaining: native-app
 plan Session 5 (operator QA + v1.0.0), now the ONLY gate before the tag.
+
+**Session 5 live QA log (2026-07-24, operator present):**
+- Boot on new build: migrations applied, health/branding OK, `data/logs` file created
+  token-free. Old server's orphaned ffmpeg observed live (the SR-WI-021 bug, pre-fix build);
+  new build reaps on shutdown.
+- Phase 2 pause test found TWO bugs, fixed as `e682a6f`: (1) revival churn — hls.js reloads
+  master.m3u8 while paused and the revival path treated each reload as resumption (29
+  revive→dormant cycles in one pause); paused sessions now stay parked (resume/segment
+  requests still revive). (2) The client reconnect budget refunded only on FRAG_LOADED,
+  which never fires while paused, so churn blips accumulated into a false "Connection to
+  the server was lost"; LEVEL_LOADED now refunds too. Revival append math verified live
+  (parked at seg 129 → resumed at t=2381.8s exactly).
+- Known noise (non-blocking, follow-up candidate): TrickplayService retries the same
+  broken file every 10-min cycle (exit -1094995529 on one item) — needs a permanent-failure
+  marker like the metadata retry ladder.
 Sessions B and C are independent of each other and could swap or parallelize if needed;
 D depends on nothing server-side; E's SR-WI-061/063 should land before native-client work
 consumes the API.

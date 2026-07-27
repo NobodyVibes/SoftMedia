@@ -67,6 +67,30 @@ public class MediaItemDto
     public string? Rating { get; set; }
     public double? CommunityRating { get; set; }
     public string? Description { get; set; }
+
+    /// <summary>
+    /// Producing organisation — studio/network for video, PUBLISHER for books.
+    /// Mirrors <see cref="MediaItem.Studio"/> 1:1, like every other promoted column here.
+    /// </summary>
+    public string? Studio { get; set; }
+
+    /// <summary>
+    /// Primary creator — director for video, AUTHOR for books. Books with several authors
+    /// also appear in <see cref="Cast"/> with the character "Author"; this is the single
+    /// creator the scanner read out of the file.
+    /// </summary>
+    public string? Director { get; set; }
+
+    /// <summary>Book ISBN, normalised to digits. Null for non-book items.</summary>
+    public string? Isbn { get; set; }
+
+    /// <summary>
+    /// Book page count for display. NOT the reader's pagination source — the reader calls
+    /// <c>/api/v1/books/{id}/info</c>, which counts the real document, so a provider's
+    /// print-edition figure here can never affect page navigation.
+    /// </summary>
+    public int? PageCount { get; set; }
+
     public string? Container { get; set; }
     public string? VideoCodec { get; set; }
     public string? AudioCodec { get; set; }
@@ -86,6 +110,13 @@ public class MediaItemDto
     /// No new keys may be added without a plan-recorded decision; the canary test
     /// <c>MediaItemDtoMetadataContractTests</c> asserts the emitted key set for each
     /// media type stays within this list. Full typing is deferred (breaking change).
+    /// <para>
+    /// Book fields (author/publisher/ISBN/pages) deliberately do NOT live here — they are
+    /// the typed <see cref="Director"/>, <see cref="Studio"/>, <see cref="Isbn"/> and
+    /// <see cref="PageCount"/> properties above. They map 1:1 onto promoted columns, so the
+    /// bag would have added a second, untyped representation of data that already had a
+    /// home. Treat that as the precedent for anything else that looks bag-shaped.
+    /// </para>
     /// </summary>
     public Dictionary<string, object>? Metadata { get; set; }
     
@@ -264,6 +295,10 @@ public class MediaItemDto
             dto.Description = item.Overview;
             dto.CommunityRating = item.CommunityRating;
             dto.Rating = item.ContentRating;
+            dto.Studio = item.Studio;
+            dto.Director = item.Director;
+            dto.Isbn = item.Isbn;
+            dto.PageCount = item.PageCount;
 
             // Skip-pill timecodes
             dto.CreditsStart = item.CreditsStart;
@@ -362,6 +397,16 @@ public class MediaItemDto
         var ext = System.IO.Path.GetExtension(path);
         return string.IsNullOrEmpty(ext) ? null : ext.TrimStart('.').ToLowerInvariant();
     }
+
+    /// <summary>
+    /// Poster path for an item without building a whole DTO. Used by callers that
+    /// need artwork only — e.g. the playlist list's cover collage, which reads a
+    /// handful of tracks per playlist and would otherwise pay for genre/cast
+    /// projection it discards. Shares <see cref="ResolvePosterPath"/> so music's
+    /// local-endpoint preference can't drift between the two paths.
+    /// </summary>
+    public static string? ResolvePosterPathFor(MediaItem item, string? imageProxyBaseUrl = null)
+        => ResolvePosterPath(item, imageProxyBaseUrl);
 
     private static string? ResolvePosterPath(MediaItem item, string? imageProxyBaseUrl)
     {

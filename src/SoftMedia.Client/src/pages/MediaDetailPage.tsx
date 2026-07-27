@@ -1,5 +1,5 @@
 import { useParams, useNavigate, Navigate } from 'react-router-dom';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import api from '../services/api';
@@ -185,11 +185,14 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
         enabled: isBook,
     });
 
-    const { data: nextEpisode } = useQuery({
+    const { data: nextEpisode, isPending: nextEpisodePending } = useQuery({
         queryKey: ['series', item.id, 'next-episode'],
         queryFn: async () => {
             const response = await api.get<{
                 episodeId: string;
+                seasonNumber: number;
+                episodeNumber: number;
+                title: string;
                 resumePosition: number;
                 isSeriesComplete: boolean;
             }>(`/series/${item.id}/next-episode`);
@@ -197,6 +200,15 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
         },
         enabled: item.type === MediaType.Series,
     });
+
+    // Names the episode "Resume from H:MM" would play. Only when there really is
+    // a position to resume — with none, the button says Play and there is nothing
+    // to disambiguate.
+    const resumeCaption = useMemo(() => {
+        if (item.type !== MediaType.Series || !nextEpisode || nextEpisode.resumePosition <= 0) return undefined;
+        const slug = `S${nextEpisode.seasonNumber} E${nextEpisode.episodeNumber}`;
+        return nextEpisode.title ? `${slug} · ${nextEpisode.title}` : slug;
+    }, [item.type, nextEpisode]);
 
     const resumePositionSeconds = useMemo(() => {
         if (isResumableVideo) {
@@ -367,8 +379,15 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
     const [qualityItem, setQualityItem] = useState<MediaItem | null>(null);
     const [selectedEpisodeId, setSelectedEpisodeId] = useState<string | null>(null);
 
-    // Reset when item changes
+    // Reset when the page swaps to a DIFFERENT item (this component stays mounted
+    // across detail→detail navigation). The mount run is deliberately skipped:
+    // child effects fire before the parent's, so with the queries already cached
+    // TVDetailView has reported its resume episode by the time this runs, and an
+    // unconditional reset would wipe that selection right back out.
+    const previousItemIdRef = useRef(item.id);
     useEffect(() => {
+        if (previousItemIdRef.current === item.id) return;
+        previousItemIdRef.current = item.id;
         setQualityItem(null);
         setSelectedEpisodeId(null);
     }, [item.id]);
@@ -408,6 +427,9 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
                     <TVDetailView
                         item={item}
                         selectedEpisodeId={selectedEpisodeId}
+                        resumeEpisodeId={nextEpisode?.episodeId ?? null}
+                        resumeEpisodePending={item.type === MediaType.Series && nextEpisodePending}
+                        resumeHasPosition={(nextEpisode?.resumePosition ?? 0) > 0}
                         onEpisodeSelect={handleEpisodeSelect}
                         onDefaultQualityItemFound={handleDefaultQualityFound}
                     />
@@ -426,6 +448,7 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
             onPlay={handlePlay}
             onPlayFromBeginning={handlePlayFromBeginning}
             resumePositionSeconds={resumePositionSeconds}
+            resumeCaption={resumeCaption}
             playPending={playPending}
             playLabel={isBook ? bookReadLabel(item.container, bookProgress) : undefined}
             playIcon={isBook ? <BookOpen className="w-6 h-6" aria-hidden="true" /> : undefined}

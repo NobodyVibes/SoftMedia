@@ -165,11 +165,116 @@ public class BookMetadataExtractorTests : IDisposable
         Assert.Null(result);
     }
 
+    // ──────────────────────────────────────────────────── page count (books)
+
+    [Fact]
+    public async Task ExtractAsync_Epub_ReadsEpub3NumberOfPages()
+    {
+        var epubPath = Path.Combine(_tempDir, "epub3-pages.epub");
+        BuildMinimalEpub(epubPath,
+            title: "It", author: "Stephen King", date: "1986", publisher: "Viking",
+            description: "", isbn: "9780670813025", language: "en",
+            extraMetadata: """<meta property="schema:numberOfPages">1138</meta>""");
+
+        var result = await _sut.ExtractAsync(epubPath);
+
+        Assert.NotNull(result);
+        Assert.Equal(1138, result!.PageCount);
+    }
+
+    [Fact]
+    public async Task ExtractAsync_Epub_ReadsCalibrePageCount()
+    {
+        var epubPath = Path.Combine(_tempDir, "calibre-pages.epub");
+        BuildMinimalEpub(epubPath,
+            title: "Misery", author: "Stephen King", date: "1987", publisher: "Viking",
+            description: "", isbn: "9780670813643", language: "en",
+            extraMetadata: """<meta name="calibre:page_count" content="310"/>""");
+
+        var result = await _sut.ExtractAsync(epubPath);
+
+        Assert.NotNull(result);
+        Assert.Equal(310, result!.PageCount);
+    }
+
+    [Fact]
+    public async Task ExtractAsync_Epub_WithoutPageDeclaration_LeavesPageCountNull()
+    {
+        // Reflowable text has no intrinsic pagination. Inventing a number here (spine
+        // length, character count) would contradict every printed edition, so the field
+        // must stay null and let the metadata provider supply the print figure.
+        var epubPath = Path.Combine(_tempDir, "no-pages.epub");
+        BuildMinimalEpub(epubPath,
+            title: "Carrie", author: "Stephen King", date: "1974", publisher: "Doubleday",
+            description: "", isbn: "9780385086950", language: "en");
+
+        var result = await _sut.ExtractAsync(epubPath);
+
+        Assert.NotNull(result);
+        Assert.Null(result!.PageCount);
+    }
+
+    [Theory]
+    // Near-miss keys that are NOT counts — a substring match on "page" would swallow all three.
+    [InlineData("""<meta property="rendition:spread">landscape</meta>""")]
+    [InlineData("""<meta name="calibre:page_progression" content="ltr"/>""")]
+    [InlineData("""<meta property="schema:numberOfPages">0</meta>""")]
+    public async Task ExtractAsync_Epub_IgnoresNonCountPageMetadata(string extraMetadata)
+    {
+        var epubPath = Path.Combine(_tempDir, $"decoy-{Guid.NewGuid():N}.epub");
+        BuildMinimalEpub(epubPath,
+            title: "Cujo", author: "Stephen King", date: "1981", publisher: "Viking",
+            description: "", isbn: "9780670456475", language: "en",
+            extraMetadata: extraMetadata);
+
+        var result = await _sut.ExtractAsync(epubPath);
+
+        Assert.NotNull(result);
+        Assert.Null(result!.PageCount);
+    }
+
+    [Fact]
+    public async Task ExtractAsync_Epub_NormalizesUrnAndHyphenatedIsbn()
+    {
+        // Real OPFs write the identifier every which way; all forms must collapse to the
+        // same digits so the file-wins precedence rule in MetadataAggregator compares like
+        // with like against a provider's bare-digit ISBN.
+        var epubPath = Path.Combine(_tempDir, "urn-isbn.epub");
+        BuildMinimalEpub(epubPath,
+            title: "The Stand", author: "Stephen King", date: "1978", publisher: "Doubleday",
+            description: "", isbn: "urn:isbn:978-0-385-12168-2", language: "en");
+
+        var result = await _sut.ExtractAsync(epubPath);
+
+        Assert.NotNull(result);
+        Assert.Equal("9780385121682", result!.Isbn);
+    }
+
+    [Fact]
+    public async Task ExtractAsync_Pdf_ReadsPageCountEvenWithoutInfoDictionary()
+    {
+        // A PDF's page tree is authoritative and always present — scanner rips with an empty
+        // Info dictionary used to return null wholesale and lose it. This is the exact case
+        // that made "Pages" blank for PDF-only libraries.
+        var pdfPath = Path.Combine(_tempDir, "three-pages.pdf");
+        var builder = new UglyToad.PdfPig.Writer.PdfDocumentBuilder();
+        builder.AddPage(UglyToad.PdfPig.Content.PageSize.A4);
+        builder.AddPage(UglyToad.PdfPig.Content.PageSize.A4);
+        builder.AddPage(UglyToad.PdfPig.Content.PageSize.A4);
+        File.WriteAllBytes(pdfPath, builder.Build());
+
+        var result = await _sut.ExtractAsync(pdfPath);
+
+        Assert.NotNull(result);
+        Assert.Equal(3, result!.PageCount);
+    }
+
     // ────────────────────────────────────────────────────────────── helpers
 
     private static void BuildMinimalEpub(
         string path, string title, string author, string date,
-        string publisher, string description, string isbn, string language)
+        string publisher, string description, string isbn, string language,
+        string extraMetadata = "")
     {
         using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
 
@@ -198,6 +303,7 @@ public class BookMetadataExtractorTests : IDisposable
                     <dc:description>{description}</dc:description>
                     <dc:identifier id="BookId" opf:scheme="ISBN">{isbn}</dc:identifier>
                     <dc:language>{language}</dc:language>
+                    {extraMetadata}
                 </metadata>
             </package>
             """;

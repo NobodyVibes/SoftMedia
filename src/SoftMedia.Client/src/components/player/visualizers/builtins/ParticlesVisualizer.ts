@@ -76,14 +76,19 @@ export const particlesVisualizer: VisualizerRenderer = ({
         // Audio-reactive size
         const size = particle.size * (1 + avgAmplitude * 2);
 
-        // Interpolate between primary and secondary color based on hue
+        // Interpolate between primary and secondary color based on hue.
+        // Opacity comes from globalAlpha rather than an appended "##" hex pair:
+        // the theme vars only happen to be hex today, and any other notation
+        // (oklch, rgb) would make addColorStop throw and blank the frame.
+        const color = particle.hue < 0.5 ? primaryColor : secondaryColor;
         const gradient = ctx.createRadialGradient(
             particle.x, particle.y, 0,
             particle.x, particle.y, size * 2
         );
-        gradient.addColorStop(0, `${particle.hue < 0.5 ? primaryColor : secondaryColor}${Math.round(particle.alpha * 255).toString(16).padStart(2, '0')}`);
+        gradient.addColorStop(0, color);
         gradient.addColorStop(1, 'transparent');
 
+        ctx.globalAlpha = particle.alpha;
         ctx.beginPath();
         ctx.arc(particle.x, particle.y, size * 2, 0, Math.PI * 2);
         ctx.fillStyle = gradient;
@@ -92,7 +97,7 @@ export const particlesVisualizer: VisualizerRenderer = ({
         // Draw core
         ctx.beginPath();
         ctx.arc(particle.x, particle.y, size, 0, Math.PI * 2);
-        ctx.fillStyle = particle.hue < 0.5 ? primaryColor : secondaryColor;
+        ctx.fillStyle = color;
         ctx.globalAlpha = particle.alpha * (0.5 + avgAmplitude);
         ctx.fill();
         ctx.globalAlpha = 1;

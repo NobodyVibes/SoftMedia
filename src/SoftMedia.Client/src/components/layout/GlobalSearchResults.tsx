@@ -1,7 +1,11 @@
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Play, Film, Tv, Music, BookOpen, Gamepad2, Image } from 'lucide-react';
+import { Play, Film, Tv, Music, BookOpen, Gamepad2, Image, ListMusic, Sparkles, Lock, Globe, LibraryBig } from 'lucide-react';
 import type { GlobalSearchResult } from '../../services/searchService';
+import type { PlaylistSummary } from '../../services/playlistService';
+import type { Library } from '../../types';
+import { PlaylistCover } from '../playlists/PlaylistCover';
+import { buildSearchSections } from '../../lib/searchRanking';
 import { MediaType, type MediaItem } from '../../types';
 import { useAudioStore } from '../../store/audioStore';
 import { resolveCardPosterUrl } from '../../lib/mediaImageUrl';
@@ -28,6 +32,21 @@ function subtitleFor(item: MediaItem): string | null {
 
 interface GlobalSearchResultsProps {
     results: GlobalSearchResult[];
+    /**
+     * Playlist hits. They arrive separately because a playlist is not a media
+     * item and belongs to no library (see playlistService.search) — but they no
+     * longer render pinned first: buildSearchSections places every section by
+     * match quality.
+     */
+    playlists?: PlaylistSummary[];
+    /**
+     * The user's (ACL-filtered) library list, so a library can be found by its
+     * NAME — previously a library only appeared via the coincidence of
+     * containing matching items.
+     */
+    libraries?: Library[];
+    /** The active query; sections need it to score playlist/library hits. */
+    query: string;
     isLoading: boolean;
     onClose: () => void;
 }
@@ -41,7 +60,7 @@ const libraryIcons: Record<string, React.ReactNode> = {
     Photo: <Image size={14} />,
 };
 
-export default function GlobalSearchResults({ results, isLoading, onClose }: GlobalSearchResultsProps) {
+export default function GlobalSearchResults({ results, playlists = [], libraries = [], query, isLoading, onClose }: GlobalSearchResultsProps) {
     // Media URLs below embed the media token; re-render when it rotates so a
     // stale token can't leave the artwork permanently broken.
     useMediaTokenRefresh();
@@ -100,10 +119,14 @@ export default function GlobalSearchResults({ results, isLoading, onClose }: Glo
         );
     }
 
+    // One relevance scale across all three sources — media groups, playlists,
+    // library-name hits — so placement reflects match quality, not result type.
+    const sections = buildSearchSections({ query, mediaGroups: results, playlists, libraries });
+
     // B-07: a zero-hit query used to render nothing at all — the dropdown just
     // vanished, indistinguishable from "search is broken". TopBar only mounts
     // this component for a ≥2-char query, so an explicit empty state is safe.
-    if (results.length === 0) {
+    if (sections.length === 0) {
         return (
             <motion.div
                 initial={{ opacity: 0, y: -10 }}
@@ -124,7 +147,109 @@ export default function GlobalSearchResults({ results, isLoading, onClose }: Glo
             transition={{ duration: 0.2 }}
             className="absolute top-full left-0 right-0 mt-2 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50 max-h-[70vh] overflow-y-auto"
         >
-            {results.map((group) => (
+            {/* Sections in relevance order — a playlist named "Testing" no longer
+                outranks a movie titled exactly "Test". */}
+            {sections.map((section) => {
+                if (section.kind === 'playlists') {
+                    return (
+                <div key="playlists">
+                    <div className="px-4 py-2 bg-gradient-to-r from-primary/10 to-secondary/10 border-b border-white/5 flex items-center gap-2">
+                        <span className="text-primary"><ListMusic size={14} /></span>
+                        <span className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                            Playlists
+                        </span>
+                    </div>
+                    <div className="divide-y divide-white/5">
+                        {section.playlists.map((playlist) => (
+                            <div
+                                key={playlist.id}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => { onClose(); navigate(`/playlists/${playlist.id}`); }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        onClose();
+                                        navigate(`/playlists/${playlist.id}`);
+                                    }
+                                }}
+                                className="w-full px-4 py-3 flex items-center gap-3 hover:bg-white/5 transition-colors group text-left cursor-pointer"
+                            >
+                                {/* Square, matching the playlist cards; the 10x14 poster
+                                    box used for media would letterbox the mosaic. */}
+                                <PlaylistCover
+                                    coverPaths={playlist.coverImagePaths}
+                                    className="w-10 h-10 rounded overflow-hidden flex-shrink-0"
+                                    iconClassName="w-1/2 h-1/2"
+                                />
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-white truncate group-hover:text-primary transition-colors flex items-center gap-1.5">
+                                        {playlist.kind === 'Smart' && (
+                                            <Sparkles className="w-3 h-3 text-primary shrink-0" aria-label="Automatic playlist" />
+                                        )}
+                                        <span className="truncate">{playlist.name}</span>
+                                    </p>
+                                    <p className="text-xs text-gray-400 truncate flex items-center gap-1.5">
+                                        {playlist.isPublic
+                                            ? <Globe className="w-3 h-3 shrink-0" />
+                                            : <Lock className="w-3 h-3 shrink-0" />}
+                                        {playlist.isOwner
+                                            ? (playlist.kind === 'Smart' ? 'Automatic playlist' : 'Your playlist')
+                                            : `Shared by ${playlist.ownerUsername}`}
+                                    </p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                    );
+                }
+
+                if (section.kind === 'libraries') {
+                    return (
+                <div key="libraries">
+                    <div className="px-4 py-2 bg-gradient-to-r from-primary/10 to-secondary/10 border-b border-white/5 flex items-center gap-2">
+                        <span className="text-primary"><LibraryBig size={14} /></span>
+                        <span className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                            Libraries
+                        </span>
+                    </div>
+                    <div className="divide-y divide-white/5">
+                        {section.libraries.map((library) => (
+                            <div
+                                key={library.id}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => { onClose(); navigate(`/libraries/${library.id}`); }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        onClose();
+                                        navigate(`/libraries/${library.id}`);
+                                    }
+                                }}
+                                className="w-full px-4 py-3 flex items-center gap-3 hover:bg-white/5 transition-colors group text-left cursor-pointer"
+                            >
+                                <div className="w-10 h-10 rounded bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center flex-shrink-0 text-primary">
+                                    {libraryIcons[library.type] || <LibraryBig size={16} />}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-white truncate group-hover:text-primary transition-colors">
+                                        {library.name}
+                                    </p>
+                                    <p className="text-xs text-gray-400 truncate">
+                                        {library.type} library
+                                    </p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                    );
+                }
+
+                const group = section.group;
+                return (
                 <div key={group.libraryId}>
                     {/* Library Header */}
                     <div className="px-4 py-2 bg-gradient-to-r from-primary/10 to-secondary/10 border-b border-white/5 flex items-center gap-2">
@@ -179,8 +304,15 @@ export default function GlobalSearchResults({ results, isLoading, onClose }: Glo
                                     <p className="text-sm font-medium text-white truncate group-hover:text-primary transition-colors">
                                         {item.title}
                                     </p>
+                                    {/* Context beats explanation: a track's artist—album
+                                        line already says why it matched. The reason fills
+                                        in where no context exists — a movie surfaced by
+                                        cast or description would otherwise show a bare
+                                        year and read as noise. */}
                                     <p className="text-xs text-gray-400 truncate">
-                                        {subtitleFor(item) ?? (item.year ? String(item.year) : '')}
+                                        {subtitleFor(item)
+                                            ?? group.matchReasons?.[item.id]
+                                            ?? (item.year ? String(item.year) : '')}
                                     </p>
                                 </div>
 
@@ -197,7 +329,8 @@ export default function GlobalSearchResults({ results, isLoading, onClose }: Glo
                         ))}
                     </div>
                 </div>
-            ))}
+                );
+            })}
         </motion.div>
     );
 }

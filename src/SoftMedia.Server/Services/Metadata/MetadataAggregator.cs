@@ -120,6 +120,26 @@ public class MetadataAggregator : IMetadataAggregator
         if (!string.IsNullOrEmpty(metadata.Studio)) item.Studio = metadata.Studio;
         if (!string.IsNullOrEmpty(metadata.Director)) item.Director = metadata.Director;
 
+        // Books express the producing organisation as Publisher. Studio is the shared column
+        // for both (see MediaItem.Studio), so a provider that only fills Publisher — as any
+        // future book provider reasonably might — still lands here rather than being dropped.
+        // OpenLibrary sets both, which is why this is a fallback and not the primary path.
+        if (string.IsNullOrEmpty(item.Studio) && !string.IsNullOrEmpty(metadata.Publisher))
+            item.Studio = metadata.Publisher;
+
+        // Book identifiers, file-first. The scanner has already stamped whatever the EPUB/PDF
+        // itself declared, and that describes the exact edition sitting on disk; a provider
+        // result describes the work and may well be a different printing. So these fill only
+        // the gaps — an OpenLibrary page count reaches a reflowable EPUB (which has no
+        // intrinsic pagination) but never displaces a PDF's real page tree count.
+        if (string.IsNullOrEmpty(item.Isbn))
+        {
+            var normalizedIsbn = IsbnNormalizer.Normalize(metadata.Isbn);
+            if (normalizedIsbn != null) item.Isbn = normalizedIsbn;
+        }
+        if (!item.PageCount.HasValue && metadata.PageCount is > 0)
+            item.PageCount = metadata.PageCount;
+
         // Photos: persist the display-only EXIF dictionary (camera/iso/gps/…) to its JSON
         // column — the only consumer of MetadataResult.Extra that must survive to the DTO
         // (PhotoDetailView). Values arrive as JSON strings; store a flat string map so the
@@ -198,9 +218,27 @@ public class MetadataAggregator : IMetadataAggregator
         if (item.PosterFromLocalFile) metadata.PosterUrl = null;
 
         // Capture remote URLs to promoted columns BEFORE image extraction strips them.
-        // These columns store the original remote URLs as the source of truth.
-        if (!string.IsNullOrEmpty(metadata.PosterUrl))
+        // These columns store the original remote URLs as the source of truth — but only
+        // until the art is cached: once ImageDownloadQueueService has written a
+        // "/cache/images/…" path here, re-stamping the provider URL on the next enrichment
+        // would flip the whole library back onto /api/v1/image/proxy (and re-download art
+        // into cache/images/proxy) for as long as it takes the queue to catch up, even
+        // though the identical file is already on disk. The extractor reads
+        // metadata.PosterUrl, not this column, so the download is still queued — a cache
+        // file that has gone missing (DB-only restore, manual wipe) re-downloads under the
+        // same key and heals the path in place.
+        if (!string.IsNullOrEmpty(metadata.PosterUrl) && !IsCachedArtworkPath(item.PosterUrl))
             item.PosterUrl = metadata.PosterUrl;
+
+        // Flush what we've promoted BEFORE handing the URLs to the background image queue.
+        // That queue caches the file and writes "/cache/images/…" back on its OWN DbContext,
+        // within milliseconds when the file already exists — and MetadataQueueService's
+        // post-enrichment SaveChanges would then overwrite it with the remote URL this
+        // context still holds in memory. That lost update is why movie posters stayed
+        // proxied forever: movies lose the race by seconds because the Wikidata collection
+        // lookup runs between the enqueue below and that final save. Saving here leaves
+        // PosterUrl unmodified, so the later save no longer carries the column at all.
+        await _dbContext.SaveChangesAsync();
 
         // Process images (ExtractAndQueueAsync nulls out remote URLs to prevent hotlinking)
         bool imagesEnqueued = await _imageUrlExtractor.ExtractAndQueueAsync(item, metadata);
@@ -209,7 +247,7 @@ public class MetadataAggregator : IMetadataAggregator
         // This avoids the old JSON-ordering instability that triggered false-positive
         // "data changed" signals and unnecessary enrichment retries.
         using var sha256 = System.Security.Cryptography.SHA256.Create();
-        var hashInput = $"{item.Year}|{item.Overview}|{item.CommunityRating}|{item.ContentRating}|{item.Studio}|{item.Director}|{item.PosterUrl}|{item.BackdropUrl}|{item.ImdbId}|{item.TvMazeId}|{item.MusicBrainzId}";
+        var hashInput = $"{item.Year}|{item.Overview}|{item.CommunityRating}|{item.ContentRating}|{item.Studio}|{item.Director}|{item.PosterUrl}|{item.BackdropUrl}|{item.ImdbId}|{item.TvMazeId}|{item.MusicBrainzId}|{item.Isbn}|{item.PageCount}";
         var hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(hashInput));
         item.MetadataHash = Convert.ToBase64String(hashBytes);
 
@@ -237,6 +275,14 @@ public class MetadataAggregator : IMetadataAggregator
             }
         }
     }
+
+    /// <summary>
+    /// True for artwork this server already holds on disk — the "/cache/images/…" web path
+    /// written by ImageDownloadQueueService (provider art) or CacheLocalImageAsync (sidecar
+    /// art). Anything else (a provider http(s) URL) is served through the image proxy.
+    /// </summary>
+    private static bool IsCachedArtworkPath(string? url) =>
+        url != null && url.StartsWith("/cache/images/", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Persist genre data to the normalized Genre/MediaItemGenre tables.

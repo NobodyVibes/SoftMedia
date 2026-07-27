@@ -18,6 +18,10 @@ namespace SoftMedia.Server.Services.Background;
 /// global query filters), so soft-deleted (<c>IsMissing</c>, SR-WI-011) items KEEP their
 /// artwork and it heals when the drive returns. Only guids with no DB row at all are orphans.
 ///
+/// The same sweep also runs the reverse repair: rows whose PosterUrl is still a provider URL
+/// while the poster is already cached on disk get repointed at the cached file, so they stop
+/// being re-fetched through /api/v1/image/proxy on every library view.
+///
 /// Registered with the scheduled-task registry (P1-WI-005) for admin-visible telemetry and
 /// exposes <see cref="IManuallyTriggerableTask"/> so the Background Tasks page can run it on
 /// demand (POST /api/v1/admin/tasks/{name}/trigger, R-WI-008 dispatch).
@@ -50,7 +54,9 @@ public class ImageCacheCleanupService : BackgroundService, IManuallyTriggerableT
         _registry.Register(
             RegisteredTaskName,
             "Daily: deletes cached artwork for items that no longer exist in the database. "
-            + "Missing (offline) items keep their artwork until they are hard-deleted.",
+            + "Missing (offline) items keep their artwork until they are hard-deleted. "
+            + "Also repoints items whose poster is already cached on disk but is still being "
+            + "fetched through the image proxy.",
             TaskSchedule.Scheduled,
             supportsManualTrigger: true);
 
@@ -104,7 +110,67 @@ public class ImageCacheCleanupService : BackgroundService, IManuallyTriggerableT
                 "Image cache cleanup removed {Count} orphaned file(s) ({Rows} live DB rows).",
                 deleted, validIds.Count);
         }
+
+        await AdoptCachedPostersAsync(db, imageCache, ct);
         return deleted;
+    }
+
+    /// <summary>
+    /// Heals rows whose PosterUrl still points at the provider even though that poster is
+    /// already cached on disk. The DTO layer proxies any http(s) poster through
+    /// /api/v1/image/proxy, so such a row re-downloads its art into cache/images/proxy on
+    /// every library view while the identical file sits in cache/images/{movies,tv,…}.
+    /// The drift is otherwise permanent: the item looks "complete" to
+    /// MetadataEnrichmentPolicy, so no rescan re-enqueues it and nothing rewrites the column.
+    /// (The write path that produced it — an enrichment save clobbering the image queue's
+    /// write-back — is fixed in MetadataAggregator; this repairs rows written before that.)
+    /// </summary>
+    private async Task<int> AdoptCachedPostersAsync(AppDbContext db, IImageCacheService imageCache, CancellationToken ct)
+    {
+        try
+        {
+            var cached = imageCache.GetCachedPosterPaths();
+            if (cached.Count == 0) return 0;
+
+            // Bounded by items whose provider art is NOT cached, so this stays small; local
+            // sidecar art never matches (its PosterUrl is already a /cache path).
+            var candidates = await db.MediaItems
+                .Where(m => m.PosterUrl != null && m.PosterUrl.StartsWith("http"))
+                .ToListAsync(ct);
+
+            var healed = candidates.Where(m => cached.ContainsKey(m.Id)).ToList();
+            if (healed.Count == 0) return 0;
+
+            foreach (var item in healed)
+            {
+                item.PosterUrl = cached[item.Id];
+            }
+
+            // Same invalidation the image queue does after a write-back: the home rows and
+            // hero are materialised DTO caches and would keep serving the proxy URL.
+            var libraryIds = healed.Select(m => m.LibraryId).Distinct().ToList();
+            var staleRecents = await db.LibraryRecentCaches
+                .Where(c => libraryIds.Contains(c.LibraryId))
+                .ToListAsync(ct);
+            db.LibraryRecentCaches.RemoveRange(staleRecents);
+
+            var heroCache = await db.HeroCaches.FirstOrDefaultAsync(c => c.Id == 1, ct);
+            if (heroCache != null) db.HeroCaches.Remove(heroCache);
+
+            await db.SaveChangesAsync(ct);
+
+            _logger.LogInformation(
+                "Image cache cleanup pointed {Count} item(s) at artwork already cached on disk "
+                + "(they were being re-fetched through the image proxy on every view).",
+                healed.Count);
+            return healed.Count;
+        }
+        catch (Exception ex)
+        {
+            // Never fail the sweep over the repair pass — orphan deletion above already ran.
+            _logger.LogWarning(ex, "Failed to adopt cached posters during image cache cleanup");
+            return 0;
+        }
     }
 
     private async Task RunOnceReportedAsync(DateTime? nextRunUtc, CancellationToken ct)

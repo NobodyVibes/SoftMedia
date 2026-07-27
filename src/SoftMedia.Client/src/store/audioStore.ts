@@ -96,12 +96,18 @@ export const useAudioStore = create<AudioState>()(
                     ? [currentTrack, ...history].slice(0, 50)
                     : history;
 
-                // Repeat One: Just restart (handled by player, but we can also handle here)
-                if (repeatMode === 'one' && currentTrack) {
-                    // Let the player handle restart by not changing track
-                    set({ isPlaying: true });
-                    return;
-                }
+                // NOTE: next() deliberately does NOT special-case repeat-one. It used
+                // to return early there, which silently killed the Next button for as
+                // long as repeat-one was engaged — Previous kept working, because it
+                // has no such guard, so the player looked half-broken.
+                //
+                // Repeating a track is the *player's* job and it already does it in
+                // every automatic path: the active element carries `loop = true` under
+                // repeat-one (so `ended` never even fires), handleEnded restarts and
+                // returns before reaching here, handleAudioError pauses instead of
+                // advancing, and both preload and crossfade are gated on
+                // `repeatMode !== 'one'`. Every caller that survives to this point is
+                // an explicit user skip, and a user asking for the next track means it.
 
                 if (queue.length === 0) {
                     // Repeat All: Restart the playlist

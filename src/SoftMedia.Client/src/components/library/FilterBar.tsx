@@ -122,6 +122,12 @@ export function FilterBar({
     const isMusicLibrary = libraryType === 'Music';
     const isPhotoLibrary = libraryType === 'Photo';
 
+    // The Music library's Playlists tab lists playlists, not media items, so the
+    // media filters below (genre, year, rating, sort, favourites) have nothing to
+    // act on — they used to sit there fully interactive and do nothing at all.
+    // Search still applies and is handled by PlaylistsView.
+    const isPlaylistsView = isMusicLibrary && viewMode === 'playlists';
+
     // Get sort options based on library type
     const getSortOptions = useCallback(() => {
         const common = [
@@ -173,7 +179,7 @@ export function FilterBar({
                         type="text"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Search..."
+                        placeholder={isPlaylistsView ? 'Search playlists...' : 'Search...'}
                         className="w-full bg-white/5 border border-white/10 rounded-full pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:border-primary/50 transition-colors"
                     />
                 </div>
@@ -210,6 +216,10 @@ export function FilterBar({
                         </div>
                     )}
 
+                    {/* Media filters — hidden on the Playlists tab, which has no
+                        media items for them to narrow. */}
+                    {!isPlaylistsView && (
+                    <>
                     {/* Genre Filter - Combo box with autocomplete */}
                     <GenreComboBox
                         libraryId={libraryId}
@@ -339,6 +349,8 @@ export function FilterBar({
                     >
                         <Heart className={cn("w-5 h-5", isFavorite && "fill-current")} />
                     </button>
+                    </>
+                    )}
 
                     {/* Rescan Button */}
                     {onRescan && (

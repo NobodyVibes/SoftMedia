@@ -35,7 +35,10 @@ interface AddToPlaylistMenuProps {
  *   - lets the user create a new playlist inline without leaving the page.
  *
  * Parent renders this inside a `<div class="relative">` so the absolute
- * positioning anchors against the trigger.
+ * positioning anchors against the trigger, and marks the trigger button with
+ * `data-add-to-playlist-trigger`. The close-on-outside-pointerdown handler
+ * skips that element — otherwise pointerdown closed the menu and the same
+ * gesture's click re-toggled it open, so the trigger could never dismiss it.
  */
 export function AddToPlaylistMenu({ mediaItemIds, onClose, placement = 'down', align = 'right' }: AddToPlaylistMenuProps) {
     const queryClient = useQueryClient();
@@ -48,12 +51,24 @@ export function AddToPlaylistMenu({ mediaItemIds, onClose, placement = 'down', a
         queryFn: playlistService.list,
     });
 
-    const ownPlaylists = playlists.filter(p => p.isOwner);
+    // Manual playlists only. A smart playlist's tracks come from its rules, so the
+    // server rejects an add outright — listing one here would offer a row that
+    // can only ever fail.
+    const ownPlaylists = playlists.filter(p => p.isOwner && p.kind !== 'Smart');
+
+    // First run: no playlists to pick from, so drop straight into the create
+    // form instead of an empty list plus a "create one below" hint.
+    const noPlaylistsYet = !isLoading && ownPlaylists.length === 0;
+    const showCreateForm = showCreate || noPlaylistsYet;
 
     // Click-outside + Escape to close.
     useEffect(() => {
         const onPointer = (e: PointerEvent) => {
-            if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+            const target = e.target as HTMLElement;
+            // The trigger toggles on click; closing here too made that click
+            // instantly reopen the menu.
+            if (target.closest('[data-add-to-playlist-trigger]')) return;
+            if (containerRef.current && !containerRef.current.contains(target)) {
                 onClose();
             }
         };
@@ -116,39 +131,51 @@ export function AddToPlaylistMenu({ mediaItemIds, onClose, placement = 'down', a
             aria-label="Add to playlist"
             className={`absolute ${horizontalClass} ${verticalClass} z-50 w-72 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl overflow-hidden`}
         >
-            <div className="px-4 py-3 border-b border-white/5">
-                <div className="text-sm font-semibold text-white">Add to playlist</div>
-                <div className="text-xs text-gray-500 mt-0.5">
-                    {mediaItemIds.length} {mediaItemIds.length === 1 ? 'track' : 'tracks'}
+            {/* Deliberately styled as a caption, not a row: this header used to be
+                the boldest thing in the panel and users clicked IT as "the button",
+                when the actual actions are the playlist rows below. */}
+            <div className="px-4 py-2.5 border-b border-white/5 bg-white/[0.03]">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+                    {showCreateForm
+                        ? 'New playlist'
+                        : `Save ${mediaItemIds.length === 1 ? 'track' : `${mediaItemIds.length} tracks`} to…`}
                 </div>
             </div>
 
-            {showCreate ? (
+            {showCreateForm ? (
                 <form onSubmit={handleCreate} className="p-3">
+                    {noPlaylistsYet && (
+                        <p className="text-xs text-gray-400 mb-2">
+                            Name your first playlist — the {mediaItemIds.length === 1 ? 'track' : 'tracks'} will be added to it.
+                        </p>
+                    )}
                     <input
                         autoFocus
                         type="text"
                         value={newName}
                         onChange={(e) => setNewName(e.target.value)}
                         maxLength={120}
-                        placeholder="New playlist name"
+                        placeholder="Playlist name"
                         className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-primary mb-2"
                     />
                     <div className="flex gap-2">
-                        <button
-                            type="button"
-                            onClick={() => { setShowCreate(false); setNewName(''); }}
-                            className="flex-1 px-3 py-2 text-xs text-gray-300 hover:bg-white/5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 min-h-[36px]"
-                        >
-                            Back
-                        </button>
+                        {/* With zero playlists there is no list to go back to. */}
+                        {!noPlaylistsYet && (
+                            <button
+                                type="button"
+                                onClick={() => { setShowCreate(false); setNewName(''); }}
+                                className="flex-1 px-3 py-2 text-xs text-gray-300 hover:bg-white/5 rounded cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 min-h-[36px]"
+                            >
+                                Back
+                            </button>
+                        )}
                         <button
                             type="submit"
                             disabled={!newName.trim() || isPending}
-                            className="flex-1 px-3 py-2 text-xs bg-primary hover:bg-primary/90 text-white rounded font-medium flex items-center justify-center gap-1.5 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 min-h-[36px]"
+                            className="flex-1 px-3 py-2 text-xs bg-primary hover:bg-primary/90 text-white rounded font-medium flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 min-h-[36px]"
                         >
                             {isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-                            Create
+                            Create &amp; add
                         </button>
                     </div>
                 </form>
@@ -157,11 +184,11 @@ export function AddToPlaylistMenu({ mediaItemIds, onClose, placement = 'down', a
                     <div className="max-h-72 overflow-y-auto py-1">
                         {isLoading ? (
                             <div className="py-6 text-center text-xs text-gray-500">Loading…</div>
-                        ) : ownPlaylists.length === 0 ? (
-                            <div className="py-6 px-4 text-center text-xs text-gray-500">
-                                You don't have any playlists yet. Create one below.
-                            </div>
                         ) : (
+                            // Tailwind v4 preflight gives <button> cursor:default, which
+                            // made these rows read as inert text — cursor-pointer is
+                            // load-bearing, not cosmetic. The trailing "+ Add" appears on
+                            // hover/focus so each row announces what clicking does.
                             ownPlaylists.map(p => (
                                 <button
                                     key={p.id}
@@ -169,7 +196,7 @@ export function AddToPlaylistMenu({ mediaItemIds, onClose, placement = 'down', a
                                     role="menuitem"
                                     onClick={() => addMutation.mutate({ playlistId: p.id, ids: mediaItemIds })}
                                     disabled={isPending}
-                                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 transition-colors min-h-[44px] disabled:opacity-50"
+                                    className="group/row w-full flex items-center gap-3 px-4 py-2.5 text-left cursor-pointer hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 transition-colors min-h-[44px] disabled:opacity-50"
                                 >
                                     <ListMusic className="w-4 h-4 text-gray-400 shrink-0" />
                                     <div className="flex-1 min-w-0">
@@ -179,8 +206,13 @@ export function AddToPlaylistMenu({ mediaItemIds, onClose, placement = 'down', a
                                             {p.itemCount} {p.itemCount === 1 ? 'track' : 'tracks'}
                                         </div>
                                     </div>
-                                    {addMutation.isPending && addMutation.variables?.playlistId === p.id && (
+                                    {addMutation.isPending && addMutation.variables?.playlistId === p.id ? (
                                         <Loader2 className="w-4 h-4 animate-spin text-primary shrink-0" />
+                                    ) : (
+                                        <span className="shrink-0 inline-flex items-center gap-1 text-xs font-medium text-primary opacity-0 group-hover/row:opacity-100 group-focus-visible/row:opacity-100 transition-opacity">
+                                            <Plus className="w-3.5 h-3.5" />
+                                            Add
+                                        </span>
                                     )}
                                 </button>
                             ))
@@ -190,7 +222,7 @@ export function AddToPlaylistMenu({ mediaItemIds, onClose, placement = 'down', a
                         <button
                             type="button"
                             onClick={() => setShowCreate(true)}
-                            className="w-full flex items-center gap-3 px-4 py-3 text-left text-primary hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 transition-colors min-h-[44px]"
+                            className="w-full flex items-center gap-3 px-4 py-3 text-left text-primary cursor-pointer hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 transition-colors min-h-[44px]"
                         >
                             <Plus className="w-4 h-4" />
                             <span className="text-sm font-medium">New playlist…</span>

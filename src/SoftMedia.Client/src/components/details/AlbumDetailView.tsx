@@ -95,12 +95,16 @@ export default function AlbumDetailView({ item }: AlbumDetailViewProps) {
                         </div>
                     </button>
 
-                    {/* "Add album to playlist" — saves all tracks at once. */}
+                    {/* "Add album to playlist" — saves all tracks at once. Disabled
+                        until tracks load: the menu only renders with tracks in hand,
+                        so an early click used to be a silent no-op. */}
                     <div className="relative">
                         <button
                             type="button"
+                            data-add-to-playlist-trigger
                             onClick={() => setOpenMenuTrackId(openMenuTrackId === '__album__' ? null : '__album__')}
-                            className="group"
+                            disabled={!tracks || tracks.length === 0}
+                            className="group disabled:opacity-40 disabled:cursor-not-allowed"
                             title="Add album to playlist"
                             aria-haspopup="menu"
                             aria-expanded={openMenuTrackId === '__album__'}
@@ -192,6 +196,7 @@ export default function AlbumDetailView({ item }: AlbumDetailViewProps) {
                                             >
                                                 <button
                                                     type="button"
+                                                    data-add-to-playlist-trigger
                                                     onClick={() =>
                                                         setOpenMenuTrackId(openMenuTrackId === track.id ? null : track.id)
                                                     }

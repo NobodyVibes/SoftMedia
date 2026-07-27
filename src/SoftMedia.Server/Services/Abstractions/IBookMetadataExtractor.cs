@@ -13,7 +13,15 @@ public sealed record BookFileMetadata(
     string? Publisher,
     string? Description,
     string? Isbn,
-    string? Language
+    string? Language,
+    /// <summary>
+    /// Pages in the file itself. PDFs always supply this (the page tree is authoritative);
+    /// EPUBs only when the publisher declared <c>schema:numberOfPages</c> or Calibre wrote
+    /// <c>calibre:page_count</c> — reflowable text has no intrinsic pagination, so this is
+    /// left null rather than guessed from the spine, and the metadata provider's
+    /// print-edition figure fills the gap instead.
+    /// </summary>
+    int? PageCount = null
 )
 {
     /// <summary>

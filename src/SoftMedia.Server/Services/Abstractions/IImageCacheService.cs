@@ -42,6 +42,15 @@ public interface IImageCacheService
     int CleanupOrphanedImages(HashSet<Guid> validMediaIds);
 
     /// <summary>
+    /// Every provider poster currently on disk, as media-item id → "/cache/images/…" web path.
+    /// Only exact "{id}_poster.{ext}" keys are reported: season posters ("{id}_season01_poster"),
+    /// album covers ("{id}_cover") and local-sidecar copies ("{id}_poster_local") are owned by
+    /// other columns/flags and are deliberately excluded. Used to heal rows whose PosterUrl
+    /// still points at the provider even though the art was already cached.
+    /// </summary>
+    IReadOnlyDictionary<Guid, string> GetCachedPosterPaths();
+
+    /// <summary>
     /// SR-WI-037 — invalidate an item's cached PROVIDER artwork so the next Cache*Async call
     /// re-downloads it (otherwise a changed provider poster is served from cache forever).
     /// Deletes every cached file named "{mediaItemId}_*" across all cache subdirectories

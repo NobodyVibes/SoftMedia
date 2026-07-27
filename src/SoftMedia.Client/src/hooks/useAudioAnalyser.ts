@@ -1,23 +1,43 @@
 import { useEffect, useCallback, useState } from 'react';
 
-// Module-level singleton to survive React Strict Mode double-mounts
-interface AudioGraph {
-    context: AudioContext;
-    analyser: AnalyserNode;
-    masterGain: GainNode;
-    gainA: GainNode;
-    gainB: GainNode;
-    sourceA: MediaElementAudioSourceNode;
-    sourceB: MediaElementAudioSourceNode;
-    elementA: HTMLAudioElement;
-    elementB: HTMLAudioElement;
-}
+/**
+ * Web Audio tap that feeds the music visualizers.
+ *
+ * The graph lives at module scope rather than per hook instance because:
+ *  - PersistentPlayer unmounts its <audio> pair whenever the player is closed
+ *    (`currentTrack === null`), so the elements handed to this hook change over
+ *    the life of the page — the graph has to be *re-wired*, not re-created.
+ *  - Browsers cap concurrent AudioContexts (Chrome allows ~6), so minting one
+ *    per element pair hard-fails after a few close/re-open cycles.
+ *
+ * Signal path: <audio> -> MediaElementAudioSourceNode -> analyser -> masterGain
+ * -> destination. The analyser sits BEFORE masterGain so the visualizer still
+ * reacts at low or muted output — which is why PersistentPlayer drives volume
+ * through `setGlobalVolume` instead of element.volume while this hook is ready.
+ */
 
-let globalAudioGraph: AudioGraph | null = null;
+const FFT_SIZE = 512;
+// getByteFrequencyData fills min(frequencyBinCount, buffer.length) bins, so a
+// 64-entry buffer against a 512-point FFT keeps the low 64 bins (~0-5.5kHz at
+// 48kHz) — the range music actually occupies. Sizing the buffer to the full bin
+// count would leave the upper two thirds of every bar permanently flat.
+const FREQUENCY_BINS = 64;
+const TIME_DOMAIN_SAMPLES = 256;
 
-// Static buffers that persist across re-renders
-const frequencyData = new Uint8Array(64);
-const timeDomainData = new Uint8Array(64);
+// Static buffers that persist across re-renders; renderers read them in place.
+const frequencyData = new Uint8Array(FREQUENCY_BINS);
+const timeDomainData = new Uint8Array(TIME_DOMAIN_SAMPLES);
+
+let audioContext: AudioContext | null = null;
+let analyser: AnalyserNode | null = null;
+let masterGain: GainNode | null = null;
+
+// createMediaElementSource() throws InvalidStateError when called twice for the
+// same element on the same context, so source nodes are cached per element.
+const sourceNodes = new WeakMap<HTMLAudioElement, MediaElementAudioSourceNode>();
+
+// The element pair currently feeding the analyser.
+let connectedPair: { a: HTMLAudioElement; b: HTMLAudioElement } | null = null;
 
 interface AudioAnalyserResult {
     frequencyData: Uint8Array;
@@ -27,168 +47,148 @@ interface AudioAnalyserResult {
     setGlobalVolume: (volume: number) => void;
 }
 
+function ensureContext(): boolean {
+    if (audioContext) return true;
+
+    const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) return false;
+
+    try {
+        const context = new AudioContextClass();
+
+        const node = context.createAnalyser();
+        node.fftSize = FFT_SIZE;
+        node.smoothingTimeConstant = 0.75;
+
+        const gain = context.createGain();
+        gain.gain.value = 1.0;
+
+        node.connect(gain);
+        gain.connect(context.destination);
+
+        audioContext = context;
+        analyser = node;
+        masterGain = gain;
+        return true;
+    } catch (error) {
+        console.error('[AudioAnalyser] Failed to create AudioContext:', error);
+        return false;
+    }
+}
+
+/**
+ * A context created outside a user gesture starts suspended, and because the
+ * elements route through it that means silent playback *and* flat analyser
+ * output. Cheap enough to poke on every frame and every gesture.
+ */
+function resumeContext(): void {
+    if (audioContext?.state === 'suspended') {
+        // Rejects until the page has been interacted with; the next gesture retries.
+        audioContext.resume().catch(() => { /* no-op */ });
+    }
+}
+
+function getSourceNode(element: HTMLAudioElement): MediaElementAudioSourceNode | null {
+    if (!audioContext) return null;
+
+    const cached = sourceNodes.get(element);
+    if (cached) return cached;
+
+    try {
+        const node = audioContext.createMediaElementSource(element);
+        sourceNodes.set(element, node);
+        return node;
+    } catch (error) {
+        console.error('[AudioAnalyser] Failed to tap audio element:', error);
+        return null;
+    }
+}
+
+/** Point the analyser at `a`/`b`. Returns true once both are feeding it. */
+function connectElements(a: HTMLAudioElement, b: HTMLAudioElement): boolean {
+    if (connectedPair && connectedPair.a === a && connectedPair.b === b) return true;
+    if (!ensureContext() || !analyser) return false;
+
+    const sourceA = getSourceNode(a);
+    const sourceB = getSourceNode(b);
+    if (!sourceA || !sourceB) return false;
+
+    // Detach the previous pair first: a source node keeps capturing its element
+    // even after that element leaves the DOM, so leaving it attached would mix a
+    // dead source into the analyser.
+    if (connectedPair) {
+        sourceNodes.get(connectedPair.a)?.disconnect();
+        sourceNodes.get(connectedPair.b)?.disconnect();
+    }
+
+    // Both elements stay connected at unity: during a gapless crossfade the
+    // outgoing and incoming tracks overlap, and the visualizer should follow the
+    // mix the listener actually hears. Element .volume performs the crossfade.
+    sourceA.connect(analyser);
+    sourceB.connect(analyser);
+
+    connectedPair = { a, b };
+    return true;
+}
+
 /**
  * Hook that connects HTML5 Audio elements to Web Audio API for visualization.
  * Handles dual audio elements used for gapless playback.
  */
 export function useAudioAnalyser(
     audioA: HTMLAudioElement | null,
-    audioB: HTMLAudioElement | null,
-    activePlayer: 0 | 1
+    audioB: HTMLAudioElement | null
 ): AudioAnalyserResult {
     const [isReady, setIsReady] = useState(false);
 
-    // Initialize Audio Context and connect elements
-    const initializeAudioContext = useCallback(() => {
-        if (!audioA || !audioB) return;
-
-        // Return existing graph if valid for current elements
-        if (globalAudioGraph) {
-            if (globalAudioGraph.elementA === audioA && globalAudioGraph.elementB === audioB) {
-                if (globalAudioGraph.context.state === 'suspended') {
-                    globalAudioGraph.context.resume();
-                }
-                setIsReady(true);
-                return;
-            } else {
-                // Elements changed (should be rare in persistent player), close old context
-                // globalAudioGraph.context.close(); // Optional, depending on browser limit
-                globalAudioGraph = null;
-            }
-        }
-
-        try {
-            // Create AudioContext with Safari fallback
-            const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-            const audioContext = new AudioContextClass();
-
-            // Create analyser node
-            const analyser = audioContext.createAnalyser();
-            analyser.fftSize = 128; // 64 frequency bins
-            analyser.smoothingTimeConstant = 0.8;
-
-            // Create gain nodes for sources (crossfading)
-            const gainA = audioContext.createGain();
-            const gainB = audioContext.createGain();
-
-            // Create Master Gain for global volume
-            const masterGain = audioContext.createGain();
-            masterGain.gain.value = 1.0; // Default to full volume
-
-            // Create media element sources
-            // Note: This throws if called twice on same element in same context,
-            // but we're creating a NEW context here, so it's safe.
-            const sourceA = audioContext.createMediaElementSource(audioA);
-            const sourceB = audioContext.createMediaElementSource(audioB);
-
-            // Connect sources through channel gains to analyser
-            // Flow: Source -> ChannelGain -> Analyser -> MasterGain -> Destination
-            sourceA.connect(gainA);
-            sourceB.connect(gainB);
-            gainA.connect(analyser);
-            gainB.connect(analyser);
-
-            // Connect analyser to MasterGain, then to destination
-            analyser.connect(masterGain);
-            masterGain.connect(audioContext.destination);
-
-            // Save to singleton
-            globalAudioGraph = {
-                context: audioContext,
-                analyser,
-                masterGain,
-                gainA,
-                gainB,
-                sourceA,
-                sourceB,
-                elementA: audioA,
-                elementB: audioB
-            };
-
-            // Set initial gain based on active player
-            gainA.gain.value = activePlayer === 0 ? 1 : 0;
-            gainB.gain.value = activePlayer === 1 ? 1 : 0;
-
-            setIsReady(true);
-            console.log('[AudioAnalyser] Initialized with singleton graph');
-        } catch (error) {
-            console.error('[AudioAnalyser] Failed to initialize:', error);
-        }
-    }, [audioA, audioB, activePlayer]);
-
-    // Initialize immediately when audio elements are available
     useEffect(() => {
-        if (!audioA || !audioB) return;
-
-        // If audio is already playing or has played, init immediately
-        if (!globalAudioGraph) {
-            // Try to init - user gesture may be required
-            initializeAudioContext();
-        } else {
-            setIsReady(true);
+        if (!audioA || !audioB) {
+            // The player closed. Report not-ready so callers fall back to element
+            // volume instead of driving a masterGain nothing is routed through.
+            setIsReady(false);
+            return;
         }
 
-        // Also listen for play events as fallback
-        const handlePlay = () => {
-            if (!globalAudioGraph) {
-                initializeAudioContext();
-            } else if (globalAudioGraph.context.state === 'suspended') {
-                globalAudioGraph.context.resume();
-            }
+        // Re-wire on every element identity change. Checking only "does a graph
+        // exist" is what broke the visualizers: after the player was closed and
+        // re-opened, the analyser stayed bolted to the discarded <audio> pair, so
+        // isReady was true, the canvas kept drawing, and every sample read silence.
+        const attach = () => {
+            const connectedOk = connectElements(audioA, audioB);
+            setIsReady(connectedOk);
+            if (connectedOk) resumeContext();
         };
 
-        audioA.addEventListener('play', handlePlay);
-        audioB.addEventListener('play', handlePlay);
+        attach();
 
-        // Also init on any user interaction as a fallback
-        const handleUserInteraction = () => {
-            if (!globalAudioGraph) {
-                initializeAudioContext();
-            } else if (globalAudioGraph.context.state === 'suspended') {
-                globalAudioGraph.context.resume();
-            }
-        };
-
-        document.addEventListener('click', handleUserInteraction, { once: true });
+        audioA.addEventListener('play', attach);
+        audioB.addEventListener('play', attach);
+        document.addEventListener('pointerdown', resumeContext);
+        document.addEventListener('keydown', resumeContext);
 
         return () => {
-            audioA.removeEventListener('play', handlePlay);
-            audioB.removeEventListener('play', handlePlay);
-            document.removeEventListener('click', handleUserInteraction);
+            audioA.removeEventListener('play', attach);
+            audioB.removeEventListener('play', attach);
+            document.removeEventListener('pointerdown', resumeContext);
+            document.removeEventListener('keydown', resumeContext);
         };
-    }, [audioA, audioB, initializeAudioContext]);
-
-    // Update gain nodes based on active player
-    useEffect(() => {
-        if (!globalAudioGraph) return;
-
-        const { gainA, gainB } = globalAudioGraph;
-        gainA.gain.value = activePlayer === 0 ? 1 : 0;
-        gainB.gain.value = activePlayer === 1 ? 1 : 0;
-    }, [activePlayer, isReady]);
-
-    // Cleanup on unmount - do NOT close context to support persistence
-    useEffect(() => {
-        return () => {
-            // No cleanup needed for singleton
-        };
-    }, []);
+    }, [audioA, audioB]);
 
     // Function to update data buffers
     const updateData = useCallback(() => {
-        if (globalAudioGraph && isReady) {
-            globalAudioGraph.analyser.getByteFrequencyData(frequencyData);
-            globalAudioGraph.analyser.getByteTimeDomainData(timeDomainData);
-        }
-    }, [isReady]);
+        if (!analyser) return;
+        resumeContext();
+        analyser.getByteFrequencyData(frequencyData);
+        analyser.getByteTimeDomainData(timeDomainData);
+    }, []);
 
-    // New function to control global volume
+    // Global volume, applied after the analyser so muting never flatlines the bars.
     const setGlobalVolume = useCallback((volume: number) => {
-        if (globalAudioGraph) {
-            // Smooth transition to avoid clicks
-            const currentTime = globalAudioGraph.context.currentTime || 0;
-            globalAudioGraph.masterGain.gain.setTargetAtTime(volume, currentTime, 0.05);
-        }
+        if (!audioContext || !masterGain) return;
+        // Smooth transition to avoid clicks
+        masterGain.gain.setTargetAtTime(volume, audioContext.currentTime, 0.05);
     }, []);
 
     return {

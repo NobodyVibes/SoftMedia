@@ -330,6 +330,12 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
         } else if (type === 'Book') {
             navigate(`/read/${item.id}`);
         } else if (type === 'TV') {
+            // A version picked for the SELECTED episode is an unambiguous target —
+            // play that exact file instead of the series resolver's next-up.
+            if (inspectVersionId && qualityItem) {
+                navigate(`/play/${inspectVersionId}`);
+                return;
+            }
             // For TV shows, play the next episode to watch based on watch history.
             // The page prefetches it for the Resume label; fall back to a fetch
             // when that query hasn't resolved (or errored) by click time.
@@ -351,7 +357,11 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
                 navigate(`/play/${item.id}`);
             }
         } else {
-            navigate(`/play/${item.id}`);
+            // DV-WI-020 ×3: play what the specs panel is showing — a version picked in
+            // the "Video:" dropdown becomes the Play target (movies only; TV plays via
+            // the next-episode resolver above).
+            const target = (item.type === MediaType.Movie && inspectVersionId) || item.id;
+            navigate(`/play/${target}`);
         }
     };
 
@@ -360,6 +370,10 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
     // already honours by skipping its resume-position fetch).
     const handlePlayFromBeginning = async () => {
         if (item.type === MediaType.Series) {
+            if (inspectVersionId && qualityItem) {
+                navigate(`/play/${inspectVersionId}?start=0`);
+                return;
+            }
             try {
                 const episodeId = nextEpisode?.episodeId
                     ?? (await api.get<{ episodeId: string }>(`/series/${item.id}/next-episode`)).data.episodeId;
@@ -370,7 +384,9 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
             }
             return;
         }
-        navigate(`/play/${item.id}?start=0`);
+        // DV-WI-020 ×3: same target rule as handlePlay — restart the version being inspected.
+        const target = (item.type === MediaType.Movie && inspectVersionId) || item.id;
+        navigate(`/play/${target}?start=0`);
     };
 
     // SR-WI-050 (CLI-L) — pressing Play on an Album/Artist before its track list
@@ -383,6 +399,9 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
     // State for overriding quality info
     const [qualityItem, setQualityItem] = useState<MediaItem | null>(null);
     const [selectedEpisodeId, setSelectedEpisodeId] = useState<string | null>(null);
+    // DV-WI-020 ×3 — the specs panel's "Video:" version pick. Play honors it ("play what
+    // you're looking at"); the split-Play chevron stays the explicit per-press override.
+    const [inspectVersionId, setInspectVersionId] = useState<string | null>(null);
 
     // Reset when the page swaps to a DIFFERENT item (this component stays mounted
     // across detail→detail navigation). Adjusted during render, seeded with the
@@ -394,12 +413,30 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
         setLastItemId(item.id);
         setQualityItem(null);
         setSelectedEpisodeId(null);
+        setInspectVersionId(null);
     }
 
     const handleEpisodeSelect = (episode: MediaItem) => {
         setQualityItem(episode);
         setSelectedEpisodeId(episode.id);
+        // A version pick belongs to ONE episode — switching episodes clears it.
+        setInspectVersionId(null);
     };
+
+    // The episode LIST returns collapsed rows without the versions array (only detail
+    // responses hydrate it) — fetch the selected episode's full item so the specs
+    // panel's version dropdown works for episodes exactly like it does for movies.
+    // The list row displays instantly; the detail (with versions/tracks) replaces it
+    // when loaded.
+    const { data: selectedEpisodeDetail } = useQuery<MediaItem>({
+        queryKey: ['media', selectedEpisodeId],
+        queryFn: async () => (await api.get<MediaItem>(`/media/${selectedEpisodeId}`)).data,
+        enabled: !!selectedEpisodeId,
+        staleTime: 60_000,
+    });
+    const effectiveQualityItem = (selectedEpisodeDetail && selectedEpisodeDetail.id === selectedEpisodeId)
+        ? selectedEpisodeDetail
+        : qualityItem;
 
     // DV-WI-022: no more "representative episode" default for quality info — the series
     // DTO carries a server-side aggregate. Clicking an episode still overrides it.
@@ -453,7 +490,9 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
             playPending={playPending}
             playLabel={isBook ? bookReadLabel(item.container, bookProgress) : undefined}
             playIcon={isBook ? <BookOpen className="w-6 h-6" aria-hidden="true" /> : undefined}
-            qualityItem={qualityItem}
+            qualityItem={effectiveQualityItem}
+            inspectVersionId={inspectVersionId}
+            onInspectVersion={setInspectVersionId}
             backdropOverride={backdropOverride}
             customMetadata={customMetadata}
             actionSlot={isAdmin ? <FixMatchCard item={item} /> : undefined}

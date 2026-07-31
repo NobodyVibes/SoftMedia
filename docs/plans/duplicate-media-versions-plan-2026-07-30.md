@@ -13,6 +13,44 @@
 > backfill also grouped 26 REAL duplicate groups in the operator's library. Chromecast
 > interactive check skipped (no device; switcher-hidden-while-casting is code-pinned).
 > Scratch libraries/user/fixtures fully cleaned up; AllowUserSignup left Disabled.
+>
+> **POST-SHIP FIX (2026-07-31):** VersionLabelHelper.ResolutionLabel is now
+> WIDTH-AWARE (thresholds mirror the client's MediaQualityInfo panel). Height-only
+> mapping under-labeled every cinemascope encode by a tier (1920×816 scope 1080p read
+> "720p" — operator-reported on a real 2.35:1 title). Known remaining nicety, accepted:
+> VersionPrimaryRule still ranks by raw Height; for copies of ONE title aspect ratios
+> match so ordering is unaffected — only a pathological cross-aspect duplicate pair
+> (≥2.7:1 scope 1080p vs 16:9 720p) could front the wrong copy.
+>
+> **UX REVISION ×2 (2026-07-31, owner request):** versions UI settled on a SPLIT PLAY
+> BUTTON (`PlayVersionMenu`) after two iterations — (1) the standalone VersionsSection
+> list, then (2) a dropdown on the header quality badge, which the owner found too easy
+> to miss. Final form: with multiple copies a chevron segment joins the primary Play
+> button and opens the "play this version" menu (label chip, Default marker, size,
+> watched tick, admin prefer-star); single-file titles keep the plain full-width Play,
+> and the header badge is a pure indicator again. Survey rationale recorded: Jellyfin
+> exposes a labeled Version select (high discoverability), Plex hides "Play Version…"
+> behind an overflow menu because it auto-picks (SoftMedia deliberately doesn't, so the
+> choice must be visible at the play decision); Netflix/Amazon expose no versions at
+> all (ABR). Also fixed en route: the header badge was gated on the retired `quality`
+> DTO field and had silently stopped rendering. Menu rows are real button[role=menuitem]
+> elements with the admin star as a SIBLING (the repo's a11y guard rejects div-onClick,
+> and nesting buttons is invalid HTML).
+>
+> **UX ADDITION (2026-07-31, owner request, revised same day):** pre-play version
+> INSPECTION drives PLAY — in MediaQualityInfo (the specs strip under the genres) the
+> "Video:" VALUE is the version dropdown; picking a copy fetches that sibling item
+> (`GET /media/{id}`, cached 60s) and the whole panel (codec, bit depth, fps, audio
+> incl. Atmos, bitrate, track dropdowns) shows that file's probed metadata. The pick
+> is CONTROLLED state owned by MediaDetailPage: the main Play (and Play-from-beginning)
+> then plays the inspected version ("play what you're looking at", movies only — TV
+> plays via the next-episode resolver); the split-Play chevron remains the explicit
+> per-press override. EPISODES (owner follow-up, same day): selecting an episode now
+> fetches its FULL detail — collapsed list rows carry versionCount but NOT versions[],
+> only GET /media/{id} hydrates them — so the dropdown appears for episodes too; the
+> pick is page-owned and, while set, the series Play button plays that exact file
+> instead of the next-episode resolver (cleared on episode switch). No server changes:
+> sibling items already carry full metadata.
 > This file is retained as design history.
 >
 > **SESSION 1 COMPLETE (2026-07-30) — DV-WI-001..006 shipped.** Layer 1

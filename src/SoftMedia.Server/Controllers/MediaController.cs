@@ -114,7 +114,7 @@ public class MediaController : ControllerBase
                      && m.HdrFormat != null && m.HdrFormat != "")
             .Select(m => m.HdrFormat)
             .FirstOrDefaultAsync();
-        dto.VersionLabel = Helpers.VersionLabelHelper.ResolutionLabel(best.Height)
+        dto.VersionLabel = Helpers.VersionLabelHelper.ResolutionLabel(best.Width, best.Height)
             + (dto.HdrFormat != null ? $" {dto.HdrFormat}" : null);
     }
 

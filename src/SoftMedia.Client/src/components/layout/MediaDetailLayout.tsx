@@ -6,7 +6,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
 import { type MediaItem, MediaType } from '../../types';
 import QualityBadge from '../ui/QualityBadge';
-import VersionsSection from '../details/VersionsSection';
+import PlayVersionMenu from '../details/PlayVersionMenu';
 import MediaQualityInfo from '../ui/MediaQualityInfo';
 import { StarRating } from '../ui/StarRating';
 import { cn, formatRuntime, formatResumeTime } from '../../lib/utils';
@@ -25,6 +25,9 @@ interface MediaDetailLayoutProps {
     children: ReactNode;
     onPlay?: () => void;
     qualityItem?: MediaItem | null;
+    /** DV-WI-020 ×3 — controlled version selection for the specs panel; picks retarget Play. */
+    inspectVersionId?: string | null;
+    onInspectVersion?: (versionId: string) => void;
     backdropOverride?: string | null;
     customMetadata?: React.ReactNode;
     /** Extra icon button(s) rendered in the action row (e.g. admin Fix Match). */
@@ -60,7 +63,7 @@ interface MediaDetailLayoutProps {
     playIcon?: ReactNode;
 }
 
-export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride, customMetadata, actionSlot, resumePositionSeconds, onPlayFromBeginning, resumeCaption, playPending, playLabel, playIcon }: MediaDetailLayoutProps) {
+export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride, customMetadata, actionSlot, resumePositionSeconds, onPlayFromBeginning, resumeCaption, playPending, playLabel, playIcon, inspectVersionId, onInspectVersion }: MediaDetailLayoutProps) {
     // Media URLs below embed the media token; re-render when it rotates so a
     // stale token can't leave the artwork permanently broken.
     useMediaTokenRefresh();
@@ -181,11 +184,19 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                 skipped for them above.) */}
                             {item.type !== MediaType.Artist && item.type !== MediaType.Album && (
                                 <>
+                                    {/* DV-WI-020 (revised ×2): split Play — with multiple file
+                                        copies a chevron segment joins the button and opens the
+                                        "play this version" menu; single-file titles keep the
+                                        plain full-width Play. On TV pages the SELECTED EPISODE
+                                        (qualityItem, hydrated with its versions) is the source —
+                                        the series row itself never has file copies. */}
+                                    <div className="relative z-50 flex w-full items-stretch">
                                     <button
                                         onClick={onPlay}
                                         disabled={playPending}
                                         className={cn(
-                                            "relative z-50 w-full flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-violet-600 text-white rounded-xl font-bold shadow-lg shadow-violet-500/40 hover:scale-[1.02] active:scale-95 text-lg opacity-100",
+                                            "flex-1 min-w-0 flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-violet-600 text-white font-bold shadow-lg shadow-violet-500/40 hover:scale-[1.02] active:scale-95 text-lg opacity-100",
+                                            (((qualityItem || item).versions?.length) ?? 0) > 1 ? "rounded-l-xl hover:scale-100 active:scale-95" : "rounded-xl",
                                             playPending && "opacity-70 cursor-wait hover:scale-100 active:scale-100",
                                         )}
                                     >
@@ -213,6 +224,8 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                             playLabel ?? 'Play'
                                         )}
                                     </button>
+                                    <PlayVersionMenu item={qualityItem || item} disabled={playPending} />
+                                    </div>
 
                                     {/* SR-WI-053 — start-over escape hatch: only when a resume
                                         position exists does the second button appear, so the
@@ -382,9 +395,10 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                         {item.rating}
                                     </span>
                                 )}
-                                {item.quality && (
-                                    <QualityBadge label={item.versionLabel} />
-                                )}
+                                {/* Pure indicator — version CHOICE lives on the split Play button.
+                                    (The old gate read the retired `quality` field — the badge had
+                                    silently stopped rendering.) */}
+                                <QualityBadge label={item.versionLabel} />
                             </div>
 
                             {/* Consolidated Ratings Section */}
@@ -440,11 +454,16 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                 </div>
                             )}
 
-                            {/* Extended Quality Info */}
-                            <MediaQualityInfo item={qualityItem || item} className="mb-8" />
-
-                            {/* DV-WI-020: file copies of this title (self-hides when single-file) */}
-                            <VersionsSection item={item} />
+                            {/* Extended Quality Info. Controlled version selection applies to
+                                whichever item the panel shows — the movie itself, or the
+                                SELECTED episode on TV pages (the page clears the pick on
+                                episode switch, and Play then targets the picked file). */}
+                            <MediaQualityInfo
+                                item={qualityItem || item}
+                                className="mb-8"
+                                selectedVersionId={inspectVersionId}
+                                onVersionSelect={onInspectVersion}
+                            />
 
                             {/* Actions — watchlist is for "I'll come back to this later"
                                 content (movies, series, books, comics, games). Music uses

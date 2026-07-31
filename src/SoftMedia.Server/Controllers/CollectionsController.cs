@@ -46,6 +46,32 @@ public class CollectionsController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// DV-WI-016 follow-up — duplicate file copies of one film are ONE collection
+    /// entry. Order-preserving; a group containing <paramref name="preferId"/> is
+    /// represented by that exact row (the "now viewing" highlight must point at the
+    /// copy actually being viewed, even when it isn't the group's first-in-order).
+    /// </summary>
+    private static List<MediaItem> OneEntryPerVersionGroup(List<MediaItem> movies, Guid? preferId = null)
+    {
+        var seenGroups = new HashSet<Guid>();
+        var result = new List<MediaItem>(movies.Count);
+        foreach (var movie in movies)
+        {
+            if (movie.VersionGroupId is not Guid group)
+            {
+                result.Add(movie);
+                continue;
+            }
+            if (!seenGroups.Add(group)) continue;
+            var preferred = preferId != null
+                ? movies.FirstOrDefault(x => x.VersionGroupId == group && x.Id == preferId)
+                : null;
+            result.Add(preferred ?? movie);
+        }
+        return result;
+    }
+
     // ── List / read ──────────────────────────────────────────────────────────
 
     /// <summary>
@@ -68,7 +94,7 @@ public class CollectionsController : ControllerBase
             .Select(c => new
             {
                 c.Id, c.Name, c.Overview, c.PosterUrl, c.WikidataId,
-                Items = c.Items.Select(m => new { m.Id, m.LibraryId, m.PosterUrl, m.Type, m.ContentRating, m.IsMissing }).ToList(),
+                Items = c.Items.Select(m => new { m.Id, m.LibraryId, m.PosterUrl, m.Type, m.ContentRating, m.IsMissing, m.VersionGroupId }).ToList(),
             })
             .ToListAsync();
 
@@ -81,7 +107,14 @@ public class CollectionsController : ControllerBase
                     (access.IsUnrestricted || access.AllowedLibraryIds.Contains(i.LibraryId)) &&
                     RatingFilterExtensions.IsRatingAllowed(ceilings, i.Type, i.ContentRating)).ToList(),
             })
-            .Where(c => c.Visible.Count >= 2)
+            // Threshold and displayed count are LOGICAL FILMS, not files — one movie
+            // duplicated must not masquerade as a two-movie collection.
+            .Select(c => new
+            {
+                c.Id, c.Name, c.Overview, c.PosterUrl, c.WikidataId, c.Visible,
+                TitleCount = c.Visible.Select(i => i.VersionGroupId ?? i.Id).Distinct().Count(),
+            })
+            .Where(c => c.TitleCount >= 2)
             .OrderBy(c => c.Name)
             .ToList();
 
@@ -93,7 +126,7 @@ public class CollectionsController : ControllerBase
             // has none (manual collections without a custom poster).
             c.PosterUrl ?? c.Visible.FirstOrDefault(i => !string.IsNullOrEmpty(i.PosterUrl))?.PosterUrl,
             IsAuto: !string.IsNullOrEmpty(c.WikidataId),
-            VisibleItemCount: c.Visible.Count
+            VisibleItemCount: c.TitleCount
         )).ToList();
 
         return Ok(dtos);
@@ -123,6 +156,9 @@ public class CollectionsController : ControllerBase
         var visibleMovies = access.IsUnrestricted
             ? movies
             : movies.Where(m => access.AllowedLibraryIds.Contains(m.LibraryId)).ToList();
+
+        // One entry per logical FILM (duplicate copies collapse).
+        visibleMovies = OneEntryPerVersionGroup(visibleMovies);
 
         // Hide the whole collection when the caller can't see any of its
         // members — same anti-probe posture as Wave C.
@@ -185,6 +221,10 @@ public class CollectionsController : ControllerBase
         var visibleSiblings = access.IsUnrestricted
             ? siblings
             : siblings.Where(m => access.AllowedLibraryIds.Contains(m.LibraryId)).ToList();
+
+        // One entry per logical FILM — a duplicate copy of the viewed movie must not
+        // appear beside it as "more from this collection".
+        visibleSiblings = OneEntryPerVersionGroup(visibleSiblings, movieId);
 
         // Strip view rule: only render when ≥2 visible siblings exist (the
         // current movie counts as one). Otherwise the section would just

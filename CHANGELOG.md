@@ -21,10 +21,18 @@ from 1.0 onward.
   newest). Watched state, ratings, favorites and watchlist entries apply to the title:
   set on any copy, they cover every copy, and existing libraries are reconciled
   automatically at startup.
-- **Versions on the detail page.** When a title exists as multiple files, its detail
-  page lists each copy with quality label, container and size, per-copy watched state,
-  and a Play button per version; admins can pin a "preferred version" that becomes the
-  default everywhere. Quality badges across the app now use one server-derived label
+- **Versions on the detail page.** When a title exists as multiple files, the Play
+  button becomes a split control: Play starts the default copy, and a chevron beside it
+  opens a menu listing every copy with quality label, container, size, and per-copy
+  watched state — pick one to play that exact file. Admins can pin a "preferred
+  version" from the same menu, which becomes the default everywhere. The quality badge
+  in the header stays a simple indicator of the best available copy.
+- **Compare versions before playing.** In the technical-specs strip under the genres,
+  the "Video:" value is now a version dropdown: choose a copy and the whole panel —
+  codec, color depth, frame rate, audio format (including Atmos), bitrate, and the
+  audio/subtitle track lists — shows that file's real probed metadata. Pressing Play
+  then plays the version you're looking at; the chevron on the Play button remains a
+  one-off override. Quality badges across the app now use one server-derived label
   (goodbye FHD/HD/1080p inconsistency), stay visible on cards that have multiple
   versions, and a TV show's header now reports its honest best quality instead of
   whichever episode file the server happened to sample.
@@ -87,6 +95,16 @@ from 1.0 onward.
   the server-wide resolution/codec ceilings; the hero rotation now honours content-rating ceilings.
 
 ### Fixed
+- **"More from this collection" no longer lists a duplicate copy of the movie you're
+  viewing as a separate entry.** Collection strips, collection pages, and the collection
+  list all count and show logical films — one entry per title however many files it has,
+  and the "now viewing" highlight always points at the copy you actually opened.
+- **Widescreen movies no longer show the wrong resolution in the Versions list.**
+  Cinemascope encodes store a cropped pixel height (a 2.35:1 film at 1080p is
+  ~1920×816), and the version label only looked at height — so a 1080p copy could read
+  "720p" while the quality panel above it correctly said 1080p. Version labels (detail
+  page, cards, admin duplicates report, DLNA) now weigh width like the quality panel
+  does, so the two can't disagree.
 - **Duplicate copies of the same movie or episode no longer confuse playback and
   progress.** When two files map to one title (quality/language variants, accidental
   copies): autoplay now advances to the next episode instead of replaying the one just

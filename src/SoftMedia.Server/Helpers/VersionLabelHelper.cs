@@ -12,18 +12,30 @@ namespace SoftMedia.Server.Helpers;
 /// </summary>
 public static partial class VersionLabelHelper
 {
-    /// <summary>Height → coarse resolution tag; null when the file was never probed.</summary>
-    public static string? ResolutionLabel(int? height) => height switch
+    /// <summary>
+    /// Probed dimensions → coarse resolution tag; null when the file was never probed.
+    /// WIDTH matters as much as height: widescreen "scope" encodes crop the pixel
+    /// height (a 2.35:1 movie at 1080p is ~1920×816, at 4K ~3840×1608), so a
+    /// height-only rule under-labels every cinemascope file by a full tier. Thresholds
+    /// deliberately mirror the client's MediaQualityInfo panel so the versions list and
+    /// the quality header can never disagree about the same file.
+    /// </summary>
+    public static string? ResolutionLabel(int? width, int? height)
     {
-        null or <= 0 => null,
-        >= 4320 => "8K",
-        >= 2160 => "4K",
-        >= 1440 => "1440p",
-        >= 1080 => "1080p",
-        >= 720 => "720p",
-        >= 480 => "480p",
-        _ => $"{height}p",
-    };
+        var h = height ?? 0;
+        var w = width ?? 0;
+        if (h <= 0 && w <= 0) return null;
+
+        if (h >= 4300 || w >= 7600) return "8K";
+        if (h >= 2100 || w >= 3800) return "4K";
+        if (h >= 1400 || w >= 2500) return "1440p";
+        if (h >= 1000 || w >= 1900) return "1080p";
+        if (h >= 700 || w >= 1260) return "720p";
+        if (h >= 480 || w >= 840) return "480p";
+        if (h >= 360 || w >= 640) return "360p";
+        if (h >= 240 || w >= 420) return "240p";
+        return h > 0 ? $"{h}p" : $"{w}w";
+    }
 
     [GeneratedRegex(@"\b(director'?s[ ._-]?cut|extended|theatrical|unrated|uncut|remastered|imax)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
@@ -58,7 +70,7 @@ public static partial class VersionLabelHelper
     public static string BuildLabel(MediaItem item)
     {
         var parts = new List<string>(3);
-        var resolution = ResolutionLabel(item.Height);
+        var resolution = ResolutionLabel(item.Width, item.Height);
         if (resolution != null) parts.Add(resolution);
         if (!string.IsNullOrEmpty(item.HdrFormat)) parts.Add(item.HdrFormat);
         var edition = EditionLabel(item.Path);

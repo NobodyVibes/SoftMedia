@@ -192,7 +192,7 @@ public class DlnaContentDirectory : IDlnaContentDirectory
     /// drift from the DTO/report labels. Never-probed files fall back to the container.
     /// </summary>
     private static string VersionLabel(MediaItem item)
-        => Helpers.VersionLabelHelper.ResolutionLabel(item.Height)
+        => Helpers.VersionLabelHelper.ResolutionLabel(item.Width, item.Height)
            ?? (string.IsNullOrEmpty(item.Container) ? "ALT" : item.Container.ToUpperInvariant());
 
     private async Task<DlnaBrowseResult> AlbumChildrenAsync(Guid albumId, List<Guid> exposed, int skip, int take, string resBaseUrl, CancellationToken ct)

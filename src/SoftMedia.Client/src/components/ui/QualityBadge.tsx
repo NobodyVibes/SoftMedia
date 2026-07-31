@@ -7,17 +7,20 @@ interface QualityBadgeProps {
     label?: string;
 }
 
-export default function QualityBadge({ label }: QualityBadgeProps) {
-    if (!label) return null;
-
-    const style = label.includes('HDR') || label.includes('Dolby')
+/** Shared chip styling so the version-selector trigger matches the plain badge. */
+export function qualityBadgeStyle(label: string): string {
+    return label.includes('HDR') || label.includes('Dolby')
         ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
         : label.startsWith('4K') || label.startsWith('8K')
             ? 'bg-purple-600 text-white'
             : 'bg-blue-600 text-white';
+}
+
+export default function QualityBadge({ label }: QualityBadgeProps) {
+    if (!label) return null;
 
     return (
-        <span className={`px-2 py-0.5 text-xs font-bold rounded ${style}`}>
+        <span className={`px-2 py-0.5 text-xs font-bold rounded ${qualityBadgeStyle(label)}`}>
             {label}
         </span>
     );

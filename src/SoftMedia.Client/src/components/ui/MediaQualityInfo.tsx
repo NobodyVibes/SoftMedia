@@ -1,15 +1,32 @@
 import { type MediaItem } from '../../types';
 import { Music, MessageSquare, ChevronDown } from 'lucide-react';
-import React from 'react';
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import api from '../../services/api';
 
 interface MediaQualityInfoProps {
     item: MediaItem;
     className?: string;
+    /**
+     * DV-WI-020 (revised ×3) — controlled version selection. When provided, the
+     * "Video:" dropdown reports picks upward so the PAGE can make the main Play button
+     * honor them (play what you're looking at); without it the component keeps a local
+     * selection (episode inspection on TV pages) that affects display only.
+     */
+    selectedVersionId?: string | null;
+    onVersionSelect?: (versionId: string) => void;
 }
 
 /**
  * Displays extended quality metadata for video media items.
  * Shows video quality info (resolution, HDR, codec) and audio info (channels, codec).
+ *
+ * DV-WI-020 (revised ×3): when the title exists as multiple file copies, the "Video:"
+ * VALUE is a version dropdown — picking a copy fetches that sibling item and the WHOLE
+ * panel (codec, color depth, frame rate, audio incl. Atmos, bitrate, track lists) shows
+ * that file's metadata before anything plays. With a controlled parent (movie detail
+ * page) the pick also becomes the main Play button's target; the split-Play chevron
+ * remains the explicit per-press override.
  */
 /**
  * Track Dropdown Helper. Module-scoped, not declared inside MediaQualityInfo:
@@ -50,21 +67,53 @@ function TrackDropdown({
     );
 }
 
-export const MediaQualityInfo: React.FC<MediaQualityInfoProps> = ({ item, className = '' }) => {
+export const MediaQualityInfo: React.FC<MediaQualityInfoProps> = ({
+    item, className = '', selectedVersionId, onVersionSelect,
+}) => {
+    // Hooks must run unconditionally — the type guard returns below them.
+    const versions = item?.versions;
+    const hasVersions = (versions?.length ?? 0) > 1;
+    const controlled = !!onVersionSelect;
+    const [internalSelectedId, setInternalSelectedId] = useState<string | null>(null);
+
+    // Reset the local selection when the page swaps to a different item
+    // (adjust-during-render pattern, same as MediaDetailPage's qualityItem reset).
+    const [lastItemId, setLastItemId] = useState(item?.id);
+    if (item && item.id !== lastItemId) {
+        setLastItemId(item.id);
+        setInternalSelectedId(null);
+    }
+
+    const effectiveSelectedId = (controlled ? selectedVersionId : internalSelectedId) ?? item?.id;
+
+    // A picked sibling copy is a full MediaItem of its own — fetch it so the panel can
+    // show its real probed metadata (audio tracks included, which is where Atmos lives).
+    const wantsSibling = !!effectiveSelectedId && effectiveSelectedId !== item?.id;
+    const { data: siblingItem, isFetching } = useQuery<MediaItem>({
+        queryKey: ['media', effectiveSelectedId],
+        queryFn: async () => (await api.get<MediaItem>(`/media/${effectiveSelectedId}`)).data,
+        enabled: wantsSibling,
+        staleTime: 60_000,
+    });
+
     if (!item) return null;
 
     // Only show for video types (Movie, Episode) - Series are virtual containers
     const isVideoType = item.type === 'Movie' || item.type === 'Episode';
     if (!isVideoType) return null;
 
+    // The item whose metadata the panel displays: the picked copy once loaded, else the
+    // page's own item.
+    const shown: MediaItem = (wantsSibling && siblingItem) ? siblingItem : item;
+
     // Video quality label (e.g., "4K HDR10" or "1080p SDR")
     const getVideoQualityLabel = (): string => {
         const parts: string[] = [];
 
         // Resolution label
-        if (item.height || item.width) {
-            const h = item.height || 0;
-            const w = item.width || 0;
+        if (shown.height || shown.width) {
+            const h = shown.height || 0;
+            const w = shown.width || 0;
 
             if (h >= 4300 || w >= 7600) parts.push('8K');
             else if (h >= 2100 || w >= 3800) parts.push('4K');
@@ -79,8 +128,8 @@ export const MediaQualityInfo: React.FC<MediaQualityInfoProps> = ({ item, classN
         }
 
         // HDR format
-        if (item.hdrFormat) {
-            parts.push(item.hdrFormat);
+        if (shown.hdrFormat) {
+            parts.push(shown.hdrFormat);
         }
 
         return parts.join(' ') || 'Unknown';
@@ -88,15 +137,15 @@ export const MediaQualityInfo: React.FC<MediaQualityInfoProps> = ({ item, classN
 
     // Bit depth label (e.g., "10-bit")
     const getBitDepthLabel = (): string | null => {
-        if (!item.bitDepth) return null;
-        return `${item.bitDepth}-bit`;
+        if (!shown.bitDepth) return null;
+        return `${shown.bitDepth}-bit`;
     };
 
     // Frame rate label (e.g., "23.976 fps")
     const getFrameRateLabel = (): string | null => {
-        if (!item.frameRate) return null;
+        if (!shown.frameRate) return null;
         // Round to 3 decimal places for common rates like 23.976
-        const rounded = Math.round(item.frameRate * 1000) / 1000;
+        const rounded = Math.round(shown.frameRate * 1000) / 1000;
         return `${rounded} fps`;
     };
 
@@ -104,15 +153,15 @@ export const MediaQualityInfo: React.FC<MediaQualityInfoProps> = ({ item, classN
     const getAudioLabel = (): string => {
         const parts: string[] = [];
 
-        if (item.audioChannels) {
-            if (item.audioChannels === 2) parts.push('Stereo');
-            else if (item.audioChannels === 6) parts.push('5.1');
-            else if (item.audioChannels === 8) parts.push('7.1');
-            else parts.push(`${item.audioChannels}ch`);
+        if (shown.audioChannels) {
+            if (shown.audioChannels === 2) parts.push('Stereo');
+            else if (shown.audioChannels === 6) parts.push('5.1');
+            else if (shown.audioChannels === 8) parts.push('7.1');
+            else parts.push(`${shown.audioChannels}ch`);
         }
 
-        if (item.audioCodec) {
-            const codec = item.audioCodec.toUpperCase();
+        if (shown.audioCodec) {
+            const codec = shown.audioCodec.toUpperCase();
             // Show friendly names for common codecs
             if (codec.includes('TRUEHD') || codec.includes('ATMOS')) parts.push('Atmos');
             else if (codec.includes('DTS')) parts.push('DTS');
@@ -128,24 +177,49 @@ export const MediaQualityInfo: React.FC<MediaQualityInfoProps> = ({ item, classN
 
     // Bitrate label (e.g., "25 Mbps")
     const getBitrateLabel = (): string | null => {
-        if (!item.bitrate) return null;
-        const mbps = item.bitrate / 1000000;
+        if (!shown.bitrate) return null;
+        const mbps = shown.bitrate / 1000000;
         if (mbps >= 1) {
             return `${mbps.toFixed(1)} Mbps`;
         }
-        return `${(item.bitrate / 1000).toFixed(0)} kbps`;
+        return `${(shown.bitrate / 1000).toFixed(0)} kbps`;
     };
 
     return (
         <div className={`flex flex-col gap-3 ${className}`}>
-            {/* Row 1: Technical specs */}
-            <div className="flex flex-wrap gap-4 text-sm text-zinc-400">
-                {/* Video Quality */}
+            {/* Row 1: Technical specs (dimmed while a picked copy's metadata loads) */}
+            <div className={`flex flex-wrap gap-4 text-sm text-zinc-400 transition-opacity ${isFetching ? 'opacity-50' : ''}`}>
+                {/* Video Quality. With multiple copies the VALUE is the version dropdown —
+                    picking one swaps the whole panel to that file's specs (and, on movie
+                    pages, retargets the main Play button via the controlled parent). */}
                 <div className="flex items-center gap-2">
                     <span className="text-zinc-500">Video:</span>
-                    <span className="text-white font-medium">{getVideoQualityLabel()}</span>
-                    {item.videoCodec && (
-                        <span className="text-zinc-500">({item.videoCodec.toUpperCase()})</span>
+                    {hasVersions ? (
+                        // Visibly a CONTROL, not text: chip background + border (the same
+                        // visual language as the track dropdowns below, sized for the row)
+                        // so users notice the versions are switchable here.
+                        <span className="relative inline-flex items-center">
+                            <select
+                                aria-label="Video version"
+                                value={effectiveSelectedId}
+                                onChange={(e) => (controlled
+                                    ? onVersionSelect!(e.target.value)
+                                    : setInternalSelectedId(e.target.value))}
+                                className="appearance-none bg-white/10 border border-white/20 hover:border-blue-400/60 hover:bg-white/15 text-white font-medium rounded-md pl-2.5 pr-7 py-1 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/50 transition-all"
+                            >
+                                {versions!.map((v) => (
+                                    <option key={v.id} value={v.id} className="bg-zinc-900 text-white">
+                                        {v.label}{v.isPrimary ? ' [Default]' : ''}
+                                    </option>
+                                ))}
+                            </select>
+                            <ChevronDown className="w-3.5 h-3.5 text-zinc-300 absolute right-2 pointer-events-none" aria-hidden="true" />
+                        </span>
+                    ) : (
+                        <span className="text-white font-medium">{getVideoQualityLabel()}</span>
+                    )}
+                    {shown.videoCodec && (
+                        <span className="text-zinc-500">({shown.videoCodec.toUpperCase()})</span>
                     )}
                 </div>
 
@@ -181,16 +255,16 @@ export const MediaQualityInfo: React.FC<MediaQualityInfoProps> = ({ item, classN
             </div>
 
             {/* Row 2: Track Dropdowns */}
-            {(item.audioTracks?.length || 0) > 0 || (item.subtitleTracks?.length || 0) > 0 ? (
-                <div className="flex flex-wrap gap-3">
+            {(shown.audioTracks?.length || 0) > 0 || (shown.subtitleTracks?.length || 0) > 0 ? (
+                <div className={`flex flex-wrap gap-3 transition-opacity ${isFetching ? 'opacity-50' : ''}`}>
                     {/* Audio Tracks Dropdown */}
-                    {(item.audioTracks?.length || 0) > 0 && (
+                    {(shown.audioTracks?.length || 0) > 0 && (
                         <TrackDropdown
                             icon={Music}
                             label="Audio Track"
-                            count={item.audioTracks!.length}
+                            count={shown.audioTracks!.length}
                         >
-                            {item.audioTracks!.map((track, i) => (
+                            {shown.audioTracks!.map((track, i) => (
                                 <option key={i} value={i} className="bg-zinc-900">
                                     {track.language || 'Unknown'} - {track.codec?.toUpperCase() || 'Unknown'}
                                     {track.channels ? ` (${track.channels}ch)` : ''}
@@ -202,13 +276,13 @@ export const MediaQualityInfo: React.FC<MediaQualityInfoProps> = ({ item, classN
                     )}
 
                     {/* Subtitle Tracks Dropdown */}
-                    {(item.subtitleTracks?.length || 0) > 0 && (
+                    {(shown.subtitleTracks?.length || 0) > 0 && (
                         <TrackDropdown
                             icon={MessageSquare}
                             label="Subtitle"
-                            count={item.subtitleTracks!.length}
+                            count={shown.subtitleTracks!.length}
                         >
-                            {item.subtitleTracks!.map((track, i) => (
+                            {shown.subtitleTracks!.map((track, i) => (
                                 <option key={i} value={i} className="bg-zinc-900">
                                     {track.language || 'Unknown'} - {track.codec?.toUpperCase() || 'Text'}
                                     {track.title ? ` - ${track.title}` : ''}

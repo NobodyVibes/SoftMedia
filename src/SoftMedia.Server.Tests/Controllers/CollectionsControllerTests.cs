@@ -71,6 +71,59 @@ public class CollectionsControllerTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
+    // ── DV-WI-016 follow-up: duplicate file copies are ONE collection entry ──
+
+    private MediaItem AddDuplicateOf(MediaItem original, string path)
+    {
+        var group = original.VersionGroupId ?? Guid.NewGuid();
+        original.VersionGroupId = group;
+        var duplicate = new MediaItem
+        {
+            Id = Guid.NewGuid(), Type = MediaType.Movie, Title = original.Title,
+            SortTitle = original.SortTitle, Path = path, LibraryId = original.LibraryId,
+            CollectionId = original.CollectionId, Year = original.Year,
+            ReleaseDate = original.ReleaseDate, VersionGroupId = group,
+        };
+        _db.MediaItems.Add(duplicate);
+        _db.SaveChanges();
+        return duplicate;
+    }
+
+    [Fact]
+    public async Task ByMovie_DuplicateCopiesCollapse_AndCurrentMarksTheViewedCopy()
+    {
+        var duplicate = AddDuplicateOf(_movie2, "/a/tt-4k.mkv");
+
+        // Viewing FotR: "TT" appears ONCE in the strip, not once per file.
+        var result = await NewController(LibraryAccess.Unrestricted).GetByMovie(_movie1.Id);
+        var dto = Assert.IsType<CollectionDetailDto>(((OkObjectResult)result).Value);
+        var entry = Assert.Single(dto.Items, e => e.Media.Title == "TT");
+
+        // Viewing the DUPLICATE copy: its group is represented by the viewed copy
+        // itself, so the "now viewing" highlight matches.
+        var result2 = await NewController(LibraryAccess.Unrestricted).GetByMovie(duplicate.Id);
+        var dto2 = Assert.IsType<CollectionDetailDto>(((OkObjectResult)result2).Value);
+        var ttEntry = Assert.Single(dto2.Items, e => e.Media.Title == "TT");
+        Assert.Equal(duplicate.Id, ttEntry.Media.Id);
+        Assert.True(ttEntry.IsCurrent);
+        Assert.DoesNotContain(dto2.Items, e => e.Media.Id == _movie2.Id);
+    }
+
+    [Fact]
+    public async Task List_OneMovieDuplicated_IsNotATwoMovieCollection()
+    {
+        // The manual collection holds ONE film as two files — it must stay hidden
+        // (threshold counts logical titles), while LotR still lists three.
+        AddDuplicateOf(_movieB1, "/b/solo-4k.mkv");
+
+        var result = await NewController(LibraryAccess.Unrestricted).List();
+        var dtos = Assert.IsType<List<CollectionSummaryDto>>(((OkObjectResult)result.Result!).Value);
+
+        Assert.DoesNotContain(dtos, c => c.Id == _manualCollection.Id);
+        var lotr = Assert.Single(dtos, c => c.Id == _autoCollection.Id);
+        Assert.Equal(3, lotr.VisibleItemCount);
+    }
+
     private CollectionsController NewController(LibraryAccess access)
     {
         var libraryAccess = new Mock<IUserLibraryAccessProvider>();

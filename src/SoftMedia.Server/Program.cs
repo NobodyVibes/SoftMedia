@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.ResponseCompression;
@@ -353,6 +354,45 @@ app.Use(async (context, next) =>
                 System.Diagnostics.Activity.Current?.Id ?? context.TraceIdentifier;
             await context.Response.WriteAsJsonAsync(
                 problem, options: null, contentType: "application/problem+json");
+            return;
+        }
+    }
+    await next();
+});
+
+// MC-WI-001: cache/subtitles (extracted subtitle TEXT) and cache/trickplay (frame
+// sheets) are media content, consumed exclusively through authorized endpoints
+// (TranscodeController subtitles.vtt, TrickplayController) — the static middleware
+// must not offer an unauthenticated side door to the same bytes. 404 (not 401/403)
+// per the anti-probe rule.
+// AA-WI-001: cache/images (posters/backdrops/stills/cast headshots — and the proxy/
+// thumbnails sub-trees whose intended door is the authorized ImageController) requires
+// an authenticated caller. The client sends the WS-6 reduced-privilege media token in
+// the query string (browsers can't set Authorization on <img>); header-authed full
+// sessions/API tokens work too. Static paths never trigger the auth handler on their
+// own — no endpoint, no [Authorize] — so authenticate EXPLICITLY here. 401 (not the
+// 404 anti-probe default): artwork ids are GUIDs already visible to any signed-in
+// user, and 401 tells the client "refresh the token", which 404 would hide.
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path;
+    if (path.StartsWithSegments("/cache/subtitles") || path.StartsWithSegments("/cache/trickplay"))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+    if (path.StartsWithSegments("/cache/images"))
+    {
+        // Default scheme = SmartAuth: Authorization-header API tokens route to the
+        // ApiToken handler, everything else (incl. the query-lifted media token) to
+        // JwtBearer, whose OnTokenValidated events enforce the WS-6 rules (query
+        // tokens must be media tokens here — cast tokens and full access tokens in
+        // query strings are rejected; media tokens are GET/HEAD-only and re-checked
+        // against live user eligibility via the AA-WI-011 cache).
+        var auth = await context.AuthenticateAsync();
+        if (!auth.Succeeded)
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             return;
         }
     }

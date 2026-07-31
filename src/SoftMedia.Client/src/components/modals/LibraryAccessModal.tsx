@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Square, Library as LibraryIcon } from 'lucide-react';
@@ -40,14 +40,18 @@ export const LibraryAccessModal: React.FC<LibraryAccessModalProps> = ({ isOpen, 
         enabled: isOpen && !!user && user.role !== 'Admin',
     });
 
-    // Hydrate selection state when the modal opens for a fresh user.
-    useEffect(() => {
-        if (isOpen && currentAccess) {
-            setSelected(new Set(currentAccess));
-        } else if (!isOpen) {
-            setSelected(new Set());
-        }
-    }, [isOpen, currentAccess]);
+    // Hydrate selection when the loaded access changes, clear it on close —
+    // during render, not in an effect, so the checkboxes never show one frame
+    // of the previous user's selection (react.dev: "adjusting state when props
+    // change").
+    const [hydratedFrom, setHydratedFrom] = useState<string[] | null>(null);
+    if (isOpen && currentAccess && currentAccess !== hydratedFrom) {
+        setHydratedFrom(currentAccess);
+        setSelected(new Set(currentAccess));
+    } else if (!isOpen && hydratedFrom !== null) {
+        setHydratedFrom(null);
+        setSelected(new Set());
+    }
 
     const updateMutation = useMutation({
         mutationFn: ({ userId, libraryIds }: { userId: string; libraryIds: string[] }) =>

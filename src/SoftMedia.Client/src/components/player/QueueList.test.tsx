@@ -17,6 +17,7 @@ vi.mock('../../hooks/useMediaTokenRefresh', () => ({
 
 vi.mock('../../lib/mediaImageUrl', () => ({
     attachAuthToApiUrl: (url: string) => url,
+    resolveArtworkUrl: (url: string | null | undefined) => url ?? '/placeholder-music.png',
 }));
 
 vi.mock('../ui/ScrollingText', () => ({

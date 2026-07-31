@@ -11,6 +11,45 @@ interface MediaQualityInfoProps {
  * Displays extended quality metadata for video media items.
  * Shows video quality info (resolution, HDR, codec) and audio info (channels, codec).
  */
+/**
+ * Track Dropdown Helper. Module-scoped, not declared inside MediaQualityInfo:
+ * a component created during render gets a fresh identity every pass, so React
+ * unmounts and remounts it (resetting DOM state like an open <select>) on each
+ * parent re-render.
+ */
+function TrackDropdown({
+    icon: Icon,
+    label,
+    count,
+    children,
+}: {
+    icon: React.ComponentType<{ className?: string }>;
+    label: string;
+    count: number;
+    children: React.ReactNode;
+}) {
+    return (
+        <div className="relative group">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Icon className="h-4 w-4 text-zinc-500 group-hover:text-white transition-colors" />
+            </div>
+            <select
+                className="appearance-none bg-white/5 border border-white/10 hover:border-white/20 text-white text-sm rounded-lg pl-10 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 cursor-pointer min-w-[140px] transition-all"
+                value=""
+                onChange={() => { }}
+            >
+                <option value="" disabled className="bg-zinc-900 text-zinc-500">
+                    {count} {label}{count !== 1 ? 's' : ''}
+                </option>
+                {children}
+            </select>
+            <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                <ChevronDown className="h-4 w-4 text-zinc-500" />
+            </div>
+        </div>
+    );
+}
+
 export const MediaQualityInfo: React.FC<MediaQualityInfoProps> = ({ item, className = '' }) => {
     if (!item) return null;
 
@@ -96,38 +135,6 @@ export const MediaQualityInfo: React.FC<MediaQualityInfoProps> = ({ item, classN
         }
         return `${(item.bitrate / 1000).toFixed(0)} kbps`;
     };
-
-    // Track Dropdown Helper
-    const TrackDropdown = ({
-        icon: Icon,
-        label,
-        count,
-        children
-    }: {
-        icon: any,
-        label: string,
-        count: number,
-        children: React.ReactNode
-    }) => (
-        <div className="relative group">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Icon className="h-4 w-4 text-zinc-500 group-hover:text-white transition-colors" />
-            </div>
-            <select
-                className="appearance-none bg-white/5 border border-white/10 hover:border-white/20 text-white text-sm rounded-lg pl-10 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 cursor-pointer min-w-[140px] transition-all"
-                value=""
-                onChange={() => { }}
-            >
-                <option value="" disabled className="bg-zinc-900 text-zinc-500">
-                    {count} {label}{count !== 1 ? 's' : ''}
-                </option>
-                {children}
-            </select>
-            <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                <ChevronDown className="h-4 w-4 text-zinc-500" />
-            </div>
-        </div>
-    );
 
     return (
         <div className={`flex flex-col gap-3 ${className}`}>

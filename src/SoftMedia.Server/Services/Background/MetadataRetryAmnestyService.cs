@@ -127,6 +127,16 @@ public class MetadataRetryAmnestyService : BackgroundService, IManuallyTriggerab
     /// the lock at processing time). Public so tests and TriggerNow drive one run directly.
     /// Returns the number of items re-enqueued, or -1 on failure.
     /// </summary>
+    /// <summary>
+    /// SM-WI-042 — decaying re-grant interval: the Nth amnesty for an item schedules the
+    /// next one 14, then 28 days out (capped) instead of every flat week. The first
+    /// grant needs no gate (NextAmnestyUtc is null right after exhaustion). Combined
+    /// with the SM-WI-040 negative cache, a never-matching item costs a few cheap DB
+    /// checks per month instead of full provider sweeps per week. Pure for tests.
+    /// </summary>
+    public static TimeSpan NextAmnestyDelay(int amnestyCount)
+        => TimeSpan.FromDays(Math.Min(28, 7 * Math.Pow(2, amnestyCount + 1)));
+
     public async Task<int> RunAmnestyAsync(CancellationToken ct = default)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -137,20 +147,31 @@ public class MetadataRetryAmnestyService : BackgroundService, IManuallyTriggerab
             var queue = scope.ServiceProvider.GetRequiredService<IMetadataQueue>();
             var settings = scope.ServiceProvider.GetRequiredService<ISettingsService>();
 
+            // SM-WI-042: items whose decayed next-amnesty time hasn't arrived stay
+            // exhausted and untouched this pass.
+            var now = DateTime.UtcNow;
             var exhausted = await db.MediaItems
-                .Where(m => m.IsRetryExhausted && !m.MetadataLocked)
+                .Where(m => m.IsRetryExhausted && !m.MetadataLocked
+                    && (m.NextAmnestyUtc == null || m.NextAmnestyUtc <= now))
                 .ToListAsync(ct);
 
             if (exhausted.Count == 0)
             {
                 _registry.Report(TaskName, "Success", sw.ElapsedMilliseconds);
-                _logger.LogInformation("Retry amnesty: no exhausted items.");
+                _logger.LogInformation("Retry amnesty: no exhausted items due.");
                 return 0;
             }
 
             foreach (var item in exhausted)
             {
                 item.IsRetryExhausted = false;
+                // Missing items get their flag cleared but consume no quota (not
+                // enqueued below) — don't advance their decay ladder either.
+                if (!item.IsMissing)
+                {
+                    item.NextAmnestyUtc = now + NextAmnestyDelay(item.AmnestyCount);
+                    item.AmnestyCount++;
+                }
             }
 
             // Drop any stale retry bookkeeping so the cleared items restart the ladder at tier 1.

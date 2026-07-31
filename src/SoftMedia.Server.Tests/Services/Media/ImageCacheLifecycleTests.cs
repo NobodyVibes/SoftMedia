@@ -89,8 +89,9 @@ public class ImageCacheLifecycleTests : IDisposable
         var music = Touch("music", $"{orphan}_cover.jpg");
         var games = Touch("games", $"{orphan}_poster.jpg");
         var books = Touch("books", $"{orphan}_poster.jpg");
-        // tv/cast is keyed by int person ids, cleaned via DeleteCastImagesForPersonIds —
-        // the orphan sweep must never touch it (its names would parse as "invalid format").
+        // tv/cast is keyed by int external person ids, cleaned via
+        // DeleteCastImagesForExternalIds / CleanupOrphanedCastImages — the guid-keyed orphan
+        // sweep must never touch it (its names would parse as "invalid format").
         var cast = Touch(Path.Combine("tv", "cast"), "42.jpg");
 
         var deleted = _service.CleanupOrphanedImages(new HashSet<Guid>());

@@ -268,9 +268,11 @@ public class MetadataAggregatorTests : IDisposable
     }
 
     [Fact]
-    public async Task EnrichMediaItemAsync_ShouldSkipImages_WhenDeferImageCachingIsTrue()
+    public async Task EnrichMediaItemAsync_ShouldSkipImages_WhenRefreshImagesIsFalse()
     {
-        // Arrange
+        // SM-WI-014: deferImageCaching removed (dead flag with a hash-skip trap);
+        // refreshImages:false is the one supported image-suppression path (Variable-mode
+        // refresh) and must still stamp metadata without queueing image work.
         var aggregator = CreateAggregator();
         var item = new MediaItem { Id = Guid.NewGuid(), Title = "Deferred Movie", Type = MediaType.Movie };
         _dbContext.MediaItems.Add(item);
@@ -286,9 +288,9 @@ public class MetadataAggregatorTests : IDisposable
             .ReturnsAsync(result);
 
         // Act
-        await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie, deferImageCaching: true);
+        await aggregator.EnrichMediaItemAsync(item, LibraryType.Movie, refreshImages: false);
 
-        // Assert — Image extractor should NOT be called when deferred
+        // Assert — Image extractor should NOT be called when image refresh is suppressed
         _mockImageExtractor.Verify(x => x.ExtractAndQueueAsync(
             It.IsAny<MediaItem>(),
             It.IsAny<MetadataResult>()), Times.Never);

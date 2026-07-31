@@ -9,15 +9,36 @@ public class TVMazeProvider : ISearchableMetadataProvider
     private readonly HttpClient _httpClient;
     private readonly ILogger<TVMazeProvider> _logger;
     private readonly RateLimiter _rateLimiter;
+    private readonly IProviderLookupCache? _lookupCache;
 
     public LibraryType SupportedType => LibraryType.TV;
     public string ProviderName => "TVMaze";
 
-    public TVMazeProvider(HttpClient httpClient, ILogger<TVMazeProvider> logger, RateLimiterFactory rateLimiterFactory)
+    public TVMazeProvider(HttpClient httpClient, ILogger<TVMazeProvider> logger, RateLimiterFactory rateLimiterFactory,
+        IProviderLookupCache? lookupCache = null)
     {
         _httpClient = httpClient;
         _logger = logger;
         _rateLimiter = rateLimiterFactory.GetLimiter("TVMaze");
+        _lookupCache = lookupCache;
+    }
+
+    /// <summary>
+    /// SM-WI-021/022 — the single funnel for every TVMaze HTTP request: exactly ONE
+    /// rate-limiter lease per request. The official budget (20 calls / 10 s per IP,
+    /// tvmaze.com/api#rate-limiting) counts REQUESTS; the old one-lease-per-lookup
+    /// pattern let up to 3 requests ride a single permit (~36/10 s worst case), and the
+    /// Fix-Match search path held no lease at all. Throws InvalidOperationException when
+    /// the local wait queue is full — genuinely exceptional, handled by callers' catches.
+    /// </summary>
+    private async Task<string> GetStringLimitedAsync(string url, CancellationToken ct = default)
+    {
+        using var lease = await _rateLimiter.AcquireAsync(1, ct);
+        if (!lease.IsAcquired)
+        {
+            throw new InvalidOperationException($"TVMaze rate-limit queue is full; request rejected locally: {url}");
+        }
+        return await _httpClient.GetStringAsync(url, ct);
     }
 
     public async Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
@@ -35,14 +56,6 @@ public class TVMazeProvider : ISearchableMetadataProvider
         
         try
         {
-            // Acquire rate limit lease before making API call
-            using var lease = await _rateLimiter.AcquireAsync(1);
-            if (!lease.IsAcquired)
-            {
-                _logger.LogWarning($"TVMaze rate limit exceeded for '{title}', request was queued too long");
-                return null;
-            }
-
             // 1. First, check for promoted IDs to skip search
             // Priority A: TVMaze ID (Native)
             if (item.TvMazeId.HasValue && item.TvMazeId.Value > 0)
@@ -52,7 +65,7 @@ public class TVMazeProvider : ISearchableMetadataProvider
                 var directUrl = $"https://api.tvmaze.com/shows/{tvmazeId}?embed[]=cast&embed[]=seasons&embed[]=episodes";
                 try 
                 {
-                    var response = await _httpClient.GetStringAsync(directUrl);
+                    var response = await GetStringLimitedAsync(directUrl);
                     using var doc = System.Text.Json.JsonDocument.Parse(response);
                     if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Null)
                     {
@@ -71,13 +84,13 @@ public class TVMazeProvider : ISearchableMetadataProvider
                 var lookupUrl = $"https://api.tvmaze.com/lookup/shows?imdb={item.ImdbId}";
                 try
                 {
-                    var response = await _httpClient.GetStringAsync(lookupUrl);
+                    var response = await GetStringLimitedAsync(lookupUrl);
                     using var doc = System.Text.Json.JsonDocument.Parse(response);
                     if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Null && doc.RootElement.TryGetProperty("id", out var idEl))
                     {
                         var resolvedId = idEl.GetInt32();
                         var fullDetailUrl = $"https://api.tvmaze.com/shows/{resolvedId}?embed[]=cast&embed[]=seasons&embed[]=episodes";
-                        var fullResponse = await _httpClient.GetStringAsync(fullDetailUrl);
+                        var fullResponse = await GetStringLimitedAsync(fullDetailUrl);
                         using var fullDoc = System.Text.Json.JsonDocument.Parse(fullResponse);
                         return ProcessShowMetadata(fullDoc.RootElement, title, fullResponse);
                     }
@@ -88,28 +101,39 @@ public class TVMazeProvider : ISearchableMetadataProvider
                 }
             }
             
+            // SM-WI-040: the ID paths above are authoritative; only this title-search
+            // fallback is cacheable. A fresh cached miss skips the network entirely.
+            var cacheKey = ProviderLookupCacheService.NormalizeKey(item.Type, title, targetYear);
+            if (_lookupCache != null && await _lookupCache.IsFreshMissAsync(ProviderName, cacheKey))
+            {
+                _logger.LogDebug("TVMaze: fresh cached miss for '{Title}'; skipping search", title);
+                return null;
+            }
+
             // Use /search/shows endpoint to get multiple results for year-based disambiguation
             // Per TVMaze API: https://www.tvmaze.com/api#show-search
             var searchUrl = $"https://api.tvmaze.com/search/shows?q={Uri.EscapeDataString(title)}";
             _logger.LogInformation($"Fetching TVMaze search for '{title}' (year: {targetYear}): {searchUrl}");
-            
+
             string searchResponse;
-            try 
+            try
             {
-                searchResponse = await _httpClient.GetStringAsync(searchUrl);
+                searchResponse = await GetStringLimitedAsync(searchUrl);
             }
             catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 _logger.LogWarning($"TVMaze search returned 404 for '{title}'");
+                if (_lookupCache != null) await _lookupCache.RecordMissAsync(ProviderName, cacheKey);
                 return null;
             }
-            
+
             using var searchDoc = System.Text.Json.JsonDocument.Parse(searchResponse);
             var searchResults = searchDoc.RootElement;
-            
+
             if (searchResults.GetArrayLength() == 0)
             {
                 _logger.LogWarning($"No TVMaze results found for '{title}'");
+                if (_lookupCache != null) await _lookupCache.RecordMissAsync(ProviderName, cacheKey);
                 return null;
             }
             
@@ -183,6 +207,7 @@ public class TVMazeProvider : ISearchableMetadataProvider
             if (!bestMatch.HasValue)
             {
                 _logger.LogWarning($"No suitable TVMaze match found for '{title}'");
+                if (_lookupCache != null) await _lookupCache.RecordMissAsync(ProviderName, cacheKey);
                 return null;
             }
             
@@ -192,16 +217,8 @@ public class TVMazeProvider : ISearchableMetadataProvider
             // Per TVMaze docs: ?embed[]=cast&embed[]=seasons&embed[]=episodes
             var detailUrl = $"https://api.tvmaze.com/shows/{matchId}?embed[]=cast&embed[]=seasons&embed[]=episodes";
             _logger.LogInformation("Fetching full details for match ID {MatchId}: {Url}", matchId, detailUrl);
-            
-            // Acquire rate limit lease before making API call
-            using var lease4 = await _rateLimiter.AcquireAsync(1);
-            if (!lease4.IsAcquired)
-            {
-                _logger.LogWarning("TVMaze rate limit exceeded for '{Title}', request was queued too long", title);
-                return null;
-            }
 
-            var detailResponse = await _httpClient.GetStringAsync(detailUrl);
+            var detailResponse = await GetStringLimitedAsync(detailUrl);
             using var detailDoc = System.Text.Json.JsonDocument.Parse(detailResponse);
             
             return ProcessShowMetadata(detailDoc.RootElement, title, detailResponse);
@@ -221,6 +238,7 @@ public class TVMazeProvider : ISearchableMetadataProvider
     {
             var result = new MetadataResult();
             result.RawPayload = rawPayload;
+            result.SourceProvider = ProviderName; // SM-WI-045: labels the payload cache row
             
             // Store TVMaze show ID for season/episode lookups
             if (root.TryGetProperty("id", out var idVal))
@@ -240,11 +258,12 @@ public class TVMazeProvider : ISearchableMetadataProvider
 
             if (root.TryGetProperty("status", out var statusVal))
             {
+                // SM-WI-044: typed field (the old Extra["status"] was persisted only for
+                // photos — i.e. computed then dropped). Drives the "Running" refresh mode.
                 var status = statusVal.GetString();
-                if (!string.IsNullOrEmpty(status)) 
+                if (!string.IsNullOrEmpty(status))
                 {
-                    result.Extra ??= new Dictionary<string, System.Text.Json.JsonElement>();
-                    result.Extra["status"] = System.Text.Json.JsonSerializer.SerializeToElement(status);
+                    result.SeriesStatus = status;
                 }
             }
 
@@ -490,7 +509,7 @@ public class TVMazeProvider : ISearchableMetadataProvider
 
         var searchUrl = $"https://api.tvmaze.com/search/shows?q={Uri.EscapeDataString(query.Trim())}";
         string body;
-        try { body = await _httpClient.GetStringAsync(searchUrl, ct); }
+        try { body = await GetStringLimitedAsync(searchUrl, ct); }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "TVMaze search failed for '{Query}'", query);

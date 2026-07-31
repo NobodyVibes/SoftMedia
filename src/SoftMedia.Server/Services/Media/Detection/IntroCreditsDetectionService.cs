@@ -48,6 +48,13 @@ public class IntroCreditsDetectionService : IIntroCreditsDetectionService
     // are recurring background score or dialogue music, not theme music.
     private const double IntroSearchEndSeconds = 300.0;
 
+    /// <summary>
+    /// DV-WI-006: a duplicate copy of an episode within this duration delta of its
+    /// representative shares the same cut — it inherits markers instead of being
+    /// fingerprinted itself. Larger deltas (extended cuts) are fingerprinted normally.
+    /// </summary>
+    private const double DuplicateDurationToleranceSeconds = 2.0;
+
     private readonly AppDbContext _db;
     private readonly IFingerprintExtractor _extractor;
     private readonly ISegmentMatcher _matcher;
@@ -80,16 +87,49 @@ public class IntroCreditsDetectionService : IIntroCreditsDetectionService
 
         var episodes = await _db.MediaItems
             .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode)
-            .OrderBy(m => m.SeasonNumber).ThenBy(m => m.EpisodeNumber)
+            .OrderBy(m => m.SeasonNumber).ThenBy(m => m.EpisodeNumber).ThenBy(m => m.Id)
             .ToListAsync(cancellationToken);
 
-        if (episodes.Count < 2)
+        // DV-WI-006: duplicate files of one episode share (Season, Episode). Fingerprint
+        // ONE row per episode — matching two copies of the same content wastes ffmpeg
+        // decode AND hands the all-pairs matcher a pair that "shares" its entire runtime.
+        // A same-duration sibling inherits the representative's markers after detection
+        // (through the source guards, so chapter-derived markers stay authoritative); a
+        // sibling with a materially different duration (extended cut) stays in the pass
+        // and is fingerprinted independently. Rows without a real episode number are
+        // never grouped — several distinct unparseable files legitimately share E0.
+        var working = new List<MediaItem>();
+        var inheritors = new List<(MediaItem Duplicate, MediaItem Representative)>();
+        working.AddRange(episodes.Where(e => !(e.EpisodeNumber is > 0)));
+        foreach (var group in episodes.Where(e => e.EpisodeNumber is > 0)
+                     .GroupBy(e => (e.SeasonNumber, e.EpisodeNumber)))
+        {
+            MediaItem? representative = null;
+            foreach (var e in group)
+            {
+                if (representative == null)
+                {
+                    representative = e;
+                    working.Add(e);
+                }
+                else if (Math.Abs(e.Duration - representative.Duration) <= DuplicateDurationToleranceSeconds)
+                {
+                    inheritors.Add((e, representative));
+                }
+                else
+                {
+                    working.Add(e);
+                }
+            }
+        }
+
+        if (working.Count < 2)
         {
             return new IntroCreditsDetectionResult(episodes.Count, 0, 0, "Need at least 2 episodes for cross-episode detection.");
         }
 
         // Load existing fingerprints in one query.
-        var episodeIds = episodes.Select(e => e.Id).ToList();
+        var episodeIds = working.Select(e => e.Id).ToList();
         var fingerprints = await _db.MediaFingerprints
             .Where(f => episodeIds.Contains(f.MediaItemId))
             .ToDictionaryAsync(f => f.MediaItemId, cancellationToken);
@@ -101,7 +141,7 @@ public class IntroCreditsDetectionService : IIntroCreditsDetectionService
         // CHECKPOINTED immediately: when a scan preempts this job, completed episodes
         // stay persisted and the re-run resumes where it left off instead of
         // re-extracting the whole series.
-        foreach (var episode in episodes)
+        foreach (var episode in working)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var extractedNew = await EnsureFingerprintAsync(episode, fingerprints, detectIntros, detectCredits, cancellationToken);
@@ -115,7 +155,7 @@ public class IntroCreditsDetectionService : IIntroCreditsDetectionService
         // (typically means FFmpeg failed for the whole library — bad path, missing
         // binary, permissions, etc.). Stamp the attempt so we don't retry on every
         // scan and surface a clear reason.
-        var anyUsableFingerprint = episodes.Any(e =>
+        var anyUsableFingerprint = working.Any(e =>
             fingerprints.TryGetValue(e.Id, out var f)
             && ((detectIntros && f.HeadFingerprint != null) || (detectCredits && f.TailFingerprint != null)));
 
@@ -131,7 +171,7 @@ public class IntroCreditsDetectionService : IIntroCreditsDetectionService
         // is a good example). Mixing seasons in one match pass causes the matcher to
         // either miss intros or land on a coincidentally-shared segment that isn't
         // either season's actual theme. Each season is detected independently.
-        var seasonGroups = episodes
+        var seasonGroups = working
             .GroupBy(e => e.SeasonNumber ?? 0)
             .Where(g => g.Count() >= 2)
             .ToList();
@@ -156,6 +196,24 @@ public class IntroCreditsDetectionService : IIntroCreditsDetectionService
 
             introsFound += intros;
             creditsFound += credits;
+        }
+
+        // DV-WI-006: same-duration duplicates inherit their representative's markers.
+        // TryWrite* enforces source precedence — a duplicate whose own file carries
+        // chapter-derived markers keeps them.
+        foreach (var (duplicate, representative) in inheritors)
+        {
+            if (representative.IntroStart.HasValue && representative.IntroEnd.HasValue
+                && TryWriteIntro(duplicate, representative.IntroStart.Value, representative.IntroEnd.Value))
+            {
+                introsFound++;
+            }
+            if (representative.CreditsStart.HasValue
+                && TryWriteCredits(duplicate, representative.CreditsStart.Value,
+                       representative.CreditsEnd ?? representative.CreditsStart.Value))
+            {
+                creditsFound++;
+            }
         }
 
         StampDetectionAttempt(episodes);

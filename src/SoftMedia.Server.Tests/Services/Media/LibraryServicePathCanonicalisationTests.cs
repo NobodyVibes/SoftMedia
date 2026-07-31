@@ -190,7 +190,8 @@ public class LibraryServicePathCanonicalisationTests : IDisposable
         var (access, ratings) = UnrestrictedProviders();
         return new LibraryService(
             libraryRepo, mediaRepo.Object, scanQueue.Object, imageCache.Object,
-            watcher, db, access, ratings, NullLogger<LibraryService>.Instance);
+            watcher, db, access, ratings,
+            new Mock<ILibraryCleanupService>().Object, NullLogger<LibraryService>.Instance);
     }
 
     // audit wave-2 WS-2: LibraryService now takes the ACL + rating providers; tests run unrestricted.
@@ -233,6 +234,7 @@ public class LibraryServicePathCanonicalisationTests : IDisposable
             db,
             access,
             ratings,
+            new Mock<ILibraryCleanupService>().Object,
             NullLogger<LibraryService>.Instance);
     }
 }

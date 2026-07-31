@@ -30,13 +30,33 @@ public class OpenLibraryProvider : ISearchableMetadataProvider
         HttpClient httpClient,
         ILogger<OpenLibraryProvider> logger,
         RateLimiterFactory rateLimiterFactory,
-        IBookMetadataExtractor? bookMetadataExtractor = null)
+        IBookMetadataExtractor? bookMetadataExtractor = null,
+        IProviderLookupCache? lookupCache = null)
     {
         _httpClient = httpClient;
         _logger = logger;
         _rateLimiter = rateLimiterFactory.GetLimiter("OpenLibrary");
         _bookMetadataExtractor = bookMetadataExtractor;
+        _lookupCache = lookupCache;
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
+    }
+
+    private readonly IProviderLookupCache? _lookupCache;
+
+    /// <summary>
+    /// SM-WI-021/022 — leased GET for every OpenLibrary request: exactly one lease per
+    /// HTTP call. The old shape held ONE lease across the whole lookup (ISBN fetch +
+    /// title search under a single permit → under-counted 3/s pacing), and the
+    /// Fix-Match search paths held none at all.
+    /// </summary>
+    private async Task<string> GetStringLimitedAsync(string url, CancellationToken ct = default)
+    {
+        using var lease = await _rateLimiter.AcquireAsync(1, ct);
+        if (!lease.IsAcquired)
+        {
+            throw new InvalidOperationException($"OpenLibrary rate-limit queue is full; request rejected locally: {url}");
+        }
+        return await _httpClient.GetStringAsync(url, ct);
     }
 
     public async Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
@@ -56,13 +76,24 @@ public class OpenLibraryProvider : ISearchableMetadataProvider
 
         try
         {
-            // Acquire rate limit lease (replaces manual SemaphoreSlim + delay)
-            using var lease = await _rateLimiter.AcquireAsync(1);
-            if (!lease.IsAcquired)
+            // SM-WI-021: no outer lease here — GetStringLimitedAsync leases each HTTP
+            // request individually (the single outer lease under-counted multi-request
+            // lookups against the 3/s pacing).
+
+            // SM-WI-032: key-first — a previously matched book refreshes via its stored
+            // work key (one request, no heuristics, no file parsing). Falls through to
+            // the ISBN/search paths when the key no longer resolves (self-healing).
+            if (!string.IsNullOrEmpty(item.OpenLibraryKey))
             {
-                _logger.LogWarning("OpenLibrary rate limit exceeded for '{Title}', skipping", title);
-                return null;
+                var keyResult = await TryFetchByStoredKeyAsync(item.OpenLibraryKey, title);
+                if (keyResult != null) return keyResult;
             }
+
+            // SM-WI-040: fresh cached miss for the title/author search → the whole
+            // search flow is skipped (the ISBN path has its own key and check).
+            var searchKey = ProviderLookupCacheService.NormalizeKey("book", title, item.Director, item.Year);
+            var searchMissCached = _lookupCache != null &&
+                await _lookupCache.IsFreshMissAsync(ProviderName, searchKey);
 
             // ISBN-first lookup — the authoritative match path. If the file is
             // an EPUB/PDF with a publisher-stamped ISBN, OpenLibrary's ISBN
@@ -71,6 +102,12 @@ public class OpenLibraryProvider : ISearchableMetadataProvider
             // or empty OL response.
             var isbnResult = await TryIsbnLookupAsync(item);
             if (isbnResult != null) return isbnResult;
+
+            if (searchMissCached)
+            {
+                _logger.LogDebug("OpenLibrary: fresh cached miss for '{Title}'; skipping search", title);
+                return null;
+            }
 
             // Build search URL using structured params when author context is available.
             // OpenLibrary's search API supports title= and author= for more accurate results.
@@ -113,7 +150,7 @@ public class OpenLibraryProvider : ISearchableMetadataProvider
                 url = $"https://openlibrary.org/search.json?q={Uri.EscapeDataString(queryTitle)}&limit=10&sort=editions&{fields}";
             }
 
-            var response = await _httpClient.GetStringAsync(url);
+            var response = await GetStringLimitedAsync(url);
 
             using var doc = JsonDocument.Parse(response);
             var root = doc.RootElement;
@@ -129,7 +166,11 @@ public class OpenLibraryProvider : ISearchableMetadataProvider
                 // cases like "Dune: House Atreides" where OpenLibrary returns an authorless,
                 // coverless stub ahead of the real Herbert & Anderson entry.
                 candidates = ApplySiblingFilters(candidates, author);
-                if (candidates.Count == 0) return null;
+                if (candidates.Count == 0)
+                {
+                    await RecordSearchMissAsync(searchKey);
+                    return null;
+                }
 
                 JsonElement? bestBook = null;
                 int bestScore = int.MaxValue; // Lower is better
@@ -144,7 +185,11 @@ public class OpenLibraryProvider : ISearchableMetadataProvider
                     }
                 }
 
-                if (!bestBook.HasValue) return null;
+                if (!bestBook.HasValue)
+                {
+                    await RecordSearchMissAsync(searchKey);
+                    return null;
+                }
 
                 // Reject matches that scored poorly — a wrong-but-present result is worse
                 // than no result, because it permanently poisons the detail page whereas
@@ -155,12 +200,14 @@ public class OpenLibraryProvider : ISearchableMetadataProvider
                     _logger.LogInformation(
                         "OpenLibrary best match for '{Title}' scored {Score} (> {Threshold}); rejecting as low-confidence",
                         title, bestScore, PoorMatchThreshold);
+                    await RecordSearchMissAsync(searchKey); // deterministic reject: same query → same reject
                     return null;
                 }
 
                 return MapDocToMetadata(bestBook.Value);
             }
-            
+
+            await RecordSearchMissAsync(searchKey);
             return null;
         }
         catch (Exception ex)
@@ -169,6 +216,11 @@ public class OpenLibraryProvider : ISearchableMetadataProvider
             return null;
         }
     }
+
+    private Task RecordSearchMissAsync(string searchKey)
+        => _lookupCache != null
+            ? _lookupCache.RecordMissAsync(ProviderName, searchKey)
+            : Task.CompletedTask;
 
     /// <summary>
     /// Authoritative ISBN-based lookup. Extracts the embedded ISBN from the
@@ -181,31 +233,49 @@ public class OpenLibraryProvider : ISearchableMetadataProvider
     /// </summary>
     private async Task<MetadataResult?> TryIsbnLookupAsync(MediaItem item)
     {
-        if (_bookMetadataExtractor == null) return null;
-        if (string.IsNullOrWhiteSpace(item.Path)) return null;
+        // SM-WI-032: the promoted Isbn column first — it was populated by a previous
+        // pass (file-embedded value wins per the column's contract), so re-opening and
+        // re-parsing the EPUB/PDF on every retry/refresh was pure wasted I/O.
+        var isbn = item.Isbn;
 
-        BookFileMetadata? extracted;
-        try
+        if (string.IsNullOrWhiteSpace(isbn))
         {
-            extracted = await _bookMetadataExtractor.ExtractAsync(item.Path);
+            if (_bookMetadataExtractor == null) return null;
+            if (string.IsNullOrWhiteSpace(item.Path)) return null;
+
+            BookFileMetadata? extracted;
+            try
+            {
+                extracted = await _bookMetadataExtractor.ExtractAsync(item.Path);
+            }
+            catch
+            {
+                return null;
+            }
+            isbn = extracted?.Isbn;
         }
-        catch
+        if (string.IsNullOrWhiteSpace(isbn)) return null;
+
+        // SM-WI-040: an ISBN that Open Library doesn't index is a stable miss — cache it
+        // so the title/author fallback doesn't re-pay this call on every tier/amnesty.
+        var isbnKey = ProviderLookupCacheService.NormalizeKey("isbn", isbn);
+        if (_lookupCache != null && await _lookupCache.IsFreshMissAsync(ProviderName, isbnKey))
         {
+            _logger.LogDebug("OpenLibrary: fresh cached ISBN miss for {Isbn}; skipping lookup", isbn);
             return null;
         }
-        var isbn = extracted?.Isbn;
-        if (string.IsNullOrWhiteSpace(isbn)) return null;
 
         try
         {
             const string fields = "fields=key,title,author_name,first_publish_year,publisher,cover_i,isbn,subject,number_of_pages_median,edition_count";
             var url = $"https://openlibrary.org/search.json?isbn={Uri.EscapeDataString(isbn)}&limit=1&{fields}";
-            var response = await _httpClient.GetStringAsync(url);
+            var response = await GetStringLimitedAsync(url);
             using var doc = JsonDocument.Parse(response);
             if (!doc.RootElement.TryGetProperty("docs", out var docs)
                 || docs.ValueKind != JsonValueKind.Array
                 || docs.GetArrayLength() == 0)
             {
+                if (_lookupCache != null) await _lookupCache.RecordMissAsync(ProviderName, isbnKey);
                 return null;
             }
 
@@ -223,8 +293,40 @@ public class OpenLibraryProvider : ISearchableMetadataProvider
     }
 
     /// <summary>
+    /// SM-WI-032 — refresh by the stored work key via the search API's key field, so the
+    /// response has the SAME doc shape as every other path (authors, publisher, pages,
+    /// subjects — the raw /works/… endpoint is much thinner). Null on any failure; the
+    /// caller falls through to ISBN/search.
+    /// </summary>
+    private async Task<MetadataResult?> TryFetchByStoredKeyAsync(string workKey, string titleForLog)
+    {
+        try
+        {
+            const string fields = "fields=key,title,author_name,first_publish_year,publisher,cover_i,isbn,subject,number_of_pages_median,edition_count";
+            var url = $"https://openlibrary.org/search.json?q={Uri.EscapeDataString($"key:\"{workKey}\"")}&limit=1&{fields}";
+            var response = await GetStringLimitedAsync(url);
+            using var doc = JsonDocument.Parse(response);
+            if (!doc.RootElement.TryGetProperty("docs", out var docs)
+                || docs.ValueKind != JsonValueKind.Array
+                || docs.GetArrayLength() == 0)
+            {
+                _logger.LogInformation("OpenLibrary stored key {Key} no longer resolves for '{Title}'; falling back", workKey, titleForLog);
+                return null;
+            }
+
+            _logger.LogInformation("OpenLibrary refresh via stored key {Key} for '{Title}'", workKey, titleForLog);
+            return MapDocToMetadata(docs[0]);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "OpenLibrary key refresh failed for {Key}; falling back", workKey);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Turns an OpenLibrary search doc element into our <see cref="MetadataResult"/>.
-    /// Shared between the ISBN-first and title/author paths since both paths
+    /// Shared between the key-first, ISBN-first and title/author paths since all
     /// receive the same doc shape.
     /// </summary>
     private static MetadataResult MapDocToMetadata(JsonElement book)
@@ -232,6 +334,8 @@ public class OpenLibraryProvider : ISearchableMetadataProvider
         var result = new MetadataResult();
 
         if (book.TryGetProperty("title", out var titleProp)) result.Title = titleProp.GetString();
+        // SM-WI-032: carry the work key so the aggregator promotes it (key-first refresh).
+        if (book.TryGetProperty("key", out var keyProp)) result.OpenLibraryKey = keyProp.GetString();
         if (book.TryGetProperty("first_publish_year", out var yearProp) && yearProp.ValueKind == JsonValueKind.Number)
             result.Year = yearProp.GetInt32();
 
@@ -485,7 +589,7 @@ public class OpenLibraryProvider : ISearchableMetadataProvider
         var url = $"https://openlibrary.org/search.json?q={Uri.EscapeDataString(query.Trim())}&limit=10&sort=editions&{fields}";
 
         string body;
-        try { body = await _httpClient.GetStringAsync(url, ct); }
+        try { body = await GetStringLimitedAsync(url, ct); }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Open Library search failed for '{Query}'", query);
@@ -539,10 +643,15 @@ public class OpenLibraryProvider : ISearchableMetadataProvider
         var url = $"https://openlibrary.org{key}.json";
         try
         {
-            var body = await _httpClient.GetStringAsync(url, ct);
+            var body = await GetStringLimitedAsync(url, ct);
             using var doc = System.Text.Json.JsonDocument.Parse(body);
             var root = doc.RootElement;
-            var result = new MetadataResult { Title = root.TryGetProperty("title", out var t) ? t.GetString() : null };
+            var result = new MetadataResult
+            {
+                Title = root.TryGetProperty("title", out var t) ? t.GetString() : null,
+                // SM-WI-032: the admin's chosen key is promoted so refreshes stay key-first.
+                OpenLibraryKey = key,
+            };
             if (root.TryGetProperty("description", out var desc))
             {
                 result.Description = desc.ValueKind == System.Text.Json.JsonValueKind.Object && desc.TryGetProperty("value", out var dv)

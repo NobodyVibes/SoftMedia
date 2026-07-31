@@ -143,11 +143,17 @@ export function useAudioAnalyser(
 ): AudioAnalyserResult {
     const [isReady, setIsReady] = useState(false);
 
+    // The player closed (an element went null): report not-ready IMMEDIATELY —
+    // during render — so callers fall back to element volume in the same pass
+    // instead of driving a masterGain nothing is routed through for a frame.
+    const [lastPair, setLastPair] = useState({ a: audioA, b: audioB });
+    if (audioA !== lastPair.a || audioB !== lastPair.b) {
+        setLastPair({ a: audioA, b: audioB });
+        if (!audioA || !audioB) setIsReady(false);
+    }
+
     useEffect(() => {
         if (!audioA || !audioB) {
-            // The player closed. Report not-ready so callers fall back to element
-            // volume instead of driving a masterGain nothing is routed through.
-            setIsReady(false);
             return;
         }
 

@@ -109,14 +109,31 @@ public class RecommendationService : IRecommendationService
                 // IsSeriesComplete is reported ONLY when every episode is finished, which is what
                 // the Continue Watching row relies on to drop a series.
                 var currentIndex = episodes.FindIndex(e => e.Id == episode.Id);
+
+                // DV-WI-002: completion is a property of the EPISODE, not the file row.
+                // Duplicate copies share (Season, Episode); ANY complete row finishes that
+                // episode — otherwise the never-played copy is offered as "next" right after
+                // the user watched the same episode via the other file, and the series can
+                // never reach IsSeriesComplete (stuck in Continue Watching forever).
+                var interactionsById = interactionList.ToDictionary(i => i.MediaItemId);
+                var completedEpisodeKeys = new HashSet<(int?, int?)>();
+                foreach (var ep in episodes)
+                {
+                    if (interactionsById.TryGetValue(ep.Id, out var epInteraction)
+                        && IsEpisodeComplete(ep, epInteraction))
+                    {
+                        completedEpisodeKeys.Add((ep.SeasonNumber, ep.EpisodeNumber));
+                    }
+                }
+
                 for (var step = 1; step < episodes.Count; step++)
                 {
                     var candidate = episodes[(currentIndex + step) % episodes.Count];
-                    var candidateInteraction = interactionList.FirstOrDefault(i => i.MediaItemId == candidate.Id);
-                    if (candidateInteraction != null && IsEpisodeComplete(candidate, candidateInteraction))
+                    if (completedEpisodeKeys.Contains((candidate.SeasonNumber, candidate.EpisodeNumber)))
                     {
                         continue;
                     }
+                    var candidateInteraction = interactionsById.GetValueOrDefault(candidate.Id);
                     return new NextEpisodeResponse
                     {
                         EpisodeId = candidate.Id,
@@ -175,9 +192,25 @@ public class RecommendationService : IRecommendationService
         // Get all episodes for this series ordered by season/episode
         var episodes = (await _mediaRepository.GetEpisodesAsync(currentEpisode.SeriesId.Value)).ToList();
 
-        // Find current episode index and get next
+        // Find current episode index, then the next DIFFERENT episode. DV-WI-001:
+        // duplicate files of the same episode share (Season, Episode) and sit adjacent in
+        // the ordering — stepping to index+1 made autoplay replay the episode it just
+        // finished via the sibling copy instead of advancing.
         var currentIndex = episodes.FindIndex(e => e.Id == currentEpisodeId);
-        if (currentIndex < 0 || currentIndex >= episodes.Count - 1)
+        MediaItem? nextEpisode = null;
+        if (currentIndex >= 0)
+        {
+            var (curSeason, curEpisode) = (episodes[currentIndex].SeasonNumber, episodes[currentIndex].EpisodeNumber);
+            for (var i = currentIndex + 1; i < episodes.Count; i++)
+            {
+                if (episodes[i].SeasonNumber == curSeason && episodes[i].EpisodeNumber == curEpisode)
+                    continue;
+                nextEpisode = episodes[i];
+                break;
+            }
+        }
+
+        if (nextEpisode == null)
         {
             // No next episode - at end of series
             return new NextEpisodeResponse
@@ -187,8 +220,6 @@ public class RecommendationService : IRecommendationService
                 IsSeriesComplete = true
             };
         }
-
-        var nextEpisode = episodes[currentIndex + 1];
         
         // Get user interaction for resume position
         var interaction = await _interactionRepository.GetAsync(userId, nextEpisode.Id);
@@ -228,20 +259,41 @@ public class RecommendationService : IRecommendationService
         // Get all episodes for this series ordered by season/episode
         var episodes = (await _mediaRepository.GetEpisodesAsync(currentEpisode.SeriesId.Value)).ToList();
 
-        // Find current episode index and get previous
+        // Find current episode index, then the previous DIFFERENT episode (DV-WI-001 —
+        // see GetNextEpisodeFromCurrentAsync; duplicate copies sit adjacent). After
+        // finding it, walk to the FIRST row of that episode's duplicate group so backward
+        // navigation lands on the same copy forward navigation would pick.
         var currentIndex = episodes.FindIndex(e => e.Id == currentEpisodeId);
-        if (currentIndex <= 0)
+        MediaItem? previousEpisode = null;
+        if (currentIndex > 0)
+        {
+            var (curSeason, curEpisode) = (episodes[currentIndex].SeasonNumber, episodes[currentIndex].EpisodeNumber);
+            for (var i = currentIndex - 1; i >= 0; i--)
+            {
+                if (episodes[i].SeasonNumber == curSeason && episodes[i].EpisodeNumber == curEpisode)
+                    continue;
+                previousEpisode = episodes[i];
+                // Land on the group's first row, not its last duplicate.
+                while (i > 0
+                       && episodes[i - 1].SeasonNumber == previousEpisode.SeasonNumber
+                       && episodes[i - 1].EpisodeNumber == previousEpisode.EpisodeNumber)
+                {
+                    previousEpisode = episodes[--i];
+                }
+                break;
+            }
+        }
+
+        if (previousEpisode == null)
         {
             // No previous episode - at start of series
             return new NextEpisodeResponse
             {
                 EpisodeId = Guid.Empty,
                 SeriesId = currentEpisode.SeriesId.Value,
-                IsSeriesComplete = false 
+                IsSeriesComplete = false
             };
         }
-
-        var previousEpisode = episodes[currentIndex - 1];
         
         // Get user interaction for resume position
         var interaction = await _interactionRepository.GetAsync(userId, previousEpisode.Id);
@@ -415,6 +467,13 @@ public class RecommendationService : IRecommendationService
 
             var unfinished = await DropFinishedAsync(userId, siblings);
 
+            // DV-WI-016: one entry per logical film — order-preserving group dedupe
+            // (release order is identical for copies of one title).
+            var seenGroups = new HashSet<Guid>();
+            unfinished = unfinished
+                .Where(m => m.VersionGroupId == null || seenGroups.Add(m.VersionGroupId.Value))
+                .ToList();
+
             var sourceDate = source.ReleaseDate
                 ?? (source.Year is int y ? new DateTime(y, 1, 1) : (DateTime?)null);
             if (sourceDate != null)
@@ -447,6 +506,7 @@ public class RecommendationService : IRecommendationService
             if (genreIds.Count > 0)
             {
                 var ranked = await visible
+                    .OnePerVersionGroup(_context.MediaItems.AsNoTracking()) // DV-WI-016: one suggestion per title
                     .Where(m => m.Type == MediaType.Movie && m.Id != movieId
                                 && (source.CollectionId == null || m.CollectionId != source.CollectionId)
                                 && m.MediaItemGenres.Any(g => genreIds.Contains(g.GenreId)))
@@ -591,9 +651,24 @@ public class RecommendationService : IRecommendationService
                             && (m.Type == MediaType.Movie || m.Type == MediaType.Series))
                 .ToListAsync();
             var byId = mostWatchedItems.ToDictionary(m => m.Id);
+            // DV-WI-016: duplicate movie copies accumulate separate history rows (history
+            // is per-file by design) — merge entries that are versions of ONE title so the
+            // row can't show the same film twice. Episodes are already rolled to series.
             var ordered = playCounts
                 .Where(p => byId.ContainsKey(p.Id))
-                .Select(p => byId[p.Id])
+                .GroupBy(p => byId[p.Id].VersionGroupId ?? (object)p.Id)
+                .Select(g => new
+                {
+                    Item = byId[g.OrderByDescending(x => x.Viewers)
+                        .ThenByDescending(x => x.Plays).ThenByDescending(x => x.Last).First().Id],
+                    Viewers = g.Max(x => x.Viewers),
+                    Plays = g.Sum(x => x.Plays),
+                    Last = g.Max(x => x.Last),
+                })
+                .OrderByDescending(x => x.Viewers)
+                .ThenByDescending(x => x.Plays)
+                .ThenByDescending(x => x.Last)
+                .Select(x => x.Item)
                 .Take(itemsPerRow)
                 .ToList();
             if (ordered.Count >= MinRowItems)

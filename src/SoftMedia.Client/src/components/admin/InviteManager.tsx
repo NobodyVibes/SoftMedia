@@ -171,8 +171,10 @@ export const InviteManager: React.FC = () => {
 
         // 2. Sorting
         result.sort((a, b) => {
-            let aValue: any = '';
-            let bValue: any = '';
+            // Comparable sort keys: every branch yields a string or a number, and
+            // both sides always take the same branch, so < / > below is coherent.
+            let aValue: string | number = '';
+            let bValue: string | number = '';
 
             switch (sortConfig.key) {
                 case 'code':
@@ -191,7 +193,7 @@ export const InviteManager: React.FC = () => {
                     aValue = a.usedByUsername || '';
                     bValue = b.usedByUsername || '';
                     break;
-                case 'status':
+                case 'status': {
                     // Custom status priority
                     const getStatusPriority = (i: InviteDto) => {
                         if (i.isRevoked) return 0;
@@ -202,9 +204,13 @@ export const InviteManager: React.FC = () => {
                     aValue = getStatusPriority(a);
                     bValue = getStatusPriority(b);
                     break;
-                default:
-                    aValue = (a as any)[sortConfig.key];
-                    bValue = (b as any)[sortConfig.key];
+                }
+                default: {
+                    const fallbackA = a[sortConfig.key as keyof InviteDto];
+                    const fallbackB = b[sortConfig.key as keyof InviteDto];
+                    aValue = typeof fallbackA === 'number' ? fallbackA : String(fallbackA ?? '');
+                    bValue = typeof fallbackB === 'number' ? fallbackB : String(fallbackB ?? '');
+                }
             }
 
             if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;

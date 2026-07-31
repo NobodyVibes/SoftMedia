@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { CastMember } from '../../types';
@@ -18,8 +18,9 @@ const MAX_COLUMNS_PER_PAGE = 2;
 
 function resolveImageSrc(imageUrl?: string): string | undefined {
     if (!imageUrl) return undefined;
-    if (imageUrl.startsWith('/cache/')) return imageUrl;
-    if (imageUrl.startsWith('/api/')) return attachAuthToApiUrl(imageUrl);
+    // Cached headshots (/cache/images/tv/cast/…) are token-gated (AA-WI-001) and
+    // /api URLs always were — attachAuthToApiUrl covers both and no-ops otherwise.
+    if (imageUrl.startsWith('/')) return attachAuthToApiUrl(imageUrl);
     if (imageUrl.startsWith('http')) return attachAuthToApiUrl(`/api/v1/image/proxy?url=${encodeURIComponent(imageUrl)}`);
     return imageUrl;
 }
@@ -56,11 +57,16 @@ export default function CastStripItem({ member }: CastStripItemProps) {
         }
     };
 
-    const closeNow = () => {
-        clearCloseTimer();
+    // Stable identity so the document-listener effect can list it as a dep
+    // without re-subscribing every render; it only touches refs and setState.
+    const closeNow = useCallback(() => {
+        if (closeTimerRef.current !== null) {
+            window.clearTimeout(closeTimerRef.current);
+            closeTimerRef.current = null;
+        }
         setIsOpen(false);
         setPopoverPos(null);
-    };
+    }, []);
 
     const scheduleClose = () => {
         clearCloseTimer();
@@ -145,7 +151,7 @@ export default function CastStripItem({ member }: CastStripItemProps) {
             window.removeEventListener('scroll', onReposition, true);
             window.removeEventListener('resize', onReposition);
         };
-    }, [isOpen]);
+    }, [isOpen, closeNow]);
 
     const handleKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
         if (e.key === 'Enter' || e.key === ' ') {

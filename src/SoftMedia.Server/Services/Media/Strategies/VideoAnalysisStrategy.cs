@@ -49,6 +49,11 @@ public class VideoAnalysisStrategy : IMediaAnalysisStrategy
 
         _logger.LogDebug("[VideoAnalysisStrategy] Analyzing {Title} at {Path}", item.Title, filePath);
 
+        // SM-WI-043: stamp the ATTEMPT (success or fail) — the Missing-mode backfill
+        // gate below keys off this, so a file ffprobe can't fill stops re-probing on
+        // every scan of a stable library.
+        item.LastProbeAttemptUtc = DateTime.UtcNow;
+
         var probe = await _mediaProbeService.ProbeMediaAsync(filePath);
         if (probe == null)
         {
@@ -81,22 +86,19 @@ public class VideoAnalysisStrategy : IMediaAnalysisStrategy
             if (string.IsNullOrEmpty(item.VideoCodec))
                 return true;
 
-            // File has been modified since last analysis
-            try
-            {
-                var fileTime = File.GetLastWriteTimeUtc(filePath);
-                if (item.DateModified < fileTime)
-                    return true;
-            }
-            catch
-            {
-                // If we can't read file time, assume we need to analyze
-                return true;
-            }
+            // SM-WI-043: the old File.GetLastWriteTimeUtc comparison here was dead on
+            // the scan path — scanners stamp DateModified from the discovery result
+            // BEFORE calling AnalyzeAsync and route genuinely changed files through
+            // Full mode, so the check was one wasted filesystem stat per unchanged
+            // file per scan (brutal over SMB). Change detection is the scanner's job.
 
-            // Migration: Check for missing Phase 2 fields
-            // This ensures existing items get new metadata on next scan
-            if (item.BitDepth == null || item.FrameRate == null || item.Width == null)
+            // Migration backfill for Phase 2 fields — but only ONCE per file version
+            // (SM-WI-043): some files legitimately probe without BitDepth/FrameRate/
+            // Width, and re-probing them every scan, forever, was a few hundred ffmpeg
+            // spawns per scan of a stable library. LastProbeAttemptUtc is stamped on
+            // every attempt; a replaced file re-enters via Full mode.
+            if ((item.BitDepth == null || item.FrameRate == null || item.Width == null)
+                && item.LastProbeAttemptUtc == null)
                 return true;
 
             return false;

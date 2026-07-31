@@ -95,7 +95,7 @@ describe('useMediaSession', () => {
         expect(meta.artwork).toEqual([{ src: '/art.jpg', sizes: '512x512' }]);
         expect(stub.playbackState).toBe('playing');
 
-        stub.handlers.get('play')!!();
+        stub.handlers.get('play')!();
         expect(onPlay).toHaveBeenCalledTimes(1);
         // Handlers not provided are explicitly unbound so stale ones can't linger.
         expect(stub.handlers.get('nexttrack')).toBeNull();
@@ -143,7 +143,7 @@ describe('useMediaSession', () => {
         });
         rerender(opts({ isPlaying: true, handlers: { onSeekTo: second } }));
 
-        stub.handlers.get('seekto')!!({ seekTime: 321 });
+        stub.handlers.get('seekto')!({ seekTime: 321 });
         expect(first).not.toHaveBeenCalled();
         expect(second).toHaveBeenCalledWith(321);
     });
@@ -156,7 +156,7 @@ describe('useMediaSession', () => {
         expect(stub.handlers.get('nexttrack')).toBeNull();
 
         rerender(opts({ isPlaying: true, handlers: { onNextTrack: onNext } }));
-        stub.handlers.get('nexttrack')!!();
+        stub.handlers.get('nexttrack')!();
         expect(onNext).toHaveBeenCalledTimes(1);
     });
 
@@ -215,7 +215,7 @@ describe('useMediaSession', () => {
         const video = renderHook(() => useMediaSession(opts({ isPlaying: true, contentId: 'movie', handlers: { onPlay: videoPlay } })));
 
         video.unmount();
-        stub.handlers.get('play')!!();
+        stub.handlers.get('play')!();
         expect(musicPlay).toHaveBeenCalledTimes(1);
         expect(videoPlay).not.toHaveBeenCalled();
     });
@@ -241,7 +241,7 @@ describe('useMediaSession', () => {
 
         expect((stub.metadata as FakeMediaMetadata).title).toBe('Track');
         expect(stub.playbackState).toBe('playing');
-        stub.handlers.get('play')!!();
+        stub.handlers.get('play')!();
         expect(onPlay).toHaveBeenCalledTimes(1);
 
         unmount();
@@ -255,9 +255,9 @@ describe('useMediaSession', () => {
         const onSeekTo = vi.fn();
         renderHook(() => useMediaSession(opts({ isPlaying: true, handlers: { onSeekTo } })));
 
-        stub.handlers.get('seekto')!!({ seekTime: 100, fastSeek: true } as { seekTime: number });
+        stub.handlers.get('seekto')!({ seekTime: 100, fastSeek: true } as { seekTime: number });
         expect(onSeekTo).not.toHaveBeenCalled();
-        stub.handlers.get('seekto')!!({ seekTime: 100 });
+        stub.handlers.get('seekto')!({ seekTime: 100 });
         expect(onSeekTo).toHaveBeenCalledWith(100);
     });
 

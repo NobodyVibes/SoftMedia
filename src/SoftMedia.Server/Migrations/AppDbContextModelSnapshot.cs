@@ -429,6 +429,9 @@ namespace SoftMedia.Server.Migrations
                     b.Property<Guid?>("AlbumId")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("AmnestyCount")
+                        .HasColumnType("INTEGER");
+
                     b.Property<Guid?>("ArtistId")
                         .HasColumnType("TEXT");
 
@@ -501,6 +504,12 @@ namespace SoftMedia.Server.Migrations
                     b.Property<double?>("FrameRate")
                         .HasColumnType("REAL");
 
+                    b.Property<string>("GameMode")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GamePlatform")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("HdrFormat")
                         .HasColumnType("TEXT");
 
@@ -543,6 +552,9 @@ namespace SoftMedia.Server.Migrations
                     b.Property<DateTime?>("LastPlayed")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("LastProbeAttemptUtc")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("LastScannedUtc")
                         .HasColumnType("TEXT");
 
@@ -564,6 +576,12 @@ namespace SoftMedia.Server.Migrations
                     b.Property<string>("MusicBrainzId")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("NextAmnestyUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OpenLibraryKey")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Overview")
                         .HasColumnType("TEXT");
 
@@ -583,6 +601,9 @@ namespace SoftMedia.Server.Migrations
                     b.Property<string>("PosterUrl")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("PreferredVersion")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime?>("ReleaseDate")
                         .HasColumnType("TEXT");
 
@@ -596,6 +617,9 @@ namespace SoftMedia.Server.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<Guid?>("SeriesId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SeriesStatus")
                         .HasColumnType("TEXT");
 
                     b.Property<long>("Size")
@@ -620,6 +644,9 @@ namespace SoftMedia.Server.Migrations
 
                     b.Property<int>("Type")
                         .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("VersionGroupId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("VideoCodec")
                         .HasColumnType("TEXT");
@@ -657,6 +684,8 @@ namespace SoftMedia.Server.Migrations
                     b.HasIndex(new[] { "Path" }, "IX_MediaItems_Path_UniqueFileBacked")
                         .IsUnique()
                         .HasFilter("\"Type\" NOT IN (1, 7, 8, 9, 10) AND \"Path\" <> ''");
+
+                    b.HasIndex(new[] { "VersionGroupId" }, "IX_MediaItems_VersionGroupId");
 
                     b.ToTable("MediaItems");
                 });
@@ -867,6 +896,25 @@ namespace SoftMedia.Server.Migrations
                     b.HasIndex("PlaylistId", "Order");
 
                     b.ToTable("PlaylistItems");
+                });
+
+            modelBuilder.Entity("SoftMedia.Server.Models.ProviderLookupCacheEntry", b =>
+                {
+                    b.Property<string>("Provider")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("QueryKey")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("LastAttemptUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Provider", "QueryKey");
+
+                    b.ToTable("ProviderLookupCache");
                 });
 
             modelBuilder.Entity("SoftMedia.Server.Models.ProviderMetadataCache", b =>

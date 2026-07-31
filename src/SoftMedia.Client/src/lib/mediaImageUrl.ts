@@ -1,15 +1,18 @@
 import { getUrlToken } from '../store/authStore';
 
 /**
- * Append `?access_token=<jwt>` to an API image URL so that `<img src="…">`
+ * Append `?access_token=<jwt>` to a SoftMedia image URL so that `<img src="…">`
  * loads pass authentication. Browsers cannot attach the `Authorization:
  * Bearer` header to `<img>` requests, so the server's JwtBearer
  * `OnMessageReceived` handler lifts the query-string token into
  * `context.Token` for a specific set of paths (see
  * Extensions/ServiceCollectionExtensions.cs in the backend).
  *
- * Only SoftMedia API URLs are modified — static `/cache/*` assets and
- * external URLs are returned unchanged.
+ * Covers API image routes AND statically served artwork under
+ * `/cache/images/**` (token-gated since AA-WI-001; the append preserves
+ * existing query strings like playlist covers' `?v=` cache stamp). Anything
+ * else — app-relative assets, external URLs — is returned unchanged, and the
+ * function NEVER rewrites the path itself (see the test pinning this).
  *
  * **Idempotent** — if the URL already carries an `access_token`, it is
  * replaced with the current store value rather than duplicated. Previously
@@ -20,7 +23,7 @@ import { getUrlToken } from '../store/authStore';
  * function via the URL transformation chain, so idempotency is mandatory.
  */
 export function attachAuthToApiUrl(url: string): string {
-    if (!url.startsWith('/api/v1/')) return url;
+    if (!url.startsWith('/api/v1/') && !url.startsWith('/cache/images/')) return url;
     const token = getUrlToken();
     if (!token) return url;
 
@@ -32,10 +35,24 @@ export function attachAuthToApiUrl(url: string): string {
 }
 
 /**
+ * Resolve any artwork path a player/queue/playlist item may carry into a
+ * fetchable `<img src>`: SoftMedia paths (API routes and the token-gated
+ * `/cache/images/**` statics, AA-WI-001) get the media token attached,
+ * external http(s) URLs pass through, and a missing path falls back to the
+ * bundled placeholder. Replaces five identical private `getImageUrl` helpers
+ * that used to special-case `/cache/` as "needs no token".
+ */
+export function resolveArtworkUrl(path: string | null | undefined, fallback = '/placeholder-music.png'): string {
+    if (!path) return fallback;
+    if (path.startsWith('http')) return path;
+    return attachAuthToApiUrl(path);
+}
+
+/**
  * Append a width query parameter to a URL that supports it, for server-side
  * thumbnail generation. Supports both the music endpoint and the image proxy;
- * returns other URLs (e.g. /cache/* static files) unchanged. Also attaches
- * the query-string access token for API URLs.
+ * other URLs keep their size. All SoftMedia URLs (API and /cache/images)
+ * get the query-string token attached.
  */
 function withWidth(url: string, width: number): string {
     if (url.includes('/api/v1/music/') || url.includes('/api/v1/image/proxy')) {

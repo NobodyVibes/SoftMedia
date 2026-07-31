@@ -121,6 +121,27 @@ public class RecommendationServicePostPlayTests : IDisposable
     }
 
     [Fact]
+    public async Task Duplicate_collection_member_appears_once_in_the_marathon_list()
+    {
+        // DV-WI-016: a 4K copy of Film Two shares its version group — the marathon list
+        // must offer Film Two ONCE, not once per file.
+        var group = Guid.NewGuid();
+        using (var ctx = new AppDbContext(_options))
+        {
+            var copy = Movie("Film Two", 2002, _collectionId);
+            copy.VersionGroupId = group;
+            ctx.MediaItems.Add(copy);
+            ctx.MediaItems.Find(_film2.Id)!.VersionGroupId = group;
+            ctx.SaveChanges();
+        }
+
+        var result = await Build().GetMoviePostPlayAsync(_userId, _film1.Id);
+
+        Assert.NotNull(result);
+        Assert.Single(result!.CollectionItems, i => i.Title == "Film Two");
+    }
+
+    [Fact]
     public async Task Middle_of_marathon_offers_the_later_film_before_an_unwatched_earlier_one()
     {
         // Finished the SECOND film without having seen the first: the third (next in release

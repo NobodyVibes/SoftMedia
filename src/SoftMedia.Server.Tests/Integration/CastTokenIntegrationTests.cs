@@ -135,12 +135,17 @@ public class CastTokenIntegrationTests : IntegrationTestBase
         Assert.Equal(HttpStatusCode.NotFound, before.StatusCode);
 
         // Ban the user; the SAME cast token must now be rejected on its next request.
+        // AA-WI-011: the eligibility verdict is cached with a short TTL and eagerly
+        // invalidated by the app's ban endpoint (UsersController.BanUser); this direct
+        // DB write performs the same invalidation the endpoint does.
         await Factory.WithDbAsync(async db =>
         {
             var u = await db.Users.FirstAsync(x => x.Id == user.Id);
             u.IsBanned = true;
             await db.SaveChangesAsync();
         });
+        Factory.Services.GetRequiredService<SoftMedia.Server.Services.Identity.IUserEligibilityCache>()
+            .Invalidate(user.Id);
 
         var after = await BearerClient(token).GetAsync($"/api/v1/stream/{mediaId}");
         Assert.Equal(HttpStatusCode.Unauthorized, after.StatusCode);

@@ -536,4 +536,91 @@ public class OpenLibraryProviderTests
         Assert.DoesNotContain("title=", requestUrl);
         Assert.DoesNotContain("author=", requestUrl);
     }
+
+    // ── SM-WI-032: ID-first refresh (stored work key / promoted ISBN column) ────────
+
+    private static (OpenLibraryProvider Provider, List<string> Requests, Mock<IBookMetadataExtractor> Extractor)
+        CreateProviderWithQueue(params string[] bodies)
+    {
+        var responses = new Queue<string>(bodies);
+        var requests = new List<string>();
+        var handlerMock = new Mock<HttpMessageHandler>();
+        handlerMock
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((HttpRequestMessage req, CancellationToken _) =>
+            {
+                requests.Add(req.RequestUri!.ToString());
+                var body = responses.Count > 0 ? responses.Dequeue() : "{\"docs\":[]}";
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(body),
+                });
+            });
+
+        var extractor = new Mock<IBookMetadataExtractor>(MockBehavior.Strict);
+        var provider = new OpenLibraryProvider(
+            new HttpClient(handlerMock.Object),
+            new Mock<ILogger<OpenLibraryProvider>>().Object,
+            new SoftMedia.Server.Helpers.RateLimiterFactory(),
+            extractor.Object);
+        return (provider, requests, extractor);
+    }
+
+    [Fact]
+    public async Task StoredWorkKey_RefreshesById_WithoutFileParsingOrSearch()
+    {
+        // Real library book: Dune. Strict extractor mock proves the EPUB is never opened.
+        var (provider, requests, _) = CreateProviderWithQueue(
+            """{"docs":[{"key":"/works/OL893415W","title":"Dune","first_publish_year":1965,"author_name":["Frank Herbert"],"cover_i":1}]}""");
+
+        var item = new MediaItem
+        {
+            Title = "Dune",
+            Type = MediaType.Book,
+            Path = @"C:\books\Original Dune series\1 - Dune - Frank Herbert.epub",
+            OpenLibraryKey = "/works/OL893415W",
+        };
+        var result = await provider.FetchMetadataAsync(item);
+
+        Assert.NotNull(result);
+        Assert.Equal("Dune", result!.Title);
+        Assert.Equal("/works/OL893415W", result.OpenLibraryKey);
+        Assert.Single(requests);
+        Assert.Contains("key%3A", requests[0]); // key-field query, not title/isbn heuristics
+    }
+
+    [Fact]
+    public async Task PromotedIsbnColumn_SkipsFileExtraction()
+    {
+        var (provider, requests, extractor) = CreateProviderWithQueue(
+            """{"docs":[{"key":"/works/OL893415W","title":"Dune","first_publish_year":1965,"isbn":["9780441172719"],"author_name":["Frank Herbert"]}]}""");
+
+        var item = new MediaItem
+        {
+            Title = "Dune",
+            Type = MediaType.Book,
+            Path = @"C:\books\Original Dune series\1 - Dune - Frank Herbert.epub",
+            Isbn = "9780441172719", // promoted on a previous pass
+        };
+        var result = await provider.FetchMetadataAsync(item);
+
+        Assert.NotNull(result);
+        Assert.Contains("isbn=9780441172719", requests[0]);
+        extractor.VerifyNoOtherCalls(); // strict: ExtractAsync never invoked
+    }
+
+    [Fact]
+    public async Task SearchMatch_CarriesWorkKey_ForPromotion()
+    {
+        var (provider, _, _) = CreateProviderWithQueue(
+            """{"docs":[{"key":"/works/OL893415W","title":"Dune","first_publish_year":1965,"cover_i":1,"author_name":["Frank Herbert"]}]}""");
+
+        var item = new MediaItem { Title = "Dune", Year = 1965, Type = MediaType.Book };
+        var result = await provider.FetchMetadataAsync(item);
+
+        Assert.NotNull(result);
+        Assert.Equal("/works/OL893415W", result!.OpenLibraryKey); // aggregator promotes → key-first next time
+    }
 }

@@ -3,7 +3,8 @@ import { StrictMode, useState } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import TVDetailView, { scrollSelectionIntoView } from './TVDetailView';
+import TVDetailView from './TVDetailView';
+import { scrollSelectionIntoView } from '../../lib/scrollSelectionIntoView';
 import api from '../../services/api';
 import type { MediaItem } from '../../types';
 

@@ -43,17 +43,20 @@ public class MediaTracksController : ControllerBase
     private readonly IMediaRepository _mediaRepository;
     private readonly IStreamSecurityService _securityService;
     private readonly IBinaryLocationService _binaryLocation;
+    private readonly ISubtitleService _subtitleService;
     private readonly ILogger<MediaTracksController> _logger;
 
     public MediaTracksController(
         IMediaRepository mediaRepository,
         IStreamSecurityService securityService,
         IBinaryLocationService binaryLocation,
+        ISubtitleService subtitleService,
         ILogger<MediaTracksController> logger)
     {
         _mediaRepository = mediaRepository;
         _securityService = securityService;
         _binaryLocation = binaryLocation;
+        _subtitleService = subtitleService;
         _logger = logger;
     }
 
@@ -115,7 +118,8 @@ public class MediaTracksController : ControllerBase
     }
 
     /// <summary>
-    /// Extract a subtitle track as WebVTT format.
+    /// Extract a subtitle track as WebVTT format. <paramref name="trackIndex"/> is the
+    /// ABSOLUTE container stream index (matching what GetTracks reports).
     /// </summary>
     [HttpGet("{id}/subtitles/{trackIndex}")]
     public async Task<IActionResult> GetSubtitle(Guid id, int trackIndex)
@@ -125,13 +129,27 @@ public class MediaTracksController : ControllerBase
 
         try
         {
-            var webvtt = await ExtractSubtitleAsWebVTTAsync(mediaItem.Path, trackIndex);
-            if (string.IsNullOrEmpty(webvtt))
+            // MC-WI-008: route through SubtitleService's persistent VTT cache instead of
+            // re-demuxing the whole container with a bespoke ffmpeg pipe on EVERY request
+            // (a multi-minute cost on big remuxes). First request extracts and caches;
+            // repeats are a file copy. The service hands each caller its own copy because
+            // transcode sessions seek-shift theirs in place — ours is read-and-discard.
+            var subtitleRelativeIndex = await _subtitleService.GetSubtitleStreamIndexAsync(mediaItem.Path, trackIndex);
+            var tempCopy = Path.Combine(Path.GetTempPath(), $"softmedia-sub-{Guid.NewGuid():N}.vtt");
+            try
             {
-                return NotFound("Subtitle track not found or could not be extracted");
+                var ok = await _subtitleService.ExtractSubtitleToVttAsync(mediaItem.Path, subtitleRelativeIndex, tempCopy);
+                if (!ok)
+                {
+                    return NotFound("Subtitle track not found or could not be extracted");
+                }
+                var webvtt = await System.IO.File.ReadAllTextAsync(tempCopy, Encoding.UTF8);
+                return Content(webvtt, "text/vtt", Encoding.UTF8);
             }
-
-            return Content(webvtt, "text/vtt", Encoding.UTF8);
+            finally
+            {
+                try { System.IO.File.Delete(tempCopy); } catch { /* best effort */ }
+            }
         }
         catch (Exception ex)
         {
@@ -274,68 +292,6 @@ public class MediaTracksController : ControllerBase
         }
 
         return response;
-    }
-
-    /// <summary>
-    /// Extract a subtitle track and convert to WebVTT format using FFmpeg.
-    /// </summary>
-    private async Task<string?> ExtractSubtitleAsWebVTTAsync(string path, int trackIndex)
-    {
-        var ffmpegPath = _binaryLocation.ResolveFFmpegPath();
-        
-        _logger.LogInformation("Extracting subtitle track {TrackIndex} from {Path} using {FFmpeg}", 
-            trackIndex, path, ffmpegPath);
-        
-        // Use FFmpeg to extract subtitle and convert to WebVTT
-        // Note: Some subtitle formats (like PGS/bitmap) cannot be converted to WebVTT
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = ffmpegPath,
-            // -c:s webvtt explicitly converts subtitles to webvtt format
-            Arguments = $"-i \"{path}\" -map 0:{trackIndex} -c:s webvtt -f webvtt pipe:1",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        _logger.LogDebug("FFmpeg command: {FileName} {Args}", startInfo.FileName, startInfo.Arguments);
-
-        using var process = Process.Start(startInfo);
-        if (process == null)
-        {
-            throw new Exception("Failed to start FFmpeg");
-        }
-
-        var outputTask = process.StandardOutput.ReadToEndAsync();
-        var errorTask = process.StandardError.ReadToEndAsync();
-        
-        await process.WaitForExitAsync();
-        
-        var output = await outputTask;
-        var errorOutput = await errorTask;
-
-        if (!string.IsNullOrEmpty(errorOutput))
-        {
-            _logger.LogDebug("FFmpeg stderr: {Error}", errorOutput);
-        }
-
-        if (process.ExitCode != 0)
-        {
-            _logger.LogWarning("FFmpeg subtitle extraction failed with exit code {ExitCode} for track {Index} in {Path}. Error: {Error}", 
-                process.ExitCode, trackIndex, path, errorOutput);
-            return null;
-        }
-        
-        if (string.IsNullOrWhiteSpace(output))
-        {
-            _logger.LogWarning("FFmpeg returned empty output for subtitle track {Index} in {Path}", trackIndex, path);
-            return null;
-        }
-
-        _logger.LogInformation("Successfully extracted {Length} bytes of WebVTT subtitle for track {Index}", 
-            output.Length, trackIndex);
-        return output;
     }
 
     // Audit wave-2 I-6: the bespoke hardcoded Windows ffmpeg/ffprobe path resolvers were removed

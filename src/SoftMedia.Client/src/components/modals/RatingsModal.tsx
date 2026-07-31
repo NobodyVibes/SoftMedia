@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { toast } from 'sonner';
 import { extractApiError } from '../../services/apiError';
 import { userService, type UserDto } from '../../services/userService';
@@ -19,11 +19,14 @@ export const RatingsModal: React.FC<RatingsModalProps> = ({ isOpen, onClose, use
     const queryClient = useQueryClient();
     const [ratings, setRatings] = useState<Record<string, string>>({});
 
-    useEffect(() => {
-        if (user) {
-            setRatings(user.contentRatings || {});
-        }
-    }, [user]);
+    // Reseed the form when the modal is pointed at a different user — during
+    // render, not in an effect, so the previous user's ratings never flash for
+    // a frame (react.dev: "adjusting state when props change").
+    const [seededFor, setSeededFor] = useState<UserDto | null>(null);
+    if (user && user !== seededFor) {
+        setSeededFor(user);
+        setRatings(user.contentRatings || {});
+    }
 
     const updateMutation = useMutation({
         mutationFn: ({ userId, contentRatings }: { userId: string; contentRatings: Record<string, string> }) =>

@@ -12,7 +12,7 @@ namespace SoftMedia.Server.Services.Metadata;
 
 public interface IMetadataAggregator
 {
-    Task EnrichMediaItemAsync(MediaItem item, LibraryType type, bool deferImageCaching = false, bool refreshImages = true);
+    Task EnrichMediaItemAsync(MediaItem item, LibraryType type, bool refreshImages = true);
 }
 
 public class MetadataAggregator : IMetadataAggregator
@@ -49,7 +49,10 @@ public class MetadataAggregator : IMetadataAggregator
         _logger = logger;
     }
 
-    public async Task EnrichMediaItemAsync(MediaItem item, LibraryType type, bool deferImageCaching = false, bool refreshImages = true)
+    // SM-WI-014: the old deferImageCaching flag was dead (sole caller passed false) and
+    // its early-return skipped MetadataHash stamping — a latent retry-loop trap had it
+    // ever been wired up. Image refresh suppression is the only supported variant.
+    public async Task EnrichMediaItemAsync(MediaItem item, LibraryType type, bool refreshImages = true)
     {
         try
         {
@@ -75,7 +78,7 @@ public class MetadataAggregator : IMetadataAggregator
                 return;
             }
 
-            await ProcessMetadataResultAsync(item, result, deferImageCaching, refreshImages);
+            await ProcessMetadataResultAsync(item, result, refreshImages);
 
             // Wave E2 — collection auto-population for movies. Runs only when:
             //   - item.Type == Movie (service guards internally),
@@ -98,7 +101,7 @@ public class MetadataAggregator : IMetadataAggregator
         }
     }
 
-    private async Task ProcessMetadataResultAsync(MediaItem item, MetadataResult metadata, bool deferImageCaching = false, bool refreshImages = true)
+    private async Task ProcessMetadataResultAsync(MediaItem item, MetadataResult metadata, bool refreshImages = true)
     {
         // Populate standard fields
         if (metadata.Year.HasValue) item.Year = metadata.Year.Value;
@@ -115,6 +118,13 @@ public class MetadataAggregator : IMetadataAggregator
         if (!string.IsNullOrEmpty(metadata.ImdbId)) item.ImdbId = metadata.ImdbId;
         if (metadata.TvMazeId.HasValue) item.TvMazeId = metadata.TvMazeId.Value;
         if (!string.IsNullOrEmpty(metadata.MusicBrainzId)) item.MusicBrainzId = metadata.MusicBrainzId;
+        if (!string.IsNullOrEmpty(metadata.OpenLibraryKey)) item.OpenLibraryKey = metadata.OpenLibraryKey;
+
+        // SM-WI-044: typed promotion of fields providers previously computed and dropped.
+        if (!string.IsNullOrEmpty(metadata.SeriesStatus) && item.Type == MediaType.Series)
+            item.SeriesStatus = metadata.SeriesStatus;
+        if (!string.IsNullOrEmpty(metadata.Platform)) item.GamePlatform = metadata.Platform;
+        if (!string.IsNullOrEmpty(metadata.GameMode)) item.GameMode = metadata.GameMode;
 
         // Promote queryable fields
         if (!string.IsNullOrEmpty(metadata.Studio)) item.Studio = metadata.Studio;
@@ -169,7 +179,7 @@ public class MetadataAggregator : IMetadataAggregator
             await _tvMetadataEnricher.PropagateSeasonMetadataAsync(item, metadata);
         }
 
-        if (deferImageCaching || !refreshImages)
+        if (!refreshImages)
         {
             return;
         }
@@ -254,7 +264,9 @@ public class MetadataAggregator : IMetadataAggregator
         // Store raw payload in cache for scanners to use (e.g. instant episode naming)
         if (!string.IsNullOrEmpty(metadata.RawPayload))
         {
-            var providerName = "TVMaze"; // Currently only TVMaze provides full embedded data
+            // SM-WI-045: label with the real source (TVMaze is still the only setter
+            // today; the fallback keeps old cache rows readable).
+            var providerName = metadata.SourceProvider ?? "TVMaze";
             var existingCache = await _dbContext.ProviderMetadataCaches
                 .FirstOrDefaultAsync(c => c.MediaItemId == item.Id && c.ProviderId == providerName);
             

@@ -81,9 +81,15 @@ public static class MetadataEnrichmentPolicy
 
         if (!strictMode)
         {
-            // Relaxed: a PROVIDER poster alone is sufficient (current behavior); a local-only
-            // poster is sufficient once an enrichment pass has run (hash present — checked above).
-            return !hasPoster;
+            // Relaxed: a PROVIDER poster alone is sufficient; a local-only poster is
+            // sufficient once an enrichment pass has run (hash present — checked above).
+            // SM-WI-041: a poster-LESS item whose enrichment pass RAN (hash stamped —
+            // the never-attempted case returned true above) is also complete: the
+            // provider matched but had no image, and `!hasPoster` alone re-enqueued
+            // such items on every scan — identical query, identical imageless answer,
+            // ladder to exhaustion, weekly amnesty, forever. Strict mode deliberately
+            // keeps retrying (it is the explicit "keep trying until complete" opt-in).
+            return !hasPoster && string.IsNullOrEmpty(item.MetadataHash);
         }
 
         // Strict: type-aware completeness checks

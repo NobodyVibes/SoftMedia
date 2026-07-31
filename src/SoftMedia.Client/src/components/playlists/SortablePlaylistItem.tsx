@@ -3,7 +3,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, Trash2, Play, ListEnd, ListPlus, Volume2 } from 'lucide-react';
 import { cn, formatDuration } from '../../lib/utils';
-import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { resolveArtworkUrl } from '../../lib/mediaImageUrl';
 import { ScrollingText } from '../ui/ScrollingText';
 import type { PlaylistEntry } from '../../services/playlistService';
 import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
@@ -78,15 +78,7 @@ export function SortablePlaylistItem({
     const album = track.metadata?.album as string | undefined;
     const duration = track.durationSeconds ? formatDuration(track.durationSeconds) : null;
 
-    const getImageUrl = (path: string | undefined) => {
-        if (!path) return '/placeholder-music.png';
-        if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
-        if (path.startsWith('http')) return path;
-        // Anything else is a static file served from wwwroot (e.g.
-        // /cache/images/albums/x.jpg). It is NOT under /api/v1 — prefixing it
-        // there yields a route that does not exist and a 404'd cover.
-        return path;
-    };
+    const getImageUrl = resolveArtworkUrl; // shared; /cache/images is token-gated (AA-WI-001)
 
     const iconButton =
         'rounded p-2 opacity-60 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none ' +

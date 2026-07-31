@@ -46,7 +46,8 @@ public class ImageControllerSsrfTests : IDisposable
         var env = new Mock<IWebHostEnvironment>();
         env.Setup(e => e.WebRootPath).Returns(_webRoot);
         var thumbs = new Mock<IThumbnailService>();
-        return new ImageController(factory.Object, env.Object, NullLogger<ImageController>.Instance, thumbs.Object);
+        var proxyStore = new ProxyImageStore(env.Object, thumbs.Object, NullLogger<ProxyImageStore>.Instance);
+        return new ImageController(factory.Object, NullLogger<ImageController>.Instance, thumbs.Object, proxyStore);
     }
 
     [Fact]
@@ -99,6 +100,66 @@ public class ImageControllerSsrfTests : IDisposable
 
         Assert.IsType<PhysicalFileResult>(result);
         Assert.Contains(handler.Requested, u => u.Contains("covers.openlibrary.org"));
+    }
+
+    // MC-WI-002 / audit wave-2 L-26 — the proxy previously accepted ANY *.archive.org
+    // subdomain, which admitted web.archive.org: a content-rewriting fetch proxy that can
+    // launder an arbitrary upstream fetch through an allowlisted host. The shared
+    // ImageFetchPolicy anchors on the genuine IA storage-node suffixes only.
+    [Fact]
+    public async Task Proxy_RedirectToWaybackMachine_IsBlocked_AndNeverRequested()
+    {
+        var handler = new ScriptedHandler
+        {
+            Respond = uri =>
+            {
+                if (uri.Host == "coverartarchive.org")
+                {
+                    var r = new HttpResponseMessage(HttpStatusCode.Redirect);
+                    r.Headers.Location = new Uri("https://web.archive.org/web/2024/https://internal.example/secret.jpg");
+                    return r;
+                }
+                var ok = new HttpResponseMessage(HttpStatusCode.OK);
+                ok.Content = new ByteArrayContent(new byte[] { 1, 2, 3 });
+                ok.Content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+                return ok;
+            },
+        };
+
+        var result = await Build(handler).ProxyImage("https://coverartarchive.org/release/x/front.jpg", null);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+        Assert.DoesNotContain(handler.Requested, u => u.Contains("web.archive.org"));
+    }
+
+    // The genuine Cover Art Archive flow must keep working: front URLs 302 to a
+    // per-release IA storage node (iaNNN.us.archive.org / dnNNNNNN.ca.archive.org).
+    [Theory]
+    [InlineData("https://ia801509.us.archive.org/23/items/mbid-x/front.jpg")]
+    [InlineData("https://dn720301.ca.archive.org/0/items/mbid-y/front.jpg")]
+    public async Task Proxy_RedirectToIaStorageNode_IsFollowed_AndServed(string storageUrl)
+    {
+        var handler = new ScriptedHandler
+        {
+            Respond = uri =>
+            {
+                if (uri.Host == "coverartarchive.org")
+                {
+                    var r = new HttpResponseMessage(HttpStatusCode.Redirect);
+                    r.Headers.Location = new Uri(storageUrl);
+                    return r;
+                }
+                var ok = new HttpResponseMessage(HttpStatusCode.OK);
+                ok.Content = new ByteArrayContent(new byte[] { 1, 2, 3, 4 });
+                ok.Content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+                return ok;
+            },
+        };
+
+        var result = await Build(handler).ProxyImage("https://coverartarchive.org/release/z/front.jpg", null);
+
+        Assert.IsType<PhysicalFileResult>(result);
+        Assert.Contains(handler.Requested, u => u == storageUrl);
     }
 
     // T6.5/I-8 — the INITIAL url must pass the scheme guard, not just redirect hops.

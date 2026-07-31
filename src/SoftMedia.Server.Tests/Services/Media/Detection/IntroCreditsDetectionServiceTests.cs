@@ -429,6 +429,119 @@ public class IntroCreditsDetectionServiceTests
         Assert.All(episodes, e => Assert.NotNull(e.LastIntroDetectionUtc));
     }
 
+    // ──────────────── DV-WI-006: duplicate files of the same episode ────────────────
+
+    private static MediaItem AddDuplicateEpisode(AppDbContext db, MediaItem series, int season, int episode, double duration, Guid id)
+    {
+        var dup = new MediaItem
+        {
+            Id = id,
+            LibraryId = series.LibraryId,
+            Title = $"S{season:00}E{episode:00} (copy)",
+            Path = $"/s{season}e{episode}-copy.mkv",
+            Type = MediaType.Episode,
+            SeriesId = series.Id,
+            SeasonNumber = season,
+            EpisodeNumber = episode,
+            Duration = duration
+        };
+        db.MediaItems.Add(dup);
+        db.SaveChanges();
+        return dup;
+    }
+
+    [Fact]
+    public async Task DetectAsync_FingerprintsDuplicateEpisodeOnce_AndDuplicateInheritsMarkers()
+    {
+        // Two files of S01E02 (same cut — same duration). Only the representative (lower
+        // id) is fingerprinted; the duplicate inherits its detected markers afterwards.
+        await using var db = NewDb();
+        var series = AddSeriesWithEpisodes(db, episodeCount: 2, episodeDuration: 1800);
+        var ep2 = db.MediaItems.First(m => m.Type == MediaType.Episode && m.EpisodeNumber == 2);
+        // The duplicate's near-max GUID pins it AFTER ep2 in (Season, Episode, Id) order,
+        // so ep2 is deterministically the representative.
+        var dup = AddDuplicateEpisode(db, db.MediaItems.First(m => m.Id == series.Id), 1, 2, 1800,
+            Guid.Parse("ffffffff-ffff-ffff-ffff-fffffffffffe"));
+
+        _extractor.Setup(e => e.ExtractHeadAsync(It.IsAny<string>(), It.IsAny<double>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BuildFingerprint(length: 6000));
+        _extractor.Setup(e => e.ExtractTailAsync(It.IsAny<string>(), It.IsAny<double>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BuildFingerprint(length: 3600));
+        _matcher.SetupSequence(m => m.FindLongestMatch(It.IsAny<uint[]>(), It.IsAny<uint[]>(), It.IsAny<int>(), It.IsAny<int>()))
+            .Returns(new SegmentMatch(120, 420, 100, 400))   // intro: B-side (E02) 10.0s..40.1s
+            .Returns(new SegmentMatch(220, 520, 200, 500));  // credits: B-side (E02) 1460.0s..
+
+        var result = await NewService(db).DetectAsync(series.Id);
+
+        Assert.Null(result.FailureReason);
+        // Two working episodes (E01 + the E02 representative) — the duplicate is never decoded.
+        _extractor.Verify(e => e.ExtractHeadAsync(It.IsAny<string>(), It.IsAny<double>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+
+        var storedDup = await db.MediaItems.FirstAsync(m => m.Id == dup.Id);
+        var storedRep = await db.MediaItems.FirstAsync(m => m.Id == ep2.Id);
+        Assert.Equal(DetectionSource.Detected, storedDup.IntroSource);
+        Assert.Equal(storedRep.IntroStart, storedDup.IntroStart);
+        Assert.Equal(storedRep.IntroEnd, storedDup.IntroEnd);
+        Assert.Equal(DetectionSource.Detected, storedDup.CreditsSource);
+        Assert.Equal(storedRep.CreditsStart, storedDup.CreditsStart);
+        Assert.NotNull(storedDup.LastIntroDetectionUtc); // stamped — no retry loop on every scan
+    }
+
+    [Fact]
+    public async Task DetectAsync_DuplicateWithChapterMarkers_KeepsThem()
+    {
+        // The duplicate file carries its own embedded chapter markers — inheritance must
+        // not overwrite them (chapter markers are authoritative over detection).
+        await using var db = NewDb();
+        var series = AddSeriesWithEpisodes(db, episodeCount: 2, episodeDuration: 1800);
+        var dup = AddDuplicateEpisode(db, db.MediaItems.First(m => m.Id == series.Id), 1, 2, 1800,
+            Guid.Parse("ffffffff-ffff-ffff-ffff-fffffffffffe"));
+        dup.IntroSource = DetectionSource.Chapter;
+        dup.IntroStart = 5;
+        dup.IntroEnd = 30;
+        db.SaveChanges();
+
+        _extractor.Setup(e => e.ExtractHeadAsync(It.IsAny<string>(), It.IsAny<double>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BuildFingerprint(length: 6000));
+        _extractor.Setup(e => e.ExtractTailAsync(It.IsAny<string>(), It.IsAny<double>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BuildFingerprint(length: 3600));
+        _matcher.SetupSequence(m => m.FindLongestMatch(It.IsAny<uint[]>(), It.IsAny<uint[]>(), It.IsAny<int>(), It.IsAny<int>()))
+            .Returns(new SegmentMatch(120, 420, 100, 400))
+            .Returns(new SegmentMatch(220, 520, 200, 500));
+
+        await NewService(db).DetectAsync(series.Id);
+
+        var storedDup = await db.MediaItems.FirstAsync(m => m.Id == dup.Id);
+        Assert.Equal(DetectionSource.Chapter, storedDup.IntroSource);
+        Assert.Equal(5, storedDup.IntroStart);
+        Assert.Equal(30, storedDup.IntroEnd);
+        // Credits had no chapter claim — those ARE inherited.
+        Assert.Equal(DetectionSource.Detected, storedDup.CreditsSource);
+    }
+
+    [Fact]
+    public async Task DetectAsync_DifferentDurationDuplicate_IsFingerprintedIndependently()
+    {
+        // An extended cut shares (Season, Episode) but not the runtime — its markers sit
+        // elsewhere, so it must be fingerprinted itself, not inherit.
+        await using var db = NewDb();
+        var series = AddSeriesWithEpisodes(db, episodeCount: 2, episodeDuration: 1800);
+        AddDuplicateEpisode(db, db.MediaItems.First(m => m.Id == series.Id), 1, 2, 2400,
+            Guid.Parse("ffffffff-ffff-ffff-ffff-fffffffffffe"));
+
+        _extractor.Setup(e => e.ExtractHeadAsync(It.IsAny<string>(), It.IsAny<double>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BuildFingerprint(length: 6000));
+        _extractor.Setup(e => e.ExtractTailAsync(It.IsAny<string>(), It.IsAny<double>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BuildFingerprint(length: 3600));
+        _matcher.Setup(m => m.FindLongestMatch(It.IsAny<uint[]>(), It.IsAny<uint[]>(), It.IsAny<int>(), It.IsAny<int>()))
+            .Returns((SegmentMatch?)null);
+
+        await NewService(db).DetectAsync(series.Id);
+
+        // All three rows decoded: E01, E02, and the different-cut copy.
+        _extractor.Verify(e => e.ExtractHeadAsync(It.IsAny<string>(), It.IsAny<double>(), It.IsAny<CancellationToken>()), Times.Exactly(3));
+    }
+
     private IntroCreditsDetectionService NewService(AppDbContext db)
         => new(db, _extractor.Object, _matcher.Object, _settings.Object, NullLogger<IntroCreditsDetectionService>.Instance);
 

@@ -25,10 +25,11 @@ vi.mock('../../store/audioStore', () => ({
 describe('MediaCard poster rendering', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        (audioStore.useAudioStore as any).mockReturnValue({
+        // `as never` narrows the partial store stub past the full zustand store type.
+        vi.mocked(audioStore.useAudioStore).mockReturnValue({
             playTrack: vi.fn(),
             addToQueue: vi.fn(),
-        });
+        } as never);
         // Set a token so attachAuthToApiUrl produces a deterministic URL.
         useAuthStore.setState({ mediaToken: 'test-jwt-token' });
     });

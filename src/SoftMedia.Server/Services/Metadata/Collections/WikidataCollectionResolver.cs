@@ -54,13 +54,13 @@ public class WikidataCollectionResolver
             return null;
         }
 
-        // SPARQL injection avoidance: imdbId is `^tt[0-9]+$` per the OMDb
-        // contract; we double-check the prefix above. The body of the literal
-        // is wrapped in quotes inside the query — any non-conforming value
-        // would have failed the prefix check.
+        // SM-WI-012: the prefix check above only validates the first two characters —
+        // IMDb IDs can also arrive from NFO sidecars, so escape the literal with the
+        // shared helper rather than trusting the OMDb `^tt[0-9]+$` contract.
+        var safeImdbId = WikidataSparqlClient.EscapeForSparql(imdbId);
         var sparqlQuery = $@"
             SELECT ?series ?seriesLabel ?seriesPoster WHERE {{
-                ?film wdt:P345 ""{imdbId}"" .
+                ?film wdt:P345 ""{safeImdbId}"" .
                 ?film wdt:P179 ?series .
                 OPTIONAL {{ ?series wdt:P18 ?seriesPoster . }}
                 SERVICE wikibase:label {{ bd:serviceParam wikibase:language ""en"" . }}

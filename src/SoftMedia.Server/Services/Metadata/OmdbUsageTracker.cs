@@ -18,6 +18,15 @@ public interface IOmdbUsageTracker
 
     /// <summary>Number of requests recorded for the current UTC day.</summary>
     Task<int> GetUsedTodayAsync();
+
+    /// <summary>
+    /// SM-WI-011 — force the counter to (at least) <paramref name="limit"/> for the
+    /// current UTC day, so every subsequent <see cref="TryRecordRequestAsync"/> is
+    /// refused until the UTC date rolls over. Called when OMDb itself reports quota
+    /// exhaustion or rejects the key — continuing to send requests would only burn
+    /// the (possibly shared) key's remaining budget on guaranteed failures.
+    /// </summary>
+    Task MarkExhaustedAsync(int limit);
 }
 
 /// <summary>
@@ -30,6 +39,14 @@ public class OmdbUsageTracker : IOmdbUsageTracker
 {
     private const string CountKey = "OMDbDailyCount";
     private const string DateKey = "OMDbCountDate";
+
+    // SM-WI-025: persist every Nth increment instead of on every request — the old
+    // per-request settings-table write pair serialized all OMDb traffic through the DB.
+    // A crash loses at most N-1 increments (restart resumes from the lower persisted
+    // value), so the worst case is a ≤(N-1)-request overshoot of the daily ceiling —
+    // absorbed by SM-WI-011's limit-error recognition (OMDb's own refusal suspends us
+    // until UTC midnight). Limit-boundary hits and MarkExhaustedAsync always persist.
+    private const int PersistEvery = 10;
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<OmdbUsageTracker> _logger;
@@ -62,8 +79,31 @@ public class OmdbUsageTracker : IOmdbUsageTracker
                 return false;
 
             _count++;
-            await PersistAsync();
+            if (_count % PersistEvery == 0 || _count >= limit)
+            {
+                await PersistAsync();
+            }
             return true;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task MarkExhaustedAsync(int limit)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            await EnsureLoadedAsync();
+            RollOverIfNewDay();
+
+            if (_count < limit)
+            {
+                _count = limit;
+                await PersistAsync();
+            }
         }
         finally
         {

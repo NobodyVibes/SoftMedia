@@ -43,6 +43,23 @@ public interface ISubtitleService
     /// <summary>Shift cue times for a seek-restarted stream. False = the file must not be served.</summary>
     bool OffsetWebVttTimestamps(string vttPath, double offsetSeconds);
     Task<int> GetSubtitleStreamIndexAsync(string inputPath, int absoluteStreamIndex);
+
+    /// <summary>
+    /// Delete every cached VTT extraction (all tracks, all mtime variants) for the given
+    /// source files. The cache is keyed by a hash of the source path — not by media id —
+    /// so callers that delete media items must pass the items' file paths BEFORE the DB
+    /// rows go away. Returns files deleted.
+    /// </summary>
+    int DeleteCachedVttForSourcePaths(IEnumerable<string> sourcePaths);
+
+    /// <summary>
+    /// Delete cached VTT files whose source-path hash matches none of
+    /// <paramref name="validSourcePaths"/>. Row-existence contract: pass the paths of ALL
+    /// MediaItems rows including soft-deleted (IsMissing) ones — their extractions are
+    /// retained so playback works instantly when the drive returns. Also removes stale
+    /// ".tmp.vtt" leftovers from crashed extractions. Returns files deleted.
+    /// </summary>
+    int CleanupOrphanedVtt(IReadOnlyCollection<string> validSourcePaths);
 }
 
 public class SubtitleService : ISubtitleService
@@ -165,12 +182,101 @@ public class SubtitleService : ISubtitleService
     }
 
     private static string BuildVttCacheKey(string inputPath, int subtitleStreamIndex)
+        => $"{HashSourcePath(inputPath)}_s{subtitleStreamIndex}";
+
+    /// <summary>16-hex-char source identity — the prefix of every cache filename for a path.</summary>
+    private static string HashSourcePath(string inputPath)
     {
         string canonical;
         try { canonical = Path.GetFullPath(inputPath); }
         catch { canonical = inputPath; }
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(canonical.ToLowerInvariant()));
-        return $"{Convert.ToHexString(hash, 0, 8).ToLowerInvariant()}_s{subtitleStreamIndex}";
+        return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
+    }
+
+    public int DeleteCachedVttForSourcePaths(IEnumerable<string> sourcePaths)
+    {
+        var deleted = 0;
+        try
+        {
+            if (!Directory.Exists(_vttCacheRoot)) return 0;
+            foreach (var sourcePath in sourcePaths)
+            {
+                if (string.IsNullOrEmpty(sourcePath)) continue;
+                // "{hash}_*" catches every track index, mtime variant, and tmp leftover.
+                foreach (var file in Directory.GetFiles(_vttCacheRoot, $"{HashSourcePath(sourcePath)}_*"))
+                {
+                    TryDelete(file);
+                    deleted++;
+                }
+            }
+            if (deleted > 0)
+            {
+                _logger.LogInformation("Deleted {Count} cached subtitle extraction(s) for removed media", deleted);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete cached subtitle extractions");
+        }
+        return deleted;
+    }
+
+    public int CleanupOrphanedVtt(IReadOnlyCollection<string> validSourcePaths)
+    {
+        var deleted = 0;
+        try
+        {
+            if (!Directory.Exists(_vttCacheRoot)) return 0;
+
+            var validPrefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in validSourcePaths)
+            {
+                if (!string.IsNullOrEmpty(path)) validPrefixes.Add(HashSourcePath(path));
+            }
+
+            foreach (var file in Directory.GetFiles(_vttCacheRoot))
+            {
+                try
+                {
+                    var name = Path.GetFileName(file);
+                    var underscore = name.IndexOf('_');
+                    var prefix = underscore > 0 ? name[..underscore] : name;
+
+                    if (validPrefixes.Contains(prefix))
+                    {
+                        // Live source — only reap crashed-extraction temp files. A LIVE
+                        // extraction holds its per-key gate for minutes at most, so the
+                        // day-old guard cannot race it.
+                        if (name.EndsWith(".tmp.vtt", StringComparison.OrdinalIgnoreCase)
+                            && File.GetLastWriteTimeUtc(file) < DateTime.UtcNow.AddDays(-1))
+                        {
+                            File.Delete(file);
+                            deleted++;
+                        }
+                        continue;
+                    }
+
+                    File.Delete(file);
+                    deleted++;
+                    _logger.LogDebug("Deleted orphaned subtitle cache file: {Path}", file);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to process subtitle cache file during cleanup: {Path}", file);
+                }
+            }
+
+            if (deleted > 0)
+            {
+                _logger.LogInformation("Subtitle cache cleanup removed {Count} orphaned file(s)", deleted);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Subtitle cache orphan cleanup failed");
+        }
+        return deleted;
     }
 
     private static long GetLastWriteTicks(string inputPath)

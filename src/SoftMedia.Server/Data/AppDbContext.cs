@@ -44,6 +44,9 @@ public class AppDbContext : DbContext
     // Persistent retry queue
     public DbSet<MetadataRetry> MetadataRetries { get; set; }
 
+    // SM-WI-040 — negative-result memory for provider searches (definitive misses only).
+    public DbSet<ProviderLookupCacheEntry> ProviderLookupCache { get; set; }
+
     // Per-user library allow-list (Wave C). See UserLibraryAccess.cs for semantics.
     public DbSet<UserLibraryAccess> UserLibraryAccess { get; set; }
 
@@ -70,6 +73,10 @@ public class AppDbContext : DbContext
         // - (UserId, RevokedAt) supports "revoke all active tokens for user X" in one scan.
         // - ReplacedByTokenId is a nullable self-FK; SetNull on delete so pruning old rows
         //   doesn't orphan a reference on surviving rows.
+        // SM-WI-040: one row per (provider, normalized query); PK doubles as the lookup index.
+        modelBuilder.Entity<ProviderLookupCacheEntry>()
+            .HasKey(e => new { e.Provider, e.QueryKey });
+
         modelBuilder.Entity<RefreshToken>()
             .HasKey(rt => rt.Id);
 
@@ -451,6 +458,11 @@ public class AppDbContext : DbContext
             .HasIndex(m => m.Path, "IX_MediaItems_Path_UniqueFileBacked")
             .IsUnique()
             .HasFilter("\"Type\" NOT IN (1, 7, 8, 9, 10) AND \"Path\" <> ''");
+
+        // DV-WI-010 — sibling lookups ("all versions of this title") and the admin
+        // duplicates report both query by group id.
+        modelBuilder.Entity<MediaItem>()
+            .HasIndex(m => m.VersionGroupId, "IX_MediaItems_VersionGroupId");
     }
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
@@ -18,10 +18,14 @@ export default function MainLayout() {
     const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
     // Navigating anywhere closes the drawer (tapping a sidebar link changes the
-    // route, so this covers link clicks without wiring every <Link>).
-    useEffect(() => {
+    // route, so this covers link clicks without wiring every <Link>). During
+    // render rather than an effect: the drawer closes in the same pass as the
+    // route change instead of flashing over the new page for a frame.
+    const [lastPathname, setLastPathname] = useState(location.pathname);
+    if (location.pathname !== lastPathname) {
+        setLastPathname(location.pathname);
         setIsMobileNavOpen(false);
-    }, [location.pathname]);
+    }
 
     // App-wide SignalR connection for broadcast events (ScanProgress and friends).
     // Without this, scan status/toast updates only worked on pages that happened to

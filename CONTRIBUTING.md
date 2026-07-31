@@ -30,13 +30,13 @@ When you open a pull request, the CLA-assistant bot will ask you to sign once.
   that consumes it. Verify with `curl`/unit tests first.
 - **Layering:** Controllers → Services → Repositories → Database. Use built-in DI; avoid static
   global state; one clear responsibility per class.
-- **Tests:** xUnit + Moq/NSubstitute (backend, under `src/SoftMedia.Server.Tests` and
-  `src/SoftMedia.Tests`); Vitest + React Testing Library (client). Cover new logic and security paths.
+- **Tests:** xUnit + Moq (backend, under `src/SoftMedia.Server.Tests` — the single live
+  suite); Vitest + React Testing Library (client). Cover new logic and security paths.
 - **Accessibility / TV-readiness (all new UI):** use `<button>`/`<input>` (not `<div onClick>` without
   `role`/`tabIndex`); pair hover with focus (`hover:bg-white/10 focus-visible:bg-white/10
   focus-visible:ring-2`); everything Tab-reachable.
-- **Tailwind v4 gotcha:** `bg-primary`/`text-primary`/`bg-background` render nothing — use explicit
-  hex (`bg-[#007AFF]`; brand gradient `#007AFF → #8A2BE2`).
+- **Tailwind v4:** the brand palette lives in `@theme` (since 2026-07-18) — use the semantic
+  classes (`bg-primary`, `text-primary`, `bg-background`), not raw hex like `bg-[#007AFF]`.
 - **Docs:** XML `///` comments on new public APIs; keep `.docs/project_checklist.md` current.
 - **Security:** sanitize inputs; parameterized queries; jail file access (`StreamSecurityService`);
   RBAC + parental `MaxRating`. See [`SECURITY.md`](SECURITY.md) to report vulnerabilities.

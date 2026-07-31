@@ -51,7 +51,12 @@ public static class ServiceCollectionExtensions
         path.StartsWithSegments("/api/v1/photos") ||
         path.StartsWithSegments("/api/v1/trickplay") ||
         path.StartsWithSegments("/api/media") ||
-        path.StartsWithSegments("/hubs/media");
+        path.StartsWithSegments("/hubs/media") ||
+        // AA-WI-002: statically served artwork is token-gated (AA-WI-001) — the browser
+        // fetches it in plain <img> tags, so the media token rides the query string
+        // exactly like the streaming routes above. Cast tokens stay hard-scoped to
+        // their stream routes and are NOT accepted here (OnTokenValidated).
+        path.StartsWithSegments("/cache/images");
 
     /// <summary>
     /// The SignalR hub is the one media route where a media token must be allowed on
@@ -70,10 +75,13 @@ public static class ServiceCollectionExtensions
     internal const string QueryTokenSourceKey = "softmedia:query-token-source";
 
     /// <summary>
-    /// Re-checks, against the live DB, that the subject of a long-lived scoped token (cast or
-    /// media) is still eligible (not banned/deleted/un-approved). A stateless JWT is otherwise
-    /// unrevocable for its whole lifetime; this is the per-request revocation point for the
-    /// cast/media token paths (audit wave-2 L-3, complements WS-3's admin-side revocation).
+    /// Re-checks that the subject of a long-lived scoped token (cast or media) is still
+    /// eligible (not banned/deleted/un-approved). A stateless JWT is otherwise unrevocable
+    /// for its whole lifetime; this is the per-request revocation point for the cast/media
+    /// token paths (audit wave-2 L-3, complements WS-3's admin-side revocation).
+    /// AA-WI-011: the verdict is cached for a short TTL with eager invalidation on the
+    /// ban/delete/approve write paths — without the cache this cost one DbContext + Users
+    /// query per HLS segment, and per poster once artwork is token-gated (AA-WI-001).
     /// </summary>
     private static async Task<bool> IsTokenUserEligibleAsync(
         Microsoft.AspNetCore.Http.HttpContext http, ClaimsPrincipal? principal)
@@ -82,9 +90,14 @@ public static class ServiceCollectionExtensions
                   ?? principal?.FindFirst("sub")?.Value;
         if (!Guid.TryParse(sub, out var userId)) return false;
 
+        var cache = http.RequestServices.GetRequiredService<IUserEligibilityCache>();
+        if (cache.TryGet(userId, out var cached)) return cached;
+
         var db = http.RequestServices.GetRequiredService<AppDbContext>();
-        return await db.Users.AsNoTracking()
+        var eligible = await db.Users.AsNoTracking()
             .AnyAsync(u => u.Id == userId && !u.IsBanned && !u.IsDeleted && u.IsApproved);
+        cache.Set(userId, eligible);
+        return eligible;
     }
 
     public static IServiceCollection AddIdentityServices(this IServiceCollection services, IConfiguration config)
@@ -97,6 +110,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IQuickConnectService, QuickConnectService>();
         services.AddScoped<IApiTokenService, ApiTokenService>();
         services.AddScoped<ITrustedDeviceService, TrustedDeviceService>();
+        // AA-WI-011: singleton so all requests share one eligibility verdict per user.
+        services.AddSingleton<IUserEligibilityCache, UserEligibilityCache>();
         services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ScopeAuthorizationHandler>();
         // Singleton: holds the in-memory pending-2FA-challenge store (P2-WI-005).
         services.AddSingleton<ITotpService, TotpService>();
@@ -362,20 +377,30 @@ public static class ServiceCollectionExtensions
                     }
                 });
 
-        // Metadata Providers
-        services.AddHttpClient<WikidataProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
-        services.AddHttpClient<TVMazeProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
-        services.AddHttpClient<OMDbProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
-        services.AddHttpClient<MusicBrainzProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+        // Metadata Providers.
+        // SM-WI-024: 30 s timeouts (was the 100 s HttpClient default) — one hung WDQS
+        // query pins a metadata-channel worker slot for the whole timeout; 30 s also
+        // sits inside WDQS's own 60 s query deadline. OpenLibrary keeps its tighter 15 s.
+        services.AddHttpClient<WikidataProvider>(c => c.Timeout = TimeSpan.FromSeconds(30))
+                .AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+        services.AddHttpClient<TVMazeProvider>(c => c.Timeout = TimeSpan.FromSeconds(30))
+                .AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+        services.AddHttpClient<OMDbProvider>(c => c.Timeout = TimeSpan.FromSeconds(30))
+                .AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+        services.AddHttpClient<MusicBrainzProvider>(c => c.Timeout = TimeSpan.FromSeconds(30))
+                .AddHttpMessageHandler<SoftMediaUserAgentHandler>();
         services.AddHttpClient<OpenLibraryProvider>(c => c.Timeout = TimeSpan.FromSeconds(15))
                 .AddHttpMessageHandler<SoftMediaUserAgentHandler>();
-        services.AddHttpClient<GameMetadataProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
-        services.AddHttpClient<ComicWikidataProvider>().AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+        services.AddHttpClient<GameMetadataProvider>(c => c.Timeout = TimeSpan.FromSeconds(30))
+                .AddHttpMessageHandler<SoftMediaUserAgentHandler>();
+        services.AddHttpClient<ComicWikidataProvider>(c => c.Timeout = TimeSpan.FromSeconds(30))
+                .AddHttpMessageHandler<SoftMediaUserAgentHandler>();
 
         // Wave E2 — OMDb→Wikidata collection bridge. Shares the SDD §4.3
         // User-Agent handler and the existing Wikidata rate-limiter slot so
         // it counts against the same budget as the rest of our Wikidata calls.
-        services.AddHttpClient<Services.Metadata.Collections.WikidataCollectionResolver>()
+        services.AddHttpClient<Services.Metadata.Collections.WikidataCollectionResolver>(
+                    c => c.Timeout = TimeSpan.FromSeconds(30))
                 .AddHttpMessageHandler<SoftMediaUserAgentHandler>();
 
         services.AddScoped<IMetadataProvider, WikidataProvider>();
@@ -447,6 +472,13 @@ public static class ServiceCollectionExtensions
         // Trickplay sprite sheets (P2-WI-001).
         services.AddScoped<ITrickplayService, TrickplayService>();
         services.AddSingleton<IThumbnailService, ThumbnailService>();
+        // Image-proxy cache lifecycle (paths, write-back deletion, age expiry).
+        services.AddSingleton<IProxyImageStore, ProxyImageStore>();
+        // Admin cache-usage report (MC-WI-007).
+        services.AddSingleton<ICacheStatsService, CacheStatsService>();
+        // Derived-artifact cleanup on library deletion (artwork, cast, trickplay,
+        // thumbnails, cached subtitle extractions).
+        services.AddScoped<ILibraryCleanupService, LibraryCleanupService>();
         services.AddScoped<IMediaRetrievalService, MediaRetrievalService>();
         services.AddScoped<IUserMediaInteractionService, UserMediaInteractionService>();
         services.AddSingleton<IComicArchiveService, ComicArchiveService>();
@@ -462,6 +494,10 @@ public static class ServiceCollectionExtensions
         // OMDb daily-quota counter. Singleton so concurrent metadata fetches share
         // one atomic count (the scoped provider instances would otherwise race).
         services.AddSingleton<Services.Metadata.IOmdbUsageTracker, Services.Metadata.OmdbUsageTracker>();
+
+        // SM-WI-040 — negative-result memory for provider searches. Singleton (creates
+        // its own DB scopes) so every provider instance shares one cache.
+        services.AddSingleton<Services.Metadata.IProviderLookupCache, Services.Metadata.ProviderLookupCacheService>();
         
         services.AddSingleton<IMediaNotificationService, MediaNotificationService>();
 
@@ -477,24 +513,13 @@ public static class ServiceCollectionExtensions
         // re-runs the host allowlist on every hop.
         .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
         .AddHttpMessageHandler<SoftMediaUserAgentHandler>()
-        .AddHttpMessageHandler(sp => 
-        {
-            var factory = sp.GetRequiredService<RateLimiterFactory>();
-            // Use TVMaze limiter (18/10s) as it's the primary constraint. 
-            // Other hosts (MusicBrainz, etc.) also are covered by this conservative limit.
-            // Ideally we'd switch limiter based on host, but for now a single shared limiter for the client is safer.
-            // Actually, wait: ImageCacheService downloads from MANY hosts.
-            // If we use "TVMaze" limiter for *everything* (Wikidata, FanArt, etc.), we might throttle unnecessary requests.
-            // However, the "default" limiter in factory is 10/10s, which is even stricter.
-            // TVMaze is 18/10s.
-            // Getting a limiter based on request URL inside the handler is better, but DelegatingHandler is constructed once per client chain usually?
-            // No, AddHttpMessageHandler factory is called when the pipeline is built.
-            // But the *instance* of the handler processes multiple requests.
-            // The handler needs to be smart enough to pick the limiter, OR we just use a safe global limit.
-            // Given the complexity, and that TVMaze is the bulk of traffic, using the TVMaze limiter for *all* image downloads 
-            // is a safe starting point (1.8 req/sec is plenty for images if we only have 2 concurrent downloads).
-            return new RateLimitingDelegatingHandler(factory.GetLimiter("TVMaze"), sp.GetRequiredService<ILogger<RateLimitingDelegatingHandler>>());
-        });
+        // SM-WI-020: per-host rate limiting. Image downloads span many hosts
+        // (covers.openlibrary.org's official cap is 100 req/5 min — the previously
+        // borrowed TVMaze limiter allowed ~540/5 min); each host now gets its §2-table
+        // limiter, shared with every other code path that talks to that host.
+        .AddHttpMessageHandler(sp => new RateLimitingDelegatingHandler(
+            sp.GetRequiredService<RateLimiterFactory>(),
+            sp.GetRequiredService<ILogger<RateLimitingDelegatingHandler>>()));
 
         // Image URL extraction (delegates to IImageDownloadQueue)
         services.AddScoped<IImageUrlExtractorService, ImageUrlExtractorService>();
@@ -731,6 +756,10 @@ public static class ServiceCollectionExtensions
         // CM-WI-003: applies chapter-derived intro/credits markers to already-scanned items
         // at boot (idempotent; the scan path keeps them current from then on).
         services.AddHostedService<ChapterMarkerBackfillService>();
+
+        // DV-WI-010: assigns VersionGroupId to pre-existing rows at boot and heals gaps
+        // the scan-time paths can leave (idempotent fill-only sweep).
+        services.AddHostedService<VersionGroupBackfillService>();
 
         // Outbound webhooks (P2-WI-004): singleton in-memory queue + drain worker.
         services.AddSingleton<IWebhookDispatcher, WebhookDispatcher>();

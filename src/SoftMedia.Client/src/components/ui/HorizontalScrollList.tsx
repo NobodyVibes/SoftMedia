@@ -44,6 +44,9 @@ export default function HorizontalScrollList({
     const [canScrollLeft, setCanScrollLeft] = useState(false);
     const [canScrollRight, setCanScrollRight] = useState(true);
 
+    // TanStack Virtual returns functions the React Compiler cannot memoize; the
+    // compiler skips this component either way, so the warning is informational.
+    // eslint-disable-next-line react-hooks/incompatible-library
     const virtualizer = useVirtualizer({
         count: virtualized ? itemCount : 0,
         getScrollElement: () => scrollRef.current,

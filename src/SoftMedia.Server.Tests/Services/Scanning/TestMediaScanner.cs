@@ -106,11 +106,24 @@ public class TestMediaScanner : BaseMediaScanner
             ProcessedFiles.Add(filePath);
         }
 
-        // Verify context is usable
-        // We can check if context is disposed by trying to access it? 
-        // Or let the framework handle it.
-        // We might want to assert that 'context' is different for different directories if we could.
-        
+        // SM-WI-061: when set, actually create a row for new files so tests can
+        // exercise the insert/save paths (the default records the call only).
+        if (CreateRealItems && existing == null)
+        {
+            var item = new MediaItem
+            {
+                LibraryId = library.Id,
+                Path = filePath,
+                Title = System.IO.Path.GetFileNameWithoutExtension(filePath),
+                Type = MediaType.Movie,
+            };
+            context.MediaItems.Add(item);
+            return new ScanOperationResult(ScanResult.New, item.Id, EnqueueMetadata: false);
+        }
+
         return new ScanOperationResult(ScanResult.New, Guid.Empty, EnqueueMetadata: false);
     }
+
+    /// <summary>SM-WI-061 — see ProcessFileAsync; off by default.</summary>
+    public bool CreateRealItems { get; set; }
 }

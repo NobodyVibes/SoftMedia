@@ -14,30 +14,48 @@ public class WikidataProvider : WikidataSparqlClient, ISearchableMetadataProvide
     public override LibraryType SupportedType => LibraryType.Movie;
     public override string ProviderName => "Wikidata";
 
-    public WikidataProvider(HttpClient httpClient, ILogger<WikidataProvider> logger, RateLimiterFactory rateLimiterFactory)
-        : base(httpClient, logger, rateLimiterFactory) { }
+    public WikidataProvider(HttpClient httpClient, ILogger<WikidataProvider> logger, RateLimiterFactory rateLimiterFactory,
+        IProviderLookupCache? lookupCache = null)
+        : base(httpClient, logger, rateLimiterFactory, lookupCache) { }
+
+    /// <summary>SM-WI-040 — title searches are cacheable; IMDb-id lookups are not.</summary>
+    protected override string? BuildLookupCacheKey(MediaItem item)
+        => TryGetCachedId(item, "imdbId", "tt") != null
+            ? null
+            : ProviderLookupCacheService.NormalizeKey(item.Type, item.Title, item.Year);
 
     protected override string BuildSparqlQuery(MediaItem item)
     {
         string itemSelector;
+        string rankProjection = "";
+        string orderClause = "";
+        int limit = 1;
 
         // Check for cached IMDb ID for direct lookup (faster, more accurate)
         var imdbId = TryGetCachedId(item, "imdbId", "tt");
         if (imdbId != null)
         {
             Logger.LogInformation("Using cached IMDb ID for '{Title}': {ImdbId}", item.Title, imdbId);
-            itemSelector = $"?item wdt:P345 \"{imdbId}\" .";
+            itemSelector = $"?item wdt:P345 \"{EscapeForSparql(imdbId)}\" .";
         }
         else
         {
-            // Fallback: entity search filtered to films (Q11424)
+            // SM-WI-030: entity search returns up to 5 candidates (rank-ordered via the
+            // EntitySearch ordinal) so SelectBinding can disambiguate by year. LIMIT 1
+            // took the most NOTABLE title match — "Dune (1984)" resolved to the 2021
+            // film, and the wrong match self-sealed once its poster made the item look
+            // enrichment-complete.
             itemSelector = BuildEntitySearchSelector(item.Title, "Q11424");
+            rankProjection = "(SAMPLE(?ordinal) AS ?rank)";
+            orderClause = "ORDER BY ASC(?rank)";
+            limit = 5;
         }
 
         // GROUP_CONCAT aggregates multi-valued properties (genre, director) into comma-separated strings.
         // GROUP BY on single-valued properties ensures one row per film.
         return $@"
             SELECT ?item ?itemLabel
+                   {rankProjection}
                    (SAMPLE(?year) AS ?year)
                    (GROUP_CONCAT(DISTINCT ?directorLabel; SEPARATOR="", "") AS ?directors)
                    (GROUP_CONCAT(DISTINCT ?genreLabel; SEPARATOR="", "") AS ?genres)
@@ -47,7 +65,7 @@ public class WikidataProvider : WikidataSparqlClient, ISearchableMetadataProvide
                    (SAMPLE(?image) AS ?image)
             WHERE {{
               {itemSelector}
-              
+
               OPTIONAL {{ ?item wdt:P577 ?pubDate . BIND(YEAR(?pubDate) AS ?year) }}
               OPTIONAL {{ ?item wdt:P57 ?director . ?director rdfs:label ?directorLabel . FILTER(LANG(?directorLabel) = ""en"") }}
               OPTIONAL {{ ?item wdt:P136 ?genre . ?genre rdfs:label ?genreLabel . FILTER(LANG(?genreLabel) = ""en"") }}
@@ -55,12 +73,67 @@ public class WikidataProvider : WikidataSparqlClient, ISearchableMetadataProvide
               OPTIONAL {{ ?item schema:description ?description . FILTER(LANG(?description) = ""en"") }}
               OPTIONAL {{ ?item wdt:P3383 ?poster . }}
               OPTIONAL {{ ?item wdt:P18 ?image . }}
-              
+
               SERVICE wikibase:label {{ bd:serviceParam wikibase:language ""en"". }}
             }}
             GROUP BY ?item ?itemLabel
-            LIMIT 1
+            {orderClause}
+            LIMIT {limit}
         ";
+    }
+
+    /// <summary>
+    /// SM-WI-030 — year disambiguation over the candidate bindings. Public static core
+    /// so tests can drive it with canned bindings (no InternalsVisibleTo convention).
+    /// Rules, in order:
+    ///   1. No usable file year (null/≤0) OR only one candidate → first candidate.
+    ///      With no year there is nothing to disambiguate with; with one candidate,
+    ///      rejecting the only hit over year drift (re-releases, director's cuts) would
+    ///      strand legitimately obscure titles — ambiguity is what the year guards.
+    ///   2. A candidate within ±1 of the file year → the highest-ranked such candidate.
+    ///   3. Candidates WITHOUT a Wikidata year → highest-ranked of those (can't be
+    ///      contradicted; better than nothing).
+    ///   4. Every candidate has a year and none is within ±1 → NO MATCH: the file's own
+    ///      year contradicts all of them, and no metadata beats wrong metadata (the
+    ///      OpenLibrary philosophy). Wrong matches self-seal via the poster.
+    /// </summary>
+    public static JsonElement? SelectMovieBinding(JsonElement bindings, int? fileYear)
+    {
+        if (fileYear is null or <= 0 || bindings.GetArrayLength() <= 1)
+        {
+            return bindings[0];
+        }
+
+        JsonElement? firstYearless = null;
+        foreach (var binding in bindings.EnumerateArray())
+        {
+            var yearStr = GetBindingString(binding, "year");
+            if (int.TryParse(yearStr, out var candidateYear))
+            {
+                if (Math.Abs(candidateYear - fileYear.Value) <= 1)
+                {
+                    return binding;
+                }
+            }
+            else
+            {
+                firstYearless ??= binding;
+            }
+        }
+
+        return firstYearless; // null when all candidates carry contradicting years
+    }
+
+    protected override JsonElement? SelectBinding(JsonElement bindings, MediaItem item)
+    {
+        var selected = SelectMovieBinding(bindings, item.Year);
+        if (selected == null)
+        {
+            Logger.LogInformation(
+                "Wikidata: no candidate for '{Title}' matches file year {Year} (±1); leaving unenriched rather than guessing",
+                item.Title, item.Year);
+        }
+        return selected;
     }
 
     protected override MetadataResult ExtractMetadata(JsonElement result, MediaItem item)
@@ -107,7 +180,7 @@ public class WikidataProvider : WikidataSparqlClient, ISearchableMetadataProvide
                 + $"&type=item&limit=15&search={Uri.EscapeDataString(query.Trim())}";
 
         string body;
-        try { body = await HttpClient.GetStringAsync(url, ct); }
+        try { body = await GetStringLimitedAsync(url, ct); }
         catch (Exception ex)
         {
             Logger.LogWarning(ex, "Wikidata wbsearchentities failed for '{Query}'", query);
@@ -183,7 +256,7 @@ public class WikidataProvider : WikidataSparqlClient, ISearchableMetadataProvide
         var url = $"https://query.wikidata.org/sparql?format=json&query={Uri.EscapeDataString(sparql)}";
         try
         {
-            var response = await HttpClient.GetStringAsync(url, ct);
+            var response = await GetStringLimitedAsync(url, ct);
             using var doc = JsonDocument.Parse(response);
             if (!doc.RootElement.TryGetProperty("results", out var results) ||
                 !results.TryGetProperty("bindings", out var bindings) ||

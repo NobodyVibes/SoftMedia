@@ -75,6 +75,11 @@ public class ContinueWatchingService : IContinueWatchingService
         // single show card (deduped by series); finished movies and fully-finished series drop out.
         var entries = new List<Entry>();
         var seenSeries = new HashSet<Guid>();
+        // DV-WI-004/016: duplicate copies of one movie must occupy ONE slot, like
+        // episodes collapse into one show card. VersionGroupId is the identity; the
+        // (library, normalized title, year) key remains as fallback for rows the boot
+        // backfill hasn't grouped yet.
+        var seenMovies = new HashSet<string>();
         var resolveBudget = SeriesResolveBudget;
 
         for (var offset = 0; entries.Count < limit && offset < MaxCandidateScan; offset += CandidatePageSize)
@@ -104,6 +109,10 @@ public class ContinueWatchingService : IContinueWatchingService
                     Duration = m.Duration,
                     CreditsStart = m.CreditsStart,
                     SeriesId = m.SeriesId,
+                    LibraryId = m.LibraryId,
+                    Title = m.Title,
+                    Year = m.Year,
+                    VersionGroupId = m.VersionGroupId,
                     Position = i.PlaybackPosition ?? 0,
                     IsWatched = i.IsWatched,
                 })
@@ -145,6 +154,15 @@ public class ContinueWatchingService : IContinueWatchingService
                 }
                 else
                 {
+                    // DV-WI-004/016: the NEWEST-played copy decides for the whole duplicate
+                    // group — claim the identity BEFORE the completion check, so a finished
+                    // newer copy also suppresses an older copy's stale half-progress (finishing
+                    // the 4K file must not resurrect the movie via the abandoned 1080p file).
+                    if (c.Type == MediaType.Movie && !seenMovies.Add(
+                            c.VersionGroupId?.ToString()
+                            ?? $"{c.LibraryId}|{NormalizeTitleKey(c.Title)}|{c.Year}"))
+                        continue;
+
                     // Movie, or an orphan episode with no parent series — represented by the item
                     // itself. The interaction's real IsWatched flag matters here: the candidate
                     // query admits watched EPISODES (for series resolution above), so a watched
@@ -218,9 +236,21 @@ public class ContinueWatchingService : IContinueWatchingService
         public double Duration { get; set; }
         public double? CreditsStart { get; set; }
         public Guid? SeriesId { get; set; }
+        public Guid LibraryId { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public int? Year { get; set; }
+        public Guid? VersionGroupId { get; set; }
         public double Position { get; set; }
         public bool IsWatched { get; set; }
     }
+
+    /// <summary>
+    /// DV-WI-004 interim duplicate-movie identity, shared with the version-group
+    /// assigner so the two rules cannot drift. Superseded by VersionGroupId reads in
+    /// Layer 2 (plan DV-WI-016).
+    /// </summary>
+    private static string NormalizeTitleKey(string title)
+        => VersionGroupHelper.NormalizeTitleKey(title);
 
     private sealed class Entry
     {

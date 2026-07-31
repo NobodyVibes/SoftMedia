@@ -6,9 +6,10 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
 import { type MediaItem, MediaType } from '../../types';
 import QualityBadge from '../ui/QualityBadge';
+import VersionsSection from '../details/VersionsSection';
 import MediaQualityInfo from '../ui/MediaQualityInfo';
 import { StarRating } from '../ui/StarRating';
-import { cn, formatRuntime } from '../../lib/utils';
+import { cn, formatRuntime, formatResumeTime } from '../../lib/utils';
 import { detailBackTarget } from '../../lib/backNavigation';
 import { toast } from 'sonner';
 import { getGenreColors } from '../../lib/genreColors';
@@ -57,17 +58,6 @@ interface MediaDetailLayoutProps {
     playLabel?: string;
     /** Icon paired with {@link playLabel} (e.g. an open book instead of ▶). */
     playIcon?: ReactNode;
-}
-
-/** "Resume from H:MM(:SS)" label — hours only when the position reaches an hour. */
-export function formatResumeTime(seconds: number): string {
-    const total = Math.max(0, Math.floor(seconds));
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    return h > 0
-        ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-        : `${m}:${s.toString().padStart(2, '0')}`;
 }
 
 export default function MediaDetailLayout({ item, children, onPlay, qualityItem, backdropOverride, customMetadata, actionSlot, resumePositionSeconds, onPlayFromBeginning, resumeCaption, playPending, playLabel, playIcon }: MediaDetailLayoutProps) {
@@ -393,7 +383,7 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
                                     </span>
                                 )}
                                 {item.quality && (
-                                    <QualityBadge quality={item.quality} />
+                                    <QualityBadge label={item.versionLabel} />
                                 )}
                             </div>
 
@@ -452,6 +442,9 @@ export default function MediaDetailLayout({ item, children, onPlay, qualityItem,
 
                             {/* Extended Quality Info */}
                             <MediaQualityInfo item={qualityItem || item} className="mb-8" />
+
+                            {/* DV-WI-020: file copies of this title (self-hides when single-file) */}
+                            <VersionsSection item={item} />
 
                             {/* Actions — watchlist is for "I'll come back to this later"
                                 content (movies, series, books, comics, games). Music uses

@@ -50,7 +50,12 @@ export default function useSequentialReveal(
     const [, setRevealedCount] = useState(0);
     const revealedRef = useRef(0);
     const countRef = useRef(count);
-    countRef.current = count;
+    // Synced in an effect, not during render — a render React discards must not
+    // have already leaked its count into the ref. The callbacks that read it
+    // (timers, image-load events) all fire after effects have run.
+    useEffect(() => {
+        countRef.current = count;
+    }, [count]);
 
     // Set of indices that have finished loading (or errored)
     const readySet = useRef(new Set<number>());
@@ -64,6 +69,11 @@ export default function useSequentialReveal(
         }
     };
 
+    // armStuckTimer and scheduleAdvance call each other; the cycle is broken by
+    // routing this direction through a ref (kept current by the effect below),
+    // so neither callback has to reference the other before its declaration.
+    const scheduleAdvanceRef = useRef<() => void>(() => {});
+
     const armStuckTimer = useCallback(() => {
         clearStuckTimer();
         const waitingIndex = revealedRef.current;
@@ -74,7 +84,7 @@ export default function useSequentialReveal(
             // If still waiting on the same index, treat it as ready and continue
             if (revealedRef.current === waitingIndex && !readySet.current.has(waitingIndex)) {
                 readySet.current.add(waitingIndex);
-                scheduleAdvance();
+                scheduleAdvanceRef.current();
             }
         }, stuckTimeoutMs);
     }, [stuckTimeoutMs]);
@@ -113,6 +123,10 @@ export default function useSequentialReveal(
         step();
     }, [staggerMs, armStuckTimer]);
 
+    useEffect(() => {
+        scheduleAdvanceRef.current = scheduleAdvance;
+    }, [scheduleAdvance]);
+
     const markReady = useCallback((index: number) => {
         readySet.current.add(index);
         // If this is the index the cursor is waiting on, kick the cascade
@@ -143,6 +157,13 @@ export default function useSequentialReveal(
     const prevCountRef = useRef(count);
     useEffect(() => {
         if (count < prevCountRef.current) {
+            // reset() atomically clears live timers, refs AND state. The state
+            // half alone could become a render-time adjustment, but the timer/ref
+            // half cannot (ref writes during render are themselves forbidden, and
+            // a render React discards must not kill live timers). Splitting them
+            // would desynchronise the cursor from its timers, so the reset stays
+            // atomic here and the rule is overridden knowingly.
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             reset();
         } else if (count > prevCountRef.current && revealedRef.current < count) {
             // Count grew and we may be done waiting on something — re-arm stuck timer

@@ -18,7 +18,7 @@ import { useAudioStore } from '../../store/audioStore';
 import { SortableQueueItem } from './SortableQueueItem';
 import { Volume2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ScrollingText } from '../ui/ScrollingText';
-import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { resolveArtworkUrl } from '../../lib/mediaImageUrl';
 import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 
 /**
@@ -97,15 +97,7 @@ export const QueueList: React.FC = () => {
         return <p className="text-gray-500 text-sm text-center py-8">Queue is empty</p>;
     }
 
-    const getImageUrl = (path: string | undefined) => {
-        if (!path) return '/placeholder-music.png';
-        if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
-        if (path.startsWith('http')) return path;
-        // Anything else is a static file served from wwwroot (e.g.
-        // /cache/images/albums/x.jpg). It is NOT under /api/v1 — prefixing it
-        // there yields a route that does not exist and a 404'd cover.
-        return path;
-    };
+    const getImageUrl = resolveArtworkUrl; // shared; /cache/images is token-gated (AA-WI-001)
 
     return (
         // min-h-0 on both levels: without it a flex child refuses to shrink below

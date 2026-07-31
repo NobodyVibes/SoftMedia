@@ -122,10 +122,6 @@ public class ComicWikidataProvider : WikidataSparqlClient
         return string.IsNullOrWhiteSpace(trimmed) ? raw.Trim() : trimmed;
     }
 
-    /// <summary>
-    /// Escapes characters that would break the SPARQL literal; Wikidata EntitySearch
-    /// is forgiving but we still need to avoid unescaped double-quotes.
-    /// </summary>
-    private static string EscapeForSparql(string input) =>
-        input.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    // SM-WI-012: EscapeForSparql moved to WikidataSparqlClient (this class's private
+    // copy was the only escaping in the codebase; the shared one now serves everyone).
 }

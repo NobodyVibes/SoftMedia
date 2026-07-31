@@ -132,6 +132,9 @@ export default function VirtualMediaGrid({
     }, [audioGrid]);
 
     const rowCount = Math.ceil(items.length / layout.columns);
+    // TanStack Virtual returns functions the React Compiler cannot memoize; the
+    // compiler skips this component either way, so the warning is informational.
+    // eslint-disable-next-line react-hooks/incompatible-library
     const virtualizer = useVirtualizer({
         count: rowCount,
         getScrollElement: () => scrollEl,

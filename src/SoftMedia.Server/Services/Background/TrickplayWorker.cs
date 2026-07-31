@@ -89,7 +89,10 @@ public class TrickplayWorker : BackgroundService
 
             var recent = await db.MediaItems
                 .AsNoTracking()
-                .Where(m => (m.Type == MediaType.Movie || m.Type == MediaType.Episode) && m.Path != "")
+                // MC-WI-003: skip soft-deleted (IsMissing) items — their source file is
+                // offline, so generation would fail on File.Exists and be re-attempted
+                // (with a warning) every sweep for as long as the drive is disconnected.
+                .Where(m => (m.Type == MediaType.Movie || m.Type == MediaType.Episode) && m.Path != "" && !m.IsMissing)
                 .OrderByDescending(m => m.DateAdded)
                 .Select(m => new { m.Id, m.Path })
                 .Take(500) // cap the per-sweep scan

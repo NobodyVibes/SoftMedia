@@ -70,6 +70,25 @@ public class SoftMediaWebApplicationFactory : WebApplicationFactory<Program>
             services.Remove(dbDescriptor);
             services.AddDbContext<AppDbContext>(options =>
                 options.UseSqlite(_dbConnectionString));
+
+            // The integration host otherwise runs the REAL BackupRotationService
+            // against the developer's working tree: its backup directory resolves
+            // from the CONTENT ROOT (the server project), its first check fires
+            // immediately, and a fresh test DB has no "already ran today" marker —
+            // so every factory instance wrote a test-database backup into the real
+            // data/backups and its retention pass PRUNED genuine backups to make
+            // room. One real backup was lost to exactly this on 2026-07-27.
+            // No integration test exercises scheduled rotation (BackupService has
+            // its own suite against isolated directories), so strip the service.
+            // ImageCacheCleanupService — the other sweeper that deletes real files —
+            // is fenced by a 5-minute initial delay no test host survives.
+            foreach (var hosted in services
+                .Where(d => d.ServiceType == typeof(IHostedService)
+                    && d.ImplementationType == typeof(SoftMedia.Server.Services.Background.BackupRotationService))
+                .ToList())
+            {
+                services.Remove(hosted);
+            }
         });
     }
 

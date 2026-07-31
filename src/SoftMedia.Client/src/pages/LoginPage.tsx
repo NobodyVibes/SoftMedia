@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { useAuthStore } from '../store/authStore';
+import { useAuthStore, type AuthUser } from '../store/authStore';
 import api from '../services/api';
 import { extractApiError } from '../services/apiError';
 import { Input } from '../components/ui/Input';
@@ -76,7 +76,9 @@ export default function LoginPage() {
     const [twoFactorChallengeId, setTwoFactorChallengeId] = useState<string | null>(null);
     const [twoFactorCode, setTwoFactorCode] = useState('');
 
-    const completeLogin = (user: any, token: string) => {
+    // The login response carries mustChangePassword on top of the stored
+    // AuthUser shape (it gates the change-password modal and is never persisted).
+    const completeLogin = (user: AuthUser & { mustChangePassword?: boolean }, token: string) => {
         if (user.mustChangePassword) {
             setTempToken(token);
             setShowChangePasswordModal(true);

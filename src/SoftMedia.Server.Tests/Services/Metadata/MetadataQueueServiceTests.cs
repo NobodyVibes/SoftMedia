@@ -82,9 +82,8 @@ public class MetadataQueueServiceTests : IDisposable
 
         // Assert
         _mockAggregator.Verify(x => x.EnrichMediaItemAsync(
-            It.Is<MediaItem>(m => m.Id == mediaId), 
-            LibraryType.Movie, 
-            false, 
+            It.Is<MediaItem>(m => m.Id == mediaId),
+            LibraryType.Movie,
             true), Times.Once);
 
         _mockNotificationService.Verify(x => x.NotifyItemUpdated(mediaId), Times.Once);
@@ -142,8 +141,8 @@ public class MetadataQueueServiceTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         // Aggregator does nothing (metadata unchanged)
-        _mockAggregator.Setup(x => x.EnrichMediaItemAsync(It.IsAny<MediaItem>(), It.IsAny<LibraryType>(), It.IsAny<bool>(), It.IsAny<bool>()))
-            .Callback<MediaItem, LibraryType, bool, bool>((m, _, _, _) => {
+        _mockAggregator.Setup(x => x.EnrichMediaItemAsync(It.IsAny<MediaItem>(), It.IsAny<LibraryType>(), It.IsAny<bool>()))
+            .Callback<MediaItem, LibraryType, bool>((m, _, _) => {
                 // Do not change MetadataHash so it shows up as unchanged
             })
             .Returns(Task.CompletedTask);
@@ -187,8 +186,8 @@ public class MetadataQueueServiceTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         // Aggregator does nothing (metadata unchanged)
-        _mockAggregator.Setup(x => x.EnrichMediaItemAsync(It.IsAny<MediaItem>(), It.IsAny<LibraryType>(), It.IsAny<bool>(), It.IsAny<bool>()))
-            .Callback<MediaItem, LibraryType, bool, bool>((m, _, _, _) => {
+        _mockAggregator.Setup(x => x.EnrichMediaItemAsync(It.IsAny<MediaItem>(), It.IsAny<LibraryType>(), It.IsAny<bool>()))
+            .Callback<MediaItem, LibraryType, bool>((m, _, _) => {
                 // Do not change MetadataHash
             })
             .Returns(Task.CompletedTask);

@@ -41,9 +41,24 @@ public class ImageCacheCleanupServiceTests : IDisposable
         var imageCache = new ImageCacheService(new HttpClient(),
             NullLogger<ImageCacheService>.Instance, env.Object, Mock.Of<IStreamSecurityService>());
 
+        // Real artifact stores over the same temp webroot — the sweep exercises their
+        // cleanup paths only (no ffmpeg/Skia work is ever triggered by a sweep).
+        var thumbnails = new ThumbnailService(env.Object,
+            NullLogger<ThumbnailService>.Instance, Mock.Of<IBinaryLocationService>());
+        var trickplay = new TrickplayService(env.Object, Mock.Of<IBinaryLocationService>(),
+            Mock.Of<ISettingsService>(), NullLogger<TrickplayService>.Instance);
+        var subtitles = new SubtitleService(NullLogger<SubtitleService>.Instance,
+            Mock.Of<IProcessRunner>(), Mock.Of<IBinaryLocationService>(), env.Object);
+        var proxyStore = new ProxyImageStore(env.Object, thumbnails,
+            NullLogger<ProxyImageStore>.Instance);
+
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(o => o.UseSqlite(_conn));
         services.AddSingleton<IImageCacheService>(imageCache);
+        services.AddSingleton<IThumbnailService>(thumbnails);
+        services.AddSingleton<ITrickplayService>(trickplay);
+        services.AddSingleton<ISubtitleService>(subtitles);
+        services.AddSingleton<IProxyImageStore>(proxyStore);
         _provider = services.BuildServiceProvider();
 
         using (var scope = _provider.CreateScope())
@@ -187,6 +202,208 @@ public class ImageCacheCleanupServiceTests : IDisposable
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             Assert.Equal(remote, (await db.MediaItems.FirstAsync(m => m.Id == liveId)).PosterUrl);
         }
+    }
+
+    /// Trickplay sheets follow the same row-existence contract as artwork: rows (even
+    /// IsMissing ones) keep their directory; guids with no row are swept.
+    [Fact]
+    public async Task RunOnce_SweepsOrphanTrickplay_RetainsLiveAndIsMissing()
+    {
+        var (liveId, missingId) = SeedRows();
+        var orphanId = Guid.NewGuid();
+
+        string TrickplayDir(Guid id)
+        {
+            var dir = Path.Combine(_webRoot, "cache", "trickplay", id.ToString("N"));
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "manifest.json"), "{}");
+            return dir;
+        }
+        var liveDir = TrickplayDir(liveId);
+        var missingDir = TrickplayDir(missingId);
+        var orphanDir = TrickplayDir(orphanId);
+
+        await _worker.RunOnceAsync();
+
+        Assert.True(Directory.Exists(liveDir));
+        Assert.True(Directory.Exists(missingDir), "IsMissing rows keep trickplay so it heals when the drive returns");
+        Assert.False(Directory.Exists(orphanDir));
+    }
+
+    /// Cast headshots are keyed by Person.ExternalId; valid = referenced by any cast row.
+    [Fact]
+    public async Task RunOnce_SweepsCastImagesWithNoReferencingCastRow()
+    {
+        var (liveId, _) = SeedRows();
+        using (var scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var person = new Person { Name = "Kept Actor", ExternalId = 777 };
+            db.Persons.Add(person);
+            await db.SaveChangesAsync();
+            db.MediaItemCasts.Add(new MediaItemCast { MediaItemId = liveId, PersonId = person.Id });
+            // An orphaned Person row with no cast rows — their file must be swept even
+            // though the row survives (Person rows are global and never deleted).
+            db.Persons.Add(new Person { Name = "Orphan Actor", ExternalId = 888 });
+            await db.SaveChangesAsync();
+        }
+
+        var castDir = Path.Combine(_cacheRoot, "tv", "cast");
+        var kept = Path.Combine(castDir, "777.jpg");
+        var orphanByPerson = Path.Combine(castDir, "888.jpg");
+        var orphanNoRow = Path.Combine(castDir, "999.jpg");
+        foreach (var f in new[] { kept, orphanByPerson, orphanNoRow }) File.WriteAllBytes(f, new byte[] { 1 });
+
+        await _worker.RunOnceAsync();
+
+        Assert.True(File.Exists(kept), "headshot of a person still referenced by a cast row must be retained");
+        Assert.False(File.Exists(orphanByPerson));
+        Assert.False(File.Exists(orphanNoRow));
+
+        // MC-WI-005: the uncredited Person ROW is also removed (previously nothing ever
+        // deleted Persons); the credited one survives.
+        using (var scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var names = await db.Persons.Select(p => p.Name).ToListAsync();
+            Assert.Contains("Kept Actor", names);
+            Assert.DoesNotContain("Orphan Actor", names);
+        }
+    }
+
+    /// MC-WI-006 — Genre rows with no MediaItemGenre link are unreachable in the UI and
+    /// are reaped by the sweep; linked genres survive.
+    [Fact]
+    public async Task RunOnce_RemovesGenresWithNoLinks()
+    {
+        var (liveId, _) = SeedRows();
+        using (var scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var linked = new Genre { Name = "Drama" };
+            var orphan = new Genre { Name = "Ghost Genre" };
+            db.Genres.AddRange(linked, orphan);
+            await db.SaveChangesAsync();
+            db.MediaItemGenres.Add(new MediaItemGenre { MediaItemId = liveId, GenreId = linked.Id });
+            await db.SaveChangesAsync();
+        }
+
+        await _worker.RunOnceAsync();
+
+        using (var scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var names = await db.Genres.Select(g => g.Name).ToListAsync();
+            Assert.Contains("Drama", names);
+            Assert.DoesNotContain("Ghost Genre", names);
+        }
+    }
+
+    /// Cached subtitle extractions are keyed by a hash of the source path; a hash matching
+    /// no row's path (including IsMissing rows' paths) is an orphan.
+    [Fact]
+    public async Task RunOnce_SweepsSubtitleVttForUnknownSourcePaths()
+    {
+        SeedRows(); // rows have paths /m/live.mkv and /m/offline.mkv
+
+        static string HashPath(string path)
+        {
+            var canonical = Path.GetFullPath(path).ToLowerInvariant();
+            var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical));
+            return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
+        }
+
+        var subsDir = Path.Combine(_webRoot, "cache", "subtitles");
+        Directory.CreateDirectory(subsDir);
+        var liveVtt = Path.Combine(subsDir, $"{HashPath("/m/live.mkv")}_s0_123.vtt");
+        var missingVtt = Path.Combine(subsDir, $"{HashPath("/m/offline.mkv")}_s1_456.vtt");
+        var orphanVtt = Path.Combine(subsDir, $"{HashPath("/gone/deleted.mkv")}_s0_789.vtt");
+        foreach (var f in new[] { liveVtt, missingVtt, orphanVtt }) File.WriteAllText(f, "WEBVTT");
+
+        await _worker.RunOnceAsync();
+
+        Assert.True(File.Exists(liveVtt));
+        Assert.True(File.Exists(missingVtt), "IsMissing rows keep their extractions so playback heals with the drive");
+        Assert.False(File.Exists(orphanVtt));
+    }
+
+    /// Proxy copies expire by age only (their hash keys are uncorrelatable with items);
+    /// a cache hit refreshes mtime, so fresh files always survive.
+    [Fact]
+    public async Task RunOnce_ExpiresOldProxyCopies_KeepsFresh()
+    {
+        SeedRows();
+        var proxyDir = Path.Combine(_cacheRoot, "proxy");
+        Directory.CreateDirectory(proxyDir);
+        var oldFile = Path.Combine(proxyDir, new string('a', 64) + ".jpg");
+        var oldSentinel = Path.Combine(proxyDir, new string('b', 64) + ".jpg.404");
+        var freshFile = Path.Combine(proxyDir, new string('c', 64) + ".jpg");
+        foreach (var f in new[] { oldFile, oldSentinel, freshFile }) File.WriteAllBytes(f, new byte[] { 1 });
+        File.SetLastWriteTimeUtc(oldFile, DateTime.UtcNow.AddDays(-40));
+        File.SetLastWriteTimeUtc(oldSentinel, DateTime.UtcNow.AddDays(-40));
+
+        await _worker.RunOnceAsync();
+
+        Assert.False(File.Exists(oldFile));
+        Assert.False(File.Exists(oldSentinel));
+        Assert.True(File.Exists(freshFile));
+    }
+
+    /// Thumbnails mix media-item keys with proxy-derived keys, so unknown keys are only
+    /// reaped once stale; item-keyed thumbnails follow row-existence regardless of age.
+    [Fact]
+    public async Task RunOnce_SweepsStaleOrphanThumbnails_KeepsItemKeyedAndFresh()
+    {
+        var (liveId, _) = SeedRows();
+        var thumbsDir = Path.Combine(_cacheRoot, "thumbnails");
+        Directory.CreateDirectory(thumbsDir);
+        var liveThumb = Path.Combine(thumbsDir, $"{liveId}_320.webp");
+        var staleOrphan = Path.Combine(thumbsDir, $"{Guid.NewGuid()}_320.webp");
+        var freshOrphan = Path.Combine(thumbsDir, $"{Guid.NewGuid()}_320.webp");
+        foreach (var f in new[] { liveThumb, staleOrphan, freshOrphan }) File.WriteAllBytes(f, new byte[] { 1 });
+        File.SetLastWriteTimeUtc(liveThumb, DateTime.UtcNow.AddDays(-30));
+        File.SetLastWriteTimeUtc(staleOrphan, DateTime.UtcNow.AddDays(-30));
+
+        await _worker.RunOnceAsync();
+
+        Assert.True(File.Exists(liveThumb), "an item-keyed thumbnail is retained while its row exists");
+        Assert.False(File.Exists(staleOrphan));
+        Assert.True(File.Exists(freshOrphan), "an unknown key younger than the min-age must survive (may be an active proxy thumbnail)");
+    }
+
+    /// When the adoption pass repoints a row from its provider URL to the cached file, the
+    /// proxy's copy of that URL must be deleted in the same pass — the URL being
+    /// overwritten is the only surviving key to the hash-named file.
+    [Fact]
+    public async Task RunOnce_AdoptionDeletesTheProxyCopyOfTheOldUrl()
+    {
+        var (liveId, _) = SeedRows();
+        Touch("movies", $"{liveId}_poster.jpg");
+
+        const string remote = "https://m.media-amazon.com/images/M/poster.jpg";
+        using (var scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            (await db.MediaItems.FirstAsync(m => m.Id == liveId)).PosterUrl = remote;
+            await db.SaveChangesAsync();
+        }
+
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(remote)));
+        var proxyDir = Path.Combine(_cacheRoot, "proxy");
+        Directory.CreateDirectory(proxyDir);
+        var proxyCopy = Path.Combine(proxyDir, hash + ".jpg");
+        File.WriteAllBytes(proxyCopy, new byte[] { 1 });
+
+        await _worker.RunOnceAsync();
+
+        using (var scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Equal($"/cache/images/movies/{liveId}_poster.jpg",
+                (await db.MediaItems.FirstAsync(m => m.Id == liveId)).PosterUrl);
+        }
+        Assert.False(File.Exists(proxyCopy), "the adopted row's proxy copy must be deleted, not orphaned");
     }
 
     [Fact]

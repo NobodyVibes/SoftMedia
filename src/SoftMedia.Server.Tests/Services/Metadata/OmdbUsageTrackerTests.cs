@@ -54,6 +54,42 @@ public class OmdbUsageTrackerTests
     }
 
     [Fact]
+    public async Task TryRecordRequestAsync_PersistsInBatches_NotPerRequest()
+    {
+        // SM-WI-025: the old per-request write pair serialized OMDb traffic through the
+        // settings table. In-memory stays exact; persistence lands on batch boundaries.
+        var (tracker, store) = CreateTracker();
+
+        for (var i = 0; i < 25; i++)
+        {
+            Assert.True(await tracker.TryRecordRequestAsync(1_000));
+        }
+
+        Assert.Equal(25, await tracker.GetUsedTodayAsync());
+        Assert.Equal("20", store["OMDbDailyCount"]); // last batch boundary, not 25
+    }
+
+    [Fact]
+    public async Task MarkExhaustedAsync_BlocksSameDay_ResetsAtUtcMidnight()
+    {
+        // SM-WI-011: an OMDb-reported quota/key refusal suspends calls for the rest of
+        // the UTC day, and the suspension lifts on rollover.
+        var now = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
+        var (tracker, store) = CreateTracker(() => now);
+
+        Assert.True(await tracker.TryRecordRequestAsync(1_000));
+        await tracker.MarkExhaustedAsync(1_000);
+
+        Assert.False(await tracker.TryRecordRequestAsync(1_000));
+        Assert.Equal(1_000, await tracker.GetUsedTodayAsync());
+        Assert.Equal("1000", store["OMDbDailyCount"]); // persisted so a restart stays suspended
+
+        now = now.AddDays(1); // UTC midnight passed
+        Assert.True(await tracker.TryRecordRequestAsync(1_000));
+        Assert.Equal(1, await tracker.GetUsedTodayAsync());
+    }
+
+    [Fact]
     public async Task TryRecordRequestAsync_AtLimit_RefusesWithoutCounting()
     {
         var (tracker, _) = CreateTracker();
@@ -83,6 +119,11 @@ public class OmdbUsageTrackerTests
         Assert.Equal(0, await tracker.GetUsedTodayAsync());
         Assert.True(await tracker.TryRecordRequestAsync(10));
         Assert.Equal(1, await tracker.GetUsedTodayAsync());
+
+        // SM-WI-025: persistence is batched (every 10th increment / limit boundary), so
+        // the rolled-over date lands in the store at the next boundary — drive to it.
+        // A crash before that is safe: restart loads the stale date and rolls over again.
+        for (var i = 0; i < 9; i++) Assert.True(await tracker.TryRecordRequestAsync(20));
         Assert.Equal("2026-07-21", store["OMDbCountDate"]);
     }
 

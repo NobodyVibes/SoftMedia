@@ -116,7 +116,12 @@ public class LibraryRepository : ILibraryRepository
             .Include(m => m.Album)
             .Include(m => m.MediaItemGenres)
                 .ThenInclude(mg => mg.Genre)
-            .Where(m => m.LibraryId == libraryId);
+            .Where(m => m.LibraryId == libraryId)
+            // DV-WI-015: duplicate copies of one title collapse to the computed primary —
+            // one card per movie/episode in grids and per-library search. Applied before
+            // count/sort/page so pagination math stays exact. Ungrouped rows (and every
+            // container type — their group id is always null) pass through untouched.
+            .OnePerVersionGroup(_context.MediaItems.AsNoTracking());
 
         // TV Library: Show only Series
         if (library.Type == LibraryType.TV)

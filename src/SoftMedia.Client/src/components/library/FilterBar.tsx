@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useDebounce } from '../../hooks/useDebounce';
 import { cn } from '../../lib/utils';
 import { GenreComboBox } from './GenreComboBox';
+import { naturalDirectionFor } from '../../lib/sortDirection';
 
 interface FilterBarProps {
     onSearch: (query: string) => void;
@@ -48,19 +49,6 @@ interface FilterBarProps {
     onSortDir?: (dir: 'asc' | 'desc') => void;
 }
 
-/**
- * The direction a sort key means when the user hasn't said otherwise: titles read A-Z,
- * everything else (dates, years, ratings, play counts) means newest/highest/most first.
- *
- * MUST mirror SortDirection.NaturalFor on the server. If the two disagree, the arrow
- * icon claims one direction while the query runs the other.
- */
-const ASCENDING_BY_NATURE = new Set(['title', 'artist']);
-
-export function naturalDirectionFor(sortKey: string): 'asc' | 'desc' {
-    return ASCENDING_BY_NATURE.has(sortKey) ? 'asc' : 'desc';
-}
-
 // Common styles for select elements
 const selectStyles = "bg-[#2a2a2a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/50 cursor-pointer";
 const optionStyles = "bg-[#2a2a2a] text-white";
@@ -102,21 +90,24 @@ export function FilterBar({
     const debouncedYear = useDebounce(year, 500);
 
     // Use refs to store callbacks to avoid dependency issues
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
+    // onSearch/onYear in the deps are honest and harmless: every caller passes a
+    // setState dispatcher (stable) or an inline lambda whose re-run only re-sends
+    // the same debounced value, which setState de-duplicates.
     useEffect(() => {
         onSearch(debouncedSearch);
-    }, [debouncedSearch]); // Intentionally omitting onSearch - it's a stable setState dispatcher
+    }, [debouncedSearch, onSearch]);
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
     useEffect(() => {
         onGenre(debouncedGenre);
     }, [debouncedGenre, onGenre]); // Include onGenre since we need it for GenreComboBox
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
     useEffect(() => {
         const y = parseInt(debouncedYear);
         onYear(isNaN(y) ? null : y);
-    }, [debouncedYear]); // Intentionally omitting onYear - it's a stable setState dispatcher
+    }, [debouncedYear, onYear]);
 
     // Determine which filters to show based on library type
     const isMusicLibrary = libraryType === 'Music';

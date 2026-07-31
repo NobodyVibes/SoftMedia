@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Dev utility (SM-WI-001): not part of the solution or CI build. Run manually:
+         dotnet run &#45;&#45;project tools/FixtureHarvester &#45;&#45; <db> <out.json> -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SoftMedia.Server\SoftMedia.Server.csproj" />
+  </ItemGroup>
+
+</Project>

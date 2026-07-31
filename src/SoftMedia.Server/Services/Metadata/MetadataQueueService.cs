@@ -50,13 +50,19 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
         _logger = logger;
         _registry = registry;
 
-        // Initialize Channels with appropriate capacities
-        // Music: High capacity because scans are large, but processing is slow.
-        // TV/Shared: Moderate capacity.
+        // SM-WI-070 — one channel per provider family, so library types never queue
+        // behind each other: Books previously shared the movie channel and their
+        // metadata sat FIFO behind the entire movie backlog (the maintainer-observed
+        // "only one type progresses at a time"). Shared-budget invariant (§2 of the
+        // remediation plan): channels control FAIRNESS only; request RATE stays gated
+        // by each provider's single process-wide limiter, so added channels can never
+        // multiply provider traffic (Game+Movie still share the one Wikidata limiter).
         _channels = new Dictionary<string, Channel<MetadataQueueItem>>
         {
             { "Music", Channel.CreateUnbounded<MetadataQueueItem>() },
             { "TV", Channel.CreateUnbounded<MetadataQueueItem>() },
+            { "Book", Channel.CreateUnbounded<MetadataQueueItem>() },
+            { "Game", Channel.CreateUnbounded<MetadataQueueItem>() },
             { "Shared", Channel.CreateUnbounded<MetadataQueueItem>() }
         };
 
@@ -142,12 +148,14 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
 
     private Channel<MetadataQueueItem> GetChannelForType(LibraryType type)
     {
-        // Dynamic Routing
+        // Dynamic Routing (SM-WI-070: Book/Game split out of Shared)
         return type switch
         {
             LibraryType.Music => _channels["Music"],
             LibraryType.TV => _channels["TV"],
-            _ => _channels["Shared"] // Movie, Book, Game, Photo
+            LibraryType.Book => _channels["Book"],
+            LibraryType.Game => _channels["Game"],
+            _ => _channels["Shared"] // Movie, Photo
         };
     }
 
@@ -160,14 +168,21 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
         // Start background cache update loop (with stoppingToken for graceful shutdown)
         tasks.Add(Task.Run(() => CacheUpdateLoopAsync(stoppingToken)));
 
-        // Launch processors for each channel
-        // Music: 2 Concurrent (Strict limit will bottleneck, but 2 allows overlap if provider is fast)
+        // Launch processors for each channel. Concurrency is sized to each provider
+        // family's §2 rate budget — more workers than the limiter admits just park on
+        // the lease queue.
+        // Music: 2 (MusicBrainz is a strict 1/s; 2 allows CAA overlap)
         tasks.Add(ProcessChannelAsync(_channels["Music"], "Music", 2, stoppingToken));
 
-        // TV: 4 Concurrent
+        // TV: 4 (TVMaze 18/10s)
         tasks.Add(ProcessChannelAsync(_channels["TV"], "TV", 4, stoppingToken));
 
-        // Shared: 10 Concurrent (Movies, Games, etc. can be retrieved very quickly from Wikidata/OMDb)
+        // SM-WI-070 — Book: 3 (OpenLibrary 3/s); Game: 3 (Wikidata 5/10s, budget SHARED
+        // with movies via the one Wikidata limiter — see §2 shared-budget invariant).
+        tasks.Add(ProcessChannelAsync(_channels["Book"], "Book", 3, stoppingToken));
+        tasks.Add(ProcessChannelAsync(_channels["Game"], "Game", 3, stoppingToken));
+
+        // Shared: 10 Concurrent (Movies, Photos)
         tasks.Add(ProcessChannelAsync(_channels["Shared"], "Shared", 10, stoppingToken));
 
         await Task.WhenAll(tasks);
@@ -232,7 +247,15 @@ public class MetadataQueueService : BackgroundService, IMetadataQueue
             var metadataBefore = mediaItem.MetadataHash;
 
             // Enrich
-            await aggregator.EnrichMediaItemAsync(mediaItem, item.Type, deferImageCaching: false, refreshImages: item.RefreshImages);
+            await aggregator.EnrichMediaItemAsync(mediaItem, item.Type, refreshImages: item.RefreshImages);
+
+            // SM-WI-042: a successful (hash-changing) enrichment ends the amnesty decay
+            // ladder — the item is healthy again and future exhaustion starts fresh.
+            if (mediaItem.AmnestyCount > 0 && mediaItem.MetadataHash != metadataBefore)
+            {
+                mediaItem.AmnestyCount = 0;
+                mediaItem.NextAmnestyUtc = null;
+            }
 
             // Save changes
             await context.SaveChangesAsync(ct);

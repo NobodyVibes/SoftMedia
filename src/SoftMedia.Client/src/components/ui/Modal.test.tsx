@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Modal } from './Modal';
 
 /**
@@ -47,11 +47,14 @@ describe('Modal', () => {
 
     it('honors initialFocusRef over the first focusable', () => {
         function Harness() {
-            const ref = { current: null as HTMLButtonElement | null };
+            // A real useRef passed straight to the ref attribute — React fills
+            // RefObjects natively, and a hand-rolled callback that mutated a
+            // render-scoped object violated render purity.
+            const ref = useRef<HTMLButtonElement | null>(null);
             return (
                 <Modal isOpen={true} onClose={() => {}} title="T" initialFocusRef={ref}>
                     <input placeholder="skipped" />
-                    <button type="button" ref={(el) => { ref.current = el; }}>Wanted</button>
+                    <button type="button" ref={ref}>Wanted</button>
                 </Modal>
             );
         }

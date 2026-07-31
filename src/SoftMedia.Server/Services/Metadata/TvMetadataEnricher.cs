@@ -84,9 +84,16 @@ public class TvMetadataEnricher : ITvMetadataEnricher
             // Overview
             if (!string.IsNullOrEmpty(epData.Summary)) child.Overview = epData.Summary;
 
-            // Still URL 
-            // Still URL -> BackdropUrl (promoted column, episode stills are backdrop-like images)
-            if (!string.IsNullOrEmpty(epData.StillUrl))
+            // Still URL -> BackdropUrl (promoted column, episode stills are backdrop-like images).
+            // Never overwrite an already-cached local still ("/cache/images/…" written by
+            // ImageDownloadQueueService) with the remote URL — that flipped every episode back
+            // onto the image proxy on each enrichment pass until the download queue caught up
+            // (same rule as MetadataAggregator's poster promotion and TvScanner's scan path).
+            // A missing cache FILE still heals: the extractor reads epData.StillUrl, not this
+            // column, so the download is queued regardless and re-caches under the same key.
+            var hasLocalStill = !string.IsNullOrEmpty(child.BackdropUrl)
+                && child.BackdropUrl.StartsWith("/cache/", StringComparison.OrdinalIgnoreCase);
+            if (!string.IsNullOrEmpty(epData.StillUrl) && !hasLocalStill)
             {
                 child.BackdropUrl = epData.StillUrl;
             }

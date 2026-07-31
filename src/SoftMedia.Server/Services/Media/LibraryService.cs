@@ -22,6 +22,7 @@ public class LibraryService : ILibraryService
     private readonly AppDbContext _context; // Direct access for cache management
     private readonly IUserLibraryAccessProvider _libraryAccess;
     private readonly IUserContentRatingProvider _ratings;
+    private readonly ILibraryCleanupService _libraryCleanup;
     private readonly ILogger<LibraryService> _logger;
 
     public LibraryService(
@@ -33,6 +34,7 @@ public class LibraryService : ILibraryService
         AppDbContext context,
         IUserLibraryAccessProvider libraryAccess,
         IUserContentRatingProvider ratings,
+        ILibraryCleanupService libraryCleanup,
         ILogger<LibraryService> logger)
     {
         _libraryRepository = libraryRepository;
@@ -43,6 +45,7 @@ public class LibraryService : ILibraryService
         _context = context;
         _libraryAccess = libraryAccess;
         _ratings = ratings;
+        _libraryCleanup = libraryCleanup;
         _logger = logger;
     }
 
@@ -256,29 +259,31 @@ public class LibraryService : ILibraryService
 
         _libraryWatcher.RemoveWatchersForLibrary(id);
 
-        var mediaToCleanup = await _mediaRepository.GetMediaIdsAndTypesByLibraryAsync(id);
-        _imageCacheService.DeleteImagesForLibrary(mediaToCleanup.Select(m => (m.Id, m.Type)));
-
-        // Clean up cast images for TV libraries using the relational MediaItemCasts table
-        if (library.Type == LibraryType.TV)
-        {
-            var castPersonIds = await ExtractCastPersonIdsForLibraryAsync(id);
-            if (castPersonIds.Count > 0)
-            {
-                _imageCacheService.DeleteCastImagesForPersonIds(castPersonIds);
-                _logger.LogInformation("Deleted {Count} cast images for library {Name}", castPersonIds.Count, library.Name);
-            }
-        }
+        // Derived on-disk artifacts (artwork, cast headshots, trickplay, thumbnails,
+        // cached subtitle extractions) must be cleaned BEFORE the repository delete —
+        // the EF cascade is about to remove the rows the cleanup queries depend on.
+        var mediaToCleanup = (await _mediaRepository.GetMediaIdsAndTypesByLibraryAsync(id)).ToList();
+        await _libraryCleanup.DeleteArtifactsForLibraryAsync(id, mediaToCleanup);
 
         await _libraryRepository.DeleteAsync(library);
 
-        // Invalidate Hero cache to remove any items from the deleted library
+        // Invalidate materialised DTO caches that may still hold this library's items:
+        // the hero row and the library's own recent-items row (the latter was previously
+        // left behind as an orphan).
+        var staleRecents = await _context.LibraryRecentCaches
+            .Where(c => c.LibraryId == id)
+            .ToListAsync();
+        _context.LibraryRecentCaches.RemoveRange(staleRecents);
+
         var heroCache = await _context.HeroCaches.FindAsync(1);
         if (heroCache != null)
         {
             _context.HeroCaches.Remove(heroCache);
+        }
+        if (staleRecents.Count > 0 || heroCache != null)
+        {
             await _context.SaveChangesAsync();
-            _logger.LogDebug("Invalidated hero cache after deleting library {LibraryName}", library.Name);
+            _logger.LogDebug("Invalidated hero/recent caches after deleting library {LibraryName}", library.Name);
         }
 
         return true;
@@ -300,24 +305,6 @@ public class LibraryService : ILibraryService
         await _libraryRepository.UpdateRangeAsync(libraries);
     }
 
-    /// <summary>
-    /// Extracts all cast person IDs from the relational MediaItemCasts table for a library.
-    /// Used during library deletion to clean up cast image files.
-    /// </summary>
-    private async Task<List<int>> ExtractCastPersonIdsForLibraryAsync(Guid libraryId)
-    {
-        // EF fills `MediaItem` via the FK on MediaItemCast; nullable-flow
-        // analysis doesn't know that, hence the `!`.
-        var personIds = await _context.MediaItemCasts
-            .AsNoTracking()
-            .Where(c => c.MediaItem!.LibraryId == libraryId)
-            .Select(c => c.PersonId)
-            .Distinct()
-            .ToListAsync();
-
-        return personIds;
-    }
-
     public async Task<IEnumerable<string>> GetLibraryGenresAsync(Guid libraryId)
     {
         return await _libraryRepository.GetLibraryGenresAsync(libraryId);
@@ -328,6 +315,10 @@ public class LibraryService : ILibraryService
         var result = await _libraryRepository.GetLibraryItemsAsync(libraryId, filter);
 
         var dtos = result.Items.Select(x => MapToDto(x.Media, x.Interaction)).ToList();
+
+        // DV-WI-015: the repository already collapsed duplicate copies to the primary;
+        // one batched query stamps each collapsed card's copy count for the UI badge.
+        await StampVersionCountsAsync(dtos);
 
         return new PagedResult<MediaItemDto>
         {
@@ -340,8 +331,51 @@ public class LibraryService : ILibraryService
 
     public async Task<IEnumerable<MediaItemDto>> GetSeriesEpisodesAsync(Guid seriesId, Guid userId)
     {
-        var items = await _mediaRepository.GetSeriesEpisodesWithInteractionsAsync(seriesId, userId);
-        return items.Select(x => MapToDto(x.Media, x.Interaction)).ToList();
+        var items = (await _mediaRepository.GetSeriesEpisodesWithInteractionsAsync(seriesId, userId)).ToList();
+
+        // DV-WI-015: one row per EPISODE. Duplicate copies collapse to the computed
+        // primary, with group-level state: watched when ANY copy is watched, resume from
+        // the most recently played copy. The rows arrive ordered (season, episode, id);
+        // the group is emitted at its first member's position, so ordering is preserved.
+        var byGroup = items
+            .Where(x => x.Media.VersionGroupId != null)
+            .GroupBy(x => x.Media.VersionGroupId!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var dtos = new List<MediaItemDto>(items.Count);
+        var emitted = new HashSet<Guid>();
+        foreach (var x in items)
+        {
+            var groupId = x.Media.VersionGroupId;
+            if (groupId == null || byGroup[groupId.Value].Count == 1)
+            {
+                dtos.Add(MapToDto(x.Media, x.Interaction));
+                continue;
+            }
+            if (!emitted.Add(groupId.Value)) continue;
+
+            var members = byGroup[groupId.Value];
+            var primary = VersionPrimaryRule.OrderPrimaryFirst(members.Select(m => m.Media)).First();
+            var interaction = VersionPrimaryRule.MergeGroupInteraction(
+                members.Where(m => m.Interaction != null).Select(m => m.Interaction!).ToList());
+            var dto = MapToDto(primary, interaction);
+            dto.VersionCount = members.Count;
+            dtos.Add(dto);
+        }
+        return dtos;
+    }
+
+    /// <summary>DV-WI-015 — batch-stamp VersionCount on a page of collapsed DTOs.</summary>
+    private async Task StampVersionCountsAsync(List<MediaItemDto> dtos)
+    {
+        var groupIds = dtos.Where(d => d.VersionGroupId != null).Select(d => d.VersionGroupId!.Value).ToList();
+        if (groupIds.Count == 0) return;
+        var counts = await _mediaRepository.GetVersionCountsAsync(groupIds);
+        foreach (var dto in dtos)
+        {
+            if (dto.VersionGroupId != null && counts.TryGetValue(dto.VersionGroupId.Value, out var count))
+                dto.VersionCount = count;
+        }
     }
 
     public async Task<IEnumerable<MediaItemDto>> GetComicIssuesAsync(Guid seriesId, Guid userId)

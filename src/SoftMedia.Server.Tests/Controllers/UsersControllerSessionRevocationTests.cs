@@ -45,7 +45,8 @@ public class UsersControllerSessionRevocationTests : IDisposable
         hasher.Setup(h => h.HashPassword(It.IsAny<string>())).Returns("hashed");
         var prefs = new Mock<IUserPreferencesService>();
 
-        var controller = new UsersController(_db, hasher.Object, prefs.Object, _refresh.Object, _devices.Object);
+        var controller = new UsersController(_db, hasher.Object, prefs.Object, _refresh.Object, _devices.Object,
+            new UserEligibilityCache());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Activity } from 'lucide-react';
 import { useVisualizerStore, type VisualizerType } from '../../../store/visualizerStore';
@@ -29,7 +29,9 @@ export const VisualizerSelector: React.FC<VisualizerSelectorProps> = ({
     const { activeVisualizer, setActiveVisualizer, isEnabled, setEnabled } = useVisualizerStore();
     const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
 
-    const updatePosition = () => {
+    // useCallback so the reposition effect can depend on it honestly instead of
+    // omitting it from the dep list.
+    const updatePosition = useCallback(() => {
         if (buttonRef.current) {
             const rect = buttonRef.current.getBoundingClientRect();
             // Align dropdown center with button center if possible, or just left align
@@ -40,7 +42,7 @@ export const VisualizerSelector: React.FC<VisualizerSelectorProps> = ({
                 width: rect.width
             });
         }
-    };
+    }, [direction]);
 
     const handleToggle = () => {
         updatePosition();
@@ -67,7 +69,7 @@ export const VisualizerSelector: React.FC<VisualizerSelectorProps> = ({
             window.removeEventListener('resize', updatePosition);
             window.removeEventListener('scroll', updatePosition, true);
         };
-    }, [isOpen]);
+    }, [isOpen, updatePosition]);
 
     // Close dropdown when clicking outside
     useEffect(() => {

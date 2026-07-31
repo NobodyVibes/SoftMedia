@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useAuthStore } from '../store/authStore';
-import { attachAuthToApiUrl, resolveCardPosterUrl } from './mediaImageUrl';
+import { attachAuthToApiUrl, resolveArtworkUrl, resolveCardPosterUrl } from './mediaImageUrl';
 
 /**
  * Regression — the previous implementation unconditionally appended
@@ -42,12 +42,24 @@ describe('attachAuthToApiUrl', () => {
         expect(thrice).toBe(once);
     });
 
-    it('passes non-API URLs through unchanged', () => {
+    it('passes external and non-SoftMedia URLs through unchanged', () => {
         useAuthStore.setState({ mediaToken: 'tok-4' });
         expect(attachAuthToApiUrl('https://example.com/poster.jpg'))
             .toBe('https://example.com/poster.jpg');
-        expect(attachAuthToApiUrl('/cache/images/something.jpg'))
-            .toBe('/cache/images/something.jpg');
+        expect(attachAuthToApiUrl('/placeholder-music.png'))
+            .toBe('/placeholder-music.png');
+    });
+
+    // AA-WI-001/004 — /cache/images statics are token-gated; the helper now
+    // tokenizes them exactly like API routes, preserving existing query strings
+    // (playlist covers carry a ?v= cache stamp).
+    it('tokenizes /cache/images statics and preserves their query string', () => {
+        useAuthStore.setState({ mediaToken: 'tok-cache' });
+        expect(attachAuthToApiUrl('/cache/images/movies/x_poster.jpg'))
+            .toBe('/cache/images/movies/x_poster.jpg?access_token=tok-cache');
+        const cover = attachAuthToApiUrl('/cache/images/playlists/p.jpg?v=123');
+        expect(cover).toContain('v=123');
+        expect(cover).toContain('access_token=tok-cache');
     });
 
     it('returns URL unchanged when no token present', () => {
@@ -103,12 +115,31 @@ describe('resolveCardPosterUrl (integration through the full chain)', () => {
      * turning `/cache/images/movies/x_poster.jpg` into
      * `/api/v1/cache/images/movies/x_poster.jpg` → 404 → broken-image icon.
      * Scanned movies store exactly this shape in MediaItems.PosterUrl, so every
-     * card in those two views was broken.
+     * card in those two views was broken. The invariant since AA-WI-004: the
+     * helper may APPEND a token but must never rewrite the PATH.
      */
-    it('leaves a locally cached /cache poster path unprefixed', () => {
+    it('tokenizes a locally cached /cache poster path without rewriting it', () => {
         const cached = '/cache/images/movies/0efd0034-4876-4612-aa8b-f82f426b15ae_poster.jpg';
         const out = resolveCardPosterUrl(cached);
-        expect(out).toBe(cached);
+        expect(out).toContain(cached);
+        expect(out).toContain('access_token=tok-card');
         expect(out).not.toContain('/api/v1/cache');
+    });
+});
+
+describe('resolveArtworkUrl (shared player/queue artwork resolver)', () => {
+    beforeEach(() => {
+        useAuthStore.setState({ mediaToken: 'tok-art' });
+    });
+
+    it('falls back to the placeholder for missing paths', () => {
+        expect(resolveArtworkUrl(undefined)).toBe('/placeholder-music.png');
+        expect(resolveArtworkUrl(null)).toBe('/placeholder-music.png');
+    });
+
+    it('tokenizes API and /cache/images paths, passes external URLs through', () => {
+        expect(resolveArtworkUrl('/api/v1/music/x/cover')).toContain('access_token=tok-art');
+        expect(resolveArtworkUrl('/cache/images/music/x_cover.jpg')).toContain('access_token=tok-art');
+        expect(resolveArtworkUrl('https://cdn.example/x.jpg')).toBe('https://cdn.example/x.jpg');
     });
 });

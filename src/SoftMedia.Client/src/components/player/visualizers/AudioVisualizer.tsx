@@ -84,8 +84,14 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
     // Animation loop. The next frame is queued FIRST so a renderer that throws
     // (an unsupported colour string, a zero-sized canvas) drops one frame instead
     // of killing the loop — a dead loop looks exactly like a frozen visualizer.
+    //
+    // The loop chains through a ref rather than referencing `animate` inside its
+    // own definition: self-reference before declaration defeats memoization, and
+    // the ref means each frame runs the LATEST loop body even if a dependency
+    // (visualizer choice, buffers) changed since the frame was queued.
+    const animateRef = useRef<() => void>(() => {});
     const animate = useCallback(() => {
-        animationFrameRef.current = requestAnimationFrame(animate);
+        animationFrameRef.current = requestAnimationFrame(() => animateRef.current());
 
         const canvas = canvasRef.current;
         if (!canvas || !isEnabled || !isReady) return;
@@ -132,6 +138,10 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
             console.error('[Visualizer] Render failed:', error);
         }
     }, [frequencyData, timeDomainData, isEnabled, isReady, activeVisualizer, updateData]);
+
+    useEffect(() => {
+        animateRef.current = animate;
+    }, [animate]);
 
     // Start/stop animation based on enabled state
     useEffect(() => {

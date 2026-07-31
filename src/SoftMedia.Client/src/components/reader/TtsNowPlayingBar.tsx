@@ -78,10 +78,9 @@ export default function TtsNowPlayingBar({
         return () => window.removeEventListener('mousedown', onDown);
     }, [timerMenuOpen]);
 
-    // Close the timer popover if the bar disappears.
-    useEffect(() => {
-        if (!visible && timerMenuOpen) setTimerMenuOpen(false);
-    }, [visible, timerMenuOpen]);
+    // Close the timer popover if the bar disappears — during render, so the
+    // popover state is already clean if the bar reappears in the same pass.
+    if (!visible && timerMenuOpen) setTimerMenuOpen(false);
 
     if (!visible) return null;
 

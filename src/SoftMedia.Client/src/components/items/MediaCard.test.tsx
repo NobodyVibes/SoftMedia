@@ -52,11 +52,13 @@ describe('MediaCard', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
-        (audioStore.useAudioStore as any).mockReturnValue({
+        // `as never` narrows the partial store stub past the full zustand store
+        // type — the component only reads these three actions in this test.
+        vi.mocked(audioStore.useAudioStore).mockReturnValue({
             playTrack: mockPlayTrack,
             addToQueue: mockAddToQueue,
             playPlaylist: mockPlayPlaylist,
-        });
+        } as never);
     });
 
     it('renders movie card correctly', () => {

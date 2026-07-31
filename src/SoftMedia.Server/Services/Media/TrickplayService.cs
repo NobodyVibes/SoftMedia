@@ -35,6 +35,22 @@ public interface ITrickplayService
     /// Absolute path to a named sheet file inside the item's trickplay dir, with a
     /// path-traversal guard. Null if the name escapes the dir or the file is absent.
     string? GetSheetPath(Guid itemId, string sheetFile);
+
+    /// <summary>
+    /// Delete the item's trickplay directory (manifest + sheets). True if anything was
+    /// removed. Called when the item (or its whole library) is deleted — before this,
+    /// trickplay had no deletion path at all and sheets leaked forever.
+    /// </summary>
+    bool DeleteForItem(Guid itemId);
+
+    /// <summary>
+    /// Delete trickplay directories whose item guid matches no entry in
+    /// <paramref name="validIds"/>. Row-existence contract: pass the ids of ALL
+    /// MediaItems rows including soft-deleted (IsMissing) ones, whose sheets are
+    /// retained so they heal when the drive returns. Also removes ".tmp" staging
+    /// directories older than a day (crashed generations). Returns directories deleted.
+    /// </summary>
+    int CleanupOrphans(HashSet<Guid> validIds);
 }
 
 public class TrickplayService : ITrickplayService
@@ -92,6 +108,71 @@ public class TrickplayService : ITrickplayService
         var candidate = Path.GetFullPath(Path.Combine(dir, sheetFile));
         if (!candidate.StartsWith(dir, StringComparison.Ordinal)) return null;
         return File.Exists(candidate) ? candidate : null;
+    }
+
+    public bool DeleteForItem(Guid itemId)
+    {
+        var dir = ItemDir(itemId);
+        try
+        {
+            if (!Directory.Exists(dir)) return false;
+            Directory.Delete(dir, recursive: true);
+            _logger.LogDebug("Deleted trickplay for {ItemId}", itemId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete trickplay directory for {ItemId}", itemId);
+            return false;
+        }
+    }
+
+    public int CleanupOrphans(HashSet<Guid> validIds)
+    {
+        var deleted = 0;
+        try
+        {
+            if (!Directory.Exists(_root)) return 0;
+
+            foreach (var dir in Directory.GetDirectories(_root))
+            {
+                var name = Path.GetFileName(dir);
+                try
+                {
+                    if (Guid.TryParseExact(name, "N", out var itemId))
+                    {
+                        if (validIds.Contains(itemId)) continue;
+                        Directory.Delete(dir, recursive: true);
+                        deleted++;
+                        _logger.LogDebug("Deleted orphaned trickplay: {Path}", dir);
+                    }
+                    else if (name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
+                             && Directory.GetLastWriteTimeUtc(dir) < DateTime.UtcNow.AddDays(-1))
+                    {
+                        // Staging dir from a crashed generation; a LIVE generation's tmp dir
+                        // is hours old at most, so the day-old guard can't race it.
+                        Directory.Delete(dir, recursive: true);
+                        deleted++;
+                    }
+                    // Anything else unrecognised is left alone — this directory only ever
+                    // holds our own layout, so err on the side of not deleting.
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to process trickplay directory during cleanup: {Path}", dir);
+                }
+            }
+
+            if (deleted > 0)
+            {
+                _logger.LogInformation("Trickplay cleanup removed {Count} orphaned director(ies)", deleted);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Trickplay orphan cleanup failed");
+        }
+        return deleted;
     }
 
     /// SR-WI-028: manifest sheet order must be NUMERIC on the index in "sheet-N.jpg" —

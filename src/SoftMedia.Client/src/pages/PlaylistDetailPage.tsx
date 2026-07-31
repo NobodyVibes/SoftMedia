@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -87,12 +87,16 @@ export default function PlaylistDetailPage() {
         enabled: !!id,
     });
 
-    // Sync local-order with server data when the query updates.
-    useEffect(() => {
-        if (playlist) {
-            setLocalOrder(playlist.items);
-        }
-    }, [playlist]);
+    // Sync local-order with server data when the query updates. Render-time
+    // adjustment rather than an effect: the resync lands in the SAME render pass
+    // instead of one frame later, so there is no flicker frame where a reorder
+    // ack briefly shows stale order. (react.dev: "adjusting state when props
+    // change".)
+    const [syncedItems, setSyncedItems] = useState<PlaylistEntry[] | null>(null);
+    if (playlist && playlist.items !== syncedItems) {
+        setSyncedItems(playlist.items);
+        setLocalOrder(playlist.items);
+    }
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),

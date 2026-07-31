@@ -27,7 +27,10 @@ export default function LoadingImage({
 }: LoadingImageProps) {
     const { ref, inView } = useInView({ triggerOnce: true, rootMargin: '200px' });
     const [status, setStatus] = useState<'idle' | 'loaded' | 'error'>('idle');
-    const offViewportSignaledRef = useRef(false);
+    // Records WHICH (src, token) the off-viewport auto-signal fired for. Keyed
+    // rather than boolean so a source/token change invalidates it implicitly —
+    // a boolean needed a reset during render, which writes a ref mid-render.
+    const offViewportSignaledForRef = useRef<string | null>(null);
 
     // Subscribe to the MEDIA token — the one `attachAuthToApiUrl` actually embeds
     // in the URL below. Without this subscription a rotation does NOT re-render
@@ -45,11 +48,16 @@ export default function LoadingImage({
 
     // Reset the failure state when src or the media token changes — otherwise an
     // image that 401'd with a stale (or absent) token stays in `status === 'error'`
-    // forever and never retries once a valid token arrives.
-    useEffect(() => {
+    // forever and never retries once a valid token arrives. During render
+    // (react.dev: "adjusting state when props change") so the retry starts in the
+    // same pass as the token rotation, not a frame later.
+    const [lastKey, setLastKey] = useState({ src, mediaToken });
+    if (src !== lastKey.src || mediaToken !== lastKey.mediaToken) {
+        setLastKey({ src, mediaToken });
         setStatus('idle');
-        offViewportSignaledRef.current = false;
-    }, [src, mediaToken]);
+    }
+
+    const signalKey = `${src ?? ''}|${mediaToken ?? ''}`;
 
     // Off-viewport auto-signal: if this slot never enters the viewport within
     // a brief window, tell the cascade coordinator to advance past it. The
@@ -57,15 +65,15 @@ export default function LoadingImage({
     // This keeps the cascade responsive while guaranteeing in-viewport items
     // reveal in strict left-to-right order.
     useEffect(() => {
-        if (!onLoad || inView || offViewportSignaledRef.current) return;
+        if (!onLoad || inView || offViewportSignaledForRef.current === signalKey) return;
         const t = setTimeout(() => {
-            if (!offViewportSignaledRef.current) {
-                offViewportSignaledRef.current = true;
+            if (offViewportSignaledForRef.current !== signalKey) {
+                offViewportSignaledForRef.current = signalKey;
                 onLoad();
             }
         }, 120);
         return () => clearTimeout(t);
-    }, [inView, onLoad]);
+    }, [inView, onLoad, signalKey]);
 
     if (!src || status === 'error') {
         return fallback ? <>{fallback}</> : null;
@@ -95,15 +103,15 @@ export default function LoadingImage({
                     onLoad={() => {
                         setStatus('loaded');
                         // Only call cascade onLoad if we didn't already signal off-viewport
-                        if (!offViewportSignaledRef.current) {
-                            offViewportSignaledRef.current = true;
+                        if (offViewportSignaledForRef.current !== signalKey) {
+                            offViewportSignaledForRef.current = signalKey;
                             onLoad?.();
                         }
                     }}
                     onError={() => {
                         setStatus('error');
-                        if (!offViewportSignaledRef.current) {
-                            offViewportSignaledRef.current = true;
+                        if (offViewportSignaledForRef.current !== signalKey) {
+                            offViewportSignaledForRef.current = signalKey;
                             onError?.();
                         }
                     }}

@@ -212,6 +212,7 @@ public class LibraryServicePathCollisionTests : IDisposable
         var svc = new LibraryService(
             libraryRepo.Object, mediaRepo.Object, scanQueue.Object, imageCache.Object,
             watcher, db, accessProvider.Object, ratings.Object,
+            new Mock<ILibraryCleanupService>().Object,
             NullLogger<LibraryService>.Instance);
         return (svc, db);
     }

@@ -35,13 +35,19 @@ export function SkipSegmentPill({ label, visible, onSkip, ariaLabel }: SkipSegme
     // reset and show again.
     const [showing, setShowing] = useState(visible);
 
-    useEffect(() => {
-        if (!visible) {
-            setShowing(false);
-            return;
-        }
+    // Track the (visible, label) signal and resync `showing` during render —
+    // a transition from intro→credits (label change) re-shows and re-arms just
+    // as a fresh visible=true does. Only the auto-fade timer stays in the
+    // effect, because a timeout is genuinely external work; its callback
+    // setting state is the documented pattern.
+    const [lastSignal, setLastSignal] = useState({ visible, label });
+    if (visible !== lastSignal.visible || label !== lastSignal.label) {
+        setLastSignal({ visible, label });
+        setShowing(visible);
+    }
 
-        setShowing(true);
+    useEffect(() => {
+        if (!visible) return;
         const t = setTimeout(() => setShowing(false), 8000);
         return () => clearTimeout(t);
     }, [visible, label]); // include label so a transition from intro→credits resets the timer

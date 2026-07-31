@@ -147,4 +147,94 @@ public class RecommendationServiceNextEpisodeTests : IDisposable
         Assert.Equal(_episodes[1].Id, next.EpisodeId);
         Assert.Equal(250, next.ResumePosition);
     }
+
+    // ---- DV-WI-001/002: duplicate files of the same episode (quality/language variants) ----
+
+    /// <summary>Adds a second (or third…) file for an existing episode number.</summary>
+    private MediaItem AddEpisode(int season, int episode, string title, Guid? id = null)
+    {
+        var ep = new MediaItem
+        {
+            Id = id ?? Guid.NewGuid(), LibraryId = _episodes[0].LibraryId, Type = MediaType.Episode,
+            Title = title, SeriesId = _seriesId, SeasonNumber = season, EpisodeNumber = episode, Duration = 1000,
+        };
+        using var ctx = new AppDbContext(_options);
+        ctx.MediaItems.Add(ep);
+        ctx.SaveChanges();
+        _episodes.Add(ep);
+        return ep;
+    }
+
+    [Fact]
+    public async Task Autoplay_from_either_copy_of_a_duplicated_episode_advances_to_the_next_episode()
+    {
+        // DV-WI-001: two files of S01E02 sit adjacent in the ordering. "Next" from either
+        // copy must be E3 — never the sibling copy of the episode the user just finished.
+        var dupE2 = AddEpisode(1, 2, "E2 (4K)");
+
+        var fromOriginal = await Build().GetNextEpisodeFromCurrentAsync(_userId, _episodes[1].Id);
+        var fromDuplicate = await Build().GetNextEpisodeFromCurrentAsync(_userId, dupE2.Id);
+
+        Assert.Equal(_episodes[2].Id, fromOriginal!.EpisodeId);
+        Assert.Equal(_episodes[2].Id, fromDuplicate!.EpisodeId);
+    }
+
+    [Fact]
+    public async Task Next_from_the_final_episode_reports_series_end_even_with_a_trailing_duplicate()
+    {
+        // A duplicate of the FINAL episode must not masquerade as a further episode.
+        AddEpisode(1, 3, "E3 (4K)");
+
+        var next = await Build().GetNextEpisodeFromCurrentAsync(_userId, _episodes[2].Id);
+
+        Assert.Equal(Guid.Empty, next!.EpisodeId);
+        Assert.True(next.IsSeriesComplete);
+    }
+
+    [Fact]
+    public async Task Previous_navigation_skips_duplicates_and_lands_on_the_groups_first_copy()
+    {
+        // DV-WI-001: backward navigation from E3 must land on the SAME copy of E2 that
+        // forward navigation would pick — the first row of the duplicate group in
+        // (Season, Episode, Id) order. Fixed GUIDs pin that order deterministically.
+        var first = AddEpisode(1, 2, "E2 (first copy)", Guid.Parse("00000000-0000-0000-0000-000000000001"));
+        AddEpisode(1, 2, "E2 (second copy)", Guid.Parse("ffffffff-ffff-ffff-ffff-fffffffffffe"));
+
+        var prev = await Build().GetPreviousEpisodeFromCurrentAsync(_userId, _episodes[2].Id);
+
+        Assert.Equal(2, prev!.EpisodeNumber);
+        Assert.Equal(first.Id, prev.EpisodeId);
+    }
+
+    [Fact]
+    public async Task Series_with_a_duplicated_episode_completes_when_any_one_copy_is_watched()
+    {
+        // DV-WI-002: the never-played duplicate of E2 must not hold the series in
+        // Continue Watching forever once E2 was watched via the other file.
+        AddEpisode(1, 2, "E2 (4K)");
+        var t = DateTime.UtcNow;
+        AddInteraction(_episodes[0], t.AddDays(-2), watched: true);
+        AddInteraction(_episodes[1], t.AddDays(-1), watched: true); // ONE copy of E2
+        AddInteraction(_episodes[2], t, watched: true);
+
+        var next = await Build().GetNextEpisodeAsync(_userId, _seriesId);
+
+        Assert.True(next!.IsSeriesComplete);
+    }
+
+    [Fact]
+    public async Task Duplicate_copy_of_a_watched_episode_is_never_offered_as_next()
+    {
+        // DV-WI-002: after finishing E2 (via one copy), the resolver must offer E3 —
+        // not the untouched duplicate file of E2.
+        AddEpisode(1, 2, "E2 (4K)");
+        var t = DateTime.UtcNow;
+        AddInteraction(_episodes[0], t.AddDays(-1), watched: true);
+        AddInteraction(_episodes[1], t, watched: true);
+
+        var next = await Build().GetNextEpisodeAsync(_userId, _seriesId);
+
+        Assert.False(next!.IsSeriesComplete);
+        Assert.Equal(_episodes[2].Id, next.EpisodeId);
+    }
 }

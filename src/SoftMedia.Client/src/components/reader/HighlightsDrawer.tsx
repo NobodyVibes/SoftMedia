@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Download, Trash2, X } from 'lucide-react';
 import type { Highlight, HighlightColour } from '../../services/bookService';
+// Palette + swatch lookup live in highlightColours.ts — shared with BookReader
+// and PdfHighlightOverlay without defeating Fast Refresh on this component file.
+import { COLOUR_PALETTE, swatchFor } from './highlightColours';
 
 interface HighlightsDrawerProps {
     items: Highlight[];
@@ -19,23 +22,6 @@ interface HighlightsDrawerProps {
      * the drawer closes so re-opening later doesn't re-trigger the edit.
      */
     autoEditNoteId?: string | null;
-}
-
-const COLOUR_PALETTE: { value: HighlightColour; label: string; swatch: string }[] = [
-    { value: 'yellow', label: 'Yellow', swatch: '#fde68a' },
-    { value: 'green', label: 'Green', swatch: '#a7f3d0' },
-    { value: 'blue', label: 'Blue', swatch: '#bfdbfe' },
-    { value: 'pink', label: 'Pink', swatch: '#fbcfe8' },
-    { value: 'orange', label: 'Orange', swatch: '#fed7aa' },
-];
-
-/**
- * Looks up the swatch colour for a stored highlight value. Unknown values
- * (e.g., a user migrating from a future palette) fall back to yellow so the
- * list still renders.
- */
-export function swatchFor(colour: string): string {
-    return COLOUR_PALETTE.find((p) => p.value === colour)?.swatch ?? '#fde68a';
 }
 
 /**
@@ -188,12 +174,18 @@ function HighlightRow({ highlight, onJump, onDelete, onChangeColour, onChangeNot
     const [noteDraft, setNoteDraft] = useState(highlight.note ?? '');
     const rootRef = useRef<HTMLLIElement | null>(null);
 
-    // Auto-edit signalled from parent: scroll into view and enter edit mode
-    // once. The effect runs when autoEditNote flips to true — on subsequent
-    // changes the user's own toggles drive `editingNote`.
+    // Auto-edit signalled from parent: enter edit mode when the flag flips to
+    // true — adjusted during render so the editor is open on the very pass the
+    // signal arrives; on subsequent changes the user's own toggles drive
+    // `editingNote`. Only the scroll stays in an effect (it touches the DOM).
+    const [lastAutoEdit, setLastAutoEdit] = useState(!!autoEditNote);
+    if (!!autoEditNote !== lastAutoEdit) {
+        setLastAutoEdit(!!autoEditNote);
+        if (autoEditNote) setEditingNote(true);
+    }
+
     useEffect(() => {
         if (!autoEditNote) return;
-        setEditingNote(true);
         rootRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }, [autoEditNote]);
 
@@ -291,5 +283,3 @@ function HighlightRow({ highlight, onJump, onDelete, onChangeColour, onChangeNot
         </li>
     );
 }
-
-export { COLOUR_PALETTE };

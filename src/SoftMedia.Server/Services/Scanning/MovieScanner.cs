@@ -36,6 +36,37 @@ public class MovieScanner : BaseMediaScanner
     }
 
     /// <summary>
+    /// DV-WI-010: after the parallel walk completes, one library-wide grouping pass
+    /// converges duplicate copies that were first seen by DIFFERENT workers in this scan
+    /// (their contexts couldn't see each other's unsaved rows). Failure-isolated — the
+    /// boot backfill heals anything this pass misses.
+    /// </summary>
+    public override async Task ScanLibraryAsync(
+        Library library,
+        IProgress<ScanProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        await base.ScanLibraryAsync(library, progress, cancellationToken);
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var changed = await VersionGroupAssigner.GroupMoviesAsync(db, library.Id, cancellationToken);
+            if (changed > 0)
+            {
+                await db.SaveChangesAsync(cancellationToken);
+                _logger.LogInformation("[MovieScanner] Version-group pass grouped {Count} movie row(s).", changed);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[MovieScanner] Version-group pass failed; the boot backfill will heal it.");
+        }
+    }
+
+    /// <summary>
     /// Process a single video file as a movie.
     /// </summary>
     protected override async Task<ScanOperationResult> ProcessFileAsync(
@@ -65,11 +96,24 @@ public class MovieScanner : BaseMediaScanner
                 && (existing.Size != file.Size || existing.DateModified != file.LastWriteUtc);
             var movie = existing ?? new MediaItem { LibraryId = library.Id };
 
-            movie.Title = title;
-            movie.SortTitle = MediaStringHelpers.GetSortTitle(title);
+            // SM-WI-010: identity fields (Title/SortTitle/Year) come from the filename
+            // only when the row is NEW. Existing rows are matched by Path, so the parse
+            // cannot differ from creation time — re-stamping could only revert provider
+            // enrichment or admin edits (it wiped enriched Years for yearless filenames
+            // and undid Fix-Match corrections despite MetadataLocked). Year is fill-only
+            // for unlocked existing rows: a parse may fill a hole, never overwrite.
+            if (isNew)
+            {
+                movie.Title = title;
+                movie.SortTitle = MediaStringHelpers.GetSortTitle(title);
+                movie.Year = year;
+            }
+            else if (!movie.MetadataLocked)
+            {
+                movie.Year ??= year;
+            }
             movie.Path = filePath;
             movie.Type = MediaType.Movie;
-            movie.Year = year;
             movie.Size = file.Size;
             movie.DateModified = file.LastWriteUtc;
 
@@ -85,7 +129,8 @@ public class MovieScanner : BaseMediaScanner
             // art returns. Enrichment still happens for local-art items (the policy treats a
             // local-only poster as incomplete until one pass stamps MetadataHash).
             var artwork = await _localArtwork.ApplyLocalArtworkAsync(
-                movie, Path.GetDirectoryName(filePath) ?? string.Empty, Path.GetFileNameWithoutExtension(filePath));
+                movie, Path.GetDirectoryName(filePath) ?? string.Empty, Path.GetFileNameWithoutExtension(filePath),
+                GetCachedDirectoryListing); // SM-WI-051: one listing per directory per scan
 
             if (isNew)
             {
@@ -94,6 +139,11 @@ public class MovieScanner : BaseMediaScanner
                 // MediaItem constructor generates Id? Check Source. 
                 // If not, we should generate it.
                 if (movie.Id == Guid.Empty) movie.Id = Guid.NewGuid();
+
+                // DV-WI-010: group with an already-persisted same-identity copy (covers
+                // watcher imports and incremental scans; copies first seen in the SAME
+                // parallel scan converge in the post-scan GroupMoviesAsync pass instead).
+                await VersionGroupAssigner.AssignMovieGroupAsync(context, movie, cancellationToken);
 
                 context.MediaItems.Add(movie);
 

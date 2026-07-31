@@ -27,7 +27,9 @@ describe('useLibraryItems', () => {
             pageSize: 50,
         };
 
-        (libraryService.getItems as any).mockResolvedValue(mockData);
+        // `as never`: the fixture rows carry only the fields this hook touches,
+        // not the full MediaItem shape.
+        vi.mocked(libraryService.getItems).mockResolvedValue(mockData as never);
 
         const wrapper = createWrapper();
         const { result } = renderHook(() => useLibraryItems('lib-1'), { wrapper });
@@ -40,7 +42,7 @@ describe('useLibraryItems', () => {
 
     it('handles search and sort parameters', async () => {
         const mockData = { items: [], totalCount: 0, page: 1, pageSize: 50 };
-        (libraryService.getItems as any).mockResolvedValue(mockData);
+        vi.mocked(libraryService.getItems).mockResolvedValue(mockData);
 
         const wrapper = createWrapper();
         const { result } = renderHook(() => useLibraryItems('lib-1', 'test query', 'title_asc'), { wrapper });

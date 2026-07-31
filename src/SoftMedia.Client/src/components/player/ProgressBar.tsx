@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { formatDuration } from '../../lib/utils';
 import { type Chapter } from '../../types';
 import { type SpriteFrame } from '../../hooks/useTrickplay';
@@ -40,6 +40,12 @@ export function ProgressBar({
     const [hoverTime, setHoverTime] = useState<number | null>(null);
     const [hoverPosition, setHoverPosition] = useState(0);
     const [frameLoaded, setFrameLoaded] = useState(false);
+    // The track's measured width, captured in the same mouse handlers that set
+    // hoverPosition. The tooltip clamp used to read the ref mid-render
+    // (getBoundingClientRect on progressRef.current), which React forbids —
+    // and the measurement is only ever needed when a mouse event just
+    // produced it anyway.
+    const [trackWidth, setTrackWidth] = useState(0);
 
     // Calculate progress percentage
     // If dragging, use hoverTime for visual feedback, otherwise use currentTime
@@ -57,6 +63,7 @@ export function ProgressBar({
         const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
         const time = percent * duration;
 
+        setTrackWidth(rect.width);
         setHoverTime(time);
         setHoverPosition(e.clientX - rect.left);
         onSeek(time); // Instant seek while dragging (optional, or wait for mouse up)
@@ -70,6 +77,7 @@ export function ProgressBar({
         const percent = Math.max(0, Math.min(1, position / rect.width));
         const time = percent * duration;
 
+        setTrackWidth(rect.width);
         setHoverTime(time);
         setHoverPosition(position);
 
@@ -85,12 +93,12 @@ export function ProgressBar({
         }
     };
 
-    const handleMouseUp = () => {
+    const handleMouseUp = useCallback(() => {
         if (isDragging) {
             setIsDragging(false);
             onSeekEnd();
         }
-    };
+    }, [isDragging, onSeekEnd]);
 
     // SDD §8.3 — keyboard operability for the seek slider. Sighted users get
     // mouse drag; non-mouse users (Tab focus, TV remote D-pad, screen reader)
@@ -146,7 +154,7 @@ export function ProgressBar({
             window.addEventListener('mouseup', handleMouseUp);
             return () => window.removeEventListener('mouseup', handleMouseUp);
         }
-    }, [isDragging]);
+    }, [isDragging, handleMouseUp]);
 
     const getChapterAtTime = (time: number): string | null => {
         if (!chapters || chapters.length === 0) return null;
@@ -162,10 +170,10 @@ export function ProgressBar({
     return (
         <div className="relative mb-3 select-none">
             {/* Hover/Drag Tooltip */}
-            {hoverTime !== null && progressRef.current && (
+            {hoverTime !== null && trackWidth > 0 && (
                 <div
                     className="absolute bottom-full mb-2 transform -translate-x-1/2 pointer-events-none z-10 flex flex-col items-center"
-                    style={{ left: Math.max(80, Math.min(hoverPosition, progressRef.current.getBoundingClientRect().width - 80)) }}
+                    style={{ left: Math.max(80, Math.min(hoverPosition, trackWidth - 80)) }}
                 >
                     {/* Pre-baked trickplay sprite tile (preferred — instant, no FFmpeg). */}
                     {isDragging && spriteFrame && (

@@ -96,6 +96,19 @@ public class MediaItem
     public string? Director { get; set; }
 
     /// <summary>
+    /// SM-WI-044 — series airing status from the provider (TVMaze: "Running", "Ended",
+    /// "To Be Determined", …). Series rows only. Lets the "Running" refresh mode target
+    /// genuinely running shows instead of refreshing every series.
+    /// </summary>
+    public string? SeriesStatus { get; set; }
+
+    /// <summary>SM-WI-044 — game platforms (comma-separated labels from Wikidata P400). Games only.</summary>
+    public string? GamePlatform { get; set; }
+
+    /// <summary>SM-WI-044 — game modes (comma-separated labels from Wikidata P404). Games only.</summary>
+    public string? GameMode { get; set; }
+
+    /// <summary>
     /// Book ISBN, normalised to digits (plus a trailing 'X' check digit) with hyphens and
     /// spaces stripped — see <see cref="Services.Media.IsbnNormalizer"/>. Sourced from the
     /// EPUB OPF &lt;dc:identifier&gt; when the file carries one, otherwise from the metadata
@@ -192,6 +205,24 @@ public class MediaItem
     public bool IsRetryExhausted { get; set; }
 
     /// <summary>
+    /// SM-WI-042 — how many amnesty passes have re-granted retries to this item.
+    /// Drives the decaying cadence (7 → 14 → 28 days, capped); reset to 0 by a
+    /// successful (hash-changing) enrichment.
+    /// </summary>
+    public int AmnestyCount { get; set; }
+
+    /// <summary>SM-WI-042 — earliest UTC time the next amnesty pass may re-grant retries.</summary>
+    public DateTime? NextAmnestyUtc { get; set; }
+
+    /// <summary>
+    /// SM-WI-043 — last time technical analysis (ffprobe) was ATTEMPTED for this file,
+    /// success or not. Files whose probe genuinely cannot fill BitDepth/FrameRate/Width
+    /// previously re-probed on every scan of a stable library, forever; the Missing-mode
+    /// backfill now runs once per file version (a changed file re-probes via Full mode).
+    /// </summary>
+    public DateTime? LastProbeAttemptUtc { get; set; }
+
+    /// <summary>
     /// SR-WI-011 soft delete: the item's file was not found on disk during a scan.
     /// Missing items are hidden from catalog surfaces (browse/search/home/DLNA) but keep
     /// all child rows (play history, interactions, bookmarks, playlist membership) so a
@@ -232,6 +263,13 @@ public class MediaItem
     public int? TvMazeId { get; set; }
     public string? MusicBrainzId { get; set; }
 
+    /// <summary>
+    /// SM-WI-032 — Open Library work key ("/works/OL12345W") stored on first successful
+    /// match. Refreshes fetch by key (one request, no title/ISBN heuristics), mirroring
+    /// the ImdbId/TvMazeId/MusicBrainzId ID-first pattern.
+    /// </summary>
+    public string? OpenLibraryKey { get; set; }
+
 
     public MediaType Type { get; set; }
 
@@ -271,6 +309,24 @@ public class MediaItem
     // the row stays in the library if the collection is removed.
     public Guid? CollectionId { get; set; }
     public Collection? Collection { get; set; }
+
+    /// <summary>
+    /// DV-WI-010 — version grouping: every file-copy of one logical title (1080p + 4K,
+    /// language variants, editions) shares a group id. Null = no known siblings (the
+    /// common fast path). Episodes use a DETERMINISTIC id derived from
+    /// (SeriesId, Season, Episode) — see VersionGroupHelper — so parallel scan workers
+    /// converge without coordination; movies mint a random id when a second copy is
+    /// found. Scanner/backfill assignment is FILL-ONLY so an admin split (fresh id)
+    /// survives rescans.
+    /// </summary>
+    public Guid? VersionGroupId { get; set; }
+
+    /// <summary>
+    /// DV-WI-010 — explicit primary-version override within a group. Default false:
+    /// the primary is COMPUTED (max height → HDR → bitrate → newest → id) and never
+    /// stored, so it can't drift; this flag, when set on exactly one member, wins.
+    /// </summary>
+    public bool PreferredVersion { get; set; }
 
     /// <summary>
     /// Wave E2 — sentinel marker tracking whether the OMDb→Wikidata collection

@@ -15,22 +15,47 @@ public class MusicBrainzProvider : ISearchableMetadataProvider
     private readonly HttpClient _httpClient;
     private readonly ILogger<MusicBrainzProvider> _logger;
     private readonly RateLimiter _rateLimiter;
+    private readonly RateLimiter _caaLimiter;
     private readonly IServiceScopeFactory _scopeFactory;
 
     public LibraryType SupportedType => LibraryType.Music;
     public string ProviderName => "MusicBrainz";
 
-    public MusicBrainzProvider(HttpClient httpClient, ILogger<MusicBrainzProvider> logger, RateLimiterFactory rateLimiterFactory, IServiceScopeFactory scopeFactory)
+    private readonly IProviderLookupCache? _lookupCache;
+
+    public MusicBrainzProvider(HttpClient httpClient, ILogger<MusicBrainzProvider> logger, RateLimiterFactory rateLimiterFactory, IServiceScopeFactory scopeFactory,
+        IProviderLookupCache? lookupCache = null)
     {
         _httpClient = httpClient;
         _logger = logger;
+        _lookupCache = lookupCache;
         _rateLimiter = rateLimiterFactory.GetLimiter("MusicBrainz");
+        // SM-WI-023: Cover Art Archive is a different service on different infrastructure
+        // (Internet Archive) — its HEAD probes must not ride MusicBrainz's 1/s budget
+        // uncounted, nor go completely unthrottled as before.
+        _caaLimiter = rateLimiterFactory.GetLimiter("CoverArtArchive");
         _scopeFactory = scopeFactory;
         // User-Agent is MANDATORY for MusicBrainz
         if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
         {
              _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("SoftMedia/1.0 (https://github.com/NobodyVibes/SoftMedia)");
         }
+    }
+
+    /// <summary>
+    /// SM-WI-022 — leased GET for MusicBrainz calls. MB's published policy is a strict
+    /// 1 request/second per IP with UA-based bans for violators; the Fix-Match search
+    /// paths previously bypassed the limiter entirely (a burst of admin searches could
+    /// violate policy). One lease per HTTP request, shared with the enrichment paths.
+    /// </summary>
+    private async Task<string> GetStringLimitedAsync(string url, CancellationToken ct = default)
+    {
+        using var lease = await _rateLimiter.AcquireAsync(1, ct);
+        if (!lease.IsAcquired)
+        {
+            throw new InvalidOperationException($"MusicBrainz rate-limit queue is full; request rejected locally: {url}");
+        }
+        return await _httpClient.GetStringAsync(url, ct);
     }
 
     public async Task<MetadataResult?> FetchMetadataAsync(MediaItem item)
@@ -283,61 +308,132 @@ public class MusicBrainzProvider : ISearchableMetadataProvider
     }
 
     /// <summary>
-    /// Fetches metadata for an Artist-type item using /ws/2/artist endpoint.
+    /// SM-WI-031: minimum MusicBrainz Lucene score (0–100) for accepting a search hit.
+    /// MB ranks by relevance, but result[0] for a short query can be an unrelated
+    /// notable entity ("Nirvana" the 60s UK band vs. the grunge band). Below this the
+    /// match is a guess, and no metadata beats wrong metadata.
+    /// </summary>
+    private const int MinSearchScore = 85;
+
+    private static int GetSearchScore(JsonElement candidate)
+    {
+        if (!candidate.TryGetProperty("score", out var s)) return 0;
+        return s.ValueKind switch
+        {
+            JsonValueKind.Number => s.GetInt32(),
+            JsonValueKind.String when int.TryParse(s.GetString(), out var v) => v,
+            _ => 0,
+        };
+    }
+
+    /// <summary>
+    /// Shared artist-element parser for the search-hit and direct-by-MBID shapes.
+    /// The MBID rides in the result so the aggregator promotes it — every later
+    /// refresh then costs one direct request instead of a search.
+    /// </summary>
+    private static MetadataResult? ParseArtistElement(JsonElement artist, string fallbackName, string? mbid)
+    {
+        if (artist.ValueKind != JsonValueKind.Object) return null;
+
+        var result = new MetadataResult
+        {
+            Title = artist.TryGetProperty("name", out var n) ? n.GetString() : fallbackName,
+            MusicBrainzId = mbid,
+        };
+
+        if (artist.TryGetProperty("disambiguation", out var dis) && dis.ValueKind == JsonValueKind.String)
+        {
+            result.Description = dis.GetString();
+        }
+
+        // SM-WI-044 (Q1): the old Extra["artistType"] was computed then dropped (Extra
+        // persists only for photos) — removed rather than persisted: no consumer.
+
+        if (artist.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Array && tags.GetArrayLength() > 0)
+        {
+            result.Genres = tags.EnumerateArray()
+                .Where(t => t.TryGetProperty("name", out _))
+                .Select(t => t.GetProperty("name").GetString()!)
+                .Take(5)
+                .ToList();
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Fetches metadata for an Artist-type item. SM-WI-031: MBID-first (a previously
+    /// matched artist refreshes with ONE direct request under the strict 1/s budget),
+    /// then Lucene search gated by <see cref="MinSearchScore"/>.
     /// </summary>
     private async Task<MetadataResult?> FetchArtistMetadataAsync(MediaItem item)
     {
         var artistName = CleanName(item.Title);
-        _logger.LogInformation("MusicBrainz artist search for: '{Artist}'", artistName);
 
-        using var lease = await _rateLimiter.AcquireAsync(1);
-        if (!lease.IsAcquired)
+        if (!string.IsNullOrEmpty(item.MusicBrainzId))
         {
-            _logger.LogWarning("MusicBrainz rate limit exceeded for artist '{Artist}'", artistName);
+            try
+            {
+                var direct = await GetStringLimitedAsync(
+                    $"https://musicbrainz.org/ws/2/artist/{item.MusicBrainzId}?fmt=json&inc=tags");
+                using var directDoc = JsonDocument.Parse(direct);
+                var parsed = ParseArtistElement(directDoc.RootElement, artistName, item.MusicBrainzId);
+                if (parsed != null)
+                {
+                    _logger.LogInformation("MusicBrainz artist refresh via MBID {Mbid}: '{Name}'", item.MusicBrainzId, parsed.Title);
+                    return parsed;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "MusicBrainz direct artist fetch failed for {Mbid}; falling back to search", item.MusicBrainzId);
+            }
+        }
+
+        // SM-WI-040: fresh cached miss → skip the search (the MBID path above is exempt).
+        var cacheKey = ProviderLookupCacheService.NormalizeKey("artist", artistName);
+        if (_lookupCache != null && await _lookupCache.IsFreshMissAsync(ProviderName, cacheKey))
+        {
+            _logger.LogDebug("MusicBrainz: fresh cached miss for artist '{Artist}'; skipping search", artistName);
             return null;
         }
 
+        _logger.LogInformation("MusicBrainz artist search for: '{Artist}'", artistName);
         var query = $"artist:\"{artistName}\"";
         var url = $"https://musicbrainz.org/ws/2/artist?query={WebUtility.UrlEncode(query)}&fmt=json&limit=5";
-        
-        var response = await _httpClient.GetAsync(url);
-        if (!response.IsSuccessStatusCode) return null;
 
-        var json = await response.Content.ReadAsStringAsync();
+        string json;
+        try { json = await GetStringLimitedAsync(url); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MusicBrainz artist search failed for '{Artist}'", artistName);
+            return null; // transient — not cached, the retry ladder owns it
+        }
         using var doc = JsonDocument.Parse(json);
-        
+
         if (doc.RootElement.TryGetProperty("artists", out var artists) && artists.GetArrayLength() > 0)
         {
-            var best = artists[0];
-            var result = new MetadataResult
+            var best = artists[0]; // MB orders by score; [0] is the only candidate worth gating
+            var score = GetSearchScore(best);
+            if (score < MinSearchScore)
             {
-                Title = best.TryGetProperty("name", out var n) ? n.GetString() : artistName
-            };
-
-            if (best.TryGetProperty("disambiguation", out var dis) && dis.ValueKind == JsonValueKind.String)
-            {
-                result.Description = dis.GetString();
+                _logger.LogInformation(
+                    "MusicBrainz: best artist hit for '{Artist}' scored {Score} < {Min}; leaving unmatched",
+                    artistName, score, MinSearchScore);
+                if (_lookupCache != null) await _lookupCache.RecordMissAsync(ProviderName, cacheKey);
+                return null;
             }
 
-            if (best.TryGetProperty("type", out var typeVal) && typeVal.ValueKind == JsonValueKind.String)
+            var mbid = best.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+            var result = ParseArtistElement(best, artistName, mbid);
+            if (result != null)
             {
-                result.Extra ??= new Dictionary<string, JsonElement>();
-                result.Extra["artistType"] = JsonSerializer.SerializeToElement(typeVal.GetString());
+                _logger.LogInformation("MusicBrainz artist match: '{Name}' (score {Score})", result.Title, score);
             }
-
-            if (best.TryGetProperty("tags", out var tags) && tags.GetArrayLength() > 0)
-            {
-                result.Genres = tags.EnumerateArray()
-                    .Where(t => t.TryGetProperty("name", out _))
-                    .Select(t => t.GetProperty("name").GetString()!)
-                    .Take(5)
-                    .ToList();
-            }
-
-            _logger.LogInformation("MusicBrainz artist match: '{Name}'", result.Title);
             return result;
         }
 
+        if (_lookupCache != null) await _lookupCache.RecordMissAsync(ProviderName, cacheKey);
         return null;
     }
 
@@ -373,14 +469,37 @@ public class MusicBrainzProvider : ISearchableMetadataProvider
             }
         }
 
-        _logger.LogInformation("MusicBrainz release-group search for: '{Album}' by '{Artist}'", albumName, artistName);
-
-        using var lease = await _rateLimiter.AcquireAsync(1);
-        if (!lease.IsAcquired)
+        // SM-WI-031: MBID-first — a previously matched album refreshes with one direct
+        // request instead of repeating the search under the 1/s budget.
+        if (!string.IsNullOrEmpty(item.MusicBrainzId))
         {
-            _logger.LogWarning("MusicBrainz rate limit exceeded for album '{Album}'", albumName);
+            try
+            {
+                var direct = await GetStringLimitedAsync(
+                    $"https://musicbrainz.org/ws/2/release-group/{item.MusicBrainzId}?fmt=json&inc=tags");
+                using var directDoc = JsonDocument.Parse(direct);
+                var parsed = await ParseReleaseGroupElementAsync(directDoc.RootElement, albumName, item.MusicBrainzId);
+                if (parsed != null)
+                {
+                    _logger.LogInformation("MusicBrainz release-group refresh via MBID {Mbid}: '{Title}'", item.MusicBrainzId, parsed.Title);
+                    return parsed;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "MusicBrainz direct release-group fetch failed for {Mbid}; falling back to search", item.MusicBrainzId);
+            }
+        }
+
+        // SM-WI-040: fresh cached miss → skip the search (the MBID path above is exempt).
+        var cacheKey = ProviderLookupCacheService.NormalizeKey("album", albumName, artistName);
+        if (_lookupCache != null && await _lookupCache.IsFreshMissAsync(ProviderName, cacheKey))
+        {
+            _logger.LogDebug("MusicBrainz: fresh cached miss for album '{Album}'; skipping search", albumName);
             return null;
         }
+
+        _logger.LogInformation("MusicBrainz release-group search for: '{Album}' by '{Artist}'", albumName, artistName);
 
         var queryParts = new List<string> { $"releasegroup:\"{albumName}\"" };
         if (!string.IsNullOrWhiteSpace(artistName))
@@ -389,55 +508,115 @@ public class MusicBrainzProvider : ISearchableMetadataProvider
         var query = string.Join(" AND ", queryParts);
         var url = $"https://musicbrainz.org/ws/2/release-group?query={WebUtility.UrlEncode(query)}&fmt=json&limit=5";
 
-        var response = await _httpClient.GetAsync(url);
-        if (!response.IsSuccessStatusCode) return null;
-
-        var json = await response.Content.ReadAsStringAsync();
+        string json;
+        try { json = await GetStringLimitedAsync(url); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MusicBrainz release-group search failed for '{Album}'", albumName);
+            return null; // transient — not cached, the retry ladder owns it
+        }
         using var doc = JsonDocument.Parse(json);
 
         if (doc.RootElement.TryGetProperty("release-groups", out var groups) && groups.GetArrayLength() > 0)
         {
-            var best = groups[0];
-            var result = new MetadataResult
+            // SM-WI-031: candidates are score-ordered; stop at the first sub-threshold
+            // score (the rest are worse). When artist context exists, require the
+            // candidate's artist-credit to agree — a same-titled album by someone else
+            // is exactly the wrong-match this guards against.
+            foreach (var candidate in groups.EnumerateArray())
             {
-                Title = best.TryGetProperty("title", out var t) ? t.GetString() : albumName
-            };
-
-            // Year from first-release-date
-            if (best.TryGetProperty("first-release-date", out var frd) && frd.ValueKind == JsonValueKind.String)
-            {
-                var dateStr = frd.GetString();
-                if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 4 && int.TryParse(dateStr.Substring(0, 4), out var year))
+                var score = GetSearchScore(candidate);
+                if (score < MinSearchScore)
                 {
-                    result.Year = year;
+                    _logger.LogInformation(
+                        "MusicBrainz: remaining release-group hits for '{Album}' score {Score} < {Min}; leaving unmatched",
+                        albumName, score, MinSearchScore);
+                    break;
+                }
+
+                if (!ArtistCreditAgrees(candidate, artistName))
+                {
+                    _logger.LogDebug("MusicBrainz: skipping release-group candidate with mismatched artist for '{Album}'", albumName);
+                    continue;
+                }
+
+                var mbid = candidate.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+                var result = await ParseReleaseGroupElementAsync(candidate, albumName, mbid);
+                if (result != null)
+                {
+                    _logger.LogInformation("MusicBrainz release-group match: '{Title}' ({Year}, score {Score})", result.Title, result.Year, score);
+                    return result;
                 }
             }
-
-            // Cover art from release-group ID
-            if (best.TryGetProperty("id", out var rgId))
-            {
-                var coverUrl = $"https://coverartarchive.org/release-group/{rgId.GetString()}/front";
-                if (await ValidateCoverArtUrlAsync(coverUrl))
-                {
-                    result.PosterUrl = coverUrl;
-                }
-            }
-
-            // Tags/genres
-            if (best.TryGetProperty("tags", out var tags) && tags.GetArrayLength() > 0)
-            {
-                result.Genres = tags.EnumerateArray()
-                    .Where(tg => tg.TryGetProperty("name", out _))
-                    .Select(tg => tg.GetProperty("name").GetString()!)
-                    .Take(5)
-                    .ToList();
-            }
-
-            _logger.LogInformation("MusicBrainz release-group match: '{Title}' ({Year})", result.Title, result.Year);
-            return result;
         }
 
+        // Definitive miss (empty, all sub-threshold, or all artist-mismatched).
+        if (_lookupCache != null) await _lookupCache.RecordMissAsync(ProviderName, cacheKey);
         return null;
+    }
+
+    /// <summary>
+    /// True when the candidate's artist-credit matches the known artist context (or when
+    /// either side lacks the information to disagree). Relaxed compare: equality or
+    /// containment, case-insensitive — "The Beatles" vs "Beatles" must not reject.
+    /// </summary>
+    private static bool ArtistCreditAgrees(JsonElement candidate, string? artistName)
+    {
+        if (string.IsNullOrWhiteSpace(artistName)) return true;
+        if (!candidate.TryGetProperty("artist-credit", out var ac) ||
+            ac.ValueKind != JsonValueKind.Array || ac.GetArrayLength() == 0)
+            return true;
+
+        var creditName = ac[0].TryGetProperty("name", out var n) ? n.GetString() : null;
+        if (string.IsNullOrWhiteSpace(creditName)) return true;
+
+        return creditName.Equals(artistName, StringComparison.OrdinalIgnoreCase)
+            || creditName.Contains(artistName, StringComparison.OrdinalIgnoreCase)
+            || artistName.Contains(creditName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Shared release-group parser for the search-hit and direct-by-MBID shapes.
+    /// Async because cover-art existence is validated against the CAA (own limiter).
+    /// </summary>
+    private async Task<MetadataResult?> ParseReleaseGroupElementAsync(JsonElement group, string fallbackTitle, string? mbid)
+    {
+        if (group.ValueKind != JsonValueKind.Object) return null;
+
+        var result = new MetadataResult
+        {
+            Title = group.TryGetProperty("title", out var t) ? t.GetString() : fallbackTitle,
+            MusicBrainzId = mbid,
+        };
+
+        if (group.TryGetProperty("first-release-date", out var frd) && frd.ValueKind == JsonValueKind.String)
+        {
+            var dateStr = frd.GetString();
+            if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 4 && int.TryParse(dateStr.Substring(0, 4), out var year))
+            {
+                result.Year = year;
+            }
+        }
+
+        if (!string.IsNullOrEmpty(mbid))
+        {
+            var coverUrl = $"https://coverartarchive.org/release-group/{mbid}/front";
+            if (await ValidateCoverArtUrlAsync(coverUrl))
+            {
+                result.PosterUrl = coverUrl;
+            }
+        }
+
+        if (group.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Array && tags.GetArrayLength() > 0)
+        {
+            result.Genres = tags.EnumerateArray()
+                .Where(tg => tg.TryGetProperty("name", out _))
+                .Select(tg => tg.GetProperty("name").GetString()!)
+                .Take(5)
+                .ToList();
+        }
+
+        return result;
     }
 
     private string CleanName(string name)
@@ -464,16 +643,28 @@ public class MusicBrainzProvider : ISearchableMetadataProvider
     /// Validates a CoverArt Archive URL via HEAD request.
     /// Per CAA API docs: 307 = cover art exists (redirect to image),
     /// 404 = no cover art available, 503 = rate limited.
+    /// SM-WI-023: throttled by the dedicated CoverArtArchive limiter (previously
+    /// unlimited), and PESSIMISTIC on 503/errors — the old "assume art exists" answer
+    /// stored a PosterUrl whose later download could fail, leaving the item hotlinking
+    /// a remote URL forever. "Unknown" now means no URL stored; a later enrichment
+    /// pass re-probes.
     /// </summary>
     private async Task<bool> ValidateCoverArtUrlAsync(string coverUrl)
     {
         try
         {
+            using var lease = await _caaLimiter.AcquireAsync(1);
+            if (!lease.IsAcquired)
+            {
+                _logger.LogDebug("CoverArt Archive limiter queue full; treating art as unknown for {Url}", coverUrl);
+                return false;
+            }
+
             using var request = new HttpRequestMessage(HttpMethod.Head, coverUrl);
             // Don't follow redirects — we just need to know if art exists
             using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
 
-            if (response.IsSuccessStatusCode || 
+            if (response.IsSuccessStatusCode ||
                 response.StatusCode == System.Net.HttpStatusCode.TemporaryRedirect ||
                 response.StatusCode == System.Net.HttpStatusCode.Redirect)
             {
@@ -486,15 +677,15 @@ public class MusicBrainzProvider : ISearchableMetadataProvider
                 return false;
             }
 
-            // 503 (rate limit) or other errors — assume art MAY exist, don't block
-            _logger.LogDebug("CoverArt Archive returned {Status} for {Url}", response.StatusCode, coverUrl);
-            return true;
+            // 503 = CAA's throttle signal; anything else unexpected. Art is UNKNOWN,
+            // not present — never store a URL we couldn't confirm.
+            _logger.LogDebug("CoverArt Archive returned {Status} for {Url}; treating art as unknown", response.StatusCode, coverUrl);
+            return false;
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to validate CoverArt Archive URL: {Url}", coverUrl);
-            // Network error — don't block, assume URL might be valid
-            return true;
+            _logger.LogDebug(ex, "Failed to validate CoverArt Archive URL: {Url}; treating art as unknown", coverUrl);
+            return false;
         }
     }
 
@@ -514,7 +705,7 @@ public class MusicBrainzProvider : ISearchableMetadataProvider
         var url = $"https://musicbrainz.org/ws/2/release-group?query={WebUtility.UrlEncode(luceneQuery)}&fmt=json&limit=10";
 
         string body;
-        try { body = await _httpClient.GetStringAsync(url, ct); }
+        try { body = await GetStringLimitedAsync(url, ct); }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "MusicBrainz search failed for '{Query}'", query);
@@ -575,7 +766,7 @@ public class MusicBrainzProvider : ISearchableMetadataProvider
         var url = $"https://musicbrainz.org/ws/2/release-group/{providerItemId}?fmt=json&inc=artist-credits";
         try
         {
-            var body = await _httpClient.GetStringAsync(url, ct);
+            var body = await GetStringLimitedAsync(url, ct);
             using var doc = System.Text.Json.JsonDocument.Parse(body);
             var root = doc.RootElement;
             var result = new MetadataResult

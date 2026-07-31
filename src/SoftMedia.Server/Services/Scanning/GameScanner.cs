@@ -53,15 +53,31 @@ public class GameScanner : BaseMediaScanner
             if (string.IsNullOrEmpty(title))
                 title = Path.GetFileNameWithoutExtension(filePath);
 
-            // Create or update game item
+            // Create or update game item. SM-WI-055/S10: capture change BEFORE stamping
+            // Size/DateModified (same ordering rule as MovieScanner) — the scanner
+            // previously had no change detection at all, so a replaced ROM kept its
+            // stale analysis until deleted and re-added.
             var isNew = existing == null;
+            var fileChanged = existing != null
+                && (existing.Size != file.Size || existing.DateModified != file.LastWriteUtc);
             var game = existing ?? new MediaItem { LibraryId = library.Id };
 
-            game.Title = title;
-            game.SortTitle = MediaStringHelpers.GetSortTitle(title);
+            // SM-WI-010: identity from the filename only for NEW rows; existing rows are
+            // matched by Path so the parse cannot have changed — re-stamping could only
+            // revert enrichment or admin (Fix-Match/MetadataLocked) edits. Year is
+            // fill-only for unlocked existing rows. Mirrors MovieScanner.
+            if (isNew)
+            {
+                game.Title = title;
+                game.SortTitle = MediaStringHelpers.GetSortTitle(title);
+                game.Year = year;
+            }
+            else if (!game.MetadataLocked)
+            {
+                game.Year ??= year;
+            }
             game.Path = filePath;
             game.Type = MediaType.Game;
-            game.Year = year;
             game.Size = file.Size;
             game.DateModified = file.LastWriteUtc;
             game.Container = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
@@ -69,10 +85,9 @@ public class GameScanner : BaseMediaScanner
             if (isNew)
             {
                 context.MediaItems.Add(game);
-                
+
                 // Delegate local file analysis (ROM headers, file metadata)
-                var refreshMode = MetadataRefreshMode.Full;
-                await _mediaAnalysisService.AnalyzeAsync(game, filePath, refreshMode, cancellationToken);
+                await _mediaAnalysisService.AnalyzeAsync(game, filePath, MetadataRefreshMode.Full, cancellationToken);
 
                 // Enqueue for background enrichment via Base Scanner
                 _logger.LogDebug("[GameScanner] Added game: {Title} ({Year})", title, year);
@@ -80,6 +95,13 @@ public class GameScanner : BaseMediaScanner
             }
             else
             {
+                // SM-WI-055/S10: a replaced file gets a full re-analysis (mirrors
+                // MovieScanner's refresh-mode routing).
+                if (fileChanged)
+                {
+                    await _mediaAnalysisService.AnalyzeAsync(game, filePath, MetadataRefreshMode.Full, cancellationToken);
+                }
+
                 // Check if metadata needs refresh (if no description/overview)
                 var needsEnrichment = MetadataEnrichmentPolicy.NeedsEnrichment(game, _strictEnrichment);
 
@@ -90,8 +112,11 @@ public class GameScanner : BaseMediaScanner
                 }
                 else
                 {
-                    _logger.LogDebug("[GameScanner] Skipped game (metadata complete): {Title}", title);
-                    return new ScanOperationResult(ScanResult.Skipped, game.Id, EnqueueMetadata: false);
+                    // Unchanged file + complete metadata = Skipped, so scan counters
+                    // reflect reality (mirrors MovieScanner).
+                    _logger.LogDebug("[GameScanner] {Action} game (metadata complete): {Title}", fileChanged ? "Updated" : "Skipped", title);
+                    return new ScanOperationResult(
+                        fileChanged ? ScanResult.Updated : ScanResult.Skipped, game.Id, EnqueueMetadata: false);
                 }
             }
         }

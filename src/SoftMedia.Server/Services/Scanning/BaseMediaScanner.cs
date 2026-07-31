@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SoftMedia.Server.Data;
+using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Infrastructure;
@@ -116,6 +117,7 @@ public abstract class BaseMediaScanner : IMediaScanner
             }
 
             _unreadableDirs.Clear();
+            _scanDirListings.Clear(); // SM-WI-051: listings are per-scan (sidecars may change between scans)
 
             // 0.5. Root availability guard. An unmounted drive or dropped network share must
             //      never masquerade as an empty library: with every root gone the scan would
@@ -160,9 +162,11 @@ public abstract class BaseMediaScanner : IMediaScanner
             _logger.LogInformation("[{Scanner}] Discovered {Files} files in {Dirs} directories",
                 DisplayName, totalFiles, discovered.Count);
 
-            // 1.5. Build an O(1) bulk dictionary lookup to prevent N+1 queries during parallel scan
+            // 1.5. Build an O(1) bulk dictionary lookup to prevent N+1 queries during parallel scan.
+            // SM-WI-056: platform comparer — OrdinalIgnoreCase everywhere silently merged
+            // case-distinct files on Linux filesystems.
             _logger.LogDebug("[{Scanner}] Bulk-loading existing media items into memory for library '{LibraryName}'", DisplayName, library.Name);
-            var knownFilesCache = new ConcurrentDictionary<string, MediaItem>(StringComparer.OrdinalIgnoreCase);
+            var knownFilesCache = new ConcurrentDictionary<string, MediaItem>(PathComparers.Platform);
             using (var initScope = _scopeFactory.CreateScope())
             {
                 var initContext = initScope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -183,7 +187,7 @@ public abstract class BaseMediaScanner : IMediaScanner
             //    every row in the library on every scan just to mark items as "seen".)
             var seenPaths = new HashSet<string>(
                 discovered.SelectMany(d => d.Files).Select(f => f.Path),
-                StringComparer.OrdinalIgnoreCase);
+                PathComparers.Platform);
 
             // 2.1. SR-WI-012 — renames/moves: before the processing walk creates brand-new
             //      items for moved files, re-bind DB rows whose path vanished to discovered
@@ -193,6 +197,15 @@ public abstract class BaseMediaScanner : IMediaScanner
             //      fresh row and the old row would purge with its children.
             await ReconcileMovedFilesAsync(library, knownFilesCache, seenPaths, discovered,
                 missingRoots.Concat(_unreadableDirs).ToList(), cancellationToken);
+
+            // SM-WI-050: the parallel/transaction unit is a BOUNDED BATCH of files, not a
+            // directory. With per-directory units, a flat 10k-file folder was ONE work
+            // item: zero parallelism, one context tracking 10k entities, and a single
+            // save whose failure/cancel discarded the whole library's probe results.
+            // Small directories pack together up to the batch size; big directories
+            // split into chunks — same-directory files stay adjacent either way, so the
+            // striped parent locks and per-batch contexts behave as before.
+            var batches = BuildScanBatches(discovered);
 
             var parallelOptions = new ParallelOptions
             {
@@ -217,7 +230,7 @@ public abstract class BaseMediaScanner : IMediaScanner
                     Volatile.Read(ref skippedCount), Volatile.Read(ref errorCount)));
             }
 
-            await Parallel.ForEachAsync(discovered, parallelOptions, async (dir, ct) =>
+            await Parallel.ForEachAsync(batches, parallelOptions, async (batch, ct) =>
             {
                 using var scope = _scopeFactory.CreateScope();
                 var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -225,7 +238,7 @@ public abstract class BaseMediaScanner : IMediaScanner
                 // List for deferred metadata enqueueing
                 var deferredQueue = new List<(Guid Id, LibraryType Type)>();
 
-                foreach (var fileResult in dir.Files)
+                foreach (var fileResult in batch)
                 {
                     var filePath = fileResult.Path;
                     ct.ThrowIfCancellationRequested();
@@ -370,8 +383,8 @@ public abstract class BaseMediaScanner : IMediaScanner
                     continue;
                 }
 
-                List<string> subdirs;
-                try { subdirs = Directory.EnumerateDirectories(dir).ToList(); }
+                List<DirectoryInfo> subdirs;
+                try { subdirs = new DirectoryInfo(dir).EnumerateDirectories().ToList(); }
                 catch
                 {
                     // permission / transient IO — children unknown, shield the subtree
@@ -381,22 +394,78 @@ public abstract class BaseMediaScanner : IMediaScanner
 
                 foreach (var sub in subdirs)
                 {
+                    // SM-WI-043/S14: DirectoryInfo.Attributes comes from the enumeration's
+                    // own data on Windows — the old File.GetAttributes(sub) was one extra
+                    // stat round-trip per directory (felt on SMB).
                     bool isReparse;
-                    try { isReparse = (File.GetAttributes(sub) & FileAttributes.ReparsePoint) != 0; }
-                    catch { _unreadableDirs.Add(sub); continue; }
+                    try { isReparse = (sub.Attributes & FileAttributes.ReparsePoint) != 0; }
+                    catch { _unreadableDirs.Add(sub.FullName); continue; }
 
                     if (isReparse)
                     {
-                        _logger.LogWarning("[{Scanner}] Skipping reparse point (symlink/junction): {Dir}", DisplayName, sub);
+                        _logger.LogWarning("[{Scanner}] Skipping reparse point (symlink/junction): {Dir}", DisplayName, sub.FullName);
                         continue;
                     }
 
-                    yield return sub;
-                    stack.Push((sub, depth + 1));
+                    yield return sub.FullName;
+                    stack.Push((sub.FullName, depth + 1));
                 }
             }
         }
     }
+
+    /// <summary>
+    /// SM-WI-050 — flatten discovery output into bounded batches (the parallel/save
+    /// unit). Directory locality is preserved: a directory's files are never
+    /// interleaved with another's, and big directories split into consecutive chunks.
+    /// Public static + pure so tests can assert the batching invariants directly.
+    /// </summary>
+    public static List<List<FileDiscoveryResult>> BuildScanBatches(
+        IReadOnlyList<(string Dir, List<FileDiscoveryResult> Files)> discovered, int batchSize = 100)
+    {
+        var batches = new List<List<FileDiscoveryResult>>();
+        var current = new List<FileDiscoveryResult>();
+
+        foreach (var (_, files) in discovered)
+        {
+            foreach (var chunk in files.Chunk(batchSize))
+            {
+                if (current.Count > 0 && current.Count + chunk.Length > batchSize)
+                {
+                    batches.Add(current);
+                    current = new List<FileDiscoveryResult>();
+                }
+
+                if (chunk.Length >= batchSize)
+                {
+                    batches.Add(chunk.ToList());
+                }
+                else
+                {
+                    current.AddRange(chunk);
+                }
+            }
+        }
+
+        if (current.Count > 0) batches.Add(current);
+        return batches;
+    }
+
+    // SM-WI-051 — per-scan directory-listing memo. The local-artwork sweep needs each
+    // media file's directory listing (sidecar discovery); listing per FILE made flat
+    // folders O(N²). One listing per directory per scan; cleared at scan start.
+    private readonly ConcurrentDictionary<string, string[]> _scanDirListings = new(PathComparers.Platform);
+
+    /// <summary>
+    /// Cached full listing (all extensions — sidecars included) of a directory for the
+    /// CURRENT scan. Failures cache an empty array so a broken directory is probed once.
+    /// </summary>
+    protected string[] GetCachedDirectoryListing(string dirPath)
+        => _scanDirListings.GetOrAdd(dirPath, static dir =>
+        {
+            try { return Directory.GetFiles(dir); }
+            catch { return Array.Empty<string>(); }
+        });
 
     protected virtual IEnumerable<FileDiscoveryResult> EnumerateFilesCurrentDir(string dirPath)
     {
@@ -446,6 +515,18 @@ public abstract class BaseMediaScanner : IMediaScanner
     }
 
     /// <summary>
+    /// SM-WI-013 — acquire the shared SQLite write gate as a disposable lease. Public so
+    /// non-scanner writers on the scan/watch paths (LibraryWatcher's targeted
+    /// missing-mark) serialize against scan saves too; previously those saves ran
+    /// unlocked and could hit SQLITE_BUSY against a concurrent scan's writers.
+    /// </summary>
+    public static async Task<IDisposable> AcquireDbWriteLockAsync(CancellationToken ct = default)
+    {
+        await _dbWriteLock.WaitAsync(ct);
+        return new SemaphoreReleaser(_dbWriteLock);
+    }
+
+    /// <summary>
     /// Process a single file (for file watcher events).
     /// </summary>
     public async Task ProcessSingleFileAsync(
@@ -481,7 +562,40 @@ public abstract class BaseMediaScanner : IMediaScanner
         var fileResult = new FileDiscoveryResult(fileInfo.FullName, fileInfo.Exists ? fileInfo.Length : 0, fileInfo.Exists ? fileInfo.LastWriteTimeUtc : DateTime.UtcNow);
 
         var opResult = await ProcessFileAsync(context, fileResult, existing, library, cancellationToken);
-        await context.SaveChangesAsync(cancellationToken);
+        // SM-WI-013: same SR-WI-035 discipline as the full-scan save windows — the
+        // watcher allows up to 3 concurrent single-file imports, and a scan may be
+        // writing at the same time.
+        using (await AcquireDbWriteLockAsync(cancellationToken))
+        {
+            // SM-WI-061 — close the check-then-add race: another writer (a running
+            // scan's batch, or a concurrent watcher import of the same file) may have
+            // committed a row for this path between our lookup above and this lock.
+            // Re-check INSIDE the lock; if a row exists now, our Added entities are
+            // redundant — drop them instead of inserting a duplicate twin (whose loser
+            // the next scan would purge along with its user data). The remaining
+            // written-after-this-check window is backstopped by the partial unique
+            // Path index, which fails the later insert loudly instead of silently.
+            if (existing == null && opResult.Result == ScanResult.New)
+            {
+                var raceWinner = await context.MediaItems.AsNoTracking()
+                    .AnyAsync(m => m.Path != null && m.Path.ToLower() == lowered && m.LibraryId == library.Id,
+                        cancellationToken);
+                if (raceWinner)
+                {
+                    _logger.LogInformation(
+                        "[{Scanner}] {Path} was imported by a concurrent writer while this single-file import ran; discarding the duplicate",
+                        DisplayName, filePath);
+                    foreach (var entry in context.ChangeTracker.Entries()
+                                 .Where(e => e.State == EntityState.Added).ToList())
+                    {
+                        entry.State = EntityState.Detached;
+                    }
+                    return;
+                }
+            }
+
+            await context.SaveChangesAsync(cancellationToken);
+        }
 
         if (opResult.EnqueueMetadata && opResult.ItemId != Guid.Empty)
         {
@@ -847,10 +961,23 @@ public abstract class BaseMediaScanner : IMediaScanner
         }
     }
 
-    private static async Task HardDeleteItemsAsync(
+    private async Task HardDeleteItemsAsync(
         AppDbContext context, IReadOnlyList<Guid> ids, bool isInMemory, CancellationToken cancellationToken)
     {
         if (ids.Count == 0) return;
+
+        // MC-WI-004: capture identity BEFORE the rows go away — subtitle cache keys
+        // derive from Path, and artwork/trickplay cleanup needs (Id, Type).
+        var doomed = new List<(Guid Id, MediaType Type, string? Path)>(ids.Count);
+        foreach (var chunk in ids.Chunk(500))
+        {
+            var rows = await context.MediaItems
+                .AsNoTracking()
+                .Where(m => chunk.Contains(m.Id))
+                .Select(m => new { m.Id, m.Type, m.Path })
+                .ToListAsync(cancellationToken);
+            doomed.AddRange(rows.Select(r => (r.Id, r.Type, (string?)r.Path)));
+        }
 
         // ExecuteDeleteAsync is highly performant but unsupported by the InMemory test provider
         if (isInMemory)
@@ -869,6 +996,25 @@ public abstract class BaseMediaScanner : IMediaScanner
                     .Where(m => chunk.Contains(m.Id))
                     .ExecuteDeleteAsync(cancellationToken);
             }
+        }
+
+        // MC-WI-004: reclaim derived artifacts (artwork, trickplay, thumbnails, cached
+        // subtitle VTTs) immediately instead of waiting up to a day for the orphan sweep,
+        // matching the manual library-delete path. Best-effort — the rows are gone either
+        // way and the daily sweep remains the backstop. GetService (not Required): some
+        // scanner test hosts don't register the cleanup service.
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            scope.ServiceProvider
+                .GetService<Media.ILibraryCleanupService>()
+                ?.DeleteArtifactsForItems(doomed);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "[{Scanner}] Artifact cleanup after hard-deleting {Count} item(s) failed; the daily cache sweep will reclaim them",
+                DisplayName, doomed.Count);
         }
     }
 

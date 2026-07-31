@@ -53,9 +53,9 @@ function page(node: ReactNode) {
 }
 
 function App() {
-  const user = useAuthStore((state: any) => state.user);
-  const token = useAuthStore((state: any) => state.token);
-  const mediaToken = useAuthStore((state: any) => state.mediaToken);
+  const user = useAuthStore((state) => state.user);
+  const token = useAuthStore((state) => state.token);
+  const mediaToken = useAuthStore((state) => state.mediaToken);
 
   // Media-token lifecycle (audit H3 → WS-6 T6.2 hard dependency): whenever the access
   // token appears or rotates (initial login, persisted session, silent refresh), fetch
@@ -67,6 +67,16 @@ function App() {
   // (server down, proxy broken) never trips the axios refresh/logout path, so
   // without it the spinner would be inescapable.
   const [connectAttempts, setConnectAttempts] = useState(0);
+
+  // Reset the retry counter the moment a media token lands — during render
+  // (react.dev: "adjusting state when props change"), so the effect below stays
+  // purely about the external work (fetching, retrying).
+  const [hadMediaToken, setHadMediaToken] = useState(false);
+  if (!!mediaToken !== hadMediaToken) {
+    setHadMediaToken(!!mediaToken);
+    if (mediaToken) setConnectAttempts(0);
+  }
+
   useEffect(() => {
     if (!token) {
       cancelMediaTokenRenewal();
@@ -81,7 +91,6 @@ function App() {
     // fetch here stored a different value, retriggered this effect, and fetched
     // again, looping for as long as the tab stayed open.
     if (mediaToken) {
-      setConnectAttempts(0);
       return;
     }
     void fetchMediaToken();

@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import Hls from 'hls.js';
 import api from '../../services/api';
-import { type MediaItem } from '../../types';
+import { type MediaItem, type MediaVersion } from '../../types';
 import { useTrackSelection } from '../../hooks/useTrackSelection';
 import { useAuthStore, getUrlToken, getAccessToken } from '../../store/authStore';
 import { NextEpisodeOverlay, type NextEpisodeInfo } from './NextEpisodeOverlay';
@@ -126,6 +126,13 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [seekOffset, setSeekOffset] = useState(0); // Offset when transcoding starts from non-zero position
+    // Mirror for effects that must READ the offset without DEPENDING on it —
+    // the stream-setup effect tears down and rebuilds HLS when its deps change,
+    // and reacting to every seek would restart the stream (see its dep comment).
+    const seekOffsetRef = useRef(0);
+    useEffect(() => {
+        seekOffsetRef.current = seekOffset;
+    }, [seekOffset]);
     const [bufferedTime, setBufferedTime] = useState(0);
     const [volume, setVolume] = useState(1);
     const [isMuted, setIsMuted] = useState(false);
@@ -961,7 +968,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                         // &gen busts caches across far-seek restarts: the URL was
                         // otherwise identical while the VTT content changes per seek
                         // offset (stale copy = subs off by the whole seek).
-                        const subtitleUrl = `/api/v1/transcode/${item.id}/subtitles.vtt?token=${subtitleToken}&sub=${selectedSubtitleTrack}&sid=${streamId}&gen=${Math.floor(seekOffset)}`;
+                        // seekOffsetRef, not seekOffset: this runs inside the
+                        // stream-setup effect, which must not re-run per seek.
+                        const subtitleUrl = `/api/v1/transcode/${item.id}/subtitles.vtt?token=${subtitleToken}&sub=${selectedSubtitleTrack}&sid=${streamId}&gen=${Math.floor(seekOffsetRef.current)}`;
                         console.log(`Adding subtitle track: ${subtitleUrl}`);
 
                         // Create and add new track element
@@ -1671,6 +1680,28 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     };
 
     // Navigate to previous or next episode (for TV shows)
+    // DV-WI-023: switch to a different FILE of this title mid-play. The current position
+    // is carried through the server resume state — saved against the TARGET id, so the
+    // fresh player mount resumes it via the normal progress flow. Editions whose runtime
+    // differs by more than 5% start from the beginning (positions aren't comparable
+    // across different cuts). The navigation REPLACES the history entry so Back still
+    // leaves the player (hierarchical back-navigation rule).
+    const switchVersion = async (version: MediaVersion) => {
+        if (version.id === item.id) return;
+        setShowMoreMenu(false);
+        const position = Math.floor(effectivePlaybackPositionRef.current || 0);
+        const sourceDuration = item.durationSeconds ?? 0;
+        const targetDuration = version.durationSeconds ?? 0;
+        const sameCut = sourceDuration > 0 && targetDuration > 0
+            && Math.abs(targetDuration - sourceDuration) / Math.max(targetDuration, sourceDuration) <= 0.05;
+        try {
+            await api.post(`/interaction/${version.id}/progress`, { position: sameCut ? position : 0 });
+        } catch {
+            // Non-fatal: the target copy resumes from its own stored state instead.
+        }
+        navigate(`/play/${version.id}`, { replace: true });
+    };
+
     const navigateEpisode = async (direction: 'prev' | 'next') => {
         const targetId = direction === 'prev' ? previousEpisodeId : nextEpisodeId;
         if (!targetId) {
@@ -1802,7 +1833,8 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
             artist: item.seasonNumber != null && item.episodeNumber != null
                 ? `Season ${item.seasonNumber} · Episode ${item.episodeNumber}`
                 : undefined,
-            // attachAuthToApiUrl is a no-op for /cache/* and external URLs.
+            // attachAuthToApiUrl tokenizes /api and the token-gated /cache/images
+            // statics (AA-WI-001); external URLs pass through untouched.
             artworkUrl: item.posterPath ? attachAuthToApiUrl(item.posterPath) : null,
         },
         handlers: {
@@ -2461,8 +2493,13 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                                 contentType,
                                                 title: item.title,
                                                 subtitle: item.year ? String(item.year) : undefined,
+                                                // AA-WI-006: the poster is token-gated (/cache/images); attach the
+                                                // MEDIA token current at load time. Deliberately NOT the cast token
+                                                // — that stays hard-scoped to this item's stream routes. The receiver
+                                                // fetches the poster immediately on load (and each queue advance
+                                                // re-plans with a fresh URL), so the 120-min TTL comfortably covers it.
                                                 posterUrl: item.posterPath
-                                                    ? new URL(item.posterPath, window.location.origin).toString()
+                                                    ? new URL(attachAuthToApiUrl(item.posterPath), window.location.origin).toString()
                                                     : undefined,
                                             });
                                             // Hand off: stop local playback so it isn't playing in two places.
@@ -2567,6 +2604,29 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                                 </button>
                                             ))}
                                         </div>
+
+                                        {/* Version (DV-WI-023) — file copies of this title; picking one
+                                            switches the SOURCE FILE (the Quality ladder above only
+                                            re-encodes the current file). Hidden while casting: the cast
+                                            token is locked to the media item the session started with. */}
+                                        {!isCasting && (item.versions?.length ?? 0) > 1 && (
+                                            <>
+                                                <div className="px-3 py-1 text-xs text-white/50 uppercase font-semibold border-t border-white/10 mt-1 pt-2">Version</div>
+                                                <div className="flex flex-col gap-1 px-3 pb-2 pt-1" role="group" aria-label="Version">
+                                                    {item.versions!.map(version => (
+                                                        <button
+                                                            key={version.id}
+                                                            type="button"
+                                                            onClick={() => switchVersion(version)}
+                                                            aria-current={version.id === item.id}
+                                                            className={`px-2.5 py-1 text-xs rounded-md text-left transition-colors ${version.id === item.id ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 hover:bg-white/20'}`}
+                                                        >
+                                                            {version.label}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </>
+                                        )}
 
                                         {/* Subtitle sync (R-WI-018) — only when a text track is
                                             actually ON (-1 is the Off sentinel, not null). */}

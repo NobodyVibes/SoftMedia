@@ -34,7 +34,15 @@ import TocDrawer, { type TocItem } from './TocDrawer';
 import ReaderSettingsPanel, { PanelSection, SegmentedControl, FontSizeControl, ZoomControl, SliderControl } from './ReaderSettingsPanel';
 import BookmarksDrawer from './BookmarksDrawer';
 import SearchDrawer, { type SearchHit } from './SearchDrawer';
-import HighlightsDrawer, { swatchFor } from './HighlightsDrawer';
+import HighlightsDrawer from './HighlightsDrawer';
+import { swatchFor } from './highlightColours';
+import {
+    EPUB_THEME_STYLE_ID,
+    applyThemeStyleTo,
+    buildEpubThemeCss,
+    readReaderTokens,
+    refreshReaderTheme,
+} from './readerTheme';
 import PdfHighlightOverlay from './PdfHighlightOverlay';
 import ShortcutHelpSheet from './ShortcutHelpSheet';
 import TtsNowPlayingBar, { type SleepTimerMode } from './TtsNowPlayingBar';
@@ -147,42 +155,9 @@ const exitFs = (): Promise<void> => {
     return fn ? Promise.resolve(fn.call(document)) : Promise.resolve();
 };
 
-// ER-011: reader colour palette now lives in CSS variables on [data-reader-root]
-// in index.css. Everything that runs outside that DOM scope — the EpubView
-// container background (React inline style: CSS var refs work fine) and the
-// epub.js iframe theme (separate document: needs computed values) — reads from
-// those variables. ER-021 flips them by toggling data-reading-theme.
-
-interface ReaderThemeTokens {
-    bg: string;
-    fg: string;
-    heading: string;
-    link: string;
-    linkHover: string;
-    selection: string;
-    fontFamily: string;
-    fontSize: string;
-    lineHeight: string;
-    paddingInline: string;
-    paddingBlock: string;
-}
-
-// Literal fallback values mirror index.css's dark-theme defaults exactly.
-// Used before the reader root is in the DOM and in jsdom where getComputedStyle
-// returns empty strings for custom properties.
-const THEME_FALLBACK: ReaderThemeTokens = {
-    bg: '#111827',
-    fg: '#e5e7eb',
-    heading: '#ffffff',
-    link: '#60a5fa',
-    linkHover: '#93c5fd',
-    selection: 'rgba(96, 165, 250, 0.45)',
-    fontFamily: "'Inter', system-ui, sans-serif",
-    fontSize: '100%',
-    lineHeight: '1.7',
-    paddingInline: '2rem',
-    paddingBlock: '1.5rem',
-};
+// ER-011/ER-020/ER-021: the reader theme cluster (tokens, CSS builder, chunk
+// injection, refreshReaderTheme) lives in readerTheme.ts — plain functions
+// don't belong in a component file (they defeat Fast Refresh module-wide).
 
 // ER-020: slice-value → CSS-value maps. Kept at module scope so the settings
 // panel can reuse them for its option labels if needed. OpenDyslexic and
@@ -209,113 +184,6 @@ const MARGIN_CSS: Record<string, string> = {
     wide: '3.5rem',
 };
 
-function readReaderTokens(root: Element | null): ReaderThemeTokens {
-    if (!root || typeof window === 'undefined' || !window.getComputedStyle) {
-        return THEME_FALLBACK;
-    }
-    const cs = window.getComputedStyle(root);
-    const take = (name: string, fallback: string) => {
-        const v = cs.getPropertyValue(name).trim();
-        return v.length > 0 ? v : fallback;
-    };
-    return {
-        bg: take('--reader-bg', THEME_FALLBACK.bg),
-        fg: take('--reader-fg', THEME_FALLBACK.fg),
-        heading: take('--reader-heading', THEME_FALLBACK.heading),
-        link: take('--reader-link', THEME_FALLBACK.link),
-        linkHover: take('--reader-link-hover', THEME_FALLBACK.linkHover),
-        selection: take('--reader-selection', THEME_FALLBACK.selection),
-        fontFamily: take('--reader-font-family', THEME_FALLBACK.fontFamily),
-        fontSize: take('--reader-font-size', THEME_FALLBACK.fontSize),
-        lineHeight: take('--reader-line-height', THEME_FALLBACK.lineHeight),
-        paddingInline: take('--reader-padding-inline', THEME_FALLBACK.paddingInline),
-        paddingBlock: take('--reader-padding-block', THEME_FALLBACK.paddingBlock),
-    };
-}
-
-/**
- * Builds the theme CSS as a plain string. We inject it directly into each
- * EPUB chunk's document as a marked <style> element rather than registering
- * via epub.js's themes.register/select pipeline — the old approach raced
- * with the first chunk's initial paint and sometimes left the page with
- * publisher styles (or browser defaults) until the user nudged the theme.
- * Marking the <style> with `id="softmedia-reader-theme"` lets our strip hook
- * distinguish ours from publisher <style> blocks.
- */
-const EPUB_THEME_STYLE_ID = 'softmedia-reader-theme';
-
-function buildEpubThemeCss(t: ReaderThemeTokens, overridePublisher: boolean): string {
-    const imp = overridePublisher ? ' !important' : '';
-    return `
-        /* Anchor the cascade on <html>. Publisher rules on inner elements
-         * usually target descendants with their own font-size, so a body-only
-         * rule doesn't propagate. Setting html is also the base for rem units,
-         * so publisher rem-based styles scale proportionally with our size. */
-        html {
-            font-size: ${t.fontSize}${imp};
-        }
-        body {
-            background: ${t.bg}${imp};
-            color: ${t.fg}${imp};
-            font-family: ${t.fontFamily}${imp};
-            font-size: ${t.fontSize}${imp};
-            line-height: ${t.lineHeight}${imp};
-            padding: ${t.paddingBlock} ${t.paddingInline}${imp};
-        }
-        /* Force common text elements to inherit font-size instead of using
-         * hard-coded px / pt values the publisher baked in. Without this a
-         * publisher rule on <p> with its own font-size defeats our body
-         * override by specificity (an element rule beats a body rule for
-         * descendants that set their own size), regardless of !important.
-         * Headings are left alone so they keep their relative scaling. */
-        p, span, div, li, td, th, dd, dt, blockquote, q, cite, em, strong {
-            font-size: inherit${imp};
-            color: ${t.fg}${imp};
-        }
-        h1, h2, h3, h4, h5, h6 { color: ${t.heading}${imp}; }
-        a { color: ${t.link}${imp}; }
-        a:hover { color: ${t.linkHover}${imp}; }
-        img, svg { max-width: 100%; }
-        ::selection { background: ${t.selection}${imp}; }
-        /* Karaoke highlight for the currently-spoken segment. Uses the
-         * browser's CSS Custom Highlight API — painted without DOM mutation
-         * so selection, clicks, and existing spans remain intact. Callers
-         * (BookReader) register/unregister ranges under this name via
-         * CSS.highlights.set('sm-tts-active', Highlight). Fallback: browsers
-         * without the API simply don't paint, which is fine — TTS still works,
-         * just without the karaoke effect. */
-        ::highlight(sm-tts-active) {
-            background-color: rgba(255, 215, 64, 0.55);
-            color: ${t.fg};
-        }
-        /* TTS pick-start mode — when armed, flip the cursor over the whole
-         * document so every word reads as "tappable to start listening here."
-         * Toggled by BookReader via a data attribute on <body> rather than
-         * reinjecting the stylesheet, so the cursor flips instantly. */
-        body[data-sm-tts-arm="true"],
-        body[data-sm-tts-arm="true"] * {
-            cursor: pointer !important;
-        }
-    `;
-}
-
-/**
- * Install or replace the reader theme <style> inside a single chunk's
- * document. Idempotent — calling repeatedly with the same CSS is a DOM
- * no-op. Appended to body (not head) so it sits after any surviving
- * publisher styles and wins cascade-by-order in addition to !important.
- */
-function applyThemeStyleTo(doc: Document, css: string): void {
-    let style = doc.getElementById(EPUB_THEME_STYLE_ID) as HTMLStyleElement | null;
-    if (!style) {
-        style = doc.createElement('style');
-        style.id = EPUB_THEME_STYLE_ID;
-        (doc.body ?? doc.head ?? doc.documentElement).appendChild(style);
-    }
-    if (style.textContent !== css) {
-        style.textContent = css;
-    }
-}
 
 /**
  * Walk a Range's visible text nodes and build a sub-Range matching character
@@ -483,7 +351,7 @@ async function searchPdf(
             continue; // Skip unreadable pages; search proceeds.
         }
         const lower = text.toLowerCase();
-        let idx = lower.indexOf(q);
+        const idx = lower.indexOf(q);
         if (idx < 0) continue;
         // One hit per page — the scrubber jumps there; the user scans visually.
         const start = Math.max(0, idx - 40);
@@ -537,37 +405,13 @@ type PdfDocProxy = {
     getPage: (pageNumber: number) => Promise<PdfPageProxy>;
 };
 
-/**
- * Push the current theme CSS into every EPUB chunk that's currently rendered.
- * Walks rendition.getContents() — epub.js exposes every live Contents wrapper
- * that way — and replaces the sentinel <style> in each. ER-021 drives this on
- * theme change; the content hook below handles newly-rendered chunks.
- * `overridePublisher` (ER-022) decides whether rules get `!important` appended.
- * Safe on a null rendition — it's a no-op.
- */
-export function refreshReaderTheme(
-    rendition: Rendition | null,
-    root: Element | null,
-    overridePublisher: boolean = true,
-): void {
-    if (!rendition) return;
-    const css = buildEpubThemeCss(readReaderTokens(root), overridePublisher);
-    const r = rendition as unknown as {
-        getContents?: () => Array<{ document?: Document }>;
-    };
-    try {
-        const contents = r.getContents?.() ?? [];
-        for (const c of contents) {
-            if (c.document) applyThemeStyleTo(c.document, css);
-        }
-    } catch {
-        // Theme application is best-effort; failures must never break reading.
-    }
-}
-
 interface BookReaderProps {
     item: MediaItem;
 }
+
+// Idle window for reading-session stats — module scope so effects can use it
+// without it appearing (pointlessly) in their dependency lists.
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
 export default function BookReader({ item }: BookReaderProps) {
     const navigate = useNavigate();
@@ -746,7 +590,7 @@ export default function BookReader({ item }: BookReaderProps) {
     } | null) => {
         if (!pending) return;
         const first = pending.quotedText.trim().split(/\s+/)[0] ?? '';
-        const cleaned = first.replace(/[^\p{L}\p{M}'\-]/gu, '');
+        const cleaned = first.replace(/[^\p{L}\p{M}'-]/gu, '');
         if (cleaned.length === 0) return;
         const x = pending.x;
         const y = pending.y;
@@ -954,7 +798,7 @@ export default function BookReader({ item }: BookReaderProps) {
             const range = getVisibleEpubRange();
             if (range && speakVisibleRange(range)) {
                 lastSpokenLocationRef.current = locKey;
-                // eslint-disable-next-line no-console
+                 
                 console.debug('[TTS] speak loc=', locKey, 'text=', range.toString().slice(0, 60));
                 return;
             }
@@ -962,7 +806,7 @@ export default function BookReader({ item }: BookReaderProps) {
             if (attempts < 4) {
                 tid = window.setTimeout(tryOnce, 200);
             } else {
-                // eslint-disable-next-line no-console
+                 
                 console.debug('[TTS] gave up on', locKey, 'after', attempts, 'attempts');
             }
         };
@@ -1350,7 +1194,6 @@ export default function BookReader({ item }: BookReaderProps) {
     // Idle timeout: if no pointer / key activity for 5 minutes, close the
     // session so leaving the tab open overnight doesn't inflate stats.
     const idleTimerRef = useRef<number | null>(null);
-    const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
     // Load summary + start a session on mount. Wraps both calls so a network
     // failure on the start doesn't block the summary fetch — each is
@@ -2534,7 +2377,9 @@ export default function BookReader({ item }: BookReaderProps) {
         return () => window.removeEventListener('keydown', handler);
     }, [
         isPdf, isCbz, isEpub, changePage, navigate, epubNext, epubPrev,
-        immersive, toggleImmersive, rtl, addBookmarkAtCurrent, item.id,
+        // `item` (not item.id): playerBackTarget reads more than the id, and a
+        // keydown-listener resubscribe on a refetched item object is free.
+        immersive, toggleImmersive, rtl, addBookmarkAtCurrent, item,
         // ER-054 deps
         tocItems.length, toggleFullscreen, readerTheme, setReaderTheme,
         fontSize, setFontSize, zoom, setZoom,
@@ -3613,12 +3458,17 @@ function PageControls({
     })();
     const syncUrl = thumbnailUrl && draftPage !== null ? thumbnailUrl(draftPage) : null;
 
+    // An invalid target has no preview — cleared during render rather than in
+    // the effect, so a just-deleted digit never shows the stale page's thumb.
+    if (draftPage === null && asyncPreview !== null) {
+        setAsyncPreview(null);
+    }
+
     // Async renderer path (ER-032 PDF). Debounced via a small delay so
     // rapid typing doesn't fire a render per keystroke; the sequence number
     // guards against late-arriving renders clobbering a newer target.
     useEffect(() => {
         if (!renderThumbnail || draftPage === null) {
-            setAsyncPreview(null);
             return;
         }
         let cancelled = false;

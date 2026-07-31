@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SoftMedia.Server.Data;
+using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Identity;
 using SoftMedia.Server.Services.Infrastructure;
@@ -46,6 +47,17 @@ public class AdminController : ControllerBase
         _backupService = backupService;
         _taskRegistry = taskRegistry;
         _triggerableTasks = triggerableTasks;
+    }
+
+    /// <summary>
+    /// MC-WI-007 — per-area on-disk footprint of wwwroot/cache (artwork, thumbnails,
+    /// image proxy, trickplay, subtitles) for the admin Cache Usage card.
+    /// </summary>
+    [HttpGet("cache-stats")]
+    public async Task<ActionResult<IReadOnlyList<CacheAreaStats>>> GetCacheStats(
+        [FromServices] ICacheStatsService cacheStats, CancellationToken ct)
+    {
+        return Ok(await cacheStats.GetStatsAsync(ct));
     }
 
     /// <summary>
@@ -541,6 +553,153 @@ public class AdminController : ControllerBase
         _logger.LogInformation("Admin {Admin} queued a metadata refresh for item {ItemId}", User.Identity?.Name, itemId);
         return Ok(new { message = "Refresh queued." });
     }
+
+    // ─────────────── DV-WI-011/012: version groups (duplicate copies of one title) ───────────────
+
+    /// <summary>
+    /// DV-WI-011 — merge items into ONE version group (they are copies of the same
+    /// logical title). Joins an existing group id when any member has one, else mints a
+    /// fresh id. Guards: ≥2 distinct items, all found, same library, same groupable type
+    /// — cross-library merges are rejected because library ACLs differ per copy.
+    /// </summary>
+    [HttpPost("versions/merge")]
+    public async Task<IActionResult> MergeVersions(
+        [FromBody] MergeVersionsRequest request, [FromServices] AppDbContext db, CancellationToken ct)
+    {
+        var ids = request.ItemIds?.Distinct().ToList() ?? new List<Guid>();
+        if (ids.Count < 2) return BadRequest("At least two distinct item ids are required.");
+
+        var items = await db.MediaItems.Where(m => ids.Contains(m.Id)).ToListAsync(ct);
+        if (items.Count != ids.Count) return NotFound();
+        if (items.Select(i => i.LibraryId).Distinct().Count() > 1)
+            return BadRequest("All items must belong to the same library.");
+        if (items.Select(i => i.Type).Distinct().Count() > 1
+            || (items[0].Type != MediaType.Movie && items[0].Type != MediaType.Episode))
+            return BadRequest("Only movies (or episodes) of the same type can be merged.");
+
+        var target = items.OrderBy(i => i.Id)
+            .Select(i => i.VersionGroupId)
+            .FirstOrDefault(g => g != null) ?? Guid.NewGuid();
+        foreach (var item in items) item.VersionGroupId = target;
+
+        // DV-WI-014 (plan §5): a merge must leave the group's watched flags consistent —
+        // any member watched marks the user's other member rows watched too.
+        await VersionGroupAssigner.ReconcileGroupWatchedAsync(db, new[] { target }, ct);
+        await db.SaveChangesAsync(ct);
+
+        _logger.LogInformation("Admin {Admin} merged {Count} item(s) into version group {Group}",
+            User.Identity?.Name, items.Count, target);
+        return Ok(new { versionGroupId = target, count = items.Count });
+    }
+
+    /// <summary>
+    /// DV-WI-011 — split one item OUT of its version group (it is not actually a copy of
+    /// the others). The fresh random id is non-null, which is precisely what makes the
+    /// split stick: scanner/backfill assignment is fill-only and never rewrites it.
+    /// </summary>
+    [HttpPost("versions/split")]
+    public async Task<IActionResult> SplitVersion(
+        [FromBody] SplitVersionRequest request, [FromServices] AppDbContext db, CancellationToken ct)
+    {
+        var item = await db.MediaItems.FirstOrDefaultAsync(m => m.Id == request.ItemId, ct);
+        if (item == null) return NotFound();
+
+        item.VersionGroupId = Guid.NewGuid();
+        item.PreferredVersion = false; // a preference claim makes no sense in a fresh singleton group
+        await db.SaveChangesAsync(ct);
+
+        _logger.LogInformation("Admin {Admin} split item {ItemId} into its own version group {Group}",
+            User.Identity?.Name, item.Id, item.VersionGroupId);
+        return Ok(new { versionGroupId = item.VersionGroupId });
+    }
+
+    /// <summary>
+    /// DV-WI-020 — mark ONE member of a version group as the preferred version (or clear
+    /// the claim). The flag beats the computed primary rule everywhere (grids, detail,
+    /// playback default). Setting it clears any sibling's previous claim so at most one
+    /// member of a group carries it.
+    /// </summary>
+    [HttpPost("versions/prefer")]
+    public async Task<IActionResult> SetPreferredVersion(
+        [FromBody] PreferVersionRequest request, [FromServices] AppDbContext db, CancellationToken ct)
+    {
+        var item = await db.MediaItems.FirstOrDefaultAsync(m => m.Id == request.ItemId, ct);
+        if (item == null) return NotFound();
+
+        if (request.Preferred && item.VersionGroupId != null)
+        {
+            var siblings = await db.MediaItems
+                .Where(m => m.VersionGroupId == item.VersionGroupId && m.Id != item.Id && m.PreferredVersion)
+                .ToListAsync(ct);
+            foreach (var sibling in siblings) sibling.PreferredVersion = false;
+        }
+        item.PreferredVersion = request.Preferred;
+        await db.SaveChangesAsync(ct);
+
+        _logger.LogInformation("Admin {Admin} set PreferredVersion={Preferred} on item {ItemId}",
+            User.Identity?.Name, request.Preferred, item.Id);
+        return Ok();
+    }
+
+    /// <summary>
+    /// DV-WI-012 — every version group with more than one member: which titles exist as
+    /// multiple files, with per-copy path, quality label, size and watched-by count, so
+    /// duplicates are visible (and mergeable/splittable) instead of silently doubling
+    /// cards. Ordered by display title for a stable report.
+    /// </summary>
+    [HttpGet("versions/duplicates")]
+    public async Task<ActionResult<List<VersionGroupDto>>> GetDuplicateVersions(
+        [FromServices] AppDbContext db, CancellationToken ct)
+    {
+        var duplicateGroupIds = await db.MediaItems
+            .Where(m => m.VersionGroupId != null)
+            .GroupBy(m => m.VersionGroupId)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToListAsync(ct);
+        if (duplicateGroupIds.Count == 0) return Ok(new List<VersionGroupDto>());
+
+        var rows = await db.MediaItems
+            .Where(m => m.VersionGroupId != null && duplicateGroupIds.Contains(m.VersionGroupId))
+            .ToListAsync(ct);
+
+        var memberIds = rows.Select(r => r.Id).ToList();
+        var watchedCounts = (await db.UserMediaInteractions
+                .Where(i => i.IsWatched && memberIds.Contains(i.MediaItemId))
+                .GroupBy(i => i.MediaItemId)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToListAsync(ct))
+            .ToDictionary(x => x.Key, x => x.Count);
+
+        var seriesIds = rows.Where(r => r.SeriesId != null).Select(r => r.SeriesId!.Value).Distinct().ToList();
+        var seriesTitles = await db.MediaItems
+            .Where(m => seriesIds.Contains(m.Id))
+            .ToDictionaryAsync(m => m.Id, m => m.Title, ct);
+        var libraryNames = await db.Libraries.ToDictionaryAsync(l => l.Id, l => l.Name, ct);
+
+        var report = rows
+            .GroupBy(r => r.VersionGroupId!.Value)
+            .Select(g =>
+            {
+                var first = g.OrderBy(m => m.Id).First();
+                var displayTitle = first.Type == MediaType.Episode
+                    ? $"{(first.SeriesId != null && seriesTitles.TryGetValue(first.SeriesId.Value, out var st) ? st : "Unknown Series")} — S{first.SeasonNumber ?? 0:D2}E{first.EpisodeNumber ?? 0:D2} {first.Title}"
+                    : first.Year != null ? $"{first.Title} ({first.Year})" : first.Title;
+                return new VersionGroupDto(
+                    g.Key,
+                    first.Type.ToString(),
+                    displayTitle,
+                    first.LibraryId,
+                    libraryNames.GetValueOrDefault(first.LibraryId),
+                    g.OrderBy(m => m.Id).Select(m => new VersionGroupMemberDto(
+                        m.Id, m.Title, m.Path, VersionLabelHelper.BuildLabel(m), m.Size,
+                        m.PreferredVersion, watchedCounts.GetValueOrDefault(m.Id))).ToList());
+            })
+            .OrderBy(g => g.DisplayTitle, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return Ok(report);
+    }
 }
 
 public class RetryFileRequest
@@ -557,4 +716,14 @@ public class BackupNameRequest
 public record SearchMatchRequest(string Query, int? Year);
 public record ApplyMatchRequest(string ProviderName, string ProviderItemId);
 public record ManualEditRequest(string? Title, string? Overview, int? Year, string? PosterUrl, string? ContentRating);
+
+// DV-WI-011/012 — version-group admin surface.
+public record MergeVersionsRequest(List<Guid> ItemIds);
+public record SplitVersionRequest(Guid ItemId);
+public record PreferVersionRequest(Guid ItemId, bool Preferred);
+public record VersionGroupMemberDto(
+    Guid Id, string Title, string? Path, string Label, long Size, bool Preferred, int WatchedByCount);
+public record VersionGroupDto(
+    Guid VersionGroupId, string Kind, string DisplayTitle, Guid LibraryId, string? LibraryName,
+    List<VersionGroupMemberDto> Members);
 

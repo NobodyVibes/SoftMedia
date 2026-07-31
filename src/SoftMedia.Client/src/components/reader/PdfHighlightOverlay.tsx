@@ -1,4 +1,4 @@
-import { swatchFor } from './HighlightsDrawer';
+import { swatchFor } from './highlightColours';
 import { parseHighlightLocation, type Highlight } from '../../services/bookService';
 
 interface PdfHighlightOverlayProps {

@@ -30,6 +30,12 @@ public interface IMediaRepository
     Task<int> GetEpisodeCountAsync(Guid seriesId, int seasonNumber);
 
     /// <summary>
+    /// DV-WI-015 — live (non-missing) member count per version group, one query for a
+    /// whole page of collapsed rows.
+    /// </summary>
+    Task<Dictionary<Guid, int>> GetVersionCountsAsync(IEnumerable<Guid> versionGroupIds);
+
+    /// <summary>
     /// Checks if a MediaItem exists.
     /// </summary>
     Task<bool> ExistsAsync(Guid id);

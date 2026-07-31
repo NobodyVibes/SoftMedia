@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ComponentProps } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import MediaDetailLayout, { formatResumeTime } from './MediaDetailLayout';
+import MediaDetailLayout from './MediaDetailLayout';
+import { formatResumeTime } from '../../lib/utils';
 import { MediaType, type MediaItem } from '../../types';
 import { toast } from 'sonner';
 

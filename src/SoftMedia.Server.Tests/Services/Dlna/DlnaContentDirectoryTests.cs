@@ -229,4 +229,39 @@ public class DlnaContentDirectoryTests
         var eps = await CdExposing(db, _movieLib).BrowseAsync($"S:{_series}", false, 0, 0, Base, default);
         Assert.Empty(Children(eps.Didl, "item"));
     }
+
+    [Fact]
+    public async Task SeriesChildren_DuplicateEpisodes_GetQualitySuffixes_UniqueOnesDoNot()
+    {
+        // DV-WI-006: DLNA renderers have no version picker — duplicate copies of one
+        // episode stay listed but carry a quality suffix so the two entries aren't
+        // byte-identical. Runs on REAL SQLite: the duplicate-key GroupBy/HAVING query
+        // must actually translate (EF InMemory would evaluate it client-side and hide
+        // a translation failure).
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection("DataSource=:memory:");
+        conn.Open();
+        using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlite(conn).Options);
+        db.Database.EnsureCreated();
+
+        var tvLib = Guid.NewGuid();
+        var seriesId = Guid.NewGuid();
+        db.Libraries.Add(new Library { Id = tvLib, Name = "Shows", Type = LibraryType.TV });
+        db.MediaItems.Add(new MediaItem { Id = seriesId, Title = "The Show", SortTitle = "show", Path = "/tv/show", LibraryId = tvLib, Type = MediaType.Series });
+        MediaItem Ep(string title, int ep, int? height) => new()
+        {
+            Id = Guid.NewGuid(), Title = title, SortTitle = title, Path = $"/tv/{title}-{height}.mkv",
+            LibraryId = tvLib, Type = MediaType.Episode, SeriesId = seriesId,
+            SeasonNumber = 1, EpisodeNumber = ep, Height = height,
+        };
+        db.MediaItems.AddRange(Ep("E1", 1, 1080), Ep("E2", 2, 1080), Ep("E2", 2, 2160));
+        db.SaveChanges();
+
+        var r = await CdExposing(db, tvLib).BrowseAsync($"S:{seriesId}", false, 0, 0, Base, default);
+        var titles = Children(r.Didl, "item").Select(Title).ToList();
+
+        Assert.Equal(3, titles.Count);
+        Assert.Contains("E1", titles);              // unique episode: no suffix
+        Assert.Contains("E2 [1080p]", titles);      // duplicates: disambiguated
+        Assert.Contains("E2 [4K]", titles);
+    }
 }

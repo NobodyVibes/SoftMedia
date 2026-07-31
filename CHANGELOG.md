@@ -7,6 +7,39 @@ from 1.0 onward.
 ## [Unreleased]
 
 ### Added
+- **Duplicate Versions card on the admin Settings page** — lists every movie and episode
+  that exists as more than one file (quality/language variants or accidental copies) with
+  per-copy quality label, size, and watched state. Copies are now tracked as *versions of
+  one title*: the server groups them automatically at scan time (and back-fills existing
+  libraries at startup), detail responses list each version with its quality label, and a
+  "Not a duplicate" action permanently separates false matches — the correction survives
+  rescans.
+- **One card per title, everywhere.** Library grids, the episode list, search results,
+  Continue Watching, the Most Watched row and post-play suggestions now show a single
+  entry per movie/episode even when several files exist — fronted by the best copy
+  (your "preferred version" pick wins, else highest resolution → HDR → bitrate →
+  newest). Watched state, ratings, favorites and watchlist entries apply to the title:
+  set on any copy, they cover every copy, and existing libraries are reconciled
+  automatically at startup.
+- **Versions on the detail page.** When a title exists as multiple files, its detail
+  page lists each copy with quality label, container and size, per-copy watched state,
+  and a Play button per version; admins can pin a "preferred version" that becomes the
+  default everywhere. Quality badges across the app now use one server-derived label
+  (goodbye FHD/HD/1080p inconsistency), stay visible on cards that have multiple
+  versions, and a TV show's header now reports its honest best quality instead of
+  whichever episode file the server happened to sample.
+- **Switch versions from inside the player.** A new "Version" menu (next to Quality)
+  lists the title's copies — pick the 4K file mid-movie and playback continues from the
+  same position with the new source. Editions whose runtime differs meaningfully (a
+  Director's Cut vs. theatrical) start from the beginning instead of landing mid-scene.
+  Play history stays honest across a switch: continuing the same sitting on another copy
+  counts as one play, not two. (The menu is hidden while casting — cast sessions keep
+  the version they started with.)
+- **Cache Usage card on the admin Settings page** — per-area file counts and sizes for
+  artwork, cast headshots, thumbnails, the image proxy, trickplay previews, and extracted
+  subtitles, so cache growth is visible at a glance (a multi-gigabyte orphaned-trickplay
+  pile previously accumulated invisibly). Cleanup runs daily and can be triggered from the
+  Background Tasks card.
 - **Device column in the admin "Now Playing" card** — each session shows an icon for the client's
   form factor (phone, tablet, TV, cast device, or browser) alongside the address it is streaming
   from. Derived from the User-Agent the client already sends; nothing is stored and no lookup
@@ -19,6 +52,23 @@ from 1.0 onward.
   aggregate episode plays up to the series; never-played items sort last.
 
 ### Security
+- **Artwork now requires authentication.** Posters, backdrops, episode stills, cast
+  headshots and playlist covers under `/cache/images` were served to anyone on the
+  network; they now require the same reduced-privilege media token the player already
+  uses (attached automatically by the web app — nothing changes visually). Casting
+  keeps working: the cast screen's poster carries the media token current at load time,
+  while the cast token stays locked to its single media item's stream routes. Banning
+  or deleting a user now cuts off their artwork access immediately, and the per-request
+  eligibility recheck behind all media/cast tokens gained a short-lived cache with
+  instant invalidation — removing a database query from every HLS segment fetch.
+- **Extracted subtitles and trickplay previews are no longer reachable without signing in.**
+  Both were quietly served as static files alongside the images cache; they now answer only
+  through the authenticated player endpoints. Artwork stays public — the app loads posters in
+  plain image tags.
+- **The image proxy's archive.org allowlist matches the downloader's audited one again** —
+  the proxy still accepted any `*.archive.org` subdomain, including the Wayback Machine, a
+  fetch proxy that could relay arbitrary upstream URLs through an allowlisted host. One shared
+  fetch policy now backs both code paths, so they cannot drift apart in the future.
 - **The main login token no longer travels in URLs** (WS-6). Query-string authentication on
   media routes now accepts only the reduced-privilege media/cast tokens — a full access token
   in a `?token=`/`?access_token=` query string is rejected (query strings leak into logs,
@@ -37,6 +87,40 @@ from 1.0 onward.
   the server-wide resolution/codec ceilings; the hero rotation now honours content-rating ceilings.
 
 ### Fixed
+- **Duplicate copies of the same movie or episode no longer confuse playback and
+  progress.** When two files map to one title (quality/language variants, accidental
+  copies): autoplay now advances to the next episode instead of replaying the one just
+  finished via its other copy; marking an episode watched (or unwatched) applies to every
+  copy; a series with a duplicated episode can actually reach "fully watched" and leave
+  Continue Watching; two half-watched copies of one movie occupy a single Continue
+  Watching slot (the most recently played wins — finishing either copy retires the
+  movie); season episode counts count episodes, not files; intro/credits detection
+  analyzes each episode once and shares the result between same-length copies; and DLNA
+  listings label duplicate episodes with their quality ("E2 [4K]") instead of showing two
+  identical titles.
+- **Duplicate copies of the same episode now share the cached still.** When two files map to
+  the same episode (quality/language variants, accidental copies), the artwork write-back only
+  updated one of the rows — every other copy kept pointing at the provider URL and loaded
+  through the image proxy on every view. All rows for an episode now receive the local cached
+  path, and re-enrichment no longer briefly flips already-cached episode stills back onto the
+  proxy.
+- **Deleting a library now removes everything derived from it.** Cast headshots (previously a
+  silent no-op — files are keyed by the provider's external person id, but deletion looked up
+  internal ids), trickplay previews (which had no deletion path at all), thumbnails, and cached
+  subtitle extractions are all cleaned up immediately; a person also credited in another library
+  keeps their headshot. Items removed by scans (offline past the retention window) get the same
+  immediate cleanup, and a daily sweep reclaims anything left over — including orphaned
+  people/genre rows — while media on temporarily disconnected drives keeps its artwork so
+  everything heals when the drive returns.
+- **Artwork viewed before its download finished no longer leaves a permanent duplicate.** The
+  on-demand image proxy's copy is deleted the moment the permanent item-keyed copy takes over,
+  and any strays now expire after 30 days of non-use (previously they sat in `cache/images/proxy`
+  forever with no way to attribute them).
+- **Comic series covers actually download now** — they were queued and then silently dropped,
+  leaving the row hot-linking the provider through the image proxy on every view.
+- **The track-menu subtitle endpoint reuses cached extractions** instead of re-demuxing the whole
+  file with a fresh ffmpeg run on every request (a multi-minute cost on large remuxes).
+- **Trickplay generation no longer retries items on disconnected drives every sweep.**
 - **"Stop" in the admin dashboard now actually stops the stream.** Killing the session was not
   enough: the player reacted to its segments failing by reloading the playlist, which started a
   brand-new transcode under the same session id — so ffmpeg respawned and playback carried on.

@@ -20,7 +20,11 @@ public interface ILocalArtworkService
     /// enrichment (see MetadataEnrichmentPolicy). Respects MetadataLocked. Never serves from
     /// the media folder — always cache copies, jailed to the folder.
     /// </summary>
-    Task<LocalArtworkResult> ApplyLocalArtworkAsync(MediaItem item, string mediaFolder, string? fileStem);
+    /// <param name="listDirectory">SM-WI-051 — optional directory-listing provider
+    /// (scanners pass their per-scan memo so a flat folder is listed once per scan,
+    /// not once per file). Null falls back to a live listing (watcher/single-file paths).</param>
+    Task<LocalArtworkResult> ApplyLocalArtworkAsync(MediaItem item, string mediaFolder, string? fileStem,
+        Func<string, string[]>? listDirectory = null);
 }
 
 public class LocalArtworkService : ILocalArtworkService
@@ -42,11 +46,12 @@ public class LocalArtworkService : ILocalArtworkService
         _logger = logger;
     }
 
-    public async Task<LocalArtworkResult> ApplyLocalArtworkAsync(MediaItem item, string mediaFolder, string? fileStem)
+    public async Task<LocalArtworkResult> ApplyLocalArtworkAsync(MediaItem item, string mediaFolder, string? fileStem,
+        Func<string, string[]>? listDirectory = null)
     {
         try
         {
-            return await ApplyCoreAsync(item, mediaFolder, fileStem);
+            return await ApplyCoreAsync(item, mediaFolder, fileStem, listDirectory);
         }
         catch (Exception ex)
         {
@@ -57,7 +62,8 @@ public class LocalArtworkService : ILocalArtworkService
         }
     }
 
-    private async Task<LocalArtworkResult> ApplyCoreAsync(MediaItem item, string mediaFolder, string? fileStem)
+    private async Task<LocalArtworkResult> ApplyCoreAsync(MediaItem item, string mediaFolder, string? fileStem,
+        Func<string, string[]>? listDirectory)
     {
         // Locked items are admin-frozen: no artwork writes of any kind (same contract as
         // enrichment's single chokepoint).
@@ -73,7 +79,9 @@ public class LocalArtworkService : ILocalArtworkService
         if (posterKey == null) return new LocalArtworkResult(false, false); // only movie/TV in v1
 
         // One directory listing serves every candidate probe and the shared-folder guard.
-        var allFiles = Directory.GetFiles(mediaFolder);
+        // SM-WI-051: scanners supply their per-scan memo so this costs one listing per
+        // DIRECTORY per scan instead of one per media file (O(N²) in flat folders).
+        var allFiles = listDirectory?.Invoke(mediaFolder) ?? Directory.GetFiles(mediaFolder);
         var imagesByStem = allFiles
             .Where(f => ImageExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
             .ToLookup(f => Path.GetFileNameWithoutExtension(f), StringComparer.OrdinalIgnoreCase);

@@ -8,9 +8,12 @@ namespace SoftMedia.Server.Services.Metadata;
 /// <summary>
 /// OMDB API provider for movie metadata.
 /// Requires an API key - either the bundled SoftMedia key or a user-provided custom key.
-/// Daily usage tracking (tier-based limits, custom keys only) is delegated to
+/// Daily usage tracking (SM-WI-011: EVERY key mode — the bundled key counts against the
+/// free-tier ceiling, custom keys against their configured tier) is delegated to
 /// <see cref="IOmdbUsageTracker"/>; every HTTP call goes through GetOmdbResponseAsync
-/// so none can bypass counting or rate limiting.
+/// so none can bypass counting or rate limiting. Quota/key errors reported by OMDb
+/// itself ("Request limit reached!", HTTP 401) suspend all OMDb calls until UTC
+/// midnight instead of masquerading as "movie not found".
 /// </summary>
 public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
 {
@@ -21,6 +24,7 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
     private readonly ISettingsService _settingsService;
     private readonly INotificationService _notificationService;
     private readonly IOmdbUsageTracker _usageTracker;
+    private readonly IProviderLookupCache? _lookupCache;
 
     public LibraryType SupportedType => LibraryType.Movie;
     public string ProviderName => "OMDb";
@@ -44,7 +48,8 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
         IConfiguration configuration,
         ISettingsService settingsService,
         INotificationService notificationService,
-        IOmdbUsageTracker usageTracker)
+        IOmdbUsageTracker usageTracker,
+        IProviderLookupCache? lookupCache = null)
     {
         _httpClient = httpClient;
         _logger = logger;
@@ -53,6 +58,7 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
         _settingsService = settingsService;
         _notificationService = notificationService;
         _usageTracker = usageTracker;
+        _lookupCache = lookupCache;
         
         // Set User-Agent for API compliance
         if (!_httpClient.DefaultRequestHeaders.Contains("User-Agent"))
@@ -94,11 +100,15 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
     }
 
     /// <summary>
-    /// Single funnel for every OMDb HTTP call. Acquires a rate-limiter lease,
-    /// then (custom keys only) atomically reserves one unit of the daily quota
-    /// BEFORE sending — so a request that fails mid-flight can never leave the
-    /// counter below OMDb's own tally. Returns null when the rate limiter or
-    /// the daily limit blocks the call.
+    /// Single funnel for every OMDb HTTP call. Acquires a rate-limiter lease, then
+    /// atomically reserves one unit of the daily quota BEFORE sending — so a request
+    /// that fails mid-flight can never leave the counter below OMDb's own tally.
+    /// SM-WI-011: quota is counted for EVERY key mode (the bundled shared key against
+    /// the free-tier ceiling), and OMDb-reported quota/key errors are recognised here:
+    /// they mark the tracker exhausted (suspending all OMDb calls until UTC midnight)
+    /// and return null, so callers never mistake them for "not found" and never fire
+    /// the follow-up search against an already-refusing key. Returns null when the
+    /// rate limiter, the daily limit, or a provider-unavailable response blocks the call.
     /// </summary>
     private async Task<string?> GetOmdbResponseAsync(string url, string mode, string context, CancellationToken ct = default)
     {
@@ -109,19 +119,109 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
             return null;
         }
 
+        var limit = await GetDailyLimitAsync(mode);
+        if (!await _usageTracker.TryRecordRequestAsync(limit))
+        {
+            _logger.LogWarning("OMDb daily limit exhausted. Skipping call for {Context}", context);
+            await CreateExhaustionNotificationAsync();
+            return null;
+        }
+
+        string body;
+        try
+        {
+            body = await _httpClient.GetStringAsync(url, ct);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            // Invalid/deactivated key. Every further call today would 401 too;
+            // suspend locally instead of hammering the endpoint.
+            _logger.LogError(
+                "OMDb rejected the API key (401) for {Context}; suspending OMDb calls until UTC midnight", context);
+            await _usageTracker.MarkExhaustedAsync(limit);
+            await CreateKeyProblemNotificationAsync();
+            return null;
+        }
+
+        if (IsProviderUnavailableResponse(body, out var providerError))
+        {
+            _logger.LogWarning(
+                "OMDb unavailable for {Context} ({Error}); suspending OMDb calls until UTC midnight",
+                context, providerError);
+            await _usageTracker.MarkExhaustedAsync(limit);
+            if (providerError.Contains("limit", StringComparison.OrdinalIgnoreCase))
+                await CreateExhaustionNotificationAsync();
+            else
+                await CreateKeyProblemNotificationAsync();
+            return null;
+        }
+
+        return body;
+    }
+
+    /// <summary>
+    /// Daily ceiling for the active key mode. Custom keys use the configured tier;
+    /// the bundled SoftMedia key is a free-tier key SHARED by every install, so this
+    /// install counts against the free ceiling — a local stop before burning the
+    /// shared quota on requests OMDb would refuse anyway.
+    /// </summary>
+    private async Task<int> GetDailyLimitAsync(string mode)
+    {
         if (mode == "custom")
         {
             var tier = await _settingsService.GetSettingAsync("OMDbApiTier", "free");
-            var limit = TierLimits.GetValueOrDefault(tier, 1_000);
-            if (!await _usageTracker.TryRecordRequestAsync(limit))
-            {
-                _logger.LogWarning("OMDb daily limit exhausted. Skipping call for {Context}", context);
-                await CreateExhaustionNotificationAsync();
-                return null;
-            }
+            return TierLimits.GetValueOrDefault(tier, 1_000);
         }
+        return TierLimits["free"];
+    }
 
-        return await _httpClient.GetStringAsync(url, ct);
+    /// <summary>
+    /// SM-WI-011 — true when an OMDb body is a quota/key refusal rather than a lookup
+    /// miss. OMDb reports both with Response:"False"; only the Error text separates
+    /// "Request limit reached!" / "Invalid API key!" from "Movie not found!".
+    /// Public static for direct unit testing (project convention: no InternalsVisibleTo).
+    /// </summary>
+    public static bool IsProviderUnavailableResponse(string body, out string providerError)
+    {
+        providerError = string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return false;
+            if (!root.TryGetProperty("Response", out var resp) || resp.GetString() != "False") return false;
+            if (!root.TryGetProperty("Error", out var err)) return false;
+
+            var error = err.GetString() ?? string.Empty;
+            if (error.Contains("limit reached", StringComparison.OrdinalIgnoreCase) ||
+                error.Contains("invalid api key", StringComparison.OrdinalIgnoreCase))
+            {
+                providerError = error;
+                return true;
+            }
+            return false;
+        }
+        catch (JsonException)
+        {
+            return false; // non-JSON body: let the caller's parser deal with it
+        }
+    }
+
+    /// <summary>
+    /// One-time notification that the configured/bundled key was rejected outright.
+    /// </summary>
+    private async Task CreateKeyProblemNotificationAsync()
+    {
+        if (!await _notificationService.HasActiveOfTypeAsync("omdb_key_invalid"))
+        {
+            await _notificationService.CreateAsync(
+                "omdb_key_invalid",
+                "OMDb API Key Rejected",
+                "OMDb rejected the API key (invalid or deactivated). Movie metadata from OMDb is " +
+                "suspended until midnight UTC; check the key in Settings → Metadata.",
+                "error"
+            );
+        }
     }
 
     /// <summary>
@@ -212,6 +312,17 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
                 cleanTitle = title.Substring(0, yearMatch.Index).Trim();
             }
 
+            // SM-WI-040: title lookups are cacheable (ID lookups above are not). A fresh
+            // cached miss skips both the &t= call and the &s= fallback. Recording happens
+            // ONLY at the definitive "no results" branches below — provider-unavailable
+            // nulls from the funnel (quota/key suspension) must never poison the cache.
+            var cacheKey = ProviderLookupCacheService.NormalizeKey("movie", cleanTitle, year);
+            if (_lookupCache != null && await _lookupCache.IsFreshMissAsync(ProviderName, cacheKey))
+            {
+                _logger.LogDebug("OMDb: fresh cached miss for '{Title}'; skipping search", title);
+                return null;
+            }
+
             // Build search URL with full plot
             var searchUrl = $"https://www.omdbapi.com/?apikey={apiKey}&t={Uri.EscapeDataString(cleanTitle)}&type=movie&plot=full";
             if (year != null)
@@ -276,12 +387,14 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
                         else
                         {
                             _logger.LogDebug("No OMDB results for '{Title}'", title);
+                            if (_lookupCache != null) await _lookupCache.RecordMissAsync(ProviderName, cacheKey);
                             return null;
                         }
                     }
                     else
                     {
                         _logger.LogDebug("No OMDB results for '{Title}'", title);
+                        if (_lookupCache != null) await _lookupCache.RecordMissAsync(ProviderName, cacheKey);
                         return null;
                     }
                 }
@@ -377,45 +490,10 @@ public class OMDbProvider : IKeyedMetadataProvider, ISearchableMetadataProvider
                     result.Studio = production;
             }
 
-            // Unmapped fields go to Extra
-            var extraData = new Dictionary<string, string>();
-
-            if (movieData.TryGetProperty("Runtime", out var runtimeProp))
-            {
-                var runtime = runtimeProp.GetString();
-                if (!string.IsNullOrEmpty(runtime) && runtime != "N/A")
-                    extraData["runtime"] = runtime;
-            }
-
-            if (movieData.TryGetProperty("Writer", out var writerProp))
-            {
-                var writer = writerProp.GetString();
-                if (!string.IsNullOrEmpty(writer) && writer != "N/A")
-                    extraData["writer"] = writer;
-            }
-
-            if (movieData.TryGetProperty("Awards", out var awardsProp))
-            {
-                var awards = awardsProp.GetString();
-                if (!string.IsNullOrEmpty(awards) && awards != "N/A")
-                    extraData["awards"] = awards;
-            }
-
-            if (movieData.TryGetProperty("BoxOffice", out var boxOfficeProp))
-            {
-                var boxOffice = boxOfficeProp.GetString();
-                if (!string.IsNullOrEmpty(boxOffice) && boxOffice != "N/A")
-                    extraData["boxOffice"] = boxOffice;
-            }
-            
-            if (extraData.Count > 0)
-            {
-                result.Extra ??= new Dictionary<string, JsonElement>();
-                foreach (var kvp in extraData)
-                {
-                    result.Extra[kvp.Key] = JsonSerializer.SerializeToElement(kvp.Value);
-                }
-            }
+            // SM-WI-044 (Q1 decision): the old Extra block (runtime/writer/awards/
+            // boxOffice) was computed on every fetch and then dropped — the aggregator
+            // persists Extra only for photos. Removed rather than persisted: no column,
+            // no consumer, pure cost.
 
             _logger.LogInformation("Successfully fetched OMDB metadata for: {Title}", title);
             return result;

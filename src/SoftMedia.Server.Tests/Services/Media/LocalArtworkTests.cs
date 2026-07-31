@@ -57,6 +57,29 @@ public class LocalArtworkTests : IDisposable
     }
 
     [Fact]
+    public async Task ProvidedDirectoryListing_IsUsed_InsteadOfLiveGetFiles()
+    {
+        // SM-WI-051 — scanners pass their per-scan listing memo so a flat folder is
+        // listed once per scan, not once per media file. Proof of the seam: a poster
+        // exists ON DISK, but the provided listing omits it → no poster applied, and
+        // the service never fell back to its own Directory.GetFiles.
+        File.WriteAllBytes(Path.Combine(_mediaDir, "poster.jpg"), new byte[] { 1 });
+        var item = Movie();
+        var listingCalls = 0;
+
+        var result = await _svc.ApplyLocalArtworkAsync(item, _mediaDir, "m", dir =>
+        {
+            listingCalls++;
+            return Array.Empty<string>(); // deliberately hides the on-disk poster
+        });
+
+        Assert.Equal(1, listingCalls);
+        Assert.False(result.Changed);
+        Assert.Null(item.PosterUrl);
+        _cache.Verify(c => c.CacheLocalImageAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
     public async Task StemPoster_Beats_FolderLevelNames()
     {
         File.WriteAllBytes(Path.Combine(_mediaDir, "poster.jpg"), new byte[] { 1 });

@@ -3,6 +3,17 @@ using SoftMedia.Server.Models;
 
 namespace SoftMedia.Server.DTOs;
 
+/// <summary>
+/// DV-WI-013 — one file-copy of a version group, as shown in the detail view's Versions
+/// list and consumed by the player's version switcher (Session 5). IsPrimary marks the
+/// COMPUTED primary (plan §2.2 rule, PreferredVersion override first); Watched and
+/// PlaybackPosition are the calling user's per-copy state.
+/// </summary>
+public record VersionDto(
+    Guid Id, string Label, int? Width, int? Height, string? HdrFormat, long? Bitrate,
+    string? Container, long Size, double? DurationSeconds, bool IsPrimary, bool Preferred,
+    bool Watched, double? PlaybackPosition);
+
 public class ChapterDto
 {
     public double StartTime { get; set; }
@@ -62,7 +73,6 @@ public class MediaItemDto
     
     public string? PosterPath { get; set; }
     public string? BackdropPath { get; set; }
-    public string? Quality { get; set; }
     public List<string>? Genres { get; set; }
     public string? Rating { get; set; }
     public double? CommunityRating { get; set; }
@@ -181,6 +191,16 @@ public class MediaItemDto
     // flag so they can render an "unavailable" state instead of a playable entry.
     public bool IsMissing { get; init; }
 
+    // DV-WI-013 — version-group surface (plan §2.2). VersionLabel is server-derived
+    // (VersionLabelHelper — the ONE label authority) so clients render it verbatim
+    // instead of re-deriving three inconsistent variants. VersionCount defaults to 1;
+    // detail responses hydrate it (and Versions) via HydrateVersions — list endpoints
+    // don't pay a per-row sibling query.
+    public Guid? VersionGroupId { get; set; }
+    public string? VersionLabel { get; set; }
+    public int VersionCount { get; set; } = 1;
+    public List<VersionDto>? Versions { get; set; }
+
     public static MediaItemDto FromMediaItem(MediaItem item, string? imageProxyBaseUrl = null, UserMediaInteraction? interaction = null)
     {
         var dto = new MediaItemDto
@@ -234,7 +254,14 @@ public class MediaItemDto
             Bitrate = item.Bitrate,
             FrameRate = item.FrameRate,
             Width = item.Width,
-            Height = item.Height
+            Height = item.Height,
+
+            // DV-WI-013 — version-group surface. The label only means something for
+            // groupable file-backed video; containers (Series/Season/…) carry neither.
+            VersionGroupId = item.VersionGroupId,
+            VersionLabel = item.Type is MediaType.Movie or MediaType.Episode
+                ? Helpers.VersionLabelHelper.BuildLabel(item)
+                : null
         };
 
         // Map audio tracks if present

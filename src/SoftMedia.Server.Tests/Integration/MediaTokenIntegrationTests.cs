@@ -92,8 +92,12 @@ public class MediaTokenIntegrationTests : IntegrationTestBase
     [Fact]
     public async Task MediaToken_RejectedAfterUserBanned()
     {
-        // Audit wave-2 L-3: a stateless media token must stop working within its lifetime once the
-        // user is banned, mirroring the cast-token recheck (and complementing WS-3 revocation).
+        // Audit wave-2 L-3: a stateless media token must stop working within its lifetime once
+        // the user is banned, mirroring the cast-token recheck (and complementing WS-3
+        // revocation). AA-WI-011: the eligibility verdict is cached with a short TTL; the app's
+        // ban endpoint (UsersController.BanUser) eagerly invalidates it, so this test — which
+        // bans via a direct DB write — performs the same invalidation the endpoint does. The
+        // TTL only bounds staleness for out-of-band DB edits.
         var user = await Factory.SeedUserAsync("media-banned");
         var token = MediaToken(user);
 
@@ -108,6 +112,8 @@ public class MediaTokenIntegrationTests : IntegrationTestBase
             u!.IsBanned = true;
             await db.SaveChangesAsync();
         }
+        Factory.Services.GetRequiredService<SoftMedia.Server.Services.Identity.IUserEligibilityCache>()
+            .Invalidate(user.Id);
 
         var after = await BearerClient(token).GetAsync($"/api/v1/stream/{Guid.NewGuid()}");
         Assert.Equal(HttpStatusCode.Unauthorized, after.StatusCode);

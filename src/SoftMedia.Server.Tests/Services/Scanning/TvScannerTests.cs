@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
 using SoftMedia.Server.Data;
+using SoftMedia.Server.Helpers;
 using SoftMedia.Server.Models;
 using SoftMedia.Server.Services.Abstractions;
 using SoftMedia.Server.Services.Media;
@@ -81,6 +82,53 @@ public class TvScannerTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, "dummy video content");
         return path;
+    }
+
+    // ─────────────────────────────────────────────── DV-WI-010: version groups
+
+    [Fact]
+    public async Task ProcessFileAsync_DuplicateEpisodeFiles_ShareTheDeterministicVersionGroup()
+    {
+        var library = new Library { Id = Guid.NewGuid(), Name = "TV", Type = LibraryType.TV };
+        var f1 = CreateFile("Show", "Season 1", "Show S01E03.mkv");
+        var f2 = CreateFile("Show", "Season 1", "Show S01E03 2160p.mkv");
+
+        var scanner = CreateScanner();
+        await scanner.ProcessFileAsync(_dbContext, f1, null, library, CancellationToken.None);
+        await _dbContext.SaveChangesAsync();
+        await scanner.ProcessFileAsync(_dbContext, f2, null, library, CancellationToken.None);
+        await _dbContext.SaveChangesAsync();
+
+        var episodes = _dbContext.MediaItems.Where(m => m.Type == MediaType.Episode).ToList();
+        Assert.Equal(2, episodes.Count);
+        Assert.NotNull(episodes[0].VersionGroupId);
+        Assert.Equal(episodes[0].VersionGroupId, episodes[1].VersionGroupId);
+        // Deterministic: any worker (or the boot backfill) computes this exact id.
+        Assert.Equal(
+            VersionGroupHelper.ComputeEpisodeGroupId(episodes[0].SeriesId!.Value, 1, 3),
+            episodes[0].VersionGroupId);
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_AdminSplitGroup_SurvivesARescanOfTheSameFile()
+    {
+        var library = new Library { Id = Guid.NewGuid(), Name = "TV", Type = LibraryType.TV };
+        var f1 = CreateFile("Show", "Season 1", "Show S01E03.mkv");
+        var scanner = CreateScanner();
+        await scanner.ProcessFileAsync(_dbContext, f1, null, library, CancellationToken.None);
+        await _dbContext.SaveChangesAsync();
+
+        // Admin split: fresh random id replaces the deterministic one.
+        var episode = _dbContext.MediaItems.Single(m => m.Type == MediaType.Episode);
+        var splitGroup = Guid.NewGuid();
+        episode.VersionGroupId = splitGroup;
+        await _dbContext.SaveChangesAsync();
+
+        // Rescan of the SAME file (identity unchanged) must not reclaim it.
+        await scanner.ProcessFileAsync(_dbContext, f1, episode, library, CancellationToken.None);
+        await _dbContext.SaveChangesAsync();
+
+        Assert.Equal(splitGroup, _dbContext.MediaItems.Single(m => m.Type == MediaType.Episode).VersionGroupId);
     }
 
     // ─────────────────────────────────────────────── SR-WI-030: watcher-path parent reuse

@@ -63,7 +63,12 @@ export default function HeroSection({
             posterUrl: poster,
             hasBackdrop: backdropOk,
         };
-        // mediaToken is a real dependency: it is baked into the URLs above.
+        // mediaToken IS a real dependency — the resolve* helpers read it from the
+        // store and bake it into the URLs — but it isn't referenced lexically, so
+        // the linter can't see it. Referencing it above the memo (the subscription
+        // at the top of the component) keeps re-renders firing; listing it here
+        // keeps the memo recomputing on those re-renders.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [rawBackdrop, rawPoster, mediaToken]);
 
     if (isLoading) {

@@ -62,8 +62,12 @@ export function useMediaHub({ libraryId, mediaId }: UseMediaHubOptions) {
     const connectionRef = useRef<HubConnection | null>(null);
     const optionsRef = useRef({ libraryId, mediaId });
 
-    // Keep options ref updated
-    optionsRef.current = { libraryId, mediaId };
+    // Keep options ref updated — in an effect, not during render: a render
+    // React later discards (StrictMode double-render, a thrown suspension)
+    // must not have already leaked its values into the ref.
+    useEffect(() => {
+        optionsRef.current = { libraryId, mediaId };
+    }, [libraryId, mediaId]);
 
     useEffect(() => {
         // Don't connect if not authenticated / media token not yet minted
@@ -134,9 +138,9 @@ export function useMediaHub({ libraryId, mediaId }: UseMediaHubOptions) {
                 if (opts.mediaId) {
                     await connection.invoke('JoinMedia', opts.mediaId).catch(err => console.error('[SignalR] Failed to join media group:', err));
                 }
-            } catch (err: any) {
+            } catch (err) {
                 // Ignore AbortError which happens when unmounting during negotiation
-                const errorMessage = err?.message || err?.toString() || '';
+                const errorMessage = err instanceof Error ? err.message : String(err ?? '');
                 if (isMounted &&
                     !errorMessage.includes('The connection was stopped during negotiation') &&
                     !errorMessage.includes('Failed to start the connection')) {

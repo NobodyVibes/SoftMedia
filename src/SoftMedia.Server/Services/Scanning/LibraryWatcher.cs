@@ -377,15 +377,50 @@ public class LibraryWatcher : BackgroundService, IDisposable
         }
     }
 
-    private void OnFileCreated(string fullPath, Guid libraryId)
+    // Protected so tests can drive raw watcher events (project convention: no InternalsVisibleTo).
+    protected void OnFileCreated(string fullPath, Guid libraryId)
     {
+        // SM-WI-060 — a DIRECTORY moved into the watched tree (the standard *arr /
+        // torrent "completed folder move") raises ONE Created event for the top folder
+        // and none for its children. This was the watcher's biggest blind spot: the
+        // whole folder stayed invisible until the next scheduled sweep. Pend every
+        // media file inside (each gets the normal stability checks) AND schedule a
+        // library scan as the backstop for anything the enumeration missed (deep
+        // trees, files still being moved in).
+        if (Directory.Exists(fullPath))
+        {
+            var pended = 0;
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories))
+                {
+                    if (!IsMediaFile(file)) continue;
+                    PendFile(file, libraryId);
+                    pended++;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to enumerate created directory {Path}; relying on the scheduled scan", fullPath);
+            }
+
+            _librariesToScan[libraryId] = DateTime.UtcNow;
+            _logger.LogInformation("Directory created: {Path} — pended {Count} media file(s), scan scheduled", fullPath, pended);
+            return;
+        }
+
         if (!IsMediaFile(fullPath)) return;
-        
+
         _logger.LogDebug("File created: {Path}", fullPath);
-        
+
         // Clear any previous issue for this file
         _fileIssues.TryRemove(fullPath, out _);
-        
+
+        PendFile(fullPath, libraryId);
+    }
+
+    private void PendFile(string fullPath, Guid libraryId)
+    {
         // Add to pending files - will be checked for stability
         _pendingFiles[fullPath] = new PendingFile
         {
@@ -463,7 +498,12 @@ public class LibraryWatcher : BackgroundService, IDisposable
 
             item.IsMissing = true;
             item.MissingSinceUtc = DateTime.UtcNow;
-            await context.SaveChangesAsync();
+            // SM-WI-013: serialize against scan-path writers (SR-WI-035 discipline);
+            // this save previously ran unlocked, racing any concurrent scan.
+            using (await BaseMediaScanner.AcquireDbWriteLockAsync())
+            {
+                await context.SaveChangesAsync();
+            }
             _logger.LogInformation("Marked deleted file missing (history retained): {Path}", path);
         }
         catch (Exception ex)
@@ -711,13 +751,53 @@ public class LibraryWatcher : BackgroundService, IDisposable
     }
 
     /// <summary>
-    /// Process a single stable file via the scanner orchestrator instead of triggering a full library scan.
+    /// SM-WI-013 — should a stable file's import wait for the scan queue? True while a
+    /// scan for the library is QUEUED (that scan's file walk will ingest the file itself —
+    /// importing now would race its discovery and could mint a duplicate row) or RUNNING
+    /// before its Metadata stage (the walk is actively writing; the watcher import would
+    /// interleave with it). A running scan that reached its Metadata stage has finished
+    /// walking: only enrichment is draining — potentially for hours — so deferring past it
+    /// would stall *arr imports for no correctness gain. Static/pure for direct testing.
     /// </summary>
-    private async Task ProcessStableFileAsync(string filePath, Guid libraryId)
+    public static bool ShouldDeferForActiveScan(IEnumerable<LibraryScanJob> jobs, Guid libraryId)
+        => jobs.Any(j => j.LibraryId == libraryId
+            && j.Type == LibraryScanJobType.LibraryScan
+            && (j.Status == LibraryScanStatus.Queued ||
+                (j.Status == LibraryScanStatus.Running && j.Stage != LibraryScanStage.Metadata)));
+
+    /// <summary>Pending-file backlog size (admin/dashboard + test visibility).</summary>
+    public int PendingFileCount => _pendingFiles.Count;
+
+    /// <summary>
+    /// Process a single stable file via the scanner orchestrator instead of triggering a full library scan.
+    /// Protected virtual so tests can drive it directly (project convention: no InternalsVisibleTo).
+    /// </summary>
+    protected virtual async Task ProcessStableFileAsync(string filePath, Guid libraryId)
     {
         try
         {
             using var scope = _scopeFactory.CreateScope();
+
+            // SM-WI-013: yield to the scan queue instead of racing it (see
+            // ShouldDeferForActiveScan). Re-pend the file so the stability loop retries
+            // it after the scan's walk is done; the walk usually ingests it first and
+            // the retry becomes a cheap no-op update.
+            var scanQueue = scope.ServiceProvider.GetService<ILibraryScanQueueService>();
+            if (scanQueue != null && ShouldDeferForActiveScan(scanQueue.GetAllJobs(), libraryId))
+            {
+                _pendingFiles[filePath] = new PendingFile
+                {
+                    Path = filePath,
+                    LastSize = GetFileSizeSafe(filePath),
+                    LastSizeChange = DateTime.UtcNow,
+                    FirstSeen = DateTime.UtcNow,
+                    LibraryId = libraryId,
+                    CheckCount = 0
+                };
+                _logger.LogDebug("Deferring single-file import while library scan is active: {Path}", filePath);
+                return;
+            }
+
             var scannerOrchestrator = scope.ServiceProvider.GetRequiredService<IScannerOrchestrator>();
             await scannerOrchestrator.ProcessSingleFileAsync(filePath, libraryId);
             _logger.LogInformation("Single-file scan completed: {Path}", filePath);

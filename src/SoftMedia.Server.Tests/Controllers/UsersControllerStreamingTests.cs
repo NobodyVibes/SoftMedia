@@ -35,7 +35,8 @@ public class UsersControllerStreamingTests : IDisposable
     private UsersController NewController() =>
         new(_context, Mock.Of<IPasswordHasher>(), Mock.Of<IUserPreferencesService>(),
             Mock.Of<SoftMedia.Server.Services.Abstractions.IRefreshTokenService>(),
-            Mock.Of<ITrustedDeviceService>());
+            Mock.Of<ITrustedDeviceService>(),
+            new SoftMedia.Server.Services.Identity.UserEligibilityCache());
 
     [Fact]
     public async Task UpdateUserStreaming_SetsCap()

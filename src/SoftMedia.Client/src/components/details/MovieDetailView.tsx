@@ -1,6 +1,8 @@
 import { type MediaItem } from '../../types';
 import { Trophy, DollarSign, Film, Pen } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
+import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 import CastStripItem from './CastStripItem';
 import CollectionStripSection from './CollectionStripSection';
 import { ExtrasSection } from './ExtrasSection';
@@ -12,15 +14,20 @@ interface MovieDetailViewProps {
 export default function MovieDetailView({ item }: MovieDetailViewProps) {
     const metadata = item.metadata || {};
     const { isSidebarCollapsed } = useUIStore();
+    // The background poster URL embeds the media token (AA-WI-001) — re-render on rotation.
+    useMediaTokenRefresh();
 
     const director = metadata.director as string;
     const writer = metadata.writer as string;
-    const studio = metadata.studio || metadata.production as string;
+    // metadata is provider-supplied Record<string, unknown> — narrow before render.
+    const studioRaw = metadata.studio ?? metadata.production;
+    const studio = typeof studioRaw === 'string' ? studioRaw : null;
     const awards = metadata.awards as string;
     const boxOffice = metadata.boxOffice as string;
 
-    // Get background poster
-    const backgroundPoster = item.posterPath || item.backdropPath || null;
+    // Get background poster (token-gated /cache path — attach the media token)
+    const backgroundPosterRaw = item.posterPath || item.backdropPath || null;
+    const backgroundPoster = backgroundPosterRaw ? attachAuthToApiUrl(backgroundPosterRaw) : null;
 
     return (
         <>

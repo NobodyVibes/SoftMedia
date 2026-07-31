@@ -14,8 +14,13 @@ public class GameMetadataProvider : WikidataSparqlClient
     public override LibraryType SupportedType => LibraryType.Game;
     public override string ProviderName => "Wikidata";
 
-    public GameMetadataProvider(HttpClient httpClient, ILogger<GameMetadataProvider> logger, RateLimiterFactory rateLimiterFactory)
-        : base(httpClient, logger, rateLimiterFactory) { }
+    public GameMetadataProvider(HttpClient httpClient, ILogger<GameMetadataProvider> logger, RateLimiterFactory rateLimiterFactory,
+        IProviderLookupCache? lookupCache = null)
+        : base(httpClient, logger, rateLimiterFactory, lookupCache) { }
+
+    /// <summary>SM-WI-040 — game lookups are always title searches; all cacheable.</summary>
+    protected override string? BuildLookupCacheKey(MediaItem item)
+        => ProviderLookupCacheService.NormalizeKey(item.Type, item.Title, item.Year);
 
     protected override string BuildSparqlQuery(MediaItem item)
     {

@@ -32,9 +32,17 @@ export function useTrickplay(itemId: string, token: string | null) {
     const [manifest, setManifest] = useState<TrickplayManifest | null>(null);
     const triedRef = useRef(false);
 
+    // Drop the previous item's manifest the moment the target changes — during
+    // render, so a seek-preview never briefly maps times against the OLD item's
+    // sprite sheets while the new manifest loads.
+    const [lastFetchKey, setLastFetchKey] = useState({ itemId, token });
+    if (itemId !== lastFetchKey.itemId || token !== lastFetchKey.token) {
+        setLastFetchKey({ itemId, token });
+        setManifest(null);
+    }
+
     useEffect(() => {
         triedRef.current = false;
-        setManifest(null);
         if (!itemId || !token) return;
 
         let cancelled = false;

@@ -97,3 +97,18 @@ export function isIntervalHoursEnabled(value: string): boolean {
     const n = Number(value);
     return Number.isSafeInteger(n) && n > 0;
 }
+
+/**
+ * "Resume from H:MM(:SS)" label — hours only when the position reaches an hour.
+ * Used by MediaDetailLayout's split Play/Resume control (SR-WI-053); lives here
+ * rather than in that component file so the file exports only components.
+ */
+export function formatResumeTime(seconds: number): string {
+    const total = Math.max(0, Math.floor(seconds));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return h > 0
+        ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+        : `${m}:${s.toString().padStart(2, '0')}`;
+}

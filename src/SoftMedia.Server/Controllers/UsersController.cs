@@ -25,19 +25,22 @@ public class UsersController : ControllerBase
     private readonly IUserPreferencesService _userPreferencesService;
     private readonly IRefreshTokenService _refreshTokens;
     private readonly ITrustedDeviceService _trustedDevices;
+    private readonly IUserEligibilityCache _eligibilityCache;
 
     public UsersController(
         AppDbContext context,
         IPasswordHasher passwordHasher,
         IUserPreferencesService userPreferencesService,
         IRefreshTokenService refreshTokens,
-        ITrustedDeviceService trustedDevices)
+        ITrustedDeviceService trustedDevices,
+        IUserEligibilityCache eligibilityCache)
     {
         _context = context;
         _passwordHasher = passwordHasher;
         _userPreferencesService = userPreferencesService;
         _refreshTokens = refreshTokens;
         _trustedDevices = trustedDevices;
+        _eligibilityCache = eligibilityCache;
     }
 
     /// <summary>
@@ -296,6 +299,10 @@ public class UsersController : ControllerBase
         user.IsBanned = request.IsBanned;
         await _context.SaveChangesAsync();
 
+        // AA-WI-011: eligibility changed (either direction) — drop the cached verdict so
+        // live media/cast tokens see it on the next request, not after the cache TTL.
+        _eligibilityCache.Invalidate(user.Id);
+
         // Audit wave-2 L-6: banning must immediately cut off live sessions (refresh chain +
         // remembered 2FA device), otherwise a stateless access/refresh token outlives the ban.
         if (request.IsBanned)
@@ -318,6 +325,10 @@ public class UsersController : ControllerBase
         user.IsApproved = request.IsApproved;
         await _context.SaveChangesAsync();
 
+        _eligibilityCache.Invalidate(user.Id); // AA-WI-011
+
+
+
         // Audit wave-2 L-6: un-approving is an account-suspension — evict live sessions.
         if (!request.IsApproved)
         {
@@ -339,6 +350,8 @@ public class UsersController : ControllerBase
         user.IsRejected = true;
         user.IsApproved = false; // Ensure they are not approved
         await _context.SaveChangesAsync();
+
+        _eligibilityCache.Invalidate(user.Id); // AA-WI-011
 
         // Audit wave-2 L-6: denying revokes any session the user established before denial.
         await RevokeUserSessionsAsync(user.Id, RefreshTokenRevocationReason.AccountSuspended);
@@ -394,6 +407,7 @@ public class UsersController : ControllerBase
 
         // Audit wave-2 L-6: a deleted account's sessions must die immediately.
         await RevokeUserSessionsAsync(id, RefreshTokenRevocationReason.AccountSuspended);
+        _eligibilityCache.Invalidate(id); // AA-WI-011
 
         return Ok();
     }

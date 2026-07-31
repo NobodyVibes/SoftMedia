@@ -116,6 +116,25 @@ public class MetadataRouter : IMetadataRouter
             "{Type} routing: Primary={Primary}, Fallback={Fallback} for '{Title}'",
             type, primary?.ProviderName ?? "none", fallback?.ProviderName ?? "none", item.Title);
 
+        // SM-WI-030(b): the NFO sidecar is a free local read and often carries an IMDb
+        // id. When it is the configured fallback and the item has no promoted id yet,
+        // read it BEFORE the primary and seed item.ImdbId — the primary's ID-direct
+        // path (Wikidata P345, OMDb &i=, TVMaze lookup) then replaces title guessing
+        // entirely, which no year heuristic can beat. The pre-read result is reused as
+        // the fallback data below, so the NFO is never parsed twice.
+        MetadataResult? nfoData = null;
+        if (fallback is { ProviderName: "Nfo" } && string.IsNullOrEmpty(item.ImdbId))
+        {
+            nfoData = await InvokeProviderAsync(fallback, item);
+            if (nfoData?.ImdbId is { } nfoImdbId && nfoImdbId.StartsWith("tt", StringComparison.Ordinal))
+            {
+                _logger.LogInformation(
+                    "NFO supplied IMDb id {ImdbId} for '{Title}'; primary will use ID-direct lookup",
+                    nfoImdbId, item.Title);
+                item.ImdbId = nfoImdbId;
+            }
+        }
+
         var primaryData = await InvokeProviderAsync(primary, item);
 
         // Sufficiency: a movie/TV result is useful if it has a Title AND any of
@@ -131,7 +150,8 @@ public class MetadataRouter : IMetadataRouter
             return primaryData;
         }
 
-        var fallbackData = await InvokeProviderAsync(fallback, item);
+        // Reuse the SM-WI-030(b) pre-read instead of parsing the NFO a second time.
+        var fallbackData = nfoData ?? await InvokeProviderAsync(fallback, item);
 
         // Merge: primary wins, fallback fills gaps.
         var merged = primaryData ?? new MetadataResult();

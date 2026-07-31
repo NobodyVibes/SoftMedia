@@ -120,11 +120,12 @@ public class BaseMediaScannerTests
 
         // Assert
         Assert.Equal(10, scanner.ProcessedFiles.Count);
-        
-        // Verify scope creation - should be called at least 10 times (once per dir) + 1 (initial existing paths) + 1 (cleanup)
-        // Actually, Parallel.ForEachAsync might reuse threads/tasks but the code does `using var scope = _scopeFactory.CreateScope()` inside the loop body.
-        // So Scopes created >= 12.
-        _mockScopeFactory.Verify(x => x.CreateScope(), Times.AtLeast(12));
+
+        // SM-WI-050: the parallel unit is a bounded BATCH, not a directory — these 10
+        // one-file directories pack into a single batch (one scope), plus the settings,
+        // bulk-load and cleanup scopes. Parallelism across many batches is asserted by
+        // ScanBatchingTests; here we only require every file processed and ≥3 scopes.
+        _mockScopeFactory.Verify(x => x.CreateScope(), Times.AtLeast(3));
     }
 
     [Fact]

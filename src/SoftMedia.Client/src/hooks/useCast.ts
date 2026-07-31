@@ -22,7 +22,7 @@ import { injectCastSdk } from '../lib/castSdkLoader';
 
 declare global {
     interface Window {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         __onGCastApiAvailable?: (available: boolean) => void;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         cast?: any;

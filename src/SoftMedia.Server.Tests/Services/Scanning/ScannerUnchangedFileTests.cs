@@ -76,7 +76,7 @@ public class ScannerUnchangedFileTests
 
         var artwork = new Mock<ILocalArtworkService>();
         artwork
-            .Setup(a => a.ApplyLocalArtworkAsync(It.IsAny<MediaItem>(), It.IsAny<string>(), It.IsAny<string?>()))
+            .Setup(a => a.ApplyLocalArtworkAsync(It.IsAny<MediaItem>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<Func<string, string[]>?>()))
             .ReturnsAsync(new LocalArtworkResult(false, false));
 
         capturedModes = modes;

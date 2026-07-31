@@ -83,6 +83,59 @@ public class MetadataRetryAmnestyServiceTests
         Assert.NotNull(status.LastRunUtc);
     }
 
+    [Theory]
+    [InlineData(0, 14)] // first re-grant: next one 14 days out
+    [InlineData(1, 28)] // second: 28 days
+    [InlineData(5, 28)] // capped at 28
+    public void NextAmnestyDelay_DecaysAndCaps(int amnestyCount, int expectedDays)
+    {
+        // SM-WI-042 — with the SM-WI-040 negative cache, retries are cheap, but the
+        // cadence still decays so permanently-unmatchable items converge to monthly.
+        Assert.Equal(TimeSpan.FromDays(expectedDays), MetadataRetryAmnestyService.NextAmnestyDelay(amnestyCount));
+    }
+
+    [Fact]
+    public async Task RunAmnesty_SkipsNotYetDueItems_AndStampsDecayOnGrantedOnes()
+    {
+        var (svc, queue, _, provider) = Build();
+        var dueId = Guid.NewGuid();
+        var notDueId = Guid.NewGuid();
+        using (var db = Db(provider))
+        {
+            db.MediaItems.Add(new MediaItem
+            {
+                Id = dueId, Title = "Due", Type = MediaType.Movie, LibraryId = Guid.NewGuid(),
+                IsRetryExhausted = true, // NextAmnestyUtc null = first grant, always due
+            });
+            db.MediaItems.Add(new MediaItem
+            {
+                Id = notDueId, Title = "Not Due", Type = MediaType.Movie, LibraryId = Guid.NewGuid(),
+                IsRetryExhausted = true, AmnestyCount = 1,
+                NextAmnestyUtc = DateTime.UtcNow.AddDays(10), // decayed schedule not reached
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var enqueued = await svc.RunAmnestyAsync();
+
+        Assert.Equal(1, enqueued);
+        using (var db = Db(provider))
+        {
+            var due = await db.MediaItems.SingleAsync(m => m.Id == dueId);
+            Assert.False(due.IsRetryExhausted);
+            Assert.Equal(1, due.AmnestyCount);
+            Assert.NotNull(due.NextAmnestyUtc);
+            Assert.InRange(due.NextAmnestyUtc!.Value,
+                DateTime.UtcNow.AddDays(13.9), DateTime.UtcNow.AddDays(14.1));
+
+            var notDue = await db.MediaItems.SingleAsync(m => m.Id == notDueId);
+            Assert.True(notDue.IsRetryExhausted); // untouched until its decayed slot
+            Assert.Equal(1, notDue.AmnestyCount);
+        }
+        queue.Verify(q => q.EnqueueMetadataRefreshAsync(notDueId, It.IsAny<LibraryType>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<Guid?>()), Times.Never);
+    }
+
     [Fact]
     public async Task RunAmnesty_NeverTouchesLockedItems()
     {

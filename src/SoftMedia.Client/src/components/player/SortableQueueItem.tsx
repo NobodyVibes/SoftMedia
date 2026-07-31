@@ -4,7 +4,7 @@ import { GripVertical } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { MediaItem } from '../../types';
 import { ScrollingText } from '../ui/ScrollingText';
-import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { resolveArtworkUrl } from '../../lib/mediaImageUrl';
 import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 
 interface Props {
@@ -34,15 +34,7 @@ export const SortableQueueItem = ({ track, originalIndex, id, onPlay }: Props) =
         position: 'relative' as const,
     };
 
-    const getImageUrl = (path: string | undefined) => {
-        if (!path) return '/placeholder-music.png';
-        if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
-        if (path.startsWith('http')) return path;
-        // Anything else is a static file served from wwwroot (e.g.
-        // /cache/images/albums/x.jpg). It is NOT under /api/v1 — prefixing it
-        // there yields a route that does not exist and a 404'd cover.
-        return path;
-    };
+    const getImageUrl = resolveArtworkUrl; // shared; /cache/images is token-gated (AA-WI-001)
 
     return (
         <div

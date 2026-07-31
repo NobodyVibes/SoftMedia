@@ -130,6 +130,45 @@ public class ImageDownloadQueueServiceTests
     }
 
     [Fact]
+    public async Task ProcessDownload_EpisodeStill_UpdatesAllDuplicateEpisodeRows()
+    {
+        // Regression: duplicate files of the same episode (quality/language variants or
+        // accidental copies) each get their own Episode row sharing (SeriesId, Season,
+        // Episode). The still write-back used FirstOrDefault, so only one row got the
+        // local "/cache/…" path — every other copy kept the remote URL and was proxied
+        // on the fly forever.
+        var service = new ImageDownloadQueueService(_mockScopeFactory.Object, _mockLogger.Object);
+        var seriesId = Guid.NewGuid();
+        var remoteUrl = "https://static.tvmaze.com/still.jpg";
+        var localPath = "/cache/images/tv/still_s01e03.jpg";
+
+        _dbContext.MediaItems.Add(new MediaItem { Id = seriesId, Title = "Test Series", Type = MediaType.Series });
+        var copy1 = new MediaItem
+        {
+            Id = Guid.NewGuid(), SeriesId = seriesId, Type = MediaType.Episode,
+            Title = "Ep 3", SeasonNumber = 1, EpisodeNumber = 3, BackdropUrl = remoteUrl
+        };
+        var copy2 = new MediaItem
+        {
+            Id = Guid.NewGuid(), SeriesId = seriesId, Type = MediaType.Episode,
+            Title = "Ep 3", SeasonNumber = 1, EpisodeNumber = 3, BackdropUrl = remoteUrl
+        };
+        _dbContext.MediaItems.AddRange(copy1, copy2);
+        await _dbContext.SaveChangesAsync();
+
+        _mockImageCache.Setup(x => x.CacheEpisodeStillAsync(seriesId, 1, 3, remoteUrl)).ReturnsAsync(localPath);
+
+        await service.EnqueueImageDownloadAsync(seriesId, remoteUrl, 1, 3, MediaType.Series, ImageType.Still);
+        await service.StartAsync(CancellationToken.None);
+        await Task.Delay(500);
+        await service.StopAsync(CancellationToken.None);
+
+        _dbContext.ChangeTracker.Clear();
+        Assert.Equal(localPath, (await _dbContext.MediaItems.FindAsync(copy1.Id))!.BackdropUrl);
+        Assert.Equal(localPath, (await _dbContext.MediaItems.FindAsync(copy2.Id))!.BackdropUrl);
+    }
+
+    [Fact]
     public async Task ProcessDownload_CastImage_UpdatesPersonByExternalId_NotPrimaryKey()
     {
         // Regression: cast downloads are enqueued with PersonId = the provider's external

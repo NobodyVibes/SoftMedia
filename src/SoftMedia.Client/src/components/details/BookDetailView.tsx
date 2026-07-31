@@ -1,11 +1,15 @@
 import { type MediaItem } from '../../types';
 import { BookOpen } from 'lucide-react';
+import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 
 interface BookDetailViewProps {
     item: MediaItem;
 }
 
 export default function BookDetailView({ item }: BookDetailViewProps) {
+    // The cover URL embeds the media token (AA-WI-001) — re-render on rotation.
+    useMediaTokenRefresh();
     // Authors come from two places and the richer one wins. OpenLibrary writes every author
     // of a work into `cast` tagged with the character "Author", so co-authored books list all
     // of them; the scanner's embedded read (EPUB dc:creator / PDF Info) yields a single name
@@ -81,8 +85,8 @@ export default function BookDetailView({ item }: BookDetailViewProps) {
             <div className="space-y-6 md:col-span-1">
                 <div className="rounded-xl overflow-hidden shadow-2xl border border-white/10 bg-gray-900 aspect-[2/3] sticky top-8">
                     {item.posterPath ? (
-                        <img 
-                            src={item.posterPath} 
+                        <img
+                            src={attachAuthToApiUrl(item.posterPath)}
                             alt={item.title}
                             className="w-full h-full object-cover"
                         />

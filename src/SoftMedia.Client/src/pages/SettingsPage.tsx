@@ -16,6 +16,8 @@ import { UserListTable } from '../components/admin/UserListTable';
 import { InviteManager } from '../components/admin/InviteManager';
 import { BackupCard } from '../components/admin/BackupCard';
 import { ScheduledTasksCard } from '../components/admin/ScheduledTasksCard';
+import { CacheUsageCard } from '../components/admin/CacheUsageCard';
+import { DuplicateVersionsCard } from '../components/admin/DuplicateVersionsCard';
 import { ActiveSessionsCard } from '../components/admin/ActiveSessionsCard';
 import { DlnaSettingsCard } from '../components/admin/DlnaSettingsCard';
 import { LibraryListTable } from '../components/library/LibraryListTable';
@@ -45,8 +47,9 @@ function AdminDashboard() {
         refetchInterval: 30000, // Poll every 30s
     });
 
-    // System notifications query (available for future dashboard features)
-    const { data: _systemNotifications = [] } = useQuery<SystemNotification[]>({
+    // System notifications query — kept warm for the cards below that read the
+    // same query key from the cache; the data itself isn't consumed here.
+    useQuery<SystemNotification[]>({
         queryKey: ['systemNotifications'],
         queryFn: notificationService.getNotifications,
         refetchInterval: 30000,
@@ -92,6 +95,12 @@ function AdminDashboard() {
 
             {/* Background Tasks */}
             <ScheduledTasksCard />
+
+            {/* Cache usage (MC-WI-007) */}
+            <CacheUsageCard />
+
+            {/* Duplicate versions report (DV-WI-012) */}
+            <DuplicateVersionsCard />
 
             {/* DLNA / UPnP media server (R-WI-010) */}
             <DlnaSettingsCard />

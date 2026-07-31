@@ -46,12 +46,28 @@ public class MetadataEnrichmentPolicyTests
     }
 
     [Fact]
-    public void NeedsEnrichment_ReturnsTrue_WhenNoPosterAndHashPresent()
+    public void NeedsEnrichment_ReturnsFalse_WhenNoPosterButAttemptStamped()
     {
+        // SM-WI-041: an enrichment pass RAN (hash stamped) and the provider had no
+        // image — relaxed mode treats that as complete. The old `!hasPoster` contract
+        // re-enqueued such items on every scan forever (identical imageless answer).
         var item = new MediaItem
         {
             Id = Guid.NewGuid(),
             MetadataHash = "hash123",
+            PosterUrl = null
+        };
+
+        Assert.False(MetadataEnrichmentPolicy.NeedsEnrichment(item));
+    }
+
+    [Fact]
+    public void NeedsEnrichment_ReturnsTrue_WhenNoPosterAndNeverAttempted()
+    {
+        var item = new MediaItem
+        {
+            Id = Guid.NewGuid(),
+            MetadataHash = null,
             PosterUrl = null
         };
 

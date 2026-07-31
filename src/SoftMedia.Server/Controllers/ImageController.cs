@@ -1,8 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using System.Security.Cryptography;
-using System.Text;
 using System.Collections.Concurrent;
 using SoftMedia.Server.Extensions;
 using SoftMedia.Server.Services.Identity;
@@ -17,10 +15,9 @@ namespace SoftMedia.Server.Controllers;
 public class ImageController : ControllerBase
 {
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IWebHostEnvironment _env;
     private readonly ILogger<ImageController> _logger;
     private readonly IThumbnailService _thumbnailService;
-    private readonly string _proxyCacheDir;
+    private readonly IProxyImageStore _proxyStore;
 
     // Maximum file size: 10MB (same as ImageCacheService)
     private const long MaxFileSizeBytes = 10 * 1024 * 1024;
@@ -31,55 +28,26 @@ public class ImageController : ControllerBase
 
     // Limit concurrent outbound fetches to avoid overwhelming upstream hosts
     private static readonly SemaphoreSlim _fetchSemaphore = new(8, 8);
-    
-    // Allowed hosts for SSRF prevention (same as ImageCacheService)
-    private static readonly HashSet<string> AllowedHosts = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "static.tvmaze.com",
-        "coverartarchive.org",
-        "archive.org",
-        "upload.wikimedia.org",
-        "commons.wikimedia.org",
-        "m.media-amazon.com",
-        "ia.media-imdb.com",
-        "covers.openlibrary.org"
-    };
 
-    /// <summary>
-    /// A host is allowed if it is an exact allowlist member OR a subdomain of
-    /// archive.org. Cover Art Archive "front" URLs 302/307-redirect through
-    /// archive.org to a per-release Internet Archive storage node
-    /// (iaNNN.us.archive.org / dnNNNNNN.ca.archive.org) — trusted IA infrastructure.
-    /// The suffix is anchored on ".archive.org" (note the leading dot) so it admits
-    /// only genuine subdomains and never matches look-alikes ("evilarchive.org") or
-    /// internal SSRF targets ("169.254.169.254"). Kept in sync with ImageCacheService.
-    /// </summary>
-    private static bool IsHostAllowed(string host) =>
-        AllowedHosts.Contains(host)
-        || host.EndsWith(".archive.org", StringComparison.OrdinalIgnoreCase);
+    // Host allowlist, scheme guard and redirect policy live in ImageFetchPolicy
+    // (MC-WI-002). This controller previously carried its own copy with a BROAD
+    // ".archive.org" suffix, which admitted web.archive.org — the Wayback Machine, a
+    // content-rewriting fetch proxy — while the downloader had already been tightened
+    // to the anchored storage-node suffixes (audit wave-2 L-26). One shared policy now.
 
-    // Allowed content types
-    private static readonly HashSet<string> AllowedContentTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"
-    };
-
-    public ImageController(IHttpClientFactory httpClientFactory, IWebHostEnvironment env, ILogger<ImageController> logger, IThumbnailService thumbnailService)
+    public ImageController(IHttpClientFactory httpClientFactory, ILogger<ImageController> logger, IThumbnailService thumbnailService, IProxyImageStore proxyStore)
     {
         _httpClientFactory = httpClientFactory;
-        _env = env;
         _logger = logger;
         _thumbnailService = thumbnailService;
-        
-        // Use wwwroot/cache/images/proxy for hash-based proxy caching
-        _proxyCacheDir = Path.Combine(_env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"), 
-            "cache", "images", "proxy");
-        Directory.CreateDirectory(_proxyCacheDir);
+        _proxyStore = proxyStore;
     }
 
     /// <summary>
-    /// Proxy and cache remote images with security validations.
-    /// Checks structured cache first to avoid duplicates.
+    /// Proxy and cache remote images with security validations. The cached copy is
+    /// TRANSIENT: the image download queue deletes it once the permanent item-keyed copy
+    /// lands, and IProxyImageStore's age sweep expires whatever is left (cache hits
+    /// refresh the file's mtime so in-use entries survive).
     /// </summary>
     [HttpGet("proxy")]
     [ResponseCache(Duration = 604800, Location = ResponseCacheLocation.Client)] // Cache for 7 days in browser
@@ -90,32 +58,28 @@ public class ImageController : ControllerBase
             return BadRequest("URL is required");
         }
 
-        // Security: Validate URL and host.
-        // T6.5/I-8: the INITIAL url must pass the same scheme guard as redirect hops —
-        // don't rely on HttpClient to reject non-http(s) schemes downstream.
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
-            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        // Security: Validate URL and host (shared scheme guard + allowlist).
+        if (!ImageFetchPolicy.TryValidateUrl(url, out var uri))
         {
             return BadRequest("Invalid URL format");
         }
-        
-        if (!IsHostAllowed(uri.Host))
+
+        if (!ImageFetchPolicy.IsHostAllowed(uri.Host))
         {
             _logger.LogWarning("Blocked proxy request for non-allowed host: {Host}", uri.Host);
             return BadRequest("Image source not allowed");
         }
 
-        // Create a safe filename from the URL hash
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(url)));
-        var extension = GetExtensionFromUrl(url);
-        var cachedFilePath = Path.Combine(_proxyCacheDir, hash + extension);
-
-        var sentinelPath = cachedFilePath + ".404";
+        // Hash-keyed paths owned by the proxy store (which also handles deletion/expiry).
+        var cachedFilePath = _proxyStore.GetCachedFilePath(url);
+        var sentinelPath = _proxyStore.GetSentinelPath(cachedFilePath);
+        var thumbnailKey = _proxyStore.GetThumbnailKey(url);
 
         // Check proxy cache first
         if (System.IO.File.Exists(cachedFilePath))
         {
-            return await ServeCachedImageAsync(cachedFilePath, hash, width);
+            _proxyStore.TouchOnHit(cachedFilePath);
+            return await ServeCachedImageAsync(cachedFilePath, thumbnailKey, width);
         }
 
         // Check negative cache — upstream previously returned non-success for this URL
@@ -130,7 +94,8 @@ public class ImageController : ControllerBase
             // Re-check caches after acquiring semaphore (another request may have populated it)
             if (System.IO.File.Exists(cachedFilePath))
             {
-                return await ServeCachedImageAsync(cachedFilePath, hash, width);
+                _proxyStore.TouchOnHit(cachedFilePath);
+                return await ServeCachedImageAsync(cachedFilePath, thumbnailKey, width);
             }
             if (System.IO.File.Exists(sentinelPath))
                 return NotFound("Image not found at source.");
@@ -143,7 +108,7 @@ public class ImageController : ControllerBase
 
             // Follows redirects manually, re-validating the allowlist on each hop (the
             // client has AllowAutoRedirect=false). null = the chain left the allowlist.
-            using var response = await GetWithAllowlistedRedirectsAsync(client, url);
+            using var response = await ImageFetchPolicy.GetWithAllowlistedRedirectsAsync(client, url, _logger);
             if (response == null)
             {
                 // A blocked redirect is a policy decision (host allow-list / scheme),
@@ -164,7 +129,7 @@ public class ImageController : ControllerBase
 
             // Security: Validate content type
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
-            if (!AllowedContentTypes.Contains(contentType))
+            if (!ImageFetchPolicy.AllowedContentTypes.Contains(contentType))
             {
                 _logger.LogWarning("Invalid content type {Type} from {Url}", contentType, url);
                 return BadRequest("Invalid image type");
@@ -199,7 +164,7 @@ public class ImageController : ControllerBase
             }
 
             _logger.LogDebug("Cached proxy image: {Url} -> {Path}", url, cachedFilePath);
-            return await ServeCachedImageAsync(cachedFilePath, hash, width);
+            return await ServeCachedImageAsync(cachedFilePath, thumbnailKey, width);
         }
         catch (TaskCanceledException)
         {
@@ -217,71 +182,19 @@ public class ImageController : ControllerBase
         }
     }
 
-    // Maximum redirect hops to follow before giving up.
-    private const int MaxRedirects = 5;
-
     /// <summary>
-    /// Issues a GET and follows up to <see cref="MaxRedirects"/> redirects MANUALLY,
-    /// re-validating each hop's host against <see cref="AllowedHosts"/> (the client has
-    /// AllowAutoRedirect=false). This stops an allowlisted host from redirecting the
-    /// proxy to an internal address (cloud metadata, loopback, RFC1918) — a host check
-    /// only on the first URL would otherwise be bypassed by the 3xx. Returns null when
-    /// the chain leaves the allowlist or exceeds the hop limit.
+    /// Serve a cached image, optionally generating a resized WebP thumbnail
+    /// (keyed by the store's URL-derived guid, so it never collides with item ids).
     /// </summary>
-    private async Task<HttpResponseMessage?> GetWithAllowlistedRedirectsAsync(HttpClient client, string url)
-    {
-        var currentUrl = url;
-        for (var hop = 0; ; hop++)
-        {
-            var response = await client.GetAsync(currentUrl, HttpCompletionOption.ResponseHeadersRead);
-
-            var status = (int)response.StatusCode;
-            if (status is < 300 or >= 400)
-                return response; // not a redirect — success or error, caller decides
-
-            var location = response.Headers.Location;
-            response.Dispose();
-
-            if (hop >= MaxRedirects)
-            {
-                _logger.LogWarning("Image proxy redirect chain exceeded {Max} hops for {Url}", MaxRedirects, url);
-                return null;
-            }
-            if (location == null)
-            {
-                _logger.LogWarning("Image proxy redirect with no Location header from {Url}", currentUrl);
-                return null;
-            }
-
-            var next = location.IsAbsoluteUri ? location : new Uri(new Uri(currentUrl), location);
-            if ((next.Scheme != Uri.UriSchemeHttp && next.Scheme != Uri.UriSchemeHttps)
-                || !IsHostAllowed(next.Host))
-            {
-                _logger.LogWarning("Blocked image proxy redirect to non-allowlisted target {Target} (from {Url})", next, currentUrl);
-                return null;
-            }
-
-            currentUrl = next.AbsoluteUri;
-        }
-    }
-
-    /// <summary>
-    /// Serve a cached image, optionally generating a resized WebP thumbnail.
-    /// </summary>
-    private async Task<IActionResult> ServeCachedImageAsync(string cachedFilePath, string urlHash, int? width)
+    private async Task<IActionResult> ServeCachedImageAsync(string cachedFilePath, Guid thumbnailKey, int? width)
     {
         var servePath = cachedFilePath;
         var serveMime = GetContentType(cachedFilePath);
 
         if (width.HasValue && width.Value >= MinThumbnailWidth && width.Value <= MaxThumbnailWidth)
         {
-            // Derive a deterministic GUID from the URL hash for ThumbnailService's file naming
-            var guidBytes = new byte[16];
-            Array.Copy(SHA256.HashData(Encoding.UTF8.GetBytes(urlHash)), guidBytes, 16);
-            var proxyGuid = new Guid(guidBytes);
-
             var thumbPath = await _thumbnailService.GetOrCreateThumbnailAsync(
-                cachedFilePath, proxyGuid, width.Value);
+                cachedFilePath, thumbnailKey, width.Value);
             if (thumbPath != null)
             {
                 servePath = thumbPath;
@@ -290,22 +203,6 @@ public class ImageController : ControllerBase
         }
 
         return PhysicalFile(servePath, serveMime, enableRangeProcessing: true);
-    }
-
-    private static string GetExtensionFromUrl(string url)
-    {
-        try
-        {
-            var path = new Uri(url).AbsolutePath;
-            var ext = Path.GetExtension(path).ToLowerInvariant();
-            if (!string.IsNullOrEmpty(ext) && ext.Length <= 5 && 
-                (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp"))
-            {
-                return ext;
-            }
-        }
-        catch { }
-        return ".jpg"; // Default
     }
 
     private static string GetContentType(string path)

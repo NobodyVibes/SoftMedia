@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { toast } from 'sonner';
 import { extractApiError } from '../../services/apiError';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -30,11 +30,12 @@ export const DlnaSettingsCard: React.FC = () => {
 
     // Initialise the form ONCE from the first settings load. A later refetch (e.g. this card's own
     // save invalidating ['settings'], or a window refocus) must NOT clobber the admin's in-progress
-    // edits, so we don't re-sync on every settings change.
-    const initialized = useRef(false);
-    useEffect(() => {
-        if (!settings || initialized.current) return;
-        initialized.current = true;
+    // edits, so we don't re-sync on every settings change. Seeded during render
+    // (react.dev: "adjusting state when props change") so the defaults never
+    // flash before the stored values arrive.
+    const [initialized, setInitialized] = useState(false);
+    if (settings && !initialized) {
+        setInitialized(true);
         const get = (k: string) => settings.find(s => s.key === k)?.value ?? '';
         setEnabled(get('EnableDlna') === 'true');
         setServerName(get('DlnaServerName') || 'SoftMedia');
@@ -47,7 +48,7 @@ export const DlnaSettingsCard: React.FC = () => {
             setMovieRating('');
             setTvRating('');
         }
-    }, [settings]);
+    }
 
     // DLNA only serves audio/video items, so only these library types are eligible to expose.
     const eligibleLibraries = libraries.filter(l => l.type === 'Movie' || l.type === 'TV' || l.type === 'Music');

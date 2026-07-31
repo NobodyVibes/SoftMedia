@@ -70,18 +70,89 @@ public class MediaController : ControllerBase
         }
 
         UserMediaInteraction? interaction = null;
-        try 
+        Guid? callerId = null;
+        try
         {
             var userId = User.GetUserId();
+            callerId = userId;
             interaction = await _context.UserMediaInteractions
                 .FirstOrDefaultAsync(x => x.UserId == userId && x.MediaItemId == id);
         }
-        catch 
+        catch
         {
             // Ignore if user claim not found (shouldn't happen with [Authorize])
         }
 
-        return MediaItemDto.FromMediaItem(item, "/api/v1/image/proxy", interaction);
+        var dto = MediaItemDto.FromMediaItem(item, "/api/v1/image/proxy", interaction);
+        await HydrateVersionsAsync(dto, item, callerId);
+        await HydrateSeriesQualityAggregateAsync(dto, item);
+        return dto;
+    }
+
+    /// <summary>
+    /// DV-WI-022 — a SERIES has no file of its own, so its detail header used to sample
+    /// an arbitrary episode for quality info (with mixed 1080p/4K copies, a coin flip).
+    /// Hydrate the honest aggregate instead: best height/width across the show's live
+    /// episodes, HDR if ANY episode has it, and the matching display label.
+    /// </summary>
+    private async Task HydrateSeriesQualityAggregateAsync(MediaItemDto dto, MediaItem item)
+    {
+        if (item.Type != MediaType.Series) return;
+
+        var best = await _context.MediaItems.AsNoTracking()
+            .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Episode && !m.IsMissing && m.Height != null)
+            .OrderByDescending(m => m.Height)
+            .ThenByDescending(m => m.HdrFormat != null && m.HdrFormat != "")
+            .Select(m => new { m.Width, m.Height })
+            .FirstOrDefaultAsync();
+        if (best == null) return;
+
+        dto.Width = best.Width;
+        dto.Height = best.Height;
+        dto.HdrFormat = await _context.MediaItems.AsNoTracking()
+            .Where(m => m.SeriesId == item.Id && m.Type == MediaType.Episode && !m.IsMissing
+                     && m.HdrFormat != null && m.HdrFormat != "")
+            .Select(m => m.HdrFormat)
+            .FirstOrDefaultAsync();
+        dto.VersionLabel = Helpers.VersionLabelHelper.ResolutionLabel(best.Height)
+            + (dto.HdrFormat != null ? $" {dto.HdrFormat}" : null);
+    }
+
+    /// <summary>
+    /// DV-WI-013 — detail responses list every version (file copy) of the item's group,
+    /// ordered by the primary rule (plan §2.2): explicit PreferredVersion override, else
+    /// max height → HDR present → max bitrate → newest → id. The primary is COMPUTED
+    /// here, never stored, so it cannot drift as files come and go. List endpoints skip
+    /// this on purpose (VersionCount stays 1) — no per-row sibling queries in grids.
+    /// </summary>
+    private async Task HydrateVersionsAsync(MediaItemDto dto, MediaItem item, Guid? userId)
+    {
+        if (item.VersionGroupId == null || item.Type is not (MediaType.Movie or MediaType.Episode)) return;
+
+        var siblings = await _context.MediaItems.AsNoTracking()
+            .Where(m => m.VersionGroupId == item.VersionGroupId && !m.IsMissing)
+            .ToListAsync();
+        if (siblings.Count <= 1) return;
+
+        var siblingIds = siblings.Select(s => s.Id).ToList();
+        var interactions = userId == null
+            ? new Dictionary<Guid, UserMediaInteraction>()
+            : await _context.UserMediaInteractions.AsNoTracking()
+                .Where(i => i.UserId == userId && siblingIds.Contains(i.MediaItemId))
+                .ToDictionaryAsync(i => i.MediaItemId);
+
+        var ordered = Services.Media.VersionPrimaryRule.OrderPrimaryFirst(siblings).ToList();
+
+        dto.VersionCount = ordered.Count;
+        dto.Versions = ordered.Select((s, index) => new VersionDto(
+            s.Id,
+            Helpers.VersionLabelHelper.BuildLabel(s),
+            s.Width, s.Height, s.HdrFormat, s.Bitrate, s.Container, s.Size,
+            DurationSeconds: s.Duration > 0 ? s.Duration : null,
+            IsPrimary: index == 0,
+            Preferred: s.PreferredVersion,
+            Watched: interactions.TryGetValue(s.Id, out var i) && i.IsWatched,
+            PlaybackPosition: interactions.TryGetValue(s.Id, out var p) ? p.PlaybackPosition : null)).ToList();
     }
 
     [HttpGet("hero")]
@@ -334,7 +405,10 @@ public class MediaController : ControllerBase
                     || (m.Album != null && EF.Functions.Like(m.Album.Title, searchPattern, Esc))))
                 || (m.Type == MediaType.Episode
                     && EF.Functions.Like(m.Title, searchPattern, Esc)
-                    && ratedSeries.Any(s => s.Id == m.SeriesId)));
+                    && ratedSeries.Any(s => s.Id == m.SeriesId)))
+            // DV-WI-015/016: duplicate copies of one title are ONE search result (the
+            // computed primary) — two byte-identical rows in the dropdown helped no one.
+            .OnePerVersionGroup(_context.MediaItems.AsNoTracking());
     }
 
     /// <summary>

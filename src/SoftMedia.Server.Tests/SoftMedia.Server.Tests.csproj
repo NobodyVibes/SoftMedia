@@ -30,6 +30,9 @@
   <ItemGroup>
     <!-- Real-format fixtures (e.g. sample.cbr — RAR cannot be synthesised in code). -->
     <None Include="TestData\**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- SM-WI-001 real-library manifest (names harvested from the operator's libraries;
+         regenerate via tools/FixtureHarvester, hand-corrections carry a _corrected marker). -->
+    <None Include="Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

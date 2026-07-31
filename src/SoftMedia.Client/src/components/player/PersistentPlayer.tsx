@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { AddToPlaylistMenu } from '../playlists/AddToPlaylistMenu';
 import api, { API_URL } from '../../services/api';
 import { getUrlToken } from '../../store/authStore';
-import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { resolveArtworkUrl } from '../../lib/mediaImageUrl';
 import { cn } from '../../lib/utils';
 import type { MediaItem } from '../../types';
 import { ScrollingText } from '../ui/ScrollingText';
@@ -173,18 +173,10 @@ export const PersistentPlayer: React.FC = () => {
         return `${API_URL}/stream/${track.id}${token ? `?token=${token}` : ''}`;
     }, []);
 
-    // Image URL helper
-    const getImageUrl = useCallback((path: string | undefined) => {
-        if (!path) return '/placeholder-music.png';
-        if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
-        if (path.startsWith('http')) return path;
-        // Anything left is a static file served from wwwroot (e.g.
-        // /cache/images/albums/x.jpg), NOT an API route — it needs no token, and
-        // the `${API_URL}` prefix this used to add produced /api/v1/cache/… ,
-        // which routes nowhere and 404s. (Supersedes B-09, which assumed this
-        // branch landed on /api/v1.)
-        return path;
-    }, []);
+    // Image URL helper — shared resolver; /cache/images statics are token-gated
+    // (AA-WI-001) so they get the media token exactly like /api routes now.
+    const getImageUrl = useCallback(
+        (path: string | undefined) => resolveArtworkUrl(path), []);
 
     // Memoized stream URL for current track
     const currentStreamUrl = useMemo(() => getStreamUrl(currentTrack), [currentTrack, getStreamUrl]);
@@ -563,7 +555,7 @@ export const PersistentPlayer: React.FC = () => {
             switch (e.code) {
                 case 'Space':
                     e.preventDefault();
-                    isPlaying ? pause() : resume();
+                    if (isPlaying) pause(); else resume();
                     break;
                 case 'ArrowRight':
                     e.preventDefault();

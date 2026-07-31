@@ -80,6 +80,7 @@ public class TvScanner : BaseMediaScanner
         _seasonCache.Clear();
         _seriesNeedingEnrichment.Clear();
         _parsedSeriesMetadataCache.Clear();
+        _episodeIndexCache.Clear(); // SM-WI-055/S11: derived from the payload cache above
         _fullScanActive = true;
 
         // Bulk pre-load all existing Series for this library
@@ -102,8 +103,12 @@ public class TvScanner : BaseMediaScanner
 
             foreach (var s in existingSeasons)
             {
+                // SM-WI-055/S13: a null-SeasonNumber season must not collide with the
+                // real "Season 0/Specials" key — `?? 0` mapped both onto (seriesId, 0)
+                // and TryAdd silently dropped one, so the loser got re-created
+                // downstream. Null seasons key as -1 (no legitimate season is negative).
                 if (s.SeriesId.HasValue)
-                    _seasonCache.TryAdd((s.SeriesId.Value, s.SeasonNumber ?? 0), s);
+                    _seasonCache.TryAdd((s.SeriesId.Value, s.SeasonNumber ?? -1), s);
             }
 
             // Bulk pre-load Provider Metadata Caches (TVMaze payloads) for the series in this library
@@ -243,7 +248,17 @@ public class TvScanner : BaseMediaScanner
             .GroupBy(f => f, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
 
-        foreach (var seriesId in seriesIds)
+        // SM-WI-053: batch the sweep — ONE query loads every series and ONE save commits
+        // the changed ones (the old shape did a single-row query + save per series: 500
+        // series = 500 queries + up to 500 commits per scan, even when nothing changed).
+        var idList = seriesIds.ToList();
+        var seriesById = (await context.MediaItems
+                .Where(m => idList.Contains(m.Id))
+                .ToListAsync(cancellationToken))
+            .ToDictionary(m => m.Id);
+
+        var anyChanged = false;
+        foreach (var seriesId in idList)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
@@ -251,15 +266,12 @@ public class TvScanner : BaseMediaScanner
                 if (!resolvedFolders.TryGetValue(seriesId, out var folder)) continue;
                 if (libraryRoots.Contains(folder)) continue;
                 if (folderClaims.GetValueOrDefault(folder) > 1) continue; // shared folder → ambiguous art
+                if (!seriesById.TryGetValue(seriesId, out var series)) continue;
 
-                var series = await context.MediaItems.FirstOrDefaultAsync(m => m.Id == seriesId, cancellationToken);
-                if (series == null) continue;
+                var artwork = await localArtwork.ApplyLocalArtworkAsync(
+                    series, folder, fileStem: null, GetCachedDirectoryListing);
+                anyChanged |= artwork.Changed;
 
-                var artwork = await localArtwork.ApplyLocalArtworkAsync(series, folder, fileStem: null);
-                if (artwork.Changed)
-                {
-                    await context.SaveChangesAsync(cancellationToken);
-                }
                 // Re-enqueue for the one-pass enrichment — but honour retry exhaustion like the
                 // policy does, or an unmatchable series would retry on every scan forever.
                 if ((artwork.LocalPosterRemoved ||
@@ -272,12 +284,20 @@ public class TvScanner : BaseMediaScanner
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
-                // One unreadable folder / transient DB error must not abort the rest of the sweep.
-                // Clear the tracker so a poisoned entity (failed SaveChanges) can't re-fail every
-                // subsequent series' save on this shared context.
+                // One unreadable folder must not abort the rest of the sweep. The failed
+                // series' entity is detached so a poisoned entity can't fail the final save.
                 _logger.LogWarning(ex, "[TvScanner] Local artwork sweep failed for series {SeriesId}; continuing.", seriesId);
-                context.ChangeTracker.Clear();
+                if (seriesById.TryGetValue(seriesId, out var poisoned))
+                {
+                    context.Entry(poisoned).State = EntityState.Detached;
+                    seriesById.Remove(seriesId);
+                }
             }
+        }
+
+        if (anyChanged)
+        {
+            await context.SaveChangesAsync(cancellationToken);
         }
     }
 
@@ -346,6 +366,9 @@ public class TvScanner : BaseMediaScanner
             var isNew = existing == null;
             var fileChanged = existing != null
                 && (existing.Size != file.Size || existing.DateModified != file.LastWriteUtc);
+            // DV-WI-010: capture the previous parsed identity BEFORE it is overwritten —
+            // a renamed file that now maps to a different episode must move version group.
+            var (previousSeason, previousEpisode) = (existing?.SeasonNumber, existing?.EpisodeNumber);
             var episode = existing ?? new MediaItem { LibraryId = library.Id };
 
             // Determine episode title
@@ -375,6 +398,19 @@ public class TvScanner : BaseMediaScanner
             episode.EpisodeNumber = episodeNum;
             episode.Size = file.Size;
             episode.DateModified = file.LastWriteUtc;
+
+            // DV-WI-010: deterministic per-(series, season, episode) group id — every
+            // parallel worker computes the same value, so duplicate copies converge with
+            // no coordination. Fill-only unless the parsed identity MOVED (rename), so an
+            // admin split's fresh id survives rescans. Unparseable rows (episode 0) stay
+            // ungrouped: distinct unknown files are not duplicates of each other.
+            if (episode.VersionGroupId == null
+                || previousSeason != seasonNum || previousEpisode != episodeNum)
+            {
+                episode.VersionGroupId = episodeNum > 0
+                    ? VersionGroupHelper.ComputeEpisodeGroupId(series.Id, seasonNum, episodeNum)
+                    : null;
+            }
 
             // Delegate technical analysis to MediaAnalysisService (Smart Probe).
             // Changed files get a full re-probe; unchanged files stay in Missing mode,
@@ -603,28 +639,44 @@ public class TvScanner : BaseMediaScanner
     /// existing episodes already have correct titles in the DB.
     /// Returns null for new episodes (titles come from enrichment post-scan).
     /// </summary>
-    private string? GetEpisodeTitleFromMetadata(MediaItem series, int seasonNum, int episodeNum)
+    // SM-WI-055/S11 — (season, episode) → element index per series, built once per scan.
+    // The old linear scan of the TVMaze episodes array PER EPISODE FILE was O(E²): a
+    // 300-episode series paid ~180k JsonElement comparisons per scan.
+    private readonly ConcurrentDictionary<Guid, Dictionary<(int Season, int Episode), JsonElement>> _episodeIndexCache = new();
+
+    private Dictionary<(int Season, int Episode), JsonElement>? GetEpisodeIndex(Guid seriesId)
     {
-        if (!_parsedSeriesMetadataCache.TryGetValue(series.Id, out var metadata) || metadata == null)
+        if (!_parsedSeriesMetadataCache.TryGetValue(seriesId, out var metadata) || metadata == null)
             return null;
 
-        // The TVMaze JSON contains an "episodes" array in the "_embedded" property
-        if (metadata.TryGetValue("_embedded", out var embeddedObj) && embeddedObj is JsonElement embedded)
+        return _episodeIndexCache.GetOrAdd(seriesId, _ =>
         {
-            if (embedded.TryGetProperty("episodes", out var episodes) && episodes.ValueKind == JsonValueKind.Array)
+            var index = new Dictionary<(int, int), JsonElement>();
+            if (metadata.TryGetValue("_embedded", out var embeddedObj) && embeddedObj is JsonElement embedded
+                && embedded.TryGetProperty("episodes", out var episodes) && episodes.ValueKind == JsonValueKind.Array)
             {
                 foreach (var ep in episodes.EnumerateArray())
                 {
-                    if (ep.TryGetProperty("season", out var s) && s.GetInt32() == seasonNum &&
-                        ep.TryGetProperty("number", out var n) && n.GetInt32() == episodeNum)
+                    // ValueKind guards: TVMaze specials can carry "number": null, which
+                    // the old code would have thrown on.
+                    if (ep.TryGetProperty("season", out var s) && s.ValueKind == JsonValueKind.Number &&
+                        ep.TryGetProperty("number", out var n) && n.ValueKind == JsonValueKind.Number)
                     {
-                        if (ep.TryGetProperty("name", out var name))
-                            return name.GetString();
+                        index[(s.GetInt32(), n.GetInt32())] = ep;
                     }
                 }
             }
-        }
-        return null;
+            return index;
+        });
+    }
+
+    private string? GetEpisodeTitleFromMetadata(MediaItem series, int seasonNum, int episodeNum)
+    {
+        var index = GetEpisodeIndex(series.Id);
+        if (index == null || !index.TryGetValue((seasonNum, episodeNum), out var ep))
+            return null;
+
+        return ep.TryGetProperty("name", out var name) ? name.GetString() : null;
     }
 
     /// <summary>
@@ -634,54 +686,40 @@ public class TvScanner : BaseMediaScanner
     /// </summary>
     private void PopulateEpisodeMetadata(MediaItem episode, MediaItem series, int seasonNum, int episodeNum)
     {
-        if (!_parsedSeriesMetadataCache.TryGetValue(series.Id, out var metadata) || metadata == null)
+        var index = GetEpisodeIndex(series.Id);
+        if (index == null || !index.TryGetValue((seasonNum, episodeNum), out var ep))
             return;
 
-        if (metadata.TryGetValue("_embedded", out var embeddedObj) && embeddedObj is JsonElement embedded)
+        // SR-WI-031: these are fill-only. Enrichment (TvMetadataEnricher /
+        // ImageDownloadQueueService) owns updates to already-populated fields;
+        // re-stamping them on every scan clobbered locally cached values.
+
+        // Summary — only when missing (enrichment propagation owns refreshes)
+        if (string.IsNullOrEmpty(episode.Overview)
+            && ep.TryGetProperty("summary", out var summary))
         {
-            if (embedded.TryGetProperty("episodes", out var episodes) && episodes.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var ep in episodes.EnumerateArray())
-                {
-                    if (ep.TryGetProperty("season", out var s) && s.GetInt32() == seasonNum &&
-                        ep.TryGetProperty("number", out var n) && n.GetInt32() == episodeNum)
-                    {
-                        // SR-WI-031: these are fill-only. Enrichment (TvMetadataEnricher /
-                        // ImageDownloadQueueService) owns updates to already-populated fields;
-                        // re-stamping them on every scan clobbered locally cached values.
+            var summaryText = summary.GetString();
+            if (!string.IsNullOrEmpty(summaryText))
+                episode.Overview = System.Text.RegularExpressions.Regex.Replace(summaryText, "<.*?>", "");
+        }
 
-                        // Summary — only when missing (enrichment propagation owns refreshes)
-                        if (string.IsNullOrEmpty(episode.Overview)
-                            && ep.TryGetProperty("summary", out var summary))
-                        {
-                            var summaryText = summary.GetString();
-                            if (!string.IsNullOrEmpty(summaryText))
-                                episode.Overview = System.Text.RegularExpressions.Regex.Replace(summaryText, "<.*?>", "");
-                        }
+        // Air date — only when missing
+        if (episode.ReleaseDate == null
+            && ep.TryGetProperty("airdate", out var airdate) && DateTime.TryParse(airdate.GetString(), out var date))
+            episode.ReleaseDate = date;
 
-                        // Air date — only when missing
-                        if (episode.ReleaseDate == null
-                            && ep.TryGetProperty("airdate", out var airdate) && DateTime.TryParse(airdate.GetString(), out var date))
-                            episode.ReleaseDate = date;
-
-                        // Still image -> Backdrop (promoted column). Never overwrite a locally
-                        // cached still (/cache/images/...) written by ImageDownloadQueueService
-                        // with the remote TVMaze URL — that re-broke offline art on every scan.
-                        var hasLocalBackdrop = !string.IsNullOrEmpty(episode.BackdropUrl)
-                            && episode.BackdropUrl.StartsWith("/cache/", StringComparison.OrdinalIgnoreCase);
-                        if (!hasLocalBackdrop
-                            && ep.TryGetProperty("image", out var img) && img.ValueKind != JsonValueKind.Null)
-                        {
-                             if (img.TryGetProperty("original", out var original))
-                                 episode.BackdropUrl = original.GetString();
-                             else if (img.TryGetProperty("medium", out var medium))
-                                 episode.BackdropUrl = medium.GetString();
-                        }
-
-                        break;
-                    }
-                }
-            }
+        // Still image -> Backdrop (promoted column). Never overwrite a locally
+        // cached still (/cache/images/...) written by ImageDownloadQueueService
+        // with the remote TVMaze URL — that re-broke offline art on every scan.
+        var hasLocalBackdrop = !string.IsNullOrEmpty(episode.BackdropUrl)
+            && episode.BackdropUrl.StartsWith("/cache/", StringComparison.OrdinalIgnoreCase);
+        if (!hasLocalBackdrop
+            && ep.TryGetProperty("image", out var img) && img.ValueKind != JsonValueKind.Null)
+        {
+             if (img.TryGetProperty("original", out var original))
+                 episode.BackdropUrl = original.GetString();
+             else if (img.TryGetProperty("medium", out var medium))
+                 episode.BackdropUrl = medium.GetString();
         }
     }
 

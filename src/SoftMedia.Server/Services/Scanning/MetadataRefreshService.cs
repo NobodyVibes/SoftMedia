@@ -13,6 +13,10 @@ namespace SoftMedia.Server.Services.Scanning;
 
 public class MetadataRefreshService : BackgroundService, IManuallyTriggerableTask
 {
+    /// <summary>SM-WI-045 — slim projection for refresh candidates (id to enqueue, type
+    /// for library-type routing, title for progress display only).</summary>
+    private sealed record RefreshCandidate(Guid Id, MediaType Type, string Title);
+
     public string TaskName => ScheduledTaskNames.MetadataRefresh;
 
     /// <summary>R-WI-008 generalised task triggering; the admin endpoint dispatches here.</summary>
@@ -66,7 +70,10 @@ public class MetadataRefreshService : BackgroundService, IManuallyTriggerableTas
         // Update Job Status
         queueService.UpdateProgress(job.Id, LibraryScanStage.Discovery, 0, 0);
 
-        List<MediaItem> candidates = new();
+        // SM-WI-045: project {Id, Type, Title} instead of materialising full entities —
+        // an "All" refresh on a large library loaded every column of every row just to
+        // enqueue ids. Title rides along only for the progress display.
+        List<RefreshCandidate> candidates = new();
 
         // Locked items are filtered here to avoid queue churn; the metadata queue's
         // ProcessItemAsync re-checks the lock at processing time regardless (P3-WI-003).
@@ -74,11 +81,14 @@ public class MetadataRefreshService : BackgroundService, IManuallyTriggerableTas
         // hidden items — the heal-on-reappear scan re-enqueues them when they return.
         if (string.Equals(mode, "Running", StringComparison.OrdinalIgnoreCase))
         {
-             // Since status was previously stored in raw payloads, and we've promoted critical fields,
-             // refresh all Series items. The TVMaze provider re-fetches full details anyway,
-             // so the cost is minimal and this ensures no running series are missed.
+             // SM-WI-044/045: SeriesStatus is now persisted (TVMaze), so "Running" can
+             // finally target genuinely running shows. Series with NO recorded status
+             // (never enriched since the column landed, or non-TVMaze sources) are
+             // included so their status gets learned; "Ended" etc. are skipped.
              candidates = await context.MediaItems
-                .Where(m => m.Type == MediaType.Series && !m.MetadataLocked && !m.IsMissing)
+                .Where(m => m.Type == MediaType.Series && !m.MetadataLocked && !m.IsMissing
+                    && (m.SeriesStatus == null || m.SeriesStatus == "Running" || m.SeriesStatus == "In Development"))
+                .Select(m => new RefreshCandidate(m.Id, m.Type, m.Title))
                 .ToListAsync(ct);
         }
         else if (string.Equals(mode, "Variable", StringComparison.OrdinalIgnoreCase))
@@ -86,6 +96,7 @@ public class MetadataRefreshService : BackgroundService, IManuallyTriggerableTas
              candidates = await context.MediaItems
                 .Where(m => (m.Type == MediaType.Series || m.Type == MediaType.Movie)
                     && !m.MetadataLocked && !m.IsMissing)
+                .Select(m => new RefreshCandidate(m.Id, m.Type, m.Title))
                 .ToListAsync(ct);
         }
         else if (string.Equals(mode, "All", StringComparison.OrdinalIgnoreCase))
@@ -100,6 +111,7 @@ public class MetadataRefreshService : BackgroundService, IManuallyTriggerableTas
                     || m.Type == MediaType.Book || m.Type == MediaType.ComicSeries
                     || m.Type == MediaType.ComicIssue || m.Type == MediaType.Game)
                     && !m.MetadataLocked && !m.IsMissing)
+                .Select(m => new RefreshCandidate(m.Id, m.Type, m.Title))
                 .ToListAsync(ct);
         }
 

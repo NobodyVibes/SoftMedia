@@ -21,11 +21,8 @@ export default function HoverableMediaCardWrapper({
     item,
     hoveredId,
     setHoveredId,
-    // baseWidth and expandedWidth are available but not currently used
-    // They are part of the prop interface for future flexibility
-    // Unified dimensions for 100% parity across Home and Library
-    baseWidth: _baseWidth = 192,
-    expandedWidth: _expandedWidth,
+    // baseWidth/expandedWidth stay on the prop interface for callers, but this
+    // wrapper doesn't consume them — so they are deliberately NOT destructured.
     height,
     width = 192,
     libraryType,

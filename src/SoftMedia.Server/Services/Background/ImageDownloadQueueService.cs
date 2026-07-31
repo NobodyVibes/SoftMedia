@@ -27,6 +27,13 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
     // Reduced to 2 to align with rate limits (approx 2 req/sec) and avoid queue timeouts
     private const int MaxConcurrentDownloads = 2;
 
+    /// <summary>
+    /// SM-WI-026: delay before the single retry of a transiently-failed download.
+    /// Settable so tests can exercise the retry path without real 5-minute waits
+    /// (project convention; no InternalsVisibleTo).
+    /// </summary>
+    public TimeSpan RetryDelay { get; set; } = TimeSpan.FromMinutes(5);
+
     public ImageDownloadQueueService(
         IServiceScopeFactory scopeFactory,
         ILogger<ImageDownloadQueueService> logger,
@@ -105,6 +112,31 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
         }
     }
 
+    /// <summary>
+    /// SM-WI-026 — re-enqueue a failed request once after <see cref="RetryDelay"/>.
+    /// The original attempt's finally-block already decremented the per-library gauge,
+    /// so the retry re-increments it on enqueue (same contract as a fresh request); a
+    /// scan whose drain hit zero in between simply finalized — the retry is background
+    /// repair, not something the user waits on. Cancellation (shutdown) drops the retry.
+    /// </summary>
+    private void ScheduleRetry(ImageDownloadRequest request, CancellationToken ct)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(RetryDelay, ct);
+                if (request.LibraryId.HasValue)
+                {
+                    _pendingByLibrary.AddOrUpdate(request.LibraryId.Value, 1, (_, count) => count + 1);
+                }
+                await _channel.Writer.WriteAsync(request with { Attempt = request.Attempt + 1 }, ct);
+            }
+            catch (OperationCanceledException) { /* shutdown — drop the retry */ }
+            catch (ChannelClosedException) { /* shutdown — drop the retry */ }
+        }, CancellationToken.None);
+    }
+
     private async Task ProcessDownloadAsync(ImageDownloadRequest request, CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -124,7 +156,10 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
                     localPath = await imageCacheService.CacheSeriesPosterAsync(request.MediaId, request.RemoteUrl);
                 else if (request.Type == MediaType.Game)
                     localPath = await imageCacheService.CacheGamePosterAsync(request.MediaId, request.RemoteUrl);
-                else if (request.Type == MediaType.Book)
+                else if (request.Type == MediaType.Book || request.Type == MediaType.ComicSeries)
+                    // ComicSeries covers (Wikidata) share the books/ key space. Without this
+                    // branch the enqueued download silently no-oped and the row kept its
+                    // provider URL — proxied on every view, forever.
                     localPath = await imageCacheService.CacheBookPosterAsync(request.MediaId, request.RemoteUrl);
             }
             else if (request.ImageType == ImageType.AlbumCover)
@@ -146,14 +181,36 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
         }
         catch (Exception ex)
         {
-             _logger.LogWarning(ex, "Failed to download image from {Url}", request.RemoteUrl);
-             return;
+            // SM-WI-026: one delayed retry for transient failures (DNS blip, provider
+            // 5xx, timeout). Before this, a single failed download left the item
+            // hotlink-proxying its remote URL until some future enrichment pass
+            // happened to re-queue it. A second failure gives up — enrichment remains
+            // the long-term repair path.
+            if (request.Attempt == 0)
+            {
+                _logger.LogInformation(ex, "Image download failed for {Url}; retrying once in {Delay}",
+                    request.RemoteUrl, RetryDelay);
+                ScheduleRetry(request, ct);
+            }
+            else
+            {
+                _logger.LogWarning(ex, "Image download failed twice for {MediaId} ({Url}); giving up until the next enrichment pass",
+                    request.MediaId, request.RemoteUrl);
+            }
+            return;
         }
 
         if (string.IsNullOrEmpty(localPath) || localPath == request.RemoteUrl)
         {
             return;
         }
+
+        // The permanent, item-keyed copy is now on disk. Drop any transient copy the image
+        // proxy cached for this exact URL while the item still pointed at the provider —
+        // its hash-keyed name is uncorrelatable with the item, so this write-back moment is
+        // the only place the two can be matched. GetService (not Required): the store is
+        // always registered in the app; only stripped-down test providers lack it.
+        scope.ServiceProvider.GetService<IProxyImageStore>()?.DeleteCachedCopy(request.RemoteUrl);
 
         // CRITICAL: Lock based on MediaId to prevent race conditions on MetadataJson updates.
         // This ensures that if multiple images (Season 1, Season 2, etc.) finish at the same time,
@@ -201,15 +258,23 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
                 }
                 else if (request.ImageType == ImageType.Still && request.SeasonNumber.HasValue && request.EpisodeNumber.HasValue)
                 {
-                    // Update specific Episode Item (Stills are stored in BackdropUrl for episodes)
-                    var episodeItem = await context.MediaItems
-                        .FirstOrDefaultAsync(m => m.SeriesId == request.MediaId && m.SeasonNumber == request.SeasonNumber && m.EpisodeNumber == request.EpisodeNumber && m.Type == MediaType.Episode, ct);
+                    // Update ALL matching Episode items (Stills are stored in BackdropUrl for
+                    // episodes). Duplicate files of the same episode (quality/language variants,
+                    // accidental copies) each get their own row sharing (SeriesId, Season, Episode);
+                    // FirstOrDefault here left every row but one pointing at the remote URL —
+                    // proxied on the fly forever despite the still being cached on disk.
+                    var episodeItems = await context.MediaItems
+                        .Where(m => m.SeriesId == request.MediaId && m.SeasonNumber == request.SeasonNumber && m.EpisodeNumber == request.EpisodeNumber && m.Type == MediaType.Episode)
+                        .ToListAsync(ct);
 
-                    if (episodeItem != null && episodeItem.BackdropUrl != localPath)
+                    foreach (var episodeItem in episodeItems)
                     {
-                        episodeItem.BackdropUrl = localPath;
-                        updated = true;
-                        _logger.LogDebug("Updated Episode item {Id} still", episodeItem.Id);
+                        if (episodeItem.BackdropUrl != localPath)
+                        {
+                            episodeItem.BackdropUrl = localPath;
+                            updated = true;
+                            _logger.LogDebug("Updated Episode item {Id} still", episodeItem.Id);
+                        }
                     }
                 }
                 else if (request.ImageType == ImageType.CastImage && request.PersonId.HasValue)
@@ -315,4 +380,4 @@ public class ImageDownloadQueueService : BackgroundService, IImageDownloadQueue
     }
 }
 
-public record ImageDownloadRequest(Guid MediaId, string RemoteUrl, int? SeasonNumber, int? EpisodeNumber, MediaType Type, ImageType ImageType, int? PersonId = null, Guid? LibraryId = null);
+public record ImageDownloadRequest(Guid MediaId, string RemoteUrl, int? SeasonNumber, int? EpisodeNumber, MediaType Type, ImageType ImageType, int? PersonId = null, Guid? LibraryId = null, int Attempt = 0);

@@ -66,12 +66,12 @@ public class ContinueWatchingServiceTests : IDisposable
     private ContinueWatchingService Build()
         => new(new AppDbContext(_options), _recommendations.Object, _access.Object, _ratings.Object);
 
-    private MediaItem AddMovie(string title, double duration = 3600, double? creditsStart = null)
+    private MediaItem AddMovie(string title, double duration = 3600, double? creditsStart = null, int? year = null)
     {
         var m = new MediaItem
         {
             Id = Guid.NewGuid(), LibraryId = _movieLib.Id, Type = MediaType.Movie,
-            Title = title, Duration = duration, CreditsStart = creditsStart,
+            Title = title, Duration = duration, CreditsStart = creditsStart, Year = year,
         };
         using var ctx = new AppDbContext(_options);
         ctx.MediaItems.Add(m);
@@ -159,6 +159,78 @@ public class ContinueWatchingServiceTests : IDisposable
         AddInteraction(movie.Id, position: 1900, DateTime.UtcNow);
 
         Assert.Empty(await Build().GetContinueWatchingAsync(_userId, 20));
+    }
+
+    // ──────────────────────────────────── DV-WI-004: duplicate movie copies
+
+    [Fact]
+    public async Task Duplicate_movie_copies_occupy_one_slot_resuming_the_most_recently_played()
+    {
+        var older = AddMovie("Inception", year: 2010);
+        var newer = AddMovie("Inception", year: 2010);
+        var t = DateTime.UtcNow;
+        AddInteraction(older.Id, position: 600, t.AddDays(-1));
+        AddInteraction(newer.Id, position: 1200, t);
+
+        var row = await Build().GetContinueWatchingAsync(_userId, 20);
+
+        var entry = Assert.Single(row);
+        Assert.Equal(newer.Id, entry.Id);
+        Assert.Equal(1200, entry.PlaybackPosition);
+    }
+
+    [Fact]
+    public async Task Finishing_the_newer_copy_suppresses_the_older_copys_stale_half_progress()
+    {
+        // The newest-played copy decides for the whole group: it is ~97% done (complete
+        // by the 95% rule), so the movie is finished — the abandoned older copy must not
+        // resurrect it in the row.
+        var older = AddMovie("Tenet", duration: 3600);
+        var newer = AddMovie("Tenet", duration: 3600);
+        var t = DateTime.UtcNow;
+        AddInteraction(older.Id, position: 600, t.AddDays(-1));
+        AddInteraction(newer.Id, position: 3500, t);
+
+        Assert.Empty(await Build().GetContinueWatchingAsync(_userId, 20));
+    }
+
+    [Fact]
+    public async Task Grouped_movie_copies_collapse_by_group_id_even_when_titles_differ()
+    {
+        // DV-WI-016: VersionGroupId is the identity — a provider-enriched copy whose
+        // title drifted from its sibling's still occupies ONE slot.
+        var group = Guid.NewGuid();
+        var older = AddMovie("Dune Part One", year: 2020);
+        var newer = AddMovie("Dune", year: 2021);
+        using (var ctx = new AppDbContext(_options))
+        {
+            ctx.MediaItems.Find(older.Id)!.VersionGroupId = group;
+            ctx.MediaItems.Find(newer.Id)!.VersionGroupId = group;
+            ctx.SaveChanges();
+        }
+        var t = DateTime.UtcNow;
+        AddInteraction(older.Id, position: 600, t.AddDays(-1));
+        AddInteraction(newer.Id, position: 900, t);
+
+        var row = await Build().GetContinueWatchingAsync(_userId, 20);
+
+        var entry = Assert.Single(row);
+        Assert.Equal(newer.Id, entry.Id);
+    }
+
+    [Fact]
+    public async Task Same_title_different_year_movies_are_not_collapsed()
+    {
+        // Remakes share a title — the year keeps them apart until VersionGroupId exists.
+        var remake = AddMovie("Dune", year: 2021);
+        var original = AddMovie("Dune", year: 1984);
+        var t = DateTime.UtcNow;
+        AddInteraction(remake.Id, position: 600, t);
+        AddInteraction(original.Id, position: 900, t.AddMinutes(-5));
+
+        var row = await Build().GetContinueWatchingAsync(_userId, 20);
+
+        Assert.Equal(2, row.Count);
     }
 
     // ─────────────────────────────────────────────────────────────── Series

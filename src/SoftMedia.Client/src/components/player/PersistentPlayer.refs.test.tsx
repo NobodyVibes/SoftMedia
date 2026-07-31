@@ -32,9 +32,9 @@ vi.mock('../../store/visualizerStore', () => ({
 vi.mock('../../hooks/useAudioAnalyser', () => ({
     useAudioAnalyser: (a: HTMLAudioElement | null, b: HTMLAudioElement | null) => {
         analyserRenders();
-        // eslint-disable-next-line react-hooks/rules-of-hooks
+         
         const [isReady, setIsReady] = useState(false);
-        // eslint-disable-next-line react-hooks/rules-of-hooks
+         
         useEffect(() => {
             setIsReady(!!(a && b));
         }, [a, b]);

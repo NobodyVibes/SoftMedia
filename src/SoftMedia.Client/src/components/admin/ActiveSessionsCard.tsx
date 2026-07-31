@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Cast, HelpCircle, Monitor, MonitorPlay, RefreshCw, Smartphone, Square, Tablet, Tv, WifiOff } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -80,12 +80,12 @@ export function ActiveSessionsCard() {
     });
 
     // A confirm left open for a row that vanished (poll refetch) must not pre-arm
-    // the destructive button for a future row with the same key.
-    useEffect(() => {
-        if (confirmKey && !sessions.some(s => rowKey(s) === confirmKey)) {
-            setConfirmKey(null);
-        }
-    }, [sessions, confirmKey]);
+    // the destructive button for a future row with the same key. Cleared during
+    // render (react.dev: "adjusting state when props change") so there is no
+    // frame where the armed button renders against the wrong row.
+    if (confirmKey && !sessions.some(s => rowKey(s) === confirmKey)) {
+        setConfirmKey(null);
+    }
 
     const terminateMutation = useMutation({
         mutationFn: (session: ActiveSession) => adminService.terminateSession(session),

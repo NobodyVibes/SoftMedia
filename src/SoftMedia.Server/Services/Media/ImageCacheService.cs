@@ -18,44 +18,8 @@ public class ImageCacheService : IImageCacheService
     // Maximum file size: 10MB
     private const long MaxFileSizeBytes = 10 * 1024 * 1024;
     
-    // Allowed image content types
-    private static readonly HashSet<string> AllowedContentTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"
-    };
-    
-    // Allowed URL hosts (allowlist for SSRF prevention)
-    private static readonly HashSet<string> AllowedHosts = new(StringComparer.OrdinalIgnoreCase)
-    {
-        // TVMaze
-        "static.tvmaze.com",
-        // MusicBrainz / Cover Art Archive
-        "coverartarchive.org",
-        "archive.org",
-        // Wikidata / Wikimedia
-        "upload.wikimedia.org",
-        "commons.wikimedia.org",
-        // OMDb (posters hosted on Amazon)
-        "m.media-amazon.com",
-        "ia.media-imdb.com",
-        // OpenLibrary
-        "covers.openlibrary.org"
-    };
-
-    /// <summary>
-    /// A host is allowed if it is an exact allowlist member OR an Internet Archive STORAGE node.
-    /// Cover Art Archive "front" URLs 302/307-redirect to a per-release IA storage node
-    /// (iaNNN.us.archive.org / dnNNNNNN.ca.archive.org). Audit wave-2 L-26: the suffix is anchored
-    /// on ".us.archive.org" / ".ca.archive.org" (the documented storage patterns) rather than the
-    /// broad ".archive.org", so it admits the genuine CAA targets but NOT web.archive.org — the
-    /// Wayback Machine, a content-rewriting fetch proxy that could launder an arbitrary upstream
-    /// fetch through an allowlisted host. Look-alikes ("evilarchive.org") and internal SSRF targets
-    /// never matched the dot-anchored suffix.
-    /// </summary>
-    private static bool IsHostAllowed(string host) =>
-        AllowedHosts.Contains(host)
-        || host.EndsWith(".us.archive.org", StringComparison.OrdinalIgnoreCase)
-        || host.EndsWith(".ca.archive.org", StringComparison.OrdinalIgnoreCase);
+    // Host allowlist, scheme guard and redirect policy live in ImageFetchPolicy
+    // (MC-WI-002) — shared with the on-demand proxy so the two can never drift again.
 
     private readonly Abstractions.IStreamSecurityService _streamSecurity;
 
@@ -265,6 +229,11 @@ public class ImageCacheService : IImageCacheService
             Models.MediaType.Artist => $"music/{mediaItemId}",
             Models.MediaType.Game => $"games/{mediaItemId}",
             Models.MediaType.Book => $"books/{mediaItemId}",
+            Models.MediaType.ComicSeries => $"books/{mediaItemId}",
+            Models.MediaType.ComicIssue => $"books/{mediaItemId}",
+            // Season posters and episode stills are keyed by the SERIES id
+            // ("tv/{seriesId}_season01_poster"), so the Series case above covers them;
+            // Photo has no provider artwork (thumbnails are cleaned separately).
             _ => null
         };
         
@@ -301,18 +270,21 @@ public class ImageCacheService : IImageCacheService
     }
 
     /// <summary>
-    /// Delete cached cast images by person IDs (used when a TV library is deleted).
+    /// Delete cached cast images by the provider's EXTERNAL person ids — files are named
+    /// "tv/cast/{Person.ExternalId}.{ext}", NOT by the Person primary key. (The library
+    /// deletion path historically passed PKs here, which matched nothing — or worse, an
+    /// unrelated person's file — so cast images always leaked.)
     /// </summary>
-    public void DeleteCastImagesForPersonIds(IEnumerable<int> personIds)
+    public void DeleteCastImagesForExternalIds(IEnumerable<int> externalPersonIds)
     {
         var castDir = Path.Combine(_basePath, "tv", "cast");
         if (!Directory.Exists(castDir)) return;
 
-        foreach (var personId in personIds)
+        foreach (var externalId in externalPersonIds)
         {
             try
             {
-                var files = Directory.GetFiles(castDir, $"{personId}.*");
+                var files = Directory.GetFiles(castDir, $"{externalId}.*");
                 foreach (var file in files)
                 {
                     File.Delete(file);
@@ -321,15 +293,62 @@ public class ImageCacheService : IImageCacheService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to delete cast image for person {PersonId}", personId);
+                _logger.LogWarning(ex, "Failed to delete cast image for external person id {ExternalId}", externalId);
             }
         }
+    }
+
+    /// <summary>
+    /// Delete cast images whose external id matches no entry in
+    /// <paramref name="validExternalIds"/> — the ids of persons still referenced by at
+    /// least one MediaItemCast row (row-existence: IsMissing items' cast rows count).
+    /// Backstop for scan-driven hard deletes and for images leaked before the external-id
+    /// fix above. Returns files deleted.
+    /// </summary>
+    public int CleanupOrphanedCastImages(HashSet<int> validExternalIds)
+    {
+        var deleted = 0;
+        var castDir = Path.Combine(_basePath, "tv", "cast");
+        if (!Directory.Exists(castDir)) return 0;
+
+        try
+        {
+            foreach (var file in Directory.GetFiles(castDir))
+            {
+                try
+                {
+                    var stem = Path.GetFileNameWithoutExtension(file);
+                    if (int.TryParse(stem, out var externalId) && validExternalIds.Contains(externalId))
+                    {
+                        continue;
+                    }
+                    File.Delete(file);
+                    deleted++;
+                    _logger.LogDebug("Deleted orphaned cast image: {Path}", file);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to process cast image during cleanup: {Path}", file);
+                }
+            }
+
+            if (deleted > 0)
+            {
+                _logger.LogInformation("Cast image cleanup removed {Count} orphaned file(s)", deleted);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Cast image orphan cleanup failed");
+        }
+        return deleted;
     }
     
     /// <summary>
     /// Every cache subdirectory whose files are keyed by a MediaItem guid ("{id}_kind.ext").
-    /// tv/cast is deliberately absent: it is keyed by int person ids and cleaned separately
-    /// via <see cref="DeleteCastImagesForPersonIds"/> (and the top-level scans below are
+    /// tv/cast is deliberately absent: it is keyed by int external person ids and cleaned
+    /// separately via <see cref="DeleteCastImagesForExternalIds"/> /
+    /// <see cref="CleanupOrphanedCastImages"/> (and the top-level scans below are
     /// non-recursive, so it is never touched by accident).
     /// </summary>
     private static readonly string[] MediaCacheSubdirectories = { "tv", "movies", "music", "games", "books" };
@@ -477,21 +496,18 @@ public class ImageCacheService : IImageCacheService
         try
         {
             // Security: Validate URL host against allowlist (SSRF prevention).
-            // T6.5/I-8: the INITIAL url must pass the same scheme guard as redirect hops —
-            // don't rely on HttpClient to reject non-http(s) schemes downstream.
-            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
-                || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            if (!ImageFetchPolicy.TryValidateUrl(url, out var uri))
             {
                 _logger.LogWarning("Invalid or non-http(s) URL: {Url}", url);
                 return url;
             }
-            
+
             _logger.LogInformation("Attempting to cache image from host: {Host}, URL: {Url}", uri.Host, url);
-            
-            if (!IsHostAllowed(uri.Host))
+
+            if (!ImageFetchPolicy.IsHostAllowed(uri.Host))
             {
                 _logger.LogWarning("URL host not in allowlist: {Host}. Allowed hosts: {AllowedHosts}",
-                    uri.Host, string.Join(", ", AllowedHosts));
+                    uri.Host, string.Join(", ", ImageFetchPolicy.AllowedHosts));
                 return url;
             }
             
@@ -528,7 +544,7 @@ public class ImageCacheService : IImageCacheService
                     // Follows redirects manually, re-validating the host allowlist on each
                     // hop (the HttpClient has AllowAutoRedirect=false). null = the chain
                     // left the allowlist (SSRF guard) — treat as a failed download.
-                    response = await GetWithAllowlistedRedirectsAsync(url, cts.Token);
+                    response = await ImageFetchPolicy.GetWithAllowlistedRedirectsAsync(_httpClient, url, _logger, cts.Token);
                 }
                 catch
                 {
@@ -572,7 +588,7 @@ public class ImageCacheService : IImageCacheService
             
             // Security: Validate content type
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
-            if (!AllowedContentTypes.Contains(contentType))
+            if (!ImageFetchPolicy.AllowedContentTypes.Contains(contentType))
             {
                 _logger.LogWarning("Invalid content type: {ContentType} from {Url}", contentType, url);
                 return url;
@@ -640,56 +656,6 @@ public class ImageCacheService : IImageCacheService
         }
     }
     
-    // Maximum redirect hops to follow before giving up.
-    private const int MaxRedirects = 5;
-
-    /// <summary>
-    /// Issues a GET and follows up to <see cref="MaxRedirects"/> redirects MANUALLY,
-    /// re-validating each hop's host against <see cref="AllowedHosts"/>. The underlying
-    /// HttpClient has AllowAutoRedirect=false, so without this a 3xx from an allowlisted
-    /// host would not be chased — and a malicious/compromised allowlisted host can't use
-    /// a redirect to reach an internal address (cloud metadata, loopback, RFC1918),
-    /// because every Location is re-checked against the same allowlist and scheme guard.
-    /// Returns null when the chain leaves the allowlist or exceeds the hop limit.
-    /// </summary>
-    private async Task<HttpResponseMessage?> GetWithAllowlistedRedirectsAsync(string url, CancellationToken ct)
-    {
-        var currentUrl = url;
-        for (var hop = 0; ; hop++)
-        {
-            var response = await _httpClient.GetAsync(currentUrl, HttpCompletionOption.ResponseHeadersRead, ct);
-
-            var status = (int)response.StatusCode;
-            if (status is < 300 or >= 400)
-                return response; // not a redirect — success or error, caller decides
-
-            // Redirect: validate the target before following it.
-            var location = response.Headers.Location;
-            response.Dispose();
-
-            if (hop >= MaxRedirects)
-            {
-                _logger.LogWarning("Image redirect chain exceeded {Max} hops for {Url}", MaxRedirects, url);
-                return null;
-            }
-            if (location == null)
-            {
-                _logger.LogWarning("Image redirect with no Location header from {Url}", currentUrl);
-                return null;
-            }
-
-            var next = location.IsAbsoluteUri ? location : new Uri(new Uri(currentUrl), location);
-            if ((next.Scheme != Uri.UriSchemeHttp && next.Scheme != Uri.UriSchemeHttps)
-                || !IsHostAllowed(next.Host))
-            {
-                _logger.LogWarning("Blocked image redirect to non-allowlisted target {Target} (from {Url})", next, currentUrl);
-                return null;
-            }
-
-            currentUrl = next.AbsoluteUri;
-        }
-    }
-
     private static string SanitizePath(string path)
     {
         // Remove any directory traversal attempts and normalize separators

@@ -37,9 +37,15 @@ public class ThumbnailService : IThumbnailService
         var cacheFileName = $"{mediaItemId}_{width}.webp";
         var cachePath = Path.Combine(_cacheDirectory, cacheFileName);
 
-        // Fast path: thumbnail already exists
+        // Fast path: thumbnail already exists. MC-WI-009: refresh mtime so the orphan
+        // sweep's min-age guard (which reaps unknown keys — e.g. proxy-derived ones — by
+        // age) treats in-use thumbnails as fresh instead of reaping and regenerating
+        // them every cycle. Best-effort.
         if (File.Exists(cachePath))
+        {
+            try { File.SetLastWriteTimeUtc(cachePath, DateTime.UtcNow); } catch { }
             return cachePath;
+        }
 
         // Acquire per-key lock to prevent duplicate generation
         var semaphore = _locks.GetOrAdd(cacheFileName, _ => new SemaphoreSlim(1, 1));
@@ -56,6 +62,66 @@ public class ThumbnailService : IThumbnailService
         {
             semaphore.Release();
         }
+    }
+
+    public int DeleteThumbnails(Guid key)
+    {
+        var deleted = 0;
+        try
+        {
+            if (!Directory.Exists(_cacheDirectory)) return 0;
+            foreach (var file in Directory.GetFiles(_cacheDirectory, $"{key}_*.webp"))
+            {
+                File.Delete(file);
+                deleted++;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete thumbnails for key {Key}", key);
+        }
+        return deleted;
+    }
+
+    public int CleanupOrphans(HashSet<Guid> validKeys, TimeSpan minAge)
+    {
+        var deleted = 0;
+        try
+        {
+            if (!Directory.Exists(_cacheDirectory)) return 0;
+            var cutoff = DateTime.UtcNow - minAge;
+
+            foreach (var file in Directory.GetFiles(_cacheDirectory))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(file) >= cutoff) continue;
+
+                    // "{guid}_{width}.webp"; a stale ".tmp"/".tmp.webp" from a crashed
+                    // generation has no parseable guid and falls through to deletion too.
+                    var name = Path.GetFileNameWithoutExtension(file);
+                    var keyPart = name.Split('_')[0];
+                    if (Guid.TryParse(keyPart, out var key) && validKeys.Contains(key)) continue;
+
+                    File.Delete(file);
+                    deleted++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to process thumbnail during cleanup: {Path}", file);
+                }
+            }
+
+            if (deleted > 0)
+            {
+                _logger.LogInformation("Thumbnail cleanup removed {Count} orphaned file(s)", deleted);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Thumbnail orphan cleanup failed");
+        }
+        return deleted;
     }
 
     private async Task<string?> GenerateThumbnailAsync(string sourcePath, string cachePath, int targetWidth)

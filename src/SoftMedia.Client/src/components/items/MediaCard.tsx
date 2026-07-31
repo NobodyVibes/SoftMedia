@@ -173,9 +173,16 @@ export default memo(function MediaCard({ item, libraryType, groupReady, onImageL
                             )}
                         </div>
 
-                        {/* Right Side: Quality, Favorite, Watched */}
-                        <div className="flex flex-col items-end gap-1.5 translate-y-2 group-hover/card:translate-y-0 group-focus-within/card:translate-y-0 opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 transition-all duration-300">
-                            <QualityBadge quality={item.quality} />
+                        {/* Right Side: Quality, Favorite, Watched.
+                            DV-WI-021: when the title exists as multiple files the quality
+                            badge is the ONLY visible differentiator, so it must not hide
+                            behind hover. */}
+                        <div className={`flex flex-col items-end gap-1.5 transition-all duration-300 ${
+                            (item.versionCount ?? 1) > 1
+                                ? ''
+                                : 'translate-y-2 group-hover/card:translate-y-0 group-focus-within/card:translate-y-0 opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100'
+                        }`}>
+                            <QualityBadge label={item.versionLabel} />
 
                             {item.isFavorite && (
                                 <div className="p-1 bg-black/60 backdrop-blur-sm rounded-full border border-white/10 shadow-sm">

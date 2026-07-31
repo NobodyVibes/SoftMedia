@@ -132,6 +132,7 @@ public class LibraryWatcherRefreshTests : IDisposable
         return new LibraryService(
             repo.Object, mediaRepo.Object, scanQueue.Object, imageCache.Object,
             watcher.Object, db, access.Object, ratings.Object,
+            new Mock<ILibraryCleanupService>().Object,
             NullLogger<LibraryService>.Instance);
     }
 }

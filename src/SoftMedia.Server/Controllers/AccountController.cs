@@ -25,14 +25,16 @@ public class AccountController : ControllerBase
     private readonly ITotpService _totp;
     private readonly ITrustedDeviceService _trustedDevices;
     private readonly IPasswordHasher _passwordHasher;
+    private readonly IUserEligibilityCache _eligibilityCache;
 
-    public AccountController(AppDbContext context, IApiTokenService apiTokens, ITotpService totp, ITrustedDeviceService trustedDevices, IPasswordHasher passwordHasher)
+    public AccountController(AppDbContext context, IApiTokenService apiTokens, ITotpService totp, ITrustedDeviceService trustedDevices, IPasswordHasher passwordHasher, IUserEligibilityCache eligibilityCache)
     {
         _context = context;
         _apiTokens = apiTokens;
         _totp = totp;
         _trustedDevices = trustedDevices;
         _passwordHasher = passwordHasher;
+        _eligibilityCache = eligibilityCache;
     }
 
     /// <summary>
@@ -82,6 +84,10 @@ public class AccountController : ControllerBase
         }
 
         await _context.SaveChangesAsync();
+
+        // AA-WI-011: drop the cached eligibility verdict so any live media/cast token
+        // stops working on the next request, not after the cache TTL.
+        _eligibilityCache.Invalidate(user.Id);
 
         return Ok(new { message = "Account deleted successfully." });
     }

@@ -66,7 +66,10 @@ public class MetadataRouterMovieTvChainTests
 
         Assert.NotNull(result);
         Assert.Equal("Inception", result!.Title);
-        fallback.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Never);
+        // SM-WI-030(b): the NFO fallback is PRE-READ once (free local read, may seed an
+        // IMDb id for the primary) — but a sufficient primary's result still wins and
+        // the NFO is never parsed a second time.
+        fallback.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.AtMostOnce);
     }
 
     [Fact]
@@ -220,7 +223,8 @@ public class MetadataRouterMovieTvChainTests
 
         Assert.NotNull(result);
         Assert.Equal("Show", result!.Title);
-        fallback.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.Never);
+        // SM-WI-030(b): NFO pre-read allowed (see movie variant) — primary still wins.
+        fallback.Verify(p => p.FetchMetadataAsync(It.IsAny<MediaItem>()), Times.AtMostOnce);
     }
 
     [Fact]

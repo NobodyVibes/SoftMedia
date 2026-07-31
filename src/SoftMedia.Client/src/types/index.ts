@@ -6,6 +6,25 @@ export interface Library {
     order: number;
 }
 
+/** DV-WI-013 — one file-copy of a version group (detail responses; player switcher). */
+export interface MediaVersion {
+    id: string;
+    label: string;
+    width?: number;
+    height?: number;
+    hdrFormat?: string;
+    bitrate?: number;
+    container?: string;
+    size: number;
+    durationSeconds?: number;
+    /** The computed primary (preferred override → max height → HDR → bitrate → newest). */
+    isPrimary: boolean;
+    /** The user's explicit "prefer this version" override, when set. */
+    preferred: boolean;
+    watched: boolean;
+    playbackPosition?: number;
+}
+
 export interface MediaItem {
     id: string;
     libraryId: string;
@@ -18,6 +37,14 @@ export interface MediaItem {
     posterPath?: string;
     backdropPath?: string;
     quality?: 'SD' | 'HD' | '4K' | 'HDR';
+    /** DV-WI-013 — shared id of all file-copies of this logical title; absent = no known siblings. */
+    versionGroupId?: string;
+    /** DV-WI-013 — server-derived quality label ("4K HDR10 Director's Cut"); render verbatim. */
+    versionLabel?: string;
+    /** DV-WI-013 — number of file-copies; 1 on list responses (only detail responses hydrate the group). */
+    versionCount?: number;
+    /** DV-WI-013 — the group's copies, primary-first; present on detail responses with versionCount > 1. */
+    versions?: MediaVersion[];
     genres?: string[];
     rating?: string; // "TV-MA", "PG-13", etc. Actually DTO uses this for External Rating now.
     communityRating?: number; // Internal Average Rating
@@ -38,7 +65,9 @@ export interface MediaItem {
     videoCodec?: string;
     audioCodec?: string;
     resolution?: string;
-    metadata?: Record<string, any>;
+    // `unknown` rather than `any`: consumers must narrow (e.g. `as string`)
+    // instead of silently treating provider metadata as whatever they hoped.
+    metadata?: Record<string, unknown>;
     userRating?: number;
     personalRating?: number;
     isFavorite?: boolean;

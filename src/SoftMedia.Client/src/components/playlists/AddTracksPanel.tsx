@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { searchService } from '../../services/searchService';
 import { playlistService } from '../../services/playlistService';
 import { useDebounce } from '../../hooks/useDebounce';
-import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { resolveArtworkUrl } from '../../lib/mediaImageUrl';
 import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 import { formatDuration, cn } from '../../lib/utils';
 import { MediaType, type MediaItem } from '../../types';
@@ -71,11 +71,7 @@ export function AddTracksPanel({ playlistId, existingMediaItemIds, onClose }: Ad
         onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Could not add track'),
     });
 
-    const getImageUrl = (path: string | undefined) => {
-        if (!path) return '/placeholder-music.png';
-        if (path.startsWith('/api/')) return attachAuthToApiUrl(path);
-        return path;
-    };
+    const getImageUrl = resolveArtworkUrl; // shared; /cache/images is token-gated (AA-WI-001)
 
     const alreadyIn = (id: string) => existingMediaItemIds.includes(id) || justAdded.includes(id);
 

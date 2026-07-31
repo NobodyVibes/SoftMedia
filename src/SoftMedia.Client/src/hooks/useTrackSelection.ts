@@ -160,7 +160,7 @@ export function useTrackSelection({ item, token, localPrefs }: UseTrackSelection
                         // (Using a flag to indicate 'found preference')
                         bestSubIndex = -2; // Temporary marker for "not found"
                     }
-                } catch (e) {
+                } catch {
                     bestSubIndex = -2;
                 }
 

@@ -274,8 +274,10 @@ export const UserListTable: React.FC = () => {
 
         // 2. Sorting
         result.sort((a, b) => {
-            let aValue: any = '';
-            let bValue: any = '';
+            // Comparable sort keys: every branch yields a string or a number, and
+            // both sides always take the same branch, so < / > below is coherent.
+            let aValue: string | number = '';
+            let bValue: string | number = '';
 
             switch (sortConfig.key) {
                 case 'username':
@@ -294,7 +296,7 @@ export const UserListTable: React.FC = () => {
                     aValue = a.createdByAdmin ? 'Admin' : a.usedInviteCode ? 'Invite' : 'Public';
                     bValue = b.createdByAdmin ? 'Admin' : b.usedInviteCode ? 'Invite' : 'Public';
                     break;
-                case 'status':
+                case 'status': {
                     // Custom status priority: Active > Pending > Denied > Banned
                     const getStatusPriority = (u: UserDto) => {
                         if (u.isBanned) return 0;
@@ -305,13 +307,17 @@ export const UserListTable: React.FC = () => {
                     aValue = getStatusPriority(a);
                     bValue = getStatusPriority(b);
                     break;
+                }
                 case 'createdAt':
                     aValue = new Date(a.createdAt).getTime();
                     bValue = new Date(b.createdAt).getTime();
                     break;
-                default:
-                    aValue = (a as any)[sortConfig.key];
-                    bValue = (b as any)[sortConfig.key];
+                default: {
+                    const fallbackA = a[sortConfig.key as keyof UserDto];
+                    const fallbackB = b[sortConfig.key as keyof UserDto];
+                    aValue = typeof fallbackA === 'number' ? fallbackA : String(fallbackA ?? '');
+                    bValue = typeof fallbackB === 'number' ? fallbackB : String(fallbackB ?? '');
+                }
             }
 
             if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;

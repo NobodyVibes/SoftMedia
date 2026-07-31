@@ -44,7 +44,8 @@ public class UsersControllerLibraryAccessTests : IDisposable
     private UsersController NewController() =>
         new(_context, Mock.Of<IPasswordHasher>(), Mock.Of<IUserPreferencesService>(),
             Mock.Of<SoftMedia.Server.Services.Abstractions.IRefreshTokenService>(),
-            Mock.Of<SoftMedia.Server.Services.Identity.ITrustedDeviceService>());
+            Mock.Of<SoftMedia.Server.Services.Identity.ITrustedDeviceService>(),
+            new SoftMedia.Server.Services.Identity.UserEligibilityCache());
 
     [Fact]
     public async Task GetUserLibraryAccess_NoRows_ReturnsEmptyArray()

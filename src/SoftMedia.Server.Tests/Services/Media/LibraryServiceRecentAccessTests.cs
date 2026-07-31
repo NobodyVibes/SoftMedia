@@ -65,7 +65,8 @@ public class LibraryServiceRecentAccessTests : IDisposable
 
         return new LibraryService(
             libraryRepo.Object, mediaRepo.Object, scanQueue.Object, imageCache.Object,
-            watcher, _db, accessProvider.Object, ratingProvider.Object, NullLogger<LibraryService>.Instance);
+            watcher, _db, accessProvider.Object, ratingProvider.Object,
+            new Mock<ILibraryCleanupService>().Object, NullLogger<LibraryService>.Instance);
     }
 
     [Fact]

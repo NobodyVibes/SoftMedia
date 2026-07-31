@@ -30,7 +30,19 @@ public interface IImageCacheService
 
     void DeleteImageForMediaItem(Guid mediaItemId, Models.MediaType type);
     void DeleteImagesForLibrary(IEnumerable<(Guid Id, Models.MediaType Type)> mediaItems);
-    void DeleteCastImagesForPersonIds(IEnumerable<int> personIds);
+
+    /// <summary>
+    /// Delete cached cast headshots by the provider's EXTERNAL person ids (the on-disk key,
+    /// "tv/cast/{Person.ExternalId}.{ext}") — never Person primary keys.
+    /// </summary>
+    void DeleteCastImagesForExternalIds(IEnumerable<int> externalPersonIds);
+
+    /// <summary>
+    /// Delete cast headshots whose external id is not in <paramref name="validExternalIds"/>
+    /// (ids of persons still referenced by any MediaItemCast row, row-existence contract).
+    /// Returns files deleted.
+    /// </summary>
+    int CleanupOrphanedCastImages(HashSet<int> validExternalIds);
 
     /// <summary>
     /// SR-WI-037 — delete orphaned cached artwork. The criterion for

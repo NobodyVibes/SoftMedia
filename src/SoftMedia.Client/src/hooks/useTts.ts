@@ -221,14 +221,14 @@ export function useTts({
         if (didLogRef.current) return;
         if (!supported) {
             didLogRef.current = true;
-            // eslint-disable-next-line no-console
+             
             console.info('[TTS] speechSynthesis not supported in this environment');
             return;
         }
         if (voices.length === 0) return;
         didLogRef.current = true;
         const def = voices.find((v) => v.default);
-        // eslint-disable-next-line no-console
+         
         console.info(
             `[TTS] supported=true voices=${voices.length}`
             + (def ? ` default=${def.name} (${def.lang})` : ''),
@@ -241,6 +241,11 @@ export function useTts({
             try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
         };
     }, [supported]);
+
+    // speakOne chains to itself from `onend` to speak the next queued segment;
+    // the self-reference goes through a ref so the callback never has to name
+    // itself before its own declaration.
+    const speakOneRef = useRef<(segment: TtsSegment, index: number, generation: number) => void>(() => {});
 
     const speakOne = useCallback((segment: TtsSegment, index: number, generation: number) => {
         const synth = window.speechSynthesis;
@@ -272,7 +277,7 @@ export function useTts({
             onSegmentEndRef.current?.(index, segment);
             const next = pendingRef.current.shift();
             if (next !== undefined) {
-                speakOne(next, index + 1, generation);
+                speakOneRef.current(next, index + 1, generation);
                 return;
             }
             activeIndexRef.current = -1;
@@ -293,6 +298,10 @@ export function useTts({
 
         synth.speak(utterance);
     }, []);
+
+    useEffect(() => {
+        speakOneRef.current = speakOne;
+    }, [speakOne]);
 
     const speak = useCallback((segments: TtsSegment[]) => {
         if (!supported) {

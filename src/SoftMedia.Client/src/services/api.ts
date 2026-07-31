@@ -45,7 +45,7 @@ function refreshAccessToken(): Promise<string> {
     // the browser; this surfaces the chain so we can spot whether refresh
     // is silently failing, what the response status was, and whether logout
     // was triggered.
-    // eslint-disable-next-line no-console
+     
     console.info('[auth] refresh starting at', new Date().toISOString());
 
     refreshInFlight = axios
@@ -53,7 +53,7 @@ function refreshAccessToken(): Promise<string> {
         .then((response) => {
             const { accessToken, user } = response.data;
             useAuthStore.getState().login(user, accessToken);
-            // eslint-disable-next-line no-console
+             
             console.info('[auth] refresh succeeded — new access token issued');
             return accessToken;
         })
@@ -62,7 +62,7 @@ function refreshAccessToken(): Promise<string> {
             const body = axios.isAxiosError(err)
                 ? (typeof err.response?.data === 'string' ? err.response.data : JSON.stringify(err.response?.data))
                 : String(err);
-            // eslint-disable-next-line no-console
+             
             console.warn(`[auth] refresh failed status=${status} body=${body}`);
             throw err;
         })
@@ -137,13 +137,13 @@ api.interceptors.response.use(
             return api(config);
         } catch (refreshError) {
             if (isRefreshRejectionInvalid(refreshError)) {
-                // eslint-disable-next-line no-console
+                 
                 console.warn('[auth] refresh returned 401 — logging out');
                 // 'expired' lets ProtectedRoute/LoginPage explain the forced logout
                 // ("session expired") instead of silently dumping the user at /login.
                 useAuthStore.getState().logout('expired');
             } else {
-                // eslint-disable-next-line no-console
+                 
                 console.warn('[auth] refresh failed transiently — keeping session');
             }
             return Promise.reject(error);

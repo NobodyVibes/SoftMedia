@@ -1,0 +1,1787 @@
+{
+  "_note": "SM-WI-001 real-library fixture manifest. Harvested from the operator's live libraries; names only. 'expected' blocks are snapshots of the production FileNameParser at harvest time — corrections are made by hand with a '_corrected' marker, never regenerated blindly.",
+  "generatedUtc": "2026-07-28T15:24:59.7742975Z",
+  "libraries": [
+    {
+      "name": "Movies",
+      "type": "Movie",
+      "totalInLibrary": 7,
+      "entries": [
+        {
+          "relativePath": "A_Boy_and_His_Dog.mp4",
+          "expected": {
+            "title": "A Boy and His Dog",
+            "year": null
+          },
+          "flags": [
+            "yearless"
+          ]
+        },
+        {
+          "relativePath": "A_Christmas_Without_Snow.mp4",
+          "expected": {
+            "title": "A Christmas Without Snow",
+            "year": null
+          },
+          "flags": [
+            "yearless"
+          ]
+        },
+        {
+          "relativePath": "A_Star_is_Born.webm",
+          "expected": {
+            "title": "A Star is Born",
+            "year": null
+          },
+          "flags": [
+            "yearless"
+          ]
+        },
+        {
+          "relativePath": "Austin Powers Trilogy (1997-2002)/1997.Austin.Powers-.International.Man.Of.Mystery.1920x818.BDRip.x264.TrueHD.mkv",
+          "expected": {
+            "title": "Austin Powers International Man Of Mystery",
+            "year": 1997
+          },
+          "flags": []
+        },
+        {
+          "relativePath": "Austin Powers Trilogy (1997-2002)/1999.Austin.Powers-.The.Spy.Who.Shagged.Me.1920x818.BDRip.x264.TrueHD.mkv",
+          "expected": {
+            "title": "Austin Powers The Spy Who Shagged Me",
+            "year": 1999
+          },
+          "flags": []
+        },
+        {
+          "relativePath": "Austin Powers Trilogy (1997-2002)/2002.Austin.Powers-.Goldmember.1920x816.BDRip.x264.TrueHD.mkv",
+          "expected": {
+            "title": "Austin Powers Goldmember",
+            "year": 2002
+          },
+          "flags": []
+        },
+        {
+          "relativePath": "small.soldiers.1998.1080p.bluray.x264-veto.mkv",
+          "expected": {
+            "title": "small soldiers",
+            "year": 1998
+          },
+          "flags": []
+        }
+      ]
+    },
+    {
+      "name": "TV",
+      "type": "TV",
+      "totalSeries": 8,
+      "series": [
+        {
+          "series": "Futurama",
+          "episodeCount": 178,
+          "entries": [
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 00x01 - Colpo grosso di Bender ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 0,
+                "episode": 1,
+                "episodeTitle": "Colpo grosso di Bender ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 00x03 - La bestia con un miliardo di schiene ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 0,
+                "episode": 3,
+                "episodeTitle": "La bestia con un miliardo di schiene ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 00x05 - Gioco di Bender ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 0,
+                "episode": 5,
+                "episodeTitle": "Gioco di Bender ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 00x06 - Nell'immenso verde profondo ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 0,
+                "episode": 6,
+                "episodeTitle": "Nell'immenso verde profondo ITA ENG"
+              },
+              "flags": [
+                "quote"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 01x01 - Pilota spaziale 3000 ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 1,
+                "episode": 1,
+                "episodeTitle": "Pilota spaziale 3000 ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 01x02 - La serie è atterrata ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 1,
+                "episode": 2,
+                "episodeTitle": "La serie è atterrata ITA ENG"
+              },
+              "flags": [
+                "nonAscii"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 01x03 - Io, coinquilino ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 1,
+                "episode": 3,
+                "episodeTitle": "Io, coinquilino ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 01x04 - L'amore perduto nello spazio ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 1,
+                "episode": 4,
+                "episodeTitle": "L'amore perduto nello spazio ITA ENG"
+              },
+              "flags": [
+                "quote"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 01x05 - Paura del pianeta robot ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 1,
+                "episode": 5,
+                "episodeTitle": "Paura del pianeta robot ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 01x06 - Per un pesce di dollari ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 1,
+                "episode": 6,
+                "episodeTitle": "Per un pesce di dollari ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 01x07 - I miei tre soli ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 1,
+                "episode": 7,
+                "episodeTitle": "I miei tre soli ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 01x08 - Palla di immondizia ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 1,
+                "episode": 8,
+                "episodeTitle": "Palla di immondizia ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 01x09 - Un viaggio infernale ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 1,
+                "episode": 9,
+                "episodeTitle": "Un viaggio infernale ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x01 - Un volo da ricordare ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 1,
+                "episodeTitle": "Un volo da ricordare ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x02 - Università marziana ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 2,
+                "episodeTitle": "Università marziana ITA ENG"
+              },
+              "flags": [
+                "nonAscii"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x03 - Attacco alieno ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 3,
+                "episodeTitle": "Attacco alieno ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x04 - Gusto a sorpresa ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 4,
+                "episodeTitle": "Gusto a sorpresa ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x05 - Il chip delle emozioni ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 5,
+                "episodeTitle": "Il chip delle emozioni ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x06 - Zapp attore ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 6,
+                "episodeTitle": "Zapp attore ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x07 - Un colpo di testa ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 7,
+                "episodeTitle": "Un colpo di testa ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x08 - Babbo Nasale ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 8,
+                "episodeTitle": "Babbo Nasale ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x09 - Crostaceo in amore ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 9,
+                "episodeTitle": "Crostaceo in amore ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x10 - San Valentino decollato ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 10,
+                "episodeTitle": "San Valentino decollato ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x11 - Il male minore ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 11,
+                "episodeTitle": "Il male minore ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x12 - Il Bender furioso ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 12,
+                "episodeTitle": "Il Bender furioso ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x13 - Hai voluto il biciclope ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 13,
+                "episodeTitle": "Hai voluto il biciclope ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x14 - L'onore ritrovato ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 14,
+                "episodeTitle": "L'onore ritrovato ITA ENG"
+              },
+              "flags": [
+                "quote"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x15 - Il mio clone ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 15,
+                "episodeTitle": "Il mio clone ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x16 - Profondo Sud ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 16,
+                "episodeTitle": "Profondo Sud ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x17 - La benda e la banda ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 17,
+                "episodeTitle": "La benda e la banda ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x18 - Il cibo parlante ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 18,
+                "episodeTitle": "Il cibo parlante ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x19 - Il giorno della mamma ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 19,
+                "episodeTitle": "Il giorno della mamma ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 02x20 - Il gioco del Se Fossi... ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 2,
+                "episode": 20,
+                "episodeTitle": "Il gioco del Se Fossi ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x01 - La macchina satanica ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 1,
+                "episodeTitle": "La macchina satanica ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x02 - Guerra dell'altro mondo ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 2,
+                "episodeTitle": "Guerra dell'altro mondo ITA ENG"
+              },
+              "flags": [
+                "quote"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x03 - Un amore sbucato dal passato ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 3,
+                "episodeTitle": "Un amore sbucato dal passato ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x04 - Un parassita perduto ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 4,
+                "episodeTitle": "Un parassita perduto ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x05 - Amazzoni in amore ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 5,
+                "episodeTitle": "Amazzoni in amore ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x06 - Il pizzetto ballerino ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 6,
+                "episodeTitle": "Il pizzetto ballerino ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x07 - Cervello grosso, scarpe fine ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 7,
+                "episodeTitle": "Cervello grosso, scarpe fine ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x08 - Un gambero da ridere ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 8,
+                "episodeTitle": "Un gambero da ridere ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x09 - Pingui-bot di Gel-catraz ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 9,
+                "episodeTitle": "Pingui bot di Gel catraz ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x10 - Il quadrifoglio ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 10,
+                "episodeTitle": "Il quadrifoglio ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x11 - Amore tecnologico ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 11,
+                "episodeTitle": "Amore tecnologico ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x12 - Infermità robotica ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 12,
+                "episodeTitle": "Infermità robotica ITA ENG"
+              },
+              "flags": [
+                "nonAscii"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x13 - Successo da paralisi ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 13,
+                "episodeTitle": "Successo da paralisi ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x14 - Un amore stellare ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 14,
+                "episodeTitle": "Un amore stellare ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 03x15 - Sono uscito con un robot ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 3,
+                "episode": 15,
+                "episodeTitle": "Sono uscito con un robot ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 04x01 - Il nonno di se stesso ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 4,
+                "episode": 1,
+                "episodeTitle": "Il nonno di se stesso ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 04x02 - Aiuto, è Natale ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 4,
+                "episode": 2,
+                "episodeTitle": "Aiuto, è Natale ITA ENG"
+              },
+              "flags": [
+                "nonAscii"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 04x03 - Il gioco del Se fossi 2 ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 4,
+                "episode": 3,
+                "episodeTitle": "Il gioco del Se fossi 2 ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 04x04 - Amore e razzi ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 4,
+                "episode": 4,
+                "episodeTitle": "Amore e razzi ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 04x05 - Muta come un pesce ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 4,
+                "episode": 5,
+                "episodeTitle": "Muta come un pesce ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 04x06 - La pietra dello scandalo ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 4,
+                "episode": 6,
+                "episodeTitle": "La pietra dello scandalo ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 04x07 - Un faraone da ricordare ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 4,
+                "episode": 7,
+                "episodeTitle": "Un faraone da ricordare ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 04x08 - Il mestiere di Dio ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 4,
+                "episode": 8,
+                "episodeTitle": "Il mestiere di Dio ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 04x09 - Manager d'assalto ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 4,
+                "episode": 9,
+                "episodeTitle": "Manager d'assalto ITA ENG"
+              },
+              "flags": [
+                "quote"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 04x10 - Una Leela tutta speciale ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 4,
+                "episode": 10,
+                "episodeTitle": "Una Leela tutta speciale ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 04x11 - Sfida ai fornelli ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 4,
+                "episode": 11,
+                "episodeTitle": "Sfida ai fornelli ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 04x12 - Così fan tutti ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 4,
+                "episode": 12,
+                "episodeTitle": "Così fan tutti ITA ENG"
+              },
+              "flags": [
+                "nonAscii"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x01 - Crimini del caldo ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 1,
+                "episodeTitle": "Crimini del caldo ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x02 - Cuore di cane ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 2,
+                "episodeTitle": "Cuore di cane ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x03 - Padri e figli ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 3,
+                "episodeTitle": "Padri e figli ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x04 - Sapore di libertà ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 4,
+                "episodeTitle": "Sapore di libertà ITA ENG"
+              },
+              "flags": [
+                "nonAscii"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x05 - Aliena vita da alieno ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 5,
+                "episodeTitle": "Aliena vita da alieno ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x06 - Meno di eroe ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 6,
+                "episodeTitle": "Meno di eroe ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x07 - Ritorno al presente ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 7,
+                "episodeTitle": "Ritorno al presente ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x08 - Il perché di Fry ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 8,
+                "episodeTitle": "Il perché di Fry ITA ENG"
+              },
+              "flags": [
+                "nonAscii"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x09 - Miele amaro ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 9,
+                "episodeTitle": "Miele amaro ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x10 - Dossi e paradossi ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 10,
+                "episodeTitle": "Dossi e paradossi ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x11 - Trecento bigliettoni ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 11,
+                "episodeTitle": "Trecento bigliettoni ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x12 - Nasi afrodisiaci ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 12,
+                "episodeTitle": "Nasi afrodisiaci ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x13 - Lei…Bender ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 13,
+                "episodeTitle": "Lei…Bender ITA ENG"
+              },
+              "flags": [
+                "nonAscii"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x14 -Bender Crusoe ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 14,
+                "episodeTitle": "Bender Crusoe ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x15 - Quelli del P.U.Z.Z.A. ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 15,
+                "episodeTitle": "Quelli del P U Z Z A ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 05x16 - Musica dal profondo ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 5,
+                "episode": 16,
+                "episodeTitle": "Musica dal profondo ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x01 - Rinascita ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 1,
+                "episodeTitle": "Rinascita ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x02 - Il provolone terrestre ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 2,
+                "episodeTitle": "Il provolone terrestre ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x03 - Sarà effettuato un test ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 3,
+                "episodeTitle": "Sarà effettuato un test ITA ENG"
+              },
+              "flags": [
+                "nonAscii"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x04 - Proposta infinito ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 4,
+                "episodeTitle": "Proposta infinito ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x05 - Il grande Da Vinci ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 5,
+                "episodeTitle": "Il grande Da Vinci ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x06 - Ispezione letale ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 6,
+                "episodeTitle": "Ispezione letale ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x07 - Fry il ritardatario ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 7,
+                "episodeTitle": "Fry il ritardatario ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x08 - Thuban operazione gatto ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 8,
+                "episodeTitle": "Thuban operazione gatto ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x09 - Origine meccanica ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 9,
+                "episodeTitle": "Origine meccanica ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x10 - Il prigioniero di Benda ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 10,
+                "episodeTitle": "Il prigioniero di Benda ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x11 - Lrrrinconciliabili Ndndifferenze ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 11,
+                "episodeTitle": "Lrrrinconciliabili Ndndifferenze ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x12 - La rivolta dei mutanti ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 12,
+                "episodeTitle": "La rivolta dei mutanti ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x13 - Una festa spettacolare ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 13,
+                "episodeTitle": "Una festa spettacolare ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x14 - Castropia ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 14,
+                "episodeTitle": "Castropia ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x15 - Benderama ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 15,
+                "episodeTitle": "Benderama ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x16 - Fantasma nelle macchine ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 16,
+                "episodeTitle": "Fantasma nelle macchine ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x17 - L'oracolo in salamoia ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 17,
+                "episodeTitle": "L'oracolo in salamoia ITA ENG"
+              },
+              "flags": [
+                "quote"
+              ]
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x18 - Il silenzio delle pinze ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 18,
+                "episodeTitle": "Il silenzio delle pinze ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x19 - La fiaba di Leela ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 19,
+                "episodeTitle": "La fiaba di Leela ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x20 - Tutte le teste dei presidenti ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 20,
+                "episodeTitle": "Tutte le teste dei presidenti ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x21 - Mobius Dick ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 21,
+                "episodeTitle": "Mobius Dick ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x22 - Fry ci cova ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 22,
+                "episodeTitle": "Fry ci cova ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x23 - La punta dello Zoidberg ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 23,
+                "episodeTitle": "La punta dello Zoidberg ITA ENG"
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Futurama (1999-2024) 1080p H265 AC3 2.0 ITA.ENG sub ita.eng Sp33dy94-MIRCrew/Futurama - 06x24 - I guerrieri del raffreddore ITA.ENG 1080p H265 sub ita.eng Sp33dy94-MIRCrew.mkv",
+              "expected": {
+                "show": "Futurama",
+                "season": 6,
+                "episode": 24,
+                "episodeTitle": "I guerrieri del raffreddore ITA ENG"
+              },
+              "flags": []
+            }
+          ]
+        },
+        {
+          "series": "Doctor Who",
+          "episodeCount": 1,
+          "entries": [
+            {
+              "relativePath": "Doctor Who S00E01 - The Christmas Invasion.mp4",
+              "expected": {
+                "show": "Doctor Who",
+                "season": 0,
+                "episode": 1,
+                "episodeTitle": "The Christmas Invasion"
+              },
+              "flags": []
+            }
+          ]
+        },
+        {
+          "series": "Disenchantment",
+          "episodeCount": 30,
+          "entries": [
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E01.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 1,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E02.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 2,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E03.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 3,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E04.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 4,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E05.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 5,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E06.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 6,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E07.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 7,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E08.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 8,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E09.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 9,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E10.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 10,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E11.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 11,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E12.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 12,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E13.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 13,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E14.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 14,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E15.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 15,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E16.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 16,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E17.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 17,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E18.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 18,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E19.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 19,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S01.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S01E20.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 1,
+                "episode": 20,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S02.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S02E01.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 2,
+                "episode": 1,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S02.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S02E02.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 2,
+                "episode": 2,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S02.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S02E03.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 2,
+                "episode": 3,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S02.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S02E04.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 2,
+                "episode": 4,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S02.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S02E05.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 2,
+                "episode": 5,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S02.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S02E06.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 2,
+                "episode": 6,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S02.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S02E07.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 2,
+                "episode": 7,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S02.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S02E08.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 2,
+                "episode": 8,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S02.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S02E09.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 2,
+                "episode": 9,
+                "episodeTitle": ""
+              },
+              "flags": []
+            },
+            {
+              "relativePath": "Disenchantment.S02.COMPLETE.720p.NF.WEBRip.x264-GalaxyTV[TGx]/Disenchantment.S02E10.720p.NF.WEBRip.x264-GalaxyTV.mkv",
+              "expected": {
+                "show": "Disenchantment",
+                "season": 2,
+                "episode": 10,
+                "episodeTitle": ""
+              },
+              "flags": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Music",
+      "type": "Music",
+      "totalTracks": 751,
+      "artists": [
+        {
+          "artistFolder": "Anthrax/Albums",
+          "albums": [
+            {
+              "albumFolder": "Anthrax/Albums/1984 - Fistful Of Metal (1992 Reissue)",
+              "tracks": [
+                "Anthrax/Albums/1984 - Fistful Of Metal (1992 Reissue)/01 - Deathrider.mp3",
+                "Anthrax/Albums/1984 - Fistful Of Metal (1992 Reissue)/02 - Metal Thrashing Mad.mp3",
+                "Anthrax/Albums/1984 - Fistful Of Metal (1992 Reissue)/03 - I'm Eighteen (Alice Cooper cover).mp3",
+                "Anthrax/Albums/1984 - Fistful Of Metal (1992 Reissue)/04 - Panic.mp3",
+                "Anthrax/Albums/1984 - Fistful Of Metal (1992 Reissue)/05 - Subjugator.mp3",
+                "Anthrax/Albums/1984 - Fistful Of Metal (1992 Reissue)/06 - Soldiers Of Metal.mp3",
+                "Anthrax/Albums/1984 - Fistful Of Metal (1992 Reissue)/07 - Death From Above.mp3",
+                "Anthrax/Albums/1984 - Fistful Of Metal (1992 Reissue)/08 - Anthrax.mp3",
+                "Anthrax/Albums/1984 - Fistful Of Metal (1992 Reissue)/09 - Across The River.mp3",
+                "Anthrax/Albums/1984 - Fistful Of Metal (1992 Reissue)/10 - Howling Furies.mp3"
+              ]
+            },
+            {
+              "albumFolder": "Anthrax/Albums/1985 - Spreading The Disease",
+              "tracks": [
+                "Anthrax/Albums/1985 - Spreading The Disease/01 - A.I.R..mp3",
+                "Anthrax/Albums/1985 - Spreading The Disease/02 - Lone Justice.mp3",
+                "Anthrax/Albums/1985 - Spreading The Disease/03 - Madhouse.mp3",
+                "Anthrax/Albums/1985 - Spreading The Disease/04 - S.S.C.-Stand Or Fall.mp3",
+                "Anthrax/Albums/1985 - Spreading The Disease/05 - The Enemy.mp3",
+                "Anthrax/Albums/1985 - Spreading The Disease/06 - Aftershock.mp3",
+                "Anthrax/Albums/1985 - Spreading The Disease/07 - Armed And Dangerous.mp3",
+                "Anthrax/Albums/1985 - Spreading The Disease/08 - Medusa.mp3",
+                "Anthrax/Albums/1985 - Spreading The Disease/09 - Gung-Ho.mp3"
+              ]
+            },
+            {
+              "albumFolder": "Anthrax/Albums/1987 - Among The Living",
+              "tracks": [
+                "Anthrax/Albums/1987 - Among The Living/01 - Among The Living.mp3",
+                "Anthrax/Albums/1987 - Among The Living/02 - Caught In A Mosh.mp3",
+                "Anthrax/Albums/1987 - Among The Living/03 - I Am The Law.mp3",
+                "Anthrax/Albums/1987 - Among The Living/04 - Efilnikufesin (N.F.L.).mp3",
+                "Anthrax/Albums/1987 - Among The Living/05 - A Skeleton In The Closet.mp3",
+                "Anthrax/Albums/1987 - Among The Living/06 - Indians.mp3",
+                "Anthrax/Albums/1987 - Among The Living/07 - One World.mp3",
+                "Anthrax/Albums/1987 - Among The Living/08 - A.D.I._Horror Of It All.mp3",
+                "Anthrax/Albums/1987 - Among The Living/09 - Imitation Of Life.mp3"
+              ]
+            },
+            {
+              "albumFolder": "Anthrax/Albums/1988 - State Of Euphoria",
+              "tracks": [
+                "Anthrax/Albums/1988 - State Of Euphoria/01 - Be All, End All.mp3",
+                "Anthrax/Albums/1988 - State Of Euphoria/02 - Out Of Sight, Out Of Mind.mp3",
+                "Anthrax/Albums/1988 - State Of Euphoria/03 - Make Me Laugh.mp3",
+                "Anthrax/Albums/1988 - State Of Euphoria/04 - Antisocial (Trust cover).mp3",
+                "Anthrax/Albums/1988 - State Of Euphoria/05 - Who Cares Wins.mp3",
+                "Anthrax/Albums/1988 - State Of Euphoria/06 - Now It's Dark.mp3",
+                "Anthrax/Albums/1988 - State Of Euphoria/07 - Schism.mp3",
+                "Anthrax/Albums/1988 - State Of Euphoria/08 - Misery Loves Company.mp3",
+                "Anthrax/Albums/1988 - State Of Euphoria/09 - 13.mp3",
+                "Anthrax/Albums/1988 - State Of Euphoria/10 - Finale.mp3"
+              ]
+            },
+            {
+              "albumFolder": "Anthrax/Albums/1990 - Persistence Of Time",
+              "tracks": [
+                "Anthrax/Albums/1990 - Persistence Of Time/01 - Time.mp3",
+                "Anthrax/Albums/1990 - Persistence Of Time/02 - Blood.mp3",
+                "Anthrax/Albums/1990 - Persistence Of Time/03 - Keep It In The Family.mp3",
+                "Anthrax/Albums/1990 - Persistence Of Time/04 - In My World.mp3",
+                "Anthrax/Albums/1990 - Persistence Of Time/05 - Gridlock.mp3",
+                "Anthrax/Albums/1990 - Persistence Of Time/06 - Intro To Reality.mp3",
+                "Anthrax/Albums/1990 - Persistence Of Time/07 - Belly Of The Beast.mp3",
+                "Anthrax/Albums/1990 - Persistence Of Time/08 - Got The Time (Joe Jackson cover).mp3",
+                "Anthrax/Albums/1990 - Persistence Of Time/09 - H8 Red.mp3",
+                "Anthrax/Albums/1990 - Persistence Of Time/10 - One Man Stands.mp3",
+                "Anthrax/Albums/1990 - Persistence Of Time/11 - Discharge.mp3"
+              ]
+            },
+            {
+              "albumFolder": "Anthrax/Albums/1993 - Sound Of White Noise (Expanded Edition)",
+              "tracks": [
+                "Anthrax/Albums/1993 - Sound Of White Noise (Expanded Edition)/01 - Potters Field.mp3",
+                "Anthrax/Albums/1993 - Sound Of White Noise (Expanded Edition)/02 - Only.mp3",
+                "Anthrax/Albums/1993 - Sound Of White Noise (Expanded Edition)/03 - Room For One More.mp3",
+                "Anthrax/Albums/1993 - Sound Of White Noise (Expanded Edition)/04 - Packaged Rebellion.mp3",
+                "Anthrax/Albums/1993 - Sound Of White Noise (Expanded Edition)/05 - Hy Pro Glo.mp3",
+                "Anthrax/Albums/1993 - Sound Of White Noise (Expanded Edition)/06 - Invisible.mp3",
+                "Anthrax/Albums/1993 - Sound Of White Noise (Expanded Edition)/07 - 1000 Points Of Hate.mp3",
+                "Anthrax/Albums/1993 - Sound Of White Noise (Expanded Edition)/08 - Black Lodge.mp3",
+                "Anthrax/Albums/1993 - Sound Of White Noise (Expanded Edition)/09 - C11 H17 N2 O2 S Na (Sodium Pentathol).mp3",
+                "Anthrax/Albums/1993 - Sound Of White Noise (Expanded Edition)/10 - Burst.mp3",
+                "Anthrax/Albums/1993 - Sound Of White Noise (Expanded Edition)/11 - This Is Not An Exit.mp3",
+                "Anthrax/Albums/1993 - Sound Of White Noise (Expanded Edition)/12 - Auf Wiedersehen (Cheap Trick cover).mp3"
+              ]
+            },
+            {
+              "albumFolder": "Anthrax/Albums/1995 - Stomp 442",
+              "tracks": [
+                "Anthrax/Albums/1995 - Stomp 442/01 - Random Acts Of Senseless Violence.mp3",
+                "Anthrax/Albums/1995 - Stomp 442/02 - Fueled.mp3",
+                "Anthrax/Albums/1995 - Stomp 442/03 - King Size.mp3",
+                "Anthrax/Albums/1995 - Stomp 442/04 - Riding Shotgun.mp3",
+                "Anthrax/Albums/1995 - Stomp 442/05 - Perpetual Motion.mp3",
+                "Anthrax/Albums/1995 - Stomp 442/06 - In A Zone.mp3",
+                "Anthrax/Albums/1995 - Stomp 442/07 - Nothing.mp3",
+                "Anthrax/Albums/1995 - Stomp 442/08 - American Pompeii.mp3",
+                "Anthrax/Albums/1995 - Stomp 442/09 - Drop The Ball.mp3",
+                "Anthrax/Albums/1995 - Stomp 442/10 - Tester.mp3",
+                "Anthrax/Albums/1995 - Stomp 442/11 - Bare.mp3"
+              ]
+            },
+            {
+              "albumFolder": "Anthrax/Albums/1998 - Volume 8 - The Threat Is Real",
+              "tracks": [
+                "Anthrax/Albums/1998 - Volume 8 - The Threat Is Real/01 - Crush.mp3",
+                "Anthrax/Albums/1998 - Volume 8 - The Threat Is Real/02 - Catharsis.mp3",
+                "Anthrax/Albums/1998 - Volume 8 - The Threat Is Real/03 - Inside Out.mp3",
+                "Anthrax/Albums/1998 - Volume 8 - The Threat Is Real/04 - Piss N Vinigar.mp3",
+                "Anthrax/Albums/1998 - Volume 8 - The Threat Is Real/05 - 604.mp3",
+                "Anthrax/Albums/1998 - Volume 8 - The Threat Is Real/06 - Toast To The Extras.mp3",
+                "Anthrax/Albums/1998 - Volume 8 - The Threat Is Real/07 - Born Again Idiot.mp3",
+                "Anthrax/Albums/1998 - Volume 8 - The Threat Is Real/08 - Killing Box.mp3",
+                "Anthrax/Albums/1998 - Volume 8 - The Threat Is Real/09 - Harms Way.mp3",
+                "Anthrax/Albums/1998 - Volume 8 - The Threat Is Real/10 - Hog Tied.mp3",
+                "Anthrax/Albums/1998 - Volume 8 - The Threat Is Real/11 - Big Fat.mp3",
+                "Anthrax/Albums/1998 - Volume 8 - The Threat Is Real/12 - Cupajoe.mp3"
+              ]
+            },
+            {
+              "albumFolder": "Anthrax/Albums/2011 - Worship Music",
+              "tracks": [
+                "Anthrax/Albums/2011 - Worship Music/01 - Worship (Intro).mp3",
+                "Anthrax/Albums/2011 - Worship Music/02 - Earth on Hell.mp3",
+                "Anthrax/Albums/2011 - Worship Music/03 - The Devil You Know.mp3",
+                "Anthrax/Albums/2011 - Worship Music/04 - Fight 'Em 'Til You Can't.mp3",
+                "Anthrax/Albums/2011 - Worship Music/05 - I'm Alive.mp3",
+                "Anthrax/Albums/2011 - Worship Music/06 - Hymn 1.mp3",
+                "Anthrax/Albums/2011 - Worship Music/07 - In the End.mp3",
+                "Anthrax/Albums/2011 - Worship Music/08 - The Giant.mp3",
+                "Anthrax/Albums/2011 - Worship Music/09 - Hymn 2.mp3",
+                "Anthrax/Albums/2011 - Worship Music/10 - Judas Priest.mp3",
+                "Anthrax/Albums/2011 - Worship Music/11 - Crawl.mp3",
+                "Anthrax/Albums/2011 - Worship Music/12 - The Constant.mp3"
+              ]
+            }
+          ]
+        },
+        {
+          "artistFolder": "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)",
+          "albums": [
+            {
+              "albumFolder": "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD1",
+              "tracks": [
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD1/01 - Contact.mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD1/02 - What Doesn't Die.mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD1/03 - Superhero.mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD1/04 - Refuse To Be Denied (feat. Anthony Martini).mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD1/05 - Safe Home.mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD1/06 - Any Place But Here.mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD1/07 - Nobody Knows Anything.mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD1/08 - Strap It On (feat. Dimebag Darrell).mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD1/09 - Black Dahlia.mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD1/10 - Cadillac Rock Box (feat. Dimebag Darrell).mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD1/11 - Taking The Music Back.mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD1/12 - Crash.mp3"
+              ]
+            },
+            {
+              "albumFolder": "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD2",
+              "tracks": [
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD2/01 - Safe Home (Radio Edit).mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD2/02 - Grunt & Click (Stomp 442 Session Recording).mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD2/03 - Dethroned Emperor (Celtic Frost cover).mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD2/04 - Celebrated Summer (Husker Du cover).mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD2/05 - Watchinґ You (Kiss cover).mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD2/06 - Auf Wiedersehen (Cheap Trick cover).mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD2/07 - Cowboy Song (Thin Lizzy cover).mp3",
+                "Anthrax/Albums/2003 - We've Come For You All (Digipack) (2 CD)/CD2/08 - London (The Smiths cover).mp3"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Books",
+      "type": "Book",
+      "totalInLibrary": 154,
+      "entries": [
+        {
+          "relativePath": "All Dune books + short stories + extras ePUB/Dune Chronicles (Dune 7)/Dune Chronicles 1 - Hunters of Dune.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "All Dune books + short stories + extras ePUB/Great Schools of Dune/Great Schools of Dune 3 - Navigators of Dune.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "All Dune books + short stories + extras ePUB/Original Dune series/3 - Children of Dune - Frank Herbert (1976).epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "All Dune books + short stories + extras ePUB/Prelude to Dune/Prelude to Dune 2 - House Harkonnen.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "All Dune books + short stories + extras ePUB/Short story collections and extras/Tales of Dune (Short stories) - Brian Herbert and Kevin J. Anderson.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Milo Manara/(Ebook - Comic) Manara, Milo - Click 2.pdf",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Milo Manara/Milo Manara Butterscotch 01.pdf",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/A Good Marriage - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/Blaze_ A Novel - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/Christine - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/Dead Zone - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/Dreamcatcher_ A Novel - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/Eyes Of The Dragon - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/From A Buick 8_A Novel - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/Gwendy's Button Box - Stephen King.epub",
+          "kind": "book",
+          "flags": [
+            "quote"
+          ]
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/In The Tall Grass - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/Later - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/My Pretty Pony - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/Nightmares In The Sky Gargoyles And Grotesques - Stephen King, Fitzgerald f-Stop.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/Popsy - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/Roadwork - Richard Bachman.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/Skeleton Crew - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/The Collective - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/The Dark Tower_3. The Waste Lands (v5.0) - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/The Dark Tower_The Wind Through The Keyhole - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/The Green Mile - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/The Little Sisters Of Eluria - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/The Plant - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/The Stand_ The Complete & Uncut - Stephen King.epub",
+          "kind": "book",
+          "flags": []
+        },
+        {
+          "relativePath": "Stephen King 121 Books Epub Collection 88/Thinner - Richard Bachman.epub",
+          "kind": "book",
+          "flags": []
+        }
+      ]
+    }
+  ]
+}

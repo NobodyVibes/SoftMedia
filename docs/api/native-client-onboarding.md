@@ -75,6 +75,11 @@ POST /api/v1/auth/login
 - Access tokens are short-lived (~15 min) — send as `Authorization: Bearer`.
 - For `<img>`-style URL contexts use the reduced-privilege **media token**
   (`GET /api/v1/auth/media-token`), never the access token in a query string.
+- **Artwork requires it too:** statically served images under `/cache/images/**`
+  (posters, backdrops, episode stills, cast headshots, playlist covers — the paths the
+  API returns in `posterPath`/`backdropPath` fields) answer **401 without a token**.
+  Append `?token=<media token>` (or send a full session/API token in the
+  `Authorization` header). Anonymous artwork access was removed in the AA-WI wave.
 
 ## 2. Quick Connect (pairing without a keyboard)
 

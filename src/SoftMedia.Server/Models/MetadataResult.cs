@@ -38,6 +38,22 @@ public class MetadataResult
     
     [JsonPropertyName("musicBrainzId")]
     public string? MusicBrainzId { get; set; }
+
+    /// <summary>SM-WI-032 — Open Library work key ("/works/OL…W") of the matched book;
+    /// promoted to MediaItem.OpenLibraryKey so refreshes fetch by key.</summary>
+    [JsonPropertyName("openLibraryKey")]
+    public string? OpenLibraryKey { get; set; }
+
+    /// <summary>SM-WI-044 — series airing status ("Running", "Ended", …); promoted to
+    /// MediaItem.SeriesStatus for series rows.</summary>
+    [JsonPropertyName("seriesStatus")]
+    public string? SeriesStatus { get; set; }
+
+    /// <summary>SM-WI-045 — name of the provider that produced this result. Set by
+    /// providers that attach a RawPayload so the payload cache row is labeled with its
+    /// real source (previously hardcoded to "TVMaze").</summary>
+    [JsonPropertyName("sourceProvider")]
+    public string? SourceProvider { get; set; }
     
     [JsonPropertyName("poster")]
     public string? PosterUrl { get; set; }

@@ -152,18 +152,48 @@ public class DlnaContentDirectory : IDlnaContentDirectory
     private async Task<DlnaBrowseResult> SeriesChildrenAsync(Guid seriesId, List<Guid> exposed, int skip, int take, string resBaseUrl, CancellationToken ct)
     {
         // Audit M7: only episodes whose library is exposed are listed (guards a guessed series id).
-        var q = _db.MediaItems.Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode && exposed.Contains(m.LibraryId))
-            .OrderBy(m => m.SeasonNumber).ThenBy(m => m.EpisodeNumber).ThenBy(m => m.SortTitle)
+        var filtered = _db.MediaItems.Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode && exposed.Contains(m.LibraryId))
             .ApplyContentRatingFilter(await DlnaCeilingsAsync(ct)) // audit wave-2 M-6
             .ExcludeMissing(); // SR-WI-011
+        var q = filtered
+            .OrderBy(m => m.SeasonNumber).ThenBy(m => m.EpisodeNumber).ThenBy(m => m.SortTitle);
         var total = await q.CountAsync(ct);
         var page = await q.Skip(skip).Take(take).ToListAsync(ct);
 
+        // DV-WI-006: DLNA renderers have no version picker, so duplicate copies of an
+        // episode stay listed — but with a quality suffix, or the renderer shows two
+        // byte-identical titles. Keys are computed over the SAME filtered set as the
+        // listing (a dup whose twin is hidden by rating/missing gets no suffix), and
+        // series-wide so pairs straddling a page boundary are still labeled.
+        var duplicateKeys = (await filtered
+                .Where(m => m.EpisodeNumber > 0)
+                .GroupBy(m => new { m.SeasonNumber, m.EpisodeNumber })
+                .Where(g => g.Count() > 1)
+                .Select(g => new { g.Key.SeasonNumber, g.Key.EpisodeNumber })
+                .ToListAsync(ct))
+            .Select(k => (k.SeasonNumber, k.EpisodeNumber))
+            .ToHashSet();
+
         var sb = new StringBuilder();
         using (var w = OpenDidl(sb))
-            foreach (var ep in page) WriteVideoItem(w, ep, $"S:{seriesId}", resBaseUrl);
+            foreach (var ep in page)
+            {
+                var suffix = duplicateKeys.Contains((ep.SeasonNumber, ep.EpisodeNumber))
+                    ? $" [{VersionLabel(ep)}]"
+                    : null;
+                WriteVideoItem(w, ep, $"S:{seriesId}", resBaseUrl, suffix);
+            }
         return new DlnaBrowseResult(Close(sb), page.Count, total);
     }
+
+    /// <summary>
+    /// DV-WI-006: coarse per-file quality tag for duplicate disambiguation in DLNA
+    /// listings — delegates to the shared label authority (DV-WI-013) so DLNA can't
+    /// drift from the DTO/report labels. Never-probed files fall back to the container.
+    /// </summary>
+    private static string VersionLabel(MediaItem item)
+        => Helpers.VersionLabelHelper.ResolutionLabel(item.Height)
+           ?? (string.IsNullOrEmpty(item.Container) ? "ALT" : item.Container.ToUpperInvariant());
 
     private async Task<DlnaBrowseResult> AlbumChildrenAsync(Guid albumId, List<Guid> exposed, int skip, int take, string resBaseUrl, CancellationToken ct)
     {
@@ -260,20 +290,21 @@ public class DlnaContentDirectory : IDlnaContentDirectory
         w.WriteEndElement();
     }
 
-    private void WriteVideoItem(XmlWriter w, MediaItem item, string parentId, string resBaseUrl)
-        => WriteItem(w, item, parentId, resBaseUrl, "object.item.videoItem", DlnaProtocol.VideoFlags);
+    private void WriteVideoItem(XmlWriter w, MediaItem item, string parentId, string resBaseUrl, string? titleSuffix = null)
+        => WriteItem(w, item, parentId, resBaseUrl, "object.item.videoItem", DlnaProtocol.VideoFlags, titleSuffix);
 
     private void WriteAudioItem(XmlWriter w, MediaItem item, string parentId, string resBaseUrl)
         => WriteItem(w, item, parentId, resBaseUrl, "object.item.audioItem.musicTrack", DlnaProtocol.AudioFlags);
 
-    private void WriteItem(XmlWriter w, MediaItem item, string parentId, string resBaseUrl, string upnpClass, string dlnaFlags)
+    private void WriteItem(XmlWriter w, MediaItem item, string parentId, string resBaseUrl, string upnpClass, string dlnaFlags, string? titleSuffix = null)
     {
         var mime = MimeTypeResolver.GetMimeType(item.Path);
         w.WriteStartElement("item", DidlNs);
         w.WriteAttributeString("id", $"I:{item.Id}");
         w.WriteAttributeString("parentID", parentId);
         w.WriteAttributeString("restricted", "1");
-        w.WriteElementString("dc", "title", DcNs, string.IsNullOrEmpty(item.Title) ? "Untitled" : item.Title);
+        var title = string.IsNullOrEmpty(item.Title) ? "Untitled" : item.Title;
+        w.WriteElementString("dc", "title", DcNs, title + titleSuffix);
         w.WriteElementString("upnp", "class", UpnpNs, upnpClass);
 
         w.WriteStartElement("res", DidlNs);

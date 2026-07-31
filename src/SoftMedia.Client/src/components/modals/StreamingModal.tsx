@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { toast } from 'sonner';
 import { extractApiError } from '../../services/apiError';
 import { userService, type UserDto } from '../../services/userService';
@@ -20,11 +20,14 @@ export const StreamingModal: React.FC<StreamingModalProps> = ({ isOpen, onClose,
     const queryClient = useQueryClient();
     const [kbps, setKbps] = useState<number>(0);
 
-    useEffect(() => {
-        if (user) {
-            setKbps(user.maxStreamBitrateKbps ?? 0);
-        }
-    }, [user]);
+    // Reseed when pointed at a different user — during render, not in an effect,
+    // so the previous user's cap never flashes (react.dev: "adjusting state when
+    // props change").
+    const [seededFor, setSeededFor] = useState<UserDto | null>(null);
+    if (user && user !== seededFor) {
+        setSeededFor(user);
+        setKbps(user.maxStreamBitrateKbps ?? 0);
+    }
 
     const updateMutation = useMutation({
         mutationFn: ({ userId, maxStreamBitrateKbps }: { userId: string; maxStreamBitrateKbps: number }) =>

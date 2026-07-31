@@ -1,5 +1,5 @@
 import { useParams, useNavigate, Navigate } from 'react-router-dom';
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import api from '../services/api';
@@ -234,17 +234,22 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
             return item.posterPath;
         }
 
-        // For Artists, pick a random album cover
+        // For Artists, pick one of their album covers. The pick is a HASH of the
+        // artist id, not Math.random(): render must be pure, and the random
+        // version re-rolled on every unrelated re-render, so the backdrop
+        // flickered between covers. Hashing keeps variety across artists while
+        // each artist's page stays stable.
         if (item.type === MediaType.Artist && artistAlbums && artistAlbums.length > 0) {
             // Filter albums that have a poster path
             const albumsWithCovers = artistAlbums.filter(a => a.posterPath);
             if (albumsWithCovers.length > 0) {
-                const randomIndex = Math.floor(Math.random() * albumsWithCovers.length);
-                return albumsWithCovers[randomIndex].posterPath;
+                let hash = 0;
+                for (let i = 0; i < item.id.length; i++) hash = (hash * 31 + item.id.charCodeAt(i)) | 0;
+                return albumsWithCovers[Math.abs(hash) % albumsWithCovers.length].posterPath;
             }
         }
         return null;
-    }, [item.type, item.posterPath, artistAlbums]);
+    }, [item.type, item.posterPath, item.id, artistAlbums]);
 
     const customMetadata = useMemo(() => {
         if (item.type === MediaType.Album && albumTracks) {
@@ -380,27 +385,24 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
     const [selectedEpisodeId, setSelectedEpisodeId] = useState<string | null>(null);
 
     // Reset when the page swaps to a DIFFERENT item (this component stays mounted
-    // across detail→detail navigation). The mount run is deliberately skipped:
-    // child effects fire before the parent's, so with the queries already cached
-    // TVDetailView has reported its resume episode by the time this runs, and an
-    // unconditional reset would wipe that selection right back out.
-    const previousItemIdRef = useRef(item.id);
-    useEffect(() => {
-        if (previousItemIdRef.current === item.id) return;
-        previousItemIdRef.current = item.id;
+    // across detail→detail navigation). Adjusted during render, seeded with the
+    // mounting item's id — so the mount pass never resets, which matters because
+    // TVDetailView reports its resume episode early and an unconditional reset
+    // would wipe that selection right back out.
+    const [lastItemId, setLastItemId] = useState(item.id);
+    if (item.id !== lastItemId) {
+        setLastItemId(item.id);
         setQualityItem(null);
         setSelectedEpisodeId(null);
-    }, [item.id]);
+    }
 
     const handleEpisodeSelect = (episode: MediaItem) => {
         setQualityItem(episode);
         setSelectedEpisodeId(episode.id);
     };
 
-    const handleDefaultQualityFound = (episode: MediaItem) => {
-        setQualityItem(prev => prev ? prev : episode);
-    };
-
+    // DV-WI-022: no more "representative episode" default for quality info — the series
+    // DTO carries a server-side aggregate. Clicking an episode still overrides it.
     const renderContent = () => {
         if (!type) return null;
 
@@ -431,7 +433,6 @@ function MediaDetailPageContent({ item }: { item: MediaItem }) {
                         resumeEpisodePending={item.type === MediaType.Series && nextEpisodePending}
                         resumeHasPosition={(nextEpisode?.resumePosition ?? 0) > 0}
                         onEpisodeSelect={handleEpisodeSelect}
-                        onDefaultQualityItemFound={handleDefaultQualityFound}
                     />
                 );
             case 'Music': return <MusicDetailView item={item} />;

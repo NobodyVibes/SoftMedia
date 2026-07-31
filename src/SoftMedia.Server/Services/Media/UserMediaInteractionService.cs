@@ -35,16 +35,25 @@ public class UserMediaInteractionService : IUserMediaInteractionService
         }
 
         interaction.Rating = rating;
-        
+
         if (interaction.Rating == null && interaction.IsFavorite == false && interaction.IsWatched == false && (interaction.PlaybackPosition ?? 0) <= 0)
         {
             _context.UserMediaInteractions.Remove(interaction);
         }
 
+        // DV-WI-014: a rating applies to the TITLE — every sibling copy carries it.
+        var siblingIds = await FanOutToSiblingCopiesAsync(
+            userId, mediaId, createMissingRows: rating != null, row => row.Rating = rating);
+
         await _context.SaveChangesAsync();
 
-        // Recalculate average rating for the media item
+        // Recalculate average rating for the media item (and its sibling copies —
+        // their per-item averages absorbed the same fan-out).
         await UpdateMediaInternalRatingAsync(mediaId);
+        foreach (var siblingId in siblingIds)
+        {
+            await UpdateMediaInternalRatingAsync(siblingId);
+        }
     }
 
     private async Task UpdateMediaInternalRatingAsync(Guid mediaId)
@@ -91,6 +100,11 @@ public class UserMediaInteractionService : IUserMediaInteractionService
         }
 
         interaction.IsFavorite = isFavorite;
+
+        // DV-WI-014: favorites are title-level — fan to sibling copies.
+        await FanOutToSiblingCopiesAsync(
+            userId, mediaId, createMissingRows: isFavorite, row => row.IsFavorite = isFavorite);
+
         await _context.SaveChangesAsync();
     }
 
@@ -139,7 +153,93 @@ public class UserMediaInteractionService : IUserMediaInteractionService
             }
         }
 
+        // DV-WI-005/014: watched is a property of the TITLE, not the file row — fan the
+        // flag out to sibling copies (movies included, via VersionGroupId) so no copy
+        // ever disagrees. Only the flag (plus a resume reset on watch) propagates —
+        // LastPlayed/history stay per-file: a sibling was never actually played, and
+        // fabricating activity would corrupt "most recently watched" and the play diary.
+        await FanOutToSiblingCopiesAsync(userId, mediaId, createMissingRows: watched, row =>
+        {
+            row.IsWatched = watched;
+            if (watched) row.PlaybackPosition = 0; // group is finished; kill stale resume points
+        });
+
         await _context.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// DV-WI-014 — sibling file-copies of the same logical title: the item's version
+    /// group when assigned (movies AND episodes), else the episode natural key as a
+    /// pre-backfill fallback. Rows without a REAL episode number never fan out —
+    /// distinct unparseable files are not copies of each other.
+    /// </summary>
+    private async Task<List<Guid>> GetVersionSiblingIdsAsync(Guid mediaId)
+    {
+        var item = await _context.MediaItems.AsNoTracking()
+            .Where(m => m.Id == mediaId)
+            .Select(m => new { m.Type, m.SeriesId, m.SeasonNumber, m.EpisodeNumber, m.VersionGroupId })
+            .FirstOrDefaultAsync();
+        if (item == null) return new List<Guid>();
+
+        if (item.VersionGroupId != null)
+        {
+            return await _context.MediaItems.AsNoTracking()
+                .Where(m => m.VersionGroupId == item.VersionGroupId && m.Id != mediaId)
+                .Select(m => m.Id)
+                .ToListAsync();
+        }
+
+        if (item is { Type: MediaType.Episode, SeriesId: not null } && item.EpisodeNumber is > 0)
+        {
+            return await _context.MediaItems.AsNoTracking()
+                .Where(m => m.SeriesId == item.SeriesId
+                         && m.Type == MediaType.Episode
+                         && m.SeasonNumber == item.SeasonNumber
+                         && m.EpisodeNumber == item.EpisodeNumber
+                         && m.Id != mediaId)
+                .Select(m => m.Id)
+                .ToListAsync();
+        }
+
+        return new List<Guid>();
+    }
+
+    /// <summary>
+    /// DV-WI-014 — applies a per-row mutation to every sibling copy's interaction row.
+    /// Creates missing rows only when the mutation asserts state (createMissingRows);
+    /// clearing state never mints empty rows, and rows left carrying nothing are GC'd
+    /// (same emptiness rule as ToggleWatchlistAsync). Caller saves. Returns the sibling
+    /// ids so callers can run per-item recomputes (internal rating).
+    /// </summary>
+    private async Task<List<Guid>> FanOutToSiblingCopiesAsync(
+        Guid userId, Guid mediaId, bool createMissingRows, Action<UserMediaInteraction> apply)
+    {
+        var siblingIds = await GetVersionSiblingIdsAsync(mediaId);
+        if (siblingIds.Count == 0) return siblingIds;
+
+        var rows = (await _context.UserMediaInteractions
+                .Where(i => i.UserId == userId && siblingIds.Contains(i.MediaItemId))
+                .ToListAsync())
+            .ToDictionary(i => i.MediaItemId);
+
+        foreach (var siblingId in siblingIds)
+        {
+            if (!rows.TryGetValue(siblingId, out var row))
+            {
+                if (!createMissingRows) continue;
+                row = new UserMediaInteraction { UserId = userId, MediaItemId = siblingId };
+                _context.UserMediaInteractions.Add(row);
+            }
+            apply(row);
+
+            if (!row.IsFavorite && !row.IsWatched && !row.IsWatchlisted
+                && row.Rating == null && (row.PlaybackPosition ?? 0) <= 0 && row.BookLocation == null
+                && _context.Entry(row).State != Microsoft.EntityFrameworkCore.EntityState.Added)
+            {
+                _context.UserMediaInteractions.Remove(row);
+            }
+        }
+        return siblingIds;
     }
 
     public async Task UpdateProgressAsync(Guid userId, Guid mediaId, double position, string? bookLocation = null)
@@ -206,7 +306,7 @@ public class UserMediaInteractionService : IUserMediaInteractionService
 
         var item = await _context.MediaItems.AsNoTracking()
             .Where(m => m.Id == mediaId)
-            .Select(m => new { m.Type, m.Duration, m.CreditsStart })
+            .Select(m => new { m.Type, m.Duration, m.CreditsStart, m.VersionGroupId })
             .FirstOrDefaultAsync();
         if (item == null) return;
         if (item.Type != MediaType.Movie && item.Type != MediaType.Episode && item.Type != MediaType.Audio) return;
@@ -253,6 +353,50 @@ public class UserMediaInteractionService : IUserMediaInteractionService
             latest.Completed = latest.Completed || Helpers.MediaCompletionHelper.IsComplete(
                 latest.MaxPosition, item.Duration, item.CreditsStart, isWatched: false);
             return; // caller saves
+        }
+
+        // DV-WI-024: a mid-sitting VERSION SWITCH — the play the user is continuing lives
+        // on a SIBLING copy of this title. Re-key that row to this file and continue it,
+        // so one sitting stays ONE play instead of counting once per file. The play (and
+        // its PlayCount) moves with the row, preserving the documented invariant
+        // "PlayCount == history rows for the item" on both sides. Continuity uses the
+        // same rewatch rule as same-item beats: a position that dropped below half the
+        // play's high-water mark is a fresh viewing (e.g. an edition switched from 0),
+        // not a continuation.
+        if (item.VersionGroupId != null)
+        {
+            var siblingPlay = await (
+                    from h in _context.PlaybackHistory
+                    join m in _context.MediaItems on h.MediaItemId equals m.Id
+                    where h.UserId == userId && h.MediaItemId != mediaId
+                          && m.VersionGroupId == item.VersionGroupId
+                    orderby h.LastBeatAt descending
+                    select h)
+                .FirstOrDefaultAsync();
+
+            if (siblingPlay != null
+                && now - siblingPlay.LastBeatAt <= PlaySessionWindow
+                && position >= siblingPlay.MaxPosition * RewatchRestartFraction)
+            {
+                var oldItem = await _context.MediaItems.FirstOrDefaultAsync(m => m.Id == siblingPlay.MediaItemId);
+                if (oldItem != null)
+                {
+                    oldItem.PlayCount = Math.Max(0, oldItem.PlayCount - 1);
+                }
+                var newItem = await _context.MediaItems.FirstOrDefaultAsync(m => m.Id == mediaId);
+                if (newItem != null)
+                {
+                    newItem.PlayCount++;
+                    newItem.LastPlayed = now;
+                }
+
+                siblingPlay.MediaItemId = mediaId;
+                siblingPlay.LastBeatAt = now;
+                siblingPlay.MaxPosition = Math.Max(siblingPlay.MaxPosition, position);
+                siblingPlay.Completed = siblingPlay.Completed || Helpers.MediaCompletionHelper.IsComplete(
+                    siblingPlay.MaxPosition, item.Duration, item.CreditsStart, isWatched: false);
+                return; // caller saves
+            }
         }
 
         // Starting a new play (first watch, a return after the window, or a rewatch from the top):
@@ -412,7 +556,8 @@ public class UserMediaInteractionService : IUserMediaInteractionService
 
         interaction.IsWatchlisted = isWatchlisted;
         // Stamp on add (used for sort); clear on remove so re-adds get a fresh timestamp.
-        interaction.WatchlistedAt = isWatchlisted ? DateTime.UtcNow : null;
+        var watchlistedAt = isWatchlisted ? DateTime.UtcNow : (DateTime?)null;
+        interaction.WatchlistedAt = watchlistedAt;
 
         // GC empty interaction rows so the table doesn't accumulate dead state.
         if (!interaction.IsFavorite
@@ -424,6 +569,15 @@ public class UserMediaInteractionService : IUserMediaInteractionService
         {
             _context.UserMediaInteractions.Remove(interaction);
         }
+
+        // DV-WI-014: the watchlist holds TITLES — fan to sibling copies (same
+        // timestamp, so watchlist sort treats the group as one add).
+        await FanOutToSiblingCopiesAsync(
+            userId, mediaId, createMissingRows: isWatchlisted, row =>
+            {
+                row.IsWatchlisted = isWatchlisted;
+                row.WatchlistedAt = watchlistedAt;
+            });
 
         await _context.SaveChangesAsync();
     }

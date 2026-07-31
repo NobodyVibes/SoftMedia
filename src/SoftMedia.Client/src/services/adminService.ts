@@ -19,6 +19,13 @@ export interface ArtworkRepairResult {
     failedEnqueue: number;
 }
 
+/** MC-WI-007 — one cache area's on-disk footprint. */
+export interface CacheAreaStats {
+    area: string;
+    files: number;
+    bytes: number;
+}
+
 export interface ScheduledTaskStatus {
     name: string;
     description: string;
@@ -63,6 +70,27 @@ export interface ActiveSession {
     deviceType: 'Mobile' | 'Tablet' | 'Tv' | 'Cast' | 'Desktop' | 'Unknown' | null;
     /** Client address as the server saw it (IPv4-mapped IPv6 already unwrapped). */
     ipAddress: string | null;
+}
+
+/** DV-WI-012 — one file-copy inside a duplicate version group. */
+export interface VersionGroupMember {
+    id: string;
+    title: string;
+    path: string | null;
+    label: string;
+    size: number;
+    preferred: boolean;
+    watchedByCount: number;
+}
+
+/** DV-WI-012 — a title that exists as more than one file. */
+export interface VersionGroup {
+    versionGroupId: string;
+    kind: 'Movie' | 'Episode';
+    displayTitle: string;
+    libraryId: string;
+    libraryName: string | null;
+    members: VersionGroupMember[];
 }
 
 export const adminService = {
@@ -175,6 +203,14 @@ export const adminService = {
     },
 
     /**
+     * MC-WI-007 — per-area on-disk footprint of the server's cache directories.
+     */
+    async getCacheStats(): Promise<CacheAreaStats[]> {
+        const response = await api.get<CacheAreaStats[]>('/admin/cache-stats');
+        return response.data;
+    },
+
+    /**
      * Lists background tasks with last-run telemetry.
      */
     async listTasks(): Promise<ScheduledTaskStatus[]> {
@@ -237,5 +273,28 @@ export const adminService = {
      */
     async refreshMatch(itemId: string): Promise<void> {
         await api.post(`/admin/match/${itemId}/refresh`);
+    },
+
+    // --- Version groups / duplicates (DV-WI-011/012) ---
+
+    /** Every title that exists as more than one file, with per-copy details. */
+    async getDuplicateVersions(): Promise<VersionGroup[]> {
+        const response = await api.get<VersionGroup[]>('/admin/versions/duplicates');
+        return response.data;
+    },
+
+    /** Declare items to be copies of the same title (joins/creates one group). */
+    async mergeVersions(itemIds: string[]): Promise<void> {
+        await api.post('/admin/versions/merge', { itemIds });
+    },
+
+    /** Declare an item NOT a copy of its group (moves it to a fresh group; sticks across rescans). */
+    async splitVersion(itemId: string): Promise<void> {
+        await api.post('/admin/versions/split', { itemId });
+    },
+
+    /** Pin (or clear) one copy as the group's preferred version — beats the computed primary. */
+    async setPreferredVersion(itemId: string, preferred: boolean): Promise<void> {
+        await api.post('/admin/versions/prefer', { itemId, preferred });
     },
 };

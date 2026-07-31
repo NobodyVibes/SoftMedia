@@ -4,6 +4,8 @@ import { Link } from 'react-router-dom';
 import { BookOpen, Play, Star } from 'lucide-react';
 import api from '../../services/api';
 import { type MediaItem } from '../../types';
+import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 import LoadingImage from '../ui/LoadingImage';
 
 interface ComicSeriesDetailViewProps {
@@ -11,6 +13,8 @@ interface ComicSeriesDetailViewProps {
 }
 
 export default function ComicSeriesDetailView({ item }: ComicSeriesDetailViewProps) {
+    // The cover URL embeds the media token (AA-WI-001) — re-render on rotation.
+    useMediaTokenRefresh();
     const { data: issues, isLoading } = useQuery({
         queryKey: ['comic-series', item.id, 'issues'],
         queryFn: async () => {
@@ -94,7 +98,7 @@ export default function ComicSeriesDetailView({ item }: ComicSeriesDetailViewPro
             <div className="space-y-6 md:col-span-1">
                 <div className="rounded-xl overflow-hidden shadow-2xl border border-white/10 bg-gray-900 aspect-[2/3] sticky top-8">
                     {item.posterPath ? (
-                        <img src={item.posterPath} alt={item.title} className="w-full h-full object-cover" />
+                        <img src={attachAuthToApiUrl(item.posterPath)} alt={item.title} className="w-full h-full object-cover" />
                     ) : (
                         <div className="w-full h-full flex flex-col items-center justify-center text-gray-500">
                             <BookOpen className="w-16 h-16 mb-4 opacity-50" />

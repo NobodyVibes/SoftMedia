@@ -83,10 +83,31 @@ public class MediaRepository : IMediaRepository
     {
         var ceilings = await _ratingProvider.GetCurrentAsync();
         var access = await _libraryAccessProvider.GetCurrentAsync();
-        return await _context.MediaItems
+        // DV-WI-003: count EPISODES, not files — duplicate copies of one episode share an
+        // EpisodeNumber and must not inflate the season count (10 episodes + 1 dup = 10).
+        // Only REAL numbers dedupe: null/0 means "couldn't parse an episode number", where
+        // several distinct files legitimately share the bucket and must each count.
+        var numbers = await _context.MediaItems
             .ApplyContentRatingFilter(ceilings)
             .ApplyLibraryAccessFilter(access)
-            .CountAsync(e => e.SeriesId == seriesId && e.SeasonNumber == seasonNumber && e.Type == MediaType.Episode);
+            .Where(e => e.SeriesId == seriesId && e.SeasonNumber == seasonNumber && e.Type == MediaType.Episode)
+            .Select(e => e.EpisodeNumber)
+            .ToListAsync();
+        return numbers.Where(n => n is > 0).Distinct().Count()
+             + numbers.Count(n => n is null or <= 0);
+    }
+
+    public async Task<Dictionary<Guid, int>> GetVersionCountsAsync(IEnumerable<Guid> versionGroupIds)
+    {
+        var ids = versionGroupIds.Distinct().Cast<Guid?>().ToList();
+        if (ids.Count == 0) return new Dictionary<Guid, int>();
+
+        var rows = await _context.MediaItems.AsNoTracking()
+            .Where(m => m.VersionGroupId != null && ids.Contains(m.VersionGroupId) && !m.IsMissing)
+            .GroupBy(m => m.VersionGroupId!.Value)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToListAsync();
+        return rows.ToDictionary(r => r.Key, r => r.Count);
     }
 
     public async Task<bool> ExistsAsync(Guid id)
@@ -108,7 +129,8 @@ public class MediaRepository : IMediaRepository
             .ApplyLibraryAccessFilter(access)
             .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode)
             .OrderBy(m => m.SeasonNumber)
-            .ThenBy(m => m.EpisodeNumber);
+            .ThenBy(m => m.EpisodeNumber)
+            .ThenBy(m => m.Id); // DV-WI-001: stable order for duplicate copies of one episode
 
         var joinedQuery = from m in query
                           join umi in _context.UserMediaInteractions.AsNoTracking()
@@ -283,6 +305,10 @@ public class MediaRepository : IMediaRepository
             .Where(m => m.SeriesId == seriesId && m.Type == MediaType.Episode)
             .OrderBy(m => m.SeasonNumber)
             .ThenBy(m => m.EpisodeNumber)
+            // DV-WI-001: duplicate files of one episode share (Season, Episode); without a
+            // total order their relative position is DB-arbitrary and next/previous-episode
+            // navigation flips between copies across calls.
+            .ThenBy(m => m.Id)
             .ToListAsync();
     }
 

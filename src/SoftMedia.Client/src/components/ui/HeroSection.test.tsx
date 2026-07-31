@@ -56,7 +56,9 @@ describe('HeroSection artwork URLs', () => {
         expect(img.getAttribute('src')).toContain('access_token=test-jwt-token');
     });
 
-    it('leaves a local /cache series poster untouched', () => {
+    // AA-WI-001/004: /cache/images statics are token-gated — the hero must attach
+    // the media token to a local series poster (path preserved, token appended).
+    it('tokenizes a local /cache series poster without rewriting the path', () => {
         render(
             <HeroSection items={[baseItem({
                 title: 'Breaking Bad',
@@ -66,7 +68,9 @@ describe('HeroSection artwork URLs', () => {
         );
 
         const img = screen.getByAltText('Breaking Bad') as HTMLImageElement;
-        expect(img.getAttribute('src')).toBe('/cache/images/series/bb.jpg');
+        expect(img.getAttribute('src')).toContain('/cache/images/series/bb.jpg');
+        expect(img.getAttribute('src')).toContain('access_token=test-jwt-token');
+        expect(img.getAttribute('src')).not.toContain('/api/v1/cache');
     });
 
     it('frames music art square', () => {

@@ -65,20 +65,22 @@ export function useLocalPreferences() {
         return defaultPreferences;
     });
 
-    // Update state when user changes (to load that user's prefs)
-    useEffect(() => {
-        const newKey = `${BASE_PREFERENCES_KEY}_${userId}`;
+    // Reload when the user changes — during render, so the previous user's
+    // subtitle/theme prefs never apply for a frame after switching accounts.
+    // Reading localStorage here is fine: it's synchronous and stable between
+    // renders, which is all render-time adjustment requires.
+    const [loadedKey, setLoadedKey] = useState(storageKey);
+    if (storageKey !== loadedKey) {
+        setLoadedKey(storageKey);
         try {
-            const stored = localStorage.getItem(newKey);
-            if (stored) {
-                setPreferences({ ...defaultPreferences, ...JSON.parse(stored) });
-            } else {
-                setPreferences(defaultPreferences);
-            }
-        } catch (e) {
+            const stored = localStorage.getItem(storageKey);
+            setPreferences(stored
+                ? { ...defaultPreferences, ...JSON.parse(stored) }
+                : defaultPreferences);
+        } catch {
             setPreferences(defaultPreferences);
         }
-    }, [userId]);
+    }
 
     // Persist to localStorage whenever preferences change (using the current user's key)
     useEffect(() => {

@@ -67,7 +67,8 @@ interface PlayerDebugPanelProps {
     mediaId: string;
     token: string;
     subtitleTrack: number | null;
-    clientCapabilities?: any;
+    /** Shipped verbatim (JSON) to the debug endpoint; the server owns the shape. */
+    clientCapabilities?: object;
     onClose: () => void;
     streamId?: string;
 }
@@ -116,7 +117,9 @@ export function PlayerDebugPanel({ mediaId, token, subtitleTrack, clientCapabili
         };
 
         fetchDebugInfo();
-    }, [mediaId, token, subtitleTrack, clientCapabilities]);
+        // streamId rides in the query string, so a session revival (new sid) must
+        // refetch — omitting it left the panel describing the DEAD session.
+    }, [mediaId, token, subtitleTrack, clientCapabilities, streamId]);
 
     // Close on Escape key
     useEffect(() => {

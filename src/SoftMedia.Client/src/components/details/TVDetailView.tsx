@@ -12,7 +12,9 @@ import HorizontalScrollList, { type HorizontalScrollListHandle } from '../ui/Hor
 import CastStripItem from './CastStripItem';
 import { ExtrasSection } from './ExtrasSection';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
+import { useMediaTokenRefresh } from '../../hooks/useMediaTokenRefresh';
 import { formatRuntime } from '../../lib/utils';
+import { scrollSelectionIntoView } from '../../lib/scrollSelectionIntoView';
 
 interface ScrollToIndexHandle {
     scrollToIndex: (index: number) => void;
@@ -50,7 +52,6 @@ interface TVDetailViewProps {
     /** Whether that episode has a saved playback position (as opposed to being simply next up). */
     resumeHasPosition?: boolean;
     onEpisodeSelect?: (episode: MediaItem) => void;
-    onDefaultQualityItemFound?: (episode: MediaItem) => void;
 }
 
 // --- Pure utility functions (module-scope to avoid re-creation) ---
@@ -67,7 +68,15 @@ function formatTime(seconds: number): string {
 }
 
 function getResolutionBadge(ep: MediaItem): string | null {
-    const resolution = ep.resolution || ep.metadata?.resolution;
+    // DV-WI-021: the server-derived label is the single authority (it already encodes
+    // resolution + HDR + edition, and for a collapsed duplicate row it describes the
+    // BEST copy). The height/width heuristic below survives only as a fallback for
+    // never-probed rows.
+    if (ep.versionLabel) return ep.versionLabel;
+
+    // metadata is provider-supplied Record<string, unknown> — narrow before use.
+    const metaResolution = typeof ep.metadata?.resolution === 'string' ? ep.metadata.resolution : null;
+    const resolution = ep.resolution || metaResolution;
 
     if (resolution) {
         const res = resolution.toLowerCase();
@@ -77,8 +86,8 @@ function getResolutionBadge(ep: MediaItem): string | null {
         if (res.includes('480') || res.includes('sd')) return 'SD';
     }
 
-    const h = ep.height || ep.metadata?.height || 0;
-    const w = ep.width || ep.metadata?.width || 0;
+    const h = ep.height || Number(ep.metadata?.height) || 0;
+    const w = ep.width || Number(ep.metadata?.width) || 0;
 
     if (h >= 4300 || w >= 7600) return '8K';
     if (h >= 2100 || w >= 3800) return '4K';
@@ -98,31 +107,6 @@ function getEpisodeProgress(ep: MediaItem): { resumeSeconds: number; progressPer
     const progressPercent = ep.progress || 0;
     const resumeSeconds = durationSeconds > 0 ? (progressPercent / 100) * durationSeconds : 0;
     return { resumeSeconds, progressPercent };
-}
-
-/**
- * Brings an auto-selected season/episode into view by nudging the scroller it
- * lives in — and nothing else. Deliberately not `scrollIntoView`: the strips
- * usually sit below the fold on load, and a resume selection must never yank
- * the page around on arrival. `boundary` (the section wrapper) stops the walk
- * short of the page scroller, so a strip that doesn't overflow simply does
- * nothing instead of scrolling the document to it.
- */
-export function scrollSelectionIntoView(el: HTMLElement, boundary: HTMLElement) {
-    for (let c = el.parentElement; c && c !== boundary; c = c.parentElement) {
-        const horizontal = c.scrollWidth > c.clientWidth + 1;
-        const vertical = c.scrollHeight > c.clientHeight + 1;
-        if (!horizontal && !vertical) continue;
-
-        const er = el.getBoundingClientRect();
-        const cr = c.getBoundingClientRect();
-        if (horizontal) {
-            c.scrollLeft += (er.left - cr.left) - (cr.width - er.width) / 2;
-        } else {
-            c.scrollTop += (er.top - cr.top) - (cr.height - er.height) / 2;
-        }
-        return;
-    }
 }
 
 const resBadgeClass = (badge: string | null) => {
@@ -332,6 +316,9 @@ interface VirtualizedEpisodeListProps {
 
 function VirtualizedEpisodeList({ episodes, selectedEpisodeId, onEpisodeSelect, getPoster, ref }: VirtualizedEpisodeListProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
+    // TanStack Virtual returns functions the React Compiler cannot memoize; the
+    // compiler skips this component either way, so the warning is informational.
+    // eslint-disable-next-line react-hooks/incompatible-library
     const virtualizer = useVirtualizer({
         count: episodes.length,
         getScrollElement: () => scrollRef.current,
@@ -385,7 +372,9 @@ function VirtualizedEpisodeList({ episodes, selectedEpisodeId, onEpisodeSelect, 
 
 // --- Main component ---
 
-export default function TVDetailView({ item, selectedEpisodeId, resumeEpisodeId, resumeEpisodePending, resumeHasPosition, onEpisodeSelect, onDefaultQualityItemFound }: TVDetailViewProps) {
+export default function TVDetailView({ item, selectedEpisodeId, resumeEpisodeId, resumeEpisodePending, resumeHasPosition, onEpisodeSelect }: TVDetailViewProps) {
+    // Episode stills / season posters embed the media token (AA-WI-001) — re-render on rotation.
+    useMediaTokenRefresh();
     const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
     const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards');
     const { isSidebarCollapsed } = useUIStore();
@@ -549,34 +538,28 @@ export default function TVDetailView({ item, selectedEpisodeId, resumeEpisodeId,
         [seasons, selectedSeason]
     );
 
-    // Find a default quality item (representative episode) if none is selected
-    useEffect(() => {
-        if (!episodes || episodes.length === 0 || !onDefaultQualityItemFound) return;
+    // DV-WI-022: the "representative episode" quality sampling is GONE — with mixed
+    // 1080p/4K copies it was a coin flip which duplicate the header advertised. The
+    // series DTO now carries an honest server-side aggregate (best height across
+    // episodes, HDR if any), so MediaQualityInfo reads the item itself.
 
-        const firstSeasonNum = seasonNumbers[0];
-        if (firstSeasonNum === undefined) return;
-
-        const firstSeasonEpisodes = seasons[firstSeasonNum];
-        if (firstSeasonEpisodes && firstSeasonEpisodes.length > 0) {
-            const representativeEp = firstSeasonEpisodes[0];
-            onDefaultQualityItemFound(representativeEp);
-        }
-    }, [episodes, seasonNumbers, seasons, onDefaultQualityItemFound]);
-
+    // Cached stills/posters (/cache/images/…) are token-gated (AA-WI-001);
+    // attachAuthToApiUrl covers them and the /api proxy URLs alike.
     const getEpisodePoster = (ep: MediaItem, width = 400) => {
         if (ep.backdropPath) {
-            if (ep.backdropPath.startsWith('/cache/')) return ep.backdropPath;
             if (ep.backdropPath.startsWith('http')) return attachAuthToApiUrl(`/api/v1/image/proxy?url=${encodeURIComponent(ep.backdropPath)}&width=${width}`);
-            return ep.backdropPath;
+            return attachAuthToApiUrl(ep.backdropPath);
         }
 
-        const stillUrl = (ep.metadata || {}).still;
+        const stillRaw = ep.metadata?.still;
+        const stillUrl = typeof stillRaw === 'string' ? stillRaw : null;
         if (stillUrl) {
-            if (stillUrl.startsWith('/cache/')) return stillUrl;
             if (stillUrl.startsWith('http')) return attachAuthToApiUrl(`/api/v1/image/proxy?url=${encodeURIComponent(stillUrl)}&width=${width}`);
+            return attachAuthToApiUrl(stillUrl);
         }
 
-        return ep.posterPath || item.posterPath;
+        const fallback = ep.posterPath || item.posterPath;
+        return fallback ? attachAuthToApiUrl(fallback) : fallback;
     };
 
     const getSeasonPoster = useCallback((seasonNum: number): string | null => {
@@ -585,7 +568,7 @@ export default function TVDetailView({ item, selectedEpisodeId, resumeEpisodeId,
         const poster = season?.poster || item.posterPath || null;
         if (!poster) return null;
         if (poster.includes('/image/proxy?')) return attachAuthToApiUrl(`${poster}&width=200`);
-        return poster;
+        return attachAuthToApiUrl(poster);
     }, [seasonsData, item.posterPath]);
 
     // Sequential left-to-right reveal for season posters and episode stills.

@@ -167,10 +167,14 @@ export function ActiveSessionsCard() {
                                             )}
                                         </td>
                                         <td className="py-2 text-xs text-gray-400">
-                                            {s.type === 'DirectPlay'
-                                                ? t('Original')
-                                                : [s.resolution, s.codec, s.maxBitrateKbps ? `${s.maxBitrateKbps} kbps` : null]
-                                                    .filter(Boolean).join(' · ') || '—'}
+                                            {/* QS-WI-003: the tooltip names the clamp that bound this session */}
+                                            <span title={s.limitReason ?? undefined}>
+                                                {s.type === 'DirectPlay'
+                                                    ? t('Original')
+                                                    : [s.resolution, s.codec, s.maxBitrateKbps ? `${s.maxBitrateKbps} kbps` : null]
+                                                        .filter(Boolean).join(' · ') || '—'}
+                                                {s.limitReason && <span className="text-amber-400/90"> *</span>}
+                                            </span>
                                         </td>
                                         <td className="py-2">
                                             <div className="flex items-center gap-2">

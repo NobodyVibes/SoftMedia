@@ -25,6 +25,7 @@ public class AdminSessionsController : ControllerBase
     private readonly ITranscodeService _transcodeService;
     private readonly IActiveStreamRegistry _streamRegistry;
     private readonly ITerminatedSessionRegistry _terminatedSessions;
+    private readonly IStreamPlanStore _planStore;
     private readonly AppDbContext _context;
     private readonly ILogger<AdminSessionsController> _logger;
 
@@ -32,12 +33,14 @@ public class AdminSessionsController : ControllerBase
         ITranscodeService transcodeService,
         IActiveStreamRegistry streamRegistry,
         ITerminatedSessionRegistry terminatedSessions,
+        IStreamPlanStore planStore,
         AppDbContext context,
         ILogger<AdminSessionsController> logger)
     {
         _transcodeService = transcodeService;
         _streamRegistry = streamRegistry;
         _terminatedSessions = terminatedSessions;
+        _planStore = planStore;
         _context = context;
         _logger = logger;
     }
@@ -120,7 +123,10 @@ public class AdminSessionsController : ControllerBase
                 SubtitleTrackIndex: s.Key.SubtitleTrackIndex,
                 StreamId: s.Key.StreamId,
                 DeviceType: s.ClientDevice?.DeviceType,
-                IpAddress: s.ClientDevice?.IpAddress));
+                IpAddress: s.ClientDevice?.IpAddress,
+                // QS-WI-003: the clamp winner negotiated for this session, if any
+                // (e.g. "bitrate.wan-cap"), shown as the Quality tooltip.
+                LimitReason: _planStore.Get(s.Key.MediaId, s.UserId, s.Key.StreamId)?.LimitReasonCode));
         }
 
         foreach (var d in directPlays)
@@ -146,7 +152,8 @@ public class AdminSessionsController : ControllerBase
                 SubtitleTrackIndex: null,
                 StreamId: null,
                 DeviceType: d.Device?.DeviceType,
-                IpAddress: d.Device?.IpAddress));
+                IpAddress: d.Device?.IpAddress,
+                LimitReason: null)); // direct play = nothing clamped by definition
         }
 
         return Ok(rows.OrderByDescending(r => r.StartedAt));
@@ -219,4 +226,7 @@ public record ActiveSessionDto(
     /// from the User-Agent, and the client address. Null when the session predates any request
     /// that carried them (e.g. an entry restored without an HttpContext).
     string? DeviceType,
-    string? IpAddress);
+    string? IpAddress,
+    /// QS-WI-003: the winning clamp reason code from plan negotiation (e.g. "bitrate.wan-cap"),
+    /// or null when nothing clamped / no plan was persisted for the session.
+    string? LimitReason = null);

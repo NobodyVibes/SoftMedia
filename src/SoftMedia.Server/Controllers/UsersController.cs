@@ -78,7 +78,9 @@ public class UsersController : ControllerBase
                 _context.Invites.Where(i => i.UsedById == u.Id).Select(i => i.Code).FirstOrDefault(),
                 u.MustChangePassword,
                 _context.UserTotps.Any(t => t.UserId == u.Id && t.EnabledAt != null),
-                u.MaxStreamBitrateKbps ?? 0 // R-WI-009 (null and 0 both mean unlimited)
+                u.MaxStreamBitrateKbps ?? 0, // R-WI-009 (null and 0 both mean unlimited)
+                u.RemoteMaxStreamBitrateKbps ?? 0, // QS-WI-002
+                u.MaxStreamResolution ?? 0
             ))
             .ToListAsync();
 
@@ -147,7 +149,9 @@ public class UsersController : ControllerBase
             null,
             user.MustChangePassword,
             false, // newly created account has no 2FA enrollment yet
-            user.MaxStreamBitrateKbps ?? 0 // R-WI-009 (0 for a new account)
+            user.MaxStreamBitrateKbps ?? 0, // R-WI-009 (0 for a new account)
+            user.RemoteMaxStreamBitrateKbps ?? 0, // QS-WI-002
+            user.MaxStreamResolution ?? 0
         ));
     }
 
@@ -214,12 +218,20 @@ public class UsersController : ControllerBase
     /// controller is <c>[Authorize(Roles="Admin")]</c>). Enforced at plan time by
     /// <see cref="Services.Media.StreamPlanService"/> / TranscodeController since P1-WI-003.
     /// </summary>
+    /// Heights the resolution ceiling accepts (QS-WI-002). Matches the quality-label ladder
+    /// used everywhere else (TranscodeController.ResolutionRank); 0 = unlimited/inherit.
+    private static readonly int[] AllowedStreamResolutions = [0, 480, 720, 1080, 1440, 2160, 4320];
+
     [HttpPut("{id}/streaming")]
     public async Task<IActionResult> UpdateUserStreaming(Guid id, UpdateUserStreamingRequest request)
     {
-        if (request.MaxStreamBitrateKbps < 0)
+        if (request.MaxStreamBitrateKbps < 0 || request.RemoteMaxStreamBitrateKbps is < 0)
         {
             return BadRequest("Bitrate cap cannot be negative (use 0 for unlimited).");
+        }
+        if (request.MaxStreamResolution is { } res && !AllowedStreamResolutions.Contains(res))
+        {
+            return BadRequest("Resolution cap must be one of 0 (unlimited), 480, 720, 1080, 1440, 2160, 4320.");
         }
 
         var user = await _context.Users.FindAsync(id);
@@ -231,6 +243,11 @@ public class UsersController : ControllerBase
         // Clamp the upper bound to the server's absolute streaming ceiling so a typo can't store an
         // absurd value; the plan computation clamps again at request time.
         user.MaxStreamBitrateKbps = Math.Min(request.MaxStreamBitrateKbps, 100_000);
+        // QS-WI-002: 0/null = clear (inherit). Stored as null so "unset" is unambiguous in SQL.
+        user.RemoteMaxStreamBitrateKbps = request.RemoteMaxStreamBitrateKbps is > 0
+            ? Math.Min(request.RemoteMaxStreamBitrateKbps.Value, 100_000)
+            : null;
+        user.MaxStreamResolution = request.MaxStreamResolution is > 0 ? request.MaxStreamResolution : null;
         await _context.SaveChangesAsync();
 
         return Ok();

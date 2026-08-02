@@ -567,7 +567,9 @@ public class AuthController : ControllerBase
             ratings,
             user.FirstName, user.LastName, user.CreatedByAdmin,
             usedInviteCode, mustChangePassword, twoFactorEnabled,
-            user.MaxStreamBitrateKbps ?? 0); // R-WI-009
+            user.MaxStreamBitrateKbps ?? 0, // R-WI-009
+            user.RemoteMaxStreamBitrateKbps ?? 0, // QS-WI-002
+            user.MaxStreamResolution ?? 0);
     }
 
     private string? ClientIp() => HttpContext.Connection.RemoteIpAddress?.ToString();

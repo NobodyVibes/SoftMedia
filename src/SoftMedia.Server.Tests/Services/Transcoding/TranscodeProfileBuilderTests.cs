@@ -18,6 +18,7 @@ public class TranscodeProfileBuilderTests : IDisposable
 {
     private readonly Mock<IMediaProbeService> _probe = new();
     private readonly Mock<ISubtitleService> _subtitles = new();
+    private readonly Mock<IOpenClToneMapProbe> _openClProbe = new();
     private readonly string _outputDir;
 
     public TranscodeProfileBuilderTests()
@@ -28,6 +29,9 @@ public class TranscodeProfileBuilderTests : IDisposable
         // burn-in branch is exercised (a loose mock's false would silently disable it).
         _subtitles.Setup(s => s.ExtractSubtitleToAssAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string>()))
             .ReturnsAsync(true);
+        // QS-WI-012: the OpenCL runtime is available by default; individual tests flip it off
+        // to exercise the software fallback.
+        _openClProbe.Setup(p => p.IsAvailableAsync()).ReturnsAsync(true);
     }
 
     public void Dispose()
@@ -45,7 +49,8 @@ public class TranscodeProfileBuilderTests : IDisposable
             NullLogger<TranscodeProfileBuilder>.Instance,
             binaries.Object,
             _probe.Object,
-            _subtitles.Object);
+            _subtitles.Object,
+            _openClProbe.Object);
     }
 
     private void SetupSource(string? fieldOrder = null, string pixelFormat = "yuv420p", string? colorTransfer = null)
@@ -237,9 +242,13 @@ public class TranscodeProfileBuilderTests : IDisposable
     // ---- Upscale clamp + lanczos ----
 
     [Theory]
+    [InlineData("480p", "min(854,iw)")]
     [InlineData("720p", "min(1280,iw)")]
     [InlineData("1080p", "min(1920,iw)")]
+    [InlineData("1440p", "min(2560,iw)")]   // numeric "{n}p" labels come from negotiated plans
     [InlineData("4k", "min(3840,iw)")]
+    [InlineData("2160p", "min(3840,iw)")]   // "2160p" and "4k" are the same target
+    [InlineData("4320p", "min(7680,iw)")]
     public async Task Software_scale_targets_are_clamped_to_source_width(string maxResolution, string expectedClamp)
     {
         SetupSource();
@@ -474,31 +483,260 @@ public class TranscodeProfileBuilderTests : IDisposable
         Assert.Contains("-c:a aac -ac 2", psi.Arguments);
     }
 
-    // ---- SR-WI-023: HDR tone mapping (nvidia CUDA / non-nvidia software) + color metadata ----
+    // ---- SR-WI-023/QS-WI-012: HDR tone mapping (nvidia CUDA / intel+amd OpenCL / software
+    // ---- fallback) + color metadata ----
 
     /// <summary>The exact software HDR→SDR chain (with the default hable operator).</summary>
     private const string SoftwareToneMapChain =
         "zscale=t=linear:npl=100,tonemap=hable,zscale=p=bt709:t=bt709:m=bt709:r=tv,format=yuv420p";
 
+    /// <summary>The exact OpenCL HDR→SDR chain (QS-WI-012, default hable operator).</summary>
+    private const string OpenClToneMapChain =
+        "format=p010le,hwupload,tonemap_opencl=format=nv12:p=bt709:t=bt709:m=bt709:tonemap=hable:desat=0,hwdownload,format=nv12";
+
     private const string Bt709Tags = "-color_primaries bt709 -color_trc bt709 -colorspace bt709";
 
     [Theory]
-    [InlineData("none", "smpte2084")]     // HDR10 (PQ)
-    [InlineData("intel", "smpte2084")]
-    [InlineData("amd", "smpte2084")]
-    [InlineData("none", "arib-std-b67")]  // HLG
-    [InlineData("intel", "arib-std-b67")]
-    [InlineData("amd", "arib-std-b67")]
-    public async Task Hdr_source_on_non_nvidia_engages_the_software_tonemap_chain_with_bt709_tags(string hw, string transfer)
+    [InlineData("smpte2084")]     // HDR10 (PQ)
+    [InlineData("arib-std-b67")]  // HLG
+    public async Task Hdr_source_without_hw_accel_engages_the_software_tonemap_chain_with_bt709_tags(string transfer)
     {
         SetupSource(pixelFormat: "yuv420p10le", colorTransfer: transfer);
 
-        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = hw, MaxResolution = "original" });
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = "none", MaxResolution = "original" });
 
         Assert.Contains($"-vf \"{SoftwareToneMapChain}\"", args);
         Assert.Contains(Bt709Tags, args);
         Assert.DoesNotContain("tonemap_cuda", args);   // CUDA chain is nvidia-only
+        Assert.DoesNotContain("tonemap_opencl", args); // OpenCL chain is intel/amd-only
         Assert.DoesNotContain("bt2020", args);         // output is SDR, never tagged HDR
+    }
+
+    [Theory]
+    [InlineData("intel", "smpte2084")]
+    [InlineData("amd", "smpte2084")]
+    [InlineData("intel", "arib-std-b67")]
+    [InlineData("amd", "arib-std-b67")]
+    public async Task Hdr_source_on_intel_amd_engages_the_opencl_tonemap_chain_with_bt709_tags(string hw, string transfer)
+    {
+        // QS-WI-012: with a working OpenCL runtime, Intel/AMD tone-map on the GPU.
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: transfer);
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = hw, MaxResolution = "original" });
+
+        Assert.Contains($"-vf \"{OpenClToneMapChain}\"", args);
+        Assert.Contains("-init_hw_device opencl=ocl -filter_hw_device ocl", args);
+        Assert.Contains(Bt709Tags, args);
+        Assert.DoesNotContain("zscale", args);        // the software chain must not double up
+        Assert.DoesNotContain("tonemap_cuda", args);
+        Assert.DoesNotContain("bt2020", args);
+    }
+
+    [Theory]
+    [InlineData("intel")]
+    [InlineData("amd")]
+    public async Task Hdr_on_intel_amd_without_opencl_falls_back_to_the_software_chain(string hw)
+    {
+        // QS-WI-012: the software zscale/tonemap chain is the universal fallback — never
+        // removed. No OpenCL runtime → no OpenCL device init (which would kill ffmpeg).
+        _openClProbe.Setup(p => p.IsAvailableAsync()).ReturnsAsync(false);
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = hw, MaxResolution = "original" });
+
+        Assert.Contains($"-vf \"{SoftwareToneMapChain}\"", args);
+        Assert.DoesNotContain("tonemap_opencl", args);
+        Assert.DoesNotContain("-init_hw_device opencl", args);
+    }
+
+    [Fact]
+    public async Task OpenCl_chain_scales_in_software_before_the_gpu_upload()
+    {
+        // Fewer pixels through the GPU hop: downscale precedes hwupload, mirroring the
+        // scale-before-tonemap ordering of the CUDA and software chains.
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = "intel", MaxResolution = "720p" });
+
+        Assert.Contains($"scale='min(1280,iw)':-2:flags=lanczos,{OpenClToneMapChain}", args);
+    }
+
+    [Fact]
+    public async Task Interlaced_hdr_source_deinterlaces_at_the_head_of_the_opencl_chain()
+    {
+        SetupSource(fieldOrder: "tt", pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = "amd", MaxResolution = "original" });
+
+        Assert.Contains($"bwdif=mode=send_frame,{OpenClToneMapChain}", args);
+    }
+
+    [Fact]
+    public async Task Hdr_text_subtitles_burn_after_the_opencl_tonemap()
+    {
+        // The chain ends in system-memory nv12 (hwdownload), so bt709 subtitle colors land
+        // on already-tone-mapped frames — same shape as the CUDA chain's subtitle tail.
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+        _probe.Setup(p => p.ProbeSubtitleCodecAsync(It.IsAny<string>(), It.IsAny<int>())).ReturnsAsync("subrip");
+
+        var args = await ArgsAsync(
+            new TranscodeSettings { HardwareAcceleration = "intel", MaxResolution = "original" },
+            subtitleTrackIndex: 2);
+
+        Assert.Contains($"{OpenClToneMapChain},subtitles=", args);
+    }
+
+    [Theory]
+    [InlineData("intel", "h264_qsv")]
+    [InlineData("amd", "h264_amf")]
+    public async Task OpenCl_tonemap_keeps_the_hardware_encoder(string hw, string encoder)
+    {
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = hw, MaxResolution = "original" });
+
+        Assert.Contains($"-c:v {encoder}", args);
+    }
+
+    [Fact]
+    public async Task OpenCl_chain_uses_the_configured_tonemap_operator()
+    {
+        SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
+
+        var args = await ArgsAsync(new TranscodeSettings
+        {
+            HardwareAcceleration = "intel",
+            MaxResolution = "original",
+            ToneMappingAlgorithm = "reinhard",
+        });
+
+        Assert.Contains("tonemap_opencl=format=nv12:p=bt709:t=bt709:m=bt709:tonemap=reinhard", args);
+    }
+
+    // ---- QS-WI-012: SelectToneMapPipeline — the single pipeline authority ----
+
+    [Theory]
+    [InlineData("nvidia", true, ToneMapPipeline.Cuda)]
+    [InlineData("nvidia", false, ToneMapPipeline.Cuda)]   // CUDA never depends on OpenCL
+    [InlineData("intel", true, ToneMapPipeline.OpenCl)]
+    [InlineData("intel", false, ToneMapPipeline.Software)]
+    [InlineData("amd", true, ToneMapPipeline.OpenCl)]
+    [InlineData("amd", false, ToneMapPipeline.Software)]
+    [InlineData("none", true, ToneMapPipeline.Software)]  // OpenCL is only wired for intel/amd
+    [InlineData("none", false, ToneMapPipeline.Software)]
+    public void Pipeline_authority_maps_each_hwaccel_to_its_tonemap_pipeline(string hw, bool openCl, ToneMapPipeline expected)
+    {
+        var pipeline = TranscodeProfileBuilder.SelectToneMapPipeline(
+            hw, sourceIsHdr: true, preserveHdr: false, outputVideoCodec: "h264",
+            subtitleBurnIn: false, openClToneMapAvailable: openCl);
+
+        Assert.Equal(expected, pipeline);
+    }
+
+    [Theory]
+    [InlineData("nvidia")]
+    [InlineData("intel")]
+    [InlineData("none")]
+    public void Pipeline_authority_returns_none_for_sdr_sources(string hw)
+    {
+        Assert.Equal(ToneMapPipeline.None, TranscodeProfileBuilder.SelectToneMapPipeline(
+            hw, sourceIsHdr: false, preserveHdr: false, outputVideoCodec: "h264",
+            subtitleBurnIn: false, openClToneMapAvailable: true));
+    }
+
+    [Fact]
+    public void Pipeline_authority_honours_hdr_passthrough_only_for_hdr_capable_codecs()
+    {
+        // PreserveHDR + hevc → passthrough (no tone-map)…
+        Assert.Equal(ToneMapPipeline.None, TranscodeProfileBuilder.SelectToneMapPipeline(
+            "nvidia", sourceIsHdr: true, preserveHdr: true, outputVideoCodec: "hevc",
+            subtitleBurnIn: false, openClToneMapAvailable: false));
+        // …but h264 output can't carry HDR (SR-WI-023 #5) — tone-map despite PreserveHDR…
+        Assert.Equal(ToneMapPipeline.Cuda, TranscodeProfileBuilder.SelectToneMapPipeline(
+            "nvidia", sourceIsHdr: true, preserveHdr: true, outputVideoCodec: "h264",
+            subtitleBurnIn: false, openClToneMapAvailable: false));
+        // …and subtitle burn-in forces the tone-map even for hevc passthrough.
+        Assert.Equal(ToneMapPipeline.Cuda, TranscodeProfileBuilder.SelectToneMapPipeline(
+            "nvidia", sourceIsHdr: true, preserveHdr: true, outputVideoCodec: "hevc",
+            subtitleBurnIn: true, openClToneMapAvailable: false));
+    }
+
+    // ---- QS-WI-006: default transcode ladder (CVBR ceiling when nothing was negotiated) ----
+
+    [Theory]
+    [InlineData("480p", "-maxrate 2500k -bufsize 5000k")]
+    [InlineData("720p", "-maxrate 5000k -bufsize 10000k")]
+    [InlineData("1080p", "-maxrate 9000k -bufsize 18000k")]
+    [InlineData("1440p", "-maxrate 14000k -bufsize 28000k")]
+    [InlineData("4k", "-maxrate 22000k -bufsize 44000k")]
+    [InlineData("2160p", "-maxrate 22000k -bufsize 44000k")]
+    [InlineData("4320p", "-maxrate 22000k -bufsize 44000k")] // above the top rung: 2160 ceiling
+    public async Task Uncapped_transcode_gets_the_ladder_default_ceiling_for_its_target(string maxRes, string expected)
+    {
+        SetupSource();
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = "none", MaxResolution = maxRes });
+
+        Assert.Contains(expected, args);
+    }
+
+    [Fact]
+    public async Task Negotiated_bitrate_cap_replaces_the_ladder_default_outright()
+    {
+        SetupSource();
+
+        var psi = await Build().BuildTranscodeArgumentsAsync(
+            @"C:\media\movie.mkv", _outputDir, "seg",
+            new TranscodeSettings { HardwareAcceleration = "none", MaxResolution = "1080p" },
+            subtitleTrackIndex: null, seekPosition: null, readRate: null,
+            audioTrackIndex: null, maxBitrate: 3000);
+
+        Assert.Contains("-maxrate 3000k", psi.Arguments);
+        Assert.DoesNotContain("-maxrate 9000k", psi.Arguments);
+    }
+
+    [Fact]
+    public async Task Ladder_default_uses_the_source_height_when_resolution_is_original()
+    {
+        // Never-upscale clamp: with MaxResolution=original a 1080p source picks the 1080 rung.
+        _probe.Setup(p => p.ProbeMediaAsync(It.IsAny<string>())).ReturnsAsync(new MediaProbeResult
+        {
+            PixelFormat = "yuv420p",
+            FrameRate = 25,
+            Resolution = "1920x1080",
+            AudioCodec = "aac",
+            AudioChannels = 2,
+        });
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = "none", MaxResolution = "original" });
+
+        Assert.Contains("-maxrate 9000k", args);
+    }
+
+    [Fact]
+    public async Task Ladder_default_is_skipped_when_the_output_height_is_unknown()
+    {
+        // Unknown source size + "original": never guess low — no ceiling at all.
+        SetupSource(); // probe has no Resolution
+
+        var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = "none", MaxResolution = "original" });
+
+        Assert.DoesNotContain("-maxrate", args);
+    }
+
+    [Fact]
+    public async Task Ladder_default_scales_down_for_hevc_output()
+    {
+        SetupSource();
+
+        var args = await ArgsAsync(new TranscodeSettings
+        {
+            HardwareAcceleration = "none",
+            MaxResolution = "1080p",
+            OutputVideoCodec = "hevc",
+        });
+
+        Assert.Contains("-maxrate 5400k", args); // 9000 × 0.6
     }
 
     [Theory]
@@ -536,15 +774,16 @@ public class TranscodeProfileBuilderTests : IDisposable
     [InlineData("amd", "-hwaccel d3d11va", "h264_amf")]
     public async Task Hdr_on_intel_amd_forces_software_decode_but_keeps_the_hardware_encoder(string hw, string hwDecodeFlag, string encoder)
     {
+        // QS-WI-012: the OpenCL chain's hwupload consumes system-memory frames, so decode
+        // stays software (zero-copy QSV/D3D11→OpenCL interop is driver-fragile)…
         SetupSource(pixelFormat: "yuv420p10le", colorTransfer: "smpte2084");
 
         var args = await ArgsAsync(new TranscodeSettings { HardwareAcceleration = hw, MaxResolution = "original" });
 
-        // zscale/tonemap cannot consume QSV/D3D11VA hardware frames: decode goes software…
         Assert.DoesNotContain(hwDecodeFlag, args);
         // …while the hardware encoder stays (it accepts system-memory frames).
         Assert.Contains($"-c:v {encoder}", args);
-        Assert.Contains($"-vf \"{SoftwareToneMapChain}\"", args);
+        Assert.Contains($"-vf \"{OpenClToneMapChain}\"", args);
     }
 
     [Theory]

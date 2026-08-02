@@ -41,6 +41,7 @@ public class TranscodeController : ControllerBase
     private readonly IStreamPlanStore _planStore;
     private readonly ISettingsService _settingsService;
     private readonly Services.Sessions.ITerminatedSessionRegistry _terminatedSessions;
+    private readonly IUserStreamingPolicyProvider _userStreamingPolicy;
 
     /// <summary>
     /// 410 Gone: an admin stopped this session and it must not be resurrected by the
@@ -67,9 +68,11 @@ public class TranscodeController : ControllerBase
         ITokenService tokenService,
         ISettingsService settingsService,
         Services.Sessions.ITerminatedSessionRegistry terminatedSessions,
+        IUserStreamingPolicyProvider userStreamingPolicy,
         ILogger<TranscodeController> logger)
     {
         _terminatedSessions = terminatedSessions;
+        _userStreamingPolicy = userStreamingPolicy;
         _transcodeService = transcodeService;
         _streamPlanService = streamPlanService;
         _mediaRepository = mediaRepository;
@@ -87,23 +90,29 @@ public class TranscodeController : ControllerBase
 
     /// B-02 — quality-label ordering for the server-wide resolution clamp. Null or
     /// "original" ranks highest (they mean source quality, which must also clamp).
-    public static int ResolutionRank(string? quality) => quality?.ToLowerInvariant() switch
-    {
-        "480p" => 480,
-        "720p" => 720,
-        "1080p" => 1080,
-        "1440p" => 1440,
-        "4k" or "2160p" => 2160,
-        "8k" or "4320p" => 4320,
-        _ => int.MaxValue, // null / "original" / unknown = uncapped request
-    };
+    /// Delegates to the shared QualityLabels authority (unified 2026-08-02) so this
+    /// gate can never disagree with plan arbitration on what a label means.
+    public static int ResolutionRank(string? quality) => QualityLabels.Rank(quality);
 
-    /// Resolves the per-user streaming bitrate override (P1-WI-003), if any.
-    private async Task<int?> GetUserMaxBitrateAsync(Guid userId)
-        => await _dbContext.Users
-            .Where(u => u.Id == userId)
-            .Select(u => u.MaxStreamBitrateKbps)
-            .FirstOrDefaultAsync();
+    /// QS-WI-005 — the server-side BlockHdrTranscode rule: true when starting a transcode
+    /// with these parameters would tone-map (HDR source → SDR output). Delegates the
+    /// passthrough test to the profile builder's single pipeline authority so this backstop
+    /// can never disagree with the plan's ToneMapPlanned fact; WHICH pipeline would run is
+    /// irrelevant to blocking, so the hwaccel/OpenCL inputs are don't-cares here.
+    public static bool WouldToneMap(string? hdrFormat, bool preserveHdr, string? codec, bool subtitleSelected)
+        => !string.IsNullOrEmpty(hdrFormat)
+           && TranscodeProfileBuilder.SelectToneMapPipeline(
+                  "none", sourceIsHdr: true, preserveHdr: preserveHdr,
+                  outputVideoCodec: codec ?? "h264", subtitleBurnIn: subtitleSelected,
+                  openClToneMapAvailable: false) != ToneMapPipeline.None;
+
+    /// QS-WI-003: the winning clamp code negotiated into the plan (bitrate/resolution/quality
+    /// family), persisted with the session so the admin Now Playing card can name it.
+    private static string? ExtractLimitReasonCode(StreamPlan plan)
+        => plan.ReasonCodes.FirstOrDefault(c =>
+                c.Code.StartsWith("bitrate.", StringComparison.Ordinal) ||
+                c.Code.StartsWith("resolution.", StringComparison.Ordinal) ||
+                c.Code.StartsWith("quality.", StringComparison.Ordinal))?.Code;
 
     private Guid GetUserId()
     {
@@ -163,10 +172,10 @@ public class TranscodeController : ControllerBase
                 token = _tokenService.GenerateMediaToken(user).Token;
             }
 
-            var userMaxBitrate = await GetUserMaxBitrateAsync(userId);
+            var userPolicy = await _userStreamingPolicy.GetAsync(userId);
             var plan = await _streamPlanService.ComputeStreamPlanAsync(
                 id, mediaItem, capabilities, token ?? string.Empty,
-                HttpContext.Connection.RemoteIpAddress, userMaxBitrate);
+                HttpContext.Connection.RemoteIpAddress, userPolicy);
 
             // R-WI-002: persist the negotiated quality/security params, keyed by this session's
             // sid, so a later master.m3u8 request (especially a far-seek that rebuilds the URL
@@ -183,7 +192,8 @@ public class TranscodeController : ControllerBase
                     plan.TranscodePreserveHdr,
                     plan.TranscodeAudioCopy,
                     plan.TranscodeAudioCodec,
-                    plan.TranscodeAudioChannels));
+                    plan.TranscodeAudioChannels,
+                    ExtractLimitReasonCode(plan)));
             }
 
             _logger.LogInformation("Stream plan for {Id}: Method={Method}, Profile={Profile}, Reason={Reason}{Cast}",
@@ -253,7 +263,10 @@ public class TranscodeController : ControllerBase
             // hole the plan-store resolver alone did not close (it only covered the happy path).
             // The stored plan's bitrate was already cap-clamped at negotiation, so this is a
             // redundant-but-safe re-clamp there and the sole guard on the null-plan path.
-            var userBitrateCap = await GetUserMaxBitrateAsync(userId);
+            // QS-WI-002: network-aware — the user's REMOTE cap variant applies off-LAN.
+            var isLan = Services.Infrastructure.NetworkClassifier.IsLan(HttpContext.Connection.RemoteIpAddress);
+            var userPolicy = await _userStreamingPolicy.GetAsync(userId);
+            var userBitrateCap = userPolicy.EffectiveBitrateCap(isLan);
             if (userBitrateCap is > 0 && (bitrate is null or <= 0 || bitrate > userBitrateCap))
             {
                 bitrate = userBitrateCap;
@@ -267,6 +280,28 @@ public class TranscodeController : ControllerBase
             // bitrate clamp this is redundant-but-safe there and the sole guard here.
             if (storedPlan == null)
             {
+                // QS-WI-001/002: the policy resolution ceiling must hold here too. Same
+                // override-wins order as the plan path: the user's ceiling replaces the
+                // network (RemoteMaxResolution, off-LAN only) ceiling.
+                var policyCeiling = userPolicy.MaxResolution ?? 0;
+                if (policyCeiling <= 0 && !isLan)
+                {
+                    var remoteResSetting = await _settingsService.GetSettingAsync("RemoteMaxResolution", "original");
+                    var remoteRank = ResolutionRank(remoteResSetting);
+                    if (!string.Equals(remoteResSetting, "original", StringComparison.OrdinalIgnoreCase)
+                        && remoteRank != int.MaxValue)
+                    {
+                        policyCeiling = remoteRank;
+                    }
+                }
+                if (policyCeiling > 0 && ResolutionRank(resolution) > policyCeiling)
+                {
+                    _logger.LogWarning(
+                        "Clamping fabricated-sid resolution {Requested} to policy ceiling {Max}p for {MediaId}",
+                        resolution, policyCeiling, id);
+                    resolution = $"{policyCeiling}p";
+                }
+
                 var maxResSetting = await _settingsService.GetSettingAsync("MaxTranscodeResolution", "original");
                 if (!string.Equals(maxResSetting, "original", StringComparison.OrdinalIgnoreCase)
                     && ResolutionRank(resolution) > ResolutionRank(maxResSetting))
@@ -311,6 +346,20 @@ public class TranscodeController : ControllerBase
             // Only trust the persisted plan for this — a client cannot force a copy of an
             // incompatible source by fiddling the URL (there is no remux query param).
             var remux = storedPlan?.Method == PlaybackMethod.Remux;
+
+            // QS-WI-005 follow-up: BlockHdrTranscode holds SERVER-SIDE too. The pre-play
+            // dialog is the UX; a client that ignores the plan's "block" policy (or a
+            // fabricated-sid request) would otherwise start the tone-mapped session anyway.
+            // Remux/direct play never tone-map, and genuine HDR passthrough (hdr=true with
+            // an HDR-capable codec, no burn-in) is not a conversion — both stay allowed.
+            if (!remux && WouldToneMap(mediaItem.HdrFormat, hdr ?? false, codec, sub.HasValue)
+                && await _settingsService.GetSettingAsync("BlockHdrTranscode", false))
+            {
+                _logger.LogInformation(
+                    "Refusing HDR-to-SDR transcode for {MediaId} (BlockHdrTranscode is on)", id);
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    "HDR-to-SDR converted playback is disabled on this server.");
+            }
 
             // R-WI-004: the audio decision (copy / codec / channels) comes ONLY from the negotiated
             // plan — there is no audio-codec query param, so a fabricated-sid request with no stored
@@ -489,7 +538,11 @@ public class TranscodeController : ControllerBase
             if (!TranscodeSid.IsValid(sid)) return BadRequest("Invalid session id.");
             var userId = GetUserId();
             var isAdmin = User.IsInRole("Admin");
-            var result = await _debugService.GetDebugInfoAsync(id, userId, clientCaps, sub, isAdmin, sid);
+            // QS-WI-003: hand the debug plan the same network class + user policy the real
+            // plan endpoint uses, so its reason-code chain matches actual playback.
+            var debugPolicy = await _userStreamingPolicy.GetAsync(userId);
+            var result = await _debugService.GetDebugInfoAsync(id, userId, clientCaps, sub, isAdmin, sid,
+                HttpContext.Connection.RemoteIpAddress, debugPolicy);
             return Ok(result);
         }
         catch (Exception ex)

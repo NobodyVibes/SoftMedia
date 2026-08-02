@@ -11,7 +11,11 @@ namespace SoftMedia.Server.Services.Transcoding;
 
 public interface ITranscodeDebugService
 {
-    Task<object> GetDebugInfoAsync(Guid mediaId, Guid userId, ClientCapabilities? clientCaps, int? sub, bool isAdmin, string? sid = null);
+    /// <param name="clientIp">Resolved client IP so the debug plan applies the same LAN/WAN
+    /// tier the real plan would (QS-WI-003).</param>
+    /// <param name="userPolicy">The caller's per-user streaming limits, for the same reason.</param>
+    Task<object> GetDebugInfoAsync(Guid mediaId, Guid userId, ClientCapabilities? clientCaps, int? sub, bool isAdmin, string? sid = null,
+        System.Net.IPAddress? clientIp = null, Services.Media.UserStreamingPolicy? userPolicy = null);
 }
 
 public class TranscodeDebugService : ITranscodeDebugService
@@ -20,6 +24,7 @@ public class TranscodeDebugService : ITranscodeDebugService
     private readonly ISettingsService _settingsService;
     private readonly IStreamPlanService _streamPlanService;
     private readonly IBinaryLocationService _binaryLocationService;
+    private readonly IOpenClToneMapProbe _openClProbe;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TranscodeDebugService> _logger;
 
@@ -28,6 +33,7 @@ public class TranscodeDebugService : ITranscodeDebugService
         ISettingsService settingsService,
         IStreamPlanService streamPlanService,
         IBinaryLocationService binaryLocationService,
+        IOpenClToneMapProbe openClProbe,
         IServiceScopeFactory scopeFactory,
         ILogger<TranscodeDebugService> logger)
     {
@@ -35,11 +41,13 @@ public class TranscodeDebugService : ITranscodeDebugService
         _settingsService = settingsService;
         _streamPlanService = streamPlanService;
         _binaryLocationService = binaryLocationService;
+        _openClProbe = openClProbe;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
-    public async Task<object> GetDebugInfoAsync(Guid mediaId, Guid userId, ClientCapabilities? clientCaps, int? sub, bool isAdmin, string? sid = null)
+    public async Task<object> GetDebugInfoAsync(Guid mediaId, Guid userId, ClientCapabilities? clientCaps, int? sub, bool isAdmin, string? sid = null,
+        System.Net.IPAddress? clientIp = null, Services.Media.UserStreamingPolicy? userPolicy = null)
     {
         if (sub.HasValue && sub.Value < 0) sub = null;
 
@@ -71,8 +79,11 @@ public class TranscodeDebugService : ITranscodeDebugService
             return new { error = "Media item not found" };
         }
 
-        // Compute Stream Plan (Backend Decision Logic)
-        var streamPlan = await _streamPlanService.ComputeStreamPlanAsync(mediaId, mediaItem, clientCaps ?? new ClientCapabilities(), string.Empty);
+        // Compute Stream Plan (Backend Decision Logic). QS-WI-003: the debug plan runs with
+        // the caller's real network class and user policy so the reason-code chain below
+        // matches what the play path actually decided.
+        var streamPlan = await _streamPlanService.ComputeStreamPlanAsync(
+            mediaId, mediaItem, clientCaps ?? new ClientCapabilities(), string.Empty, clientIp, userPolicy);
 
         if (session == null)
         {
@@ -81,6 +92,7 @@ public class TranscodeDebugService : ITranscodeDebugService
                 playbackMode = "DirectPlay",
                 isTranscoding = false,
                 message = "No active transcode session - likely direct play",
+                reasonCodes = streamPlan.ReasonCodes,
                 clientCapabilities = clientCaps != null ? new
                 {
                     videoCodecs = clientCaps.VideoCodecs,
@@ -115,18 +127,28 @@ public class TranscodeDebugService : ITranscodeDebugService
         // never tone-maps.
         var subtitleBurnIn = session.BurnSubtitles || (session.IsBitmapSubtitle && sub.HasValue);
         var effectiveCodec = session.TargetCodec ?? outputVideoCodec;
-        var codecCanCarryHdr = effectiveCodec.Contains("hevc", StringComparison.OrdinalIgnoreCase)
-            || effectiveCodec.Contains("265", StringComparison.OrdinalIgnoreCase)
-            || effectiveCodec.Contains("av1", StringComparison.OrdinalIgnoreCase);
-        var preserveEngaged = session.PreserveHdr && codecCanCarryHdr && !subtitleBurnIn;
-        var toneMapped = session.IsSourceHdr && !session.IsRemux && !preserveEngaged;
+        var preserveEngaged = session.PreserveHdr
+            && TranscodeProfileBuilder.CodecCanCarryHdr(effectiveCodec) && !subtitleBurnIn;
+        // QS-WI-012: report the tone-map decision AND its pipeline through the same single
+        // authority the builder and planner consult (remux never tone-maps).
+        var openClAvailable = session.IsSourceHdr && !session.IsRemux
+            && hwAccel.ToLowerInvariant() is "intel" or "amd"
+            && await _openClProbe.IsAvailableAsync();
+        var toneMapPipeline = session.IsRemux
+            ? ToneMapPipeline.None
+            : TranscodeProfileBuilder.SelectToneMapPipeline(
+                hwAccel, session.IsSourceHdr, session.PreserveHdr, effectiveCodec,
+                subtitleBurnIn, openClAvailable);
+        var toneMapped = toneMapPipeline != ToneMapPipeline.None;
 
         // Build comprehensive debug response
         return new
         {
             playbackMode = "Transcode",
             isTranscoding = true,
-            
+            // QS-WI-003: the full decision chain (clamps, codec/HDR causes) for the debug panel.
+            reasonCodes = streamPlan.ReasonCodes,
+
             // 1. Client Capabilities - what the browser/client sent
             clientCapabilities = clientCaps != null ? new
             {
@@ -186,6 +208,8 @@ public class TranscodeDebugService : ITranscodeDebugService
                 targetResolution = session.TargetResolution ?? streamPlan.Resolution,
                 preserveHdr = preserveEngaged,
                 toneMapped,
+                // QS-WI-012: which pipeline runs the tone-map ("cuda" | "opencl" | "software").
+                toneMapPipeline = toneMapped ? toneMapPipeline.ToString().ToLowerInvariant() : null,
                 subtitleBurnIn,
                 subtitleTrack = sub,
                 subtitleLanguage = session.SubtitleLanguage

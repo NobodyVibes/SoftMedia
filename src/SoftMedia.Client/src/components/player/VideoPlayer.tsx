@@ -21,6 +21,8 @@ import { useCast } from '../../hooks/useCast';
 import { useMediaSession } from '../../hooks/useMediaSession';
 import { attachAuthToApiUrl } from '../../lib/mediaImageUrl';
 import { playerBackTarget } from '../../lib/backNavigation';
+import { HdrTranscodePrompt } from './HdrTranscodePrompt';
+import { markAutoAdvance, beginPlaybackSitting, acknowledgeSitting, pickSdrVersionOffer, shouldShowHdrPrompt } from '../../lib/hdrGuardrail';
 import { computeCueShift, applyCueShift, clampUserOffset } from './subtitleSync';
 import { buildCueCss } from './subtitleStyle';
 import { describeCastReadiness } from '../../hooks/castReadiness';
@@ -54,6 +56,12 @@ interface StreamPlan {
     audioChannels: number;
     reason: string;
     reasonCodes?: StreamReasonCode[];
+    // QS-WI-005 — HDR guardrail facts (derived server-side from the pipeline authority).
+    toneMapPlanned?: boolean;
+    toneMapPipeline?: string | null; // 'cuda' | 'opencl' | 'software'
+    toneMapIsSoftware?: boolean;
+    hardwareAccelerationEnabled?: boolean;
+    hdrTranscodePolicy?: 'warn' | 'block' | null;
 }
 
 
@@ -188,6 +196,23 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const [currentPlan, setCurrentPlan] = useState<StreamPlan | null>(null);
     const [showExplanation, setShowExplanation] = useState(false);
 
+    // QS-WI-005 — pre-play HDR guardrail. When set, playback is HELD (src not committed)
+    // until the user answers; `url`/`needsTranscode` are the exact values the normal
+    // commit path would have applied.
+    const [hdrPrompt, setHdrPrompt] = useState<{ plan: StreamPlan; url: string; needsTranscode: boolean } | null>(null);
+    // Whether an earlier "Play anyway" in this unbroken auto-advance sitting still covers
+    // this playback. Computed once per mount by consuming the sessionStorage hand-off.
+    // The consumption is NOT idempotent (a second call reads "no hand-off" and clears the
+    // sitting), so the ref guard keeps StrictMode's double-invoked mount effect from
+    // wrongly ending the sitting in dev.
+    const hdrSittingCoveredRef = useRef(false);
+    const hdrSittingConsumedRef = useRef(false);
+    useEffect(() => {
+        if (hdrSittingConsumedRef.current) return;
+        hdrSittingConsumedRef.current = true;
+        hdrSittingCoveredRef.current = beginPlaybackSitting();
+    }, []);
+
     // HDR state tracking for toasts
     const [playerToast, setPlayerToast] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null);
     const lastToastStatusRef = useRef<'hdr' | 'tonemapped' | null>(null);
@@ -249,7 +274,7 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
     const { capabilities: mediaCapabilities, isDetecting: isDetectingCapabilities } = useMediaCapabilities();
 
     // Get user's local preferences (including default streaming quality)
-    const { preferences: localPrefs } = useLocalPreferences();
+    const { preferences: localPrefs, updatePreference: updateLocalPref } = useLocalPreferences();
 
     // R-WI-018 — subtitle appearance (device preference) + per-session sync offset.
     const cueCss = useMemo(() => buildCueCss({
@@ -685,7 +710,10 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 maxBitrate: effectiveMaxBitrate,
                 maxResolution: effectiveMaxResolution,
                 subtitleTrackIndex: selectedSubtitleTrack,
-                streamId: streamId
+                streamId: streamId,
+                // QS-WI-003: flag the ask so the server's explainer can name Data Saver
+                // as the binding constraint instead of guessing.
+                dataSaver: isDataSaver,
             });
 
             console.log('[StreamPlan] Quality - selected:', selectedQuality, 'default:', localPrefs.defaultStreamingQuality, 'effective:', effectiveQuality);
@@ -720,23 +748,46 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 console.log('[StreamPlan] Received plan:', plan);
                 setCurrentPlan(plan);
 
+                // QS-WI-005: decide up front whether the pre-play HDR guardrail will show
+                // for this plan (fresh loads only — mid-session re-plans are the same play),
+                // so the toast logic below doesn't repeat what the prompt already says.
+                const isFreshEpisodeLoad = lastLoadedItemIdRef.current !== item.id;
+                // QS-WI-011: Media Tips governs the warn prompt (an unsolicited surface);
+                // 'block' is an admin rule and ignores every device-local toggle.
+                const willPromptHdr = shouldShowHdrPrompt({
+                    policy: plan.hdrTranscodePolicy,
+                    toneMapPlanned: !!plan.toneMapPlanned,
+                    freshLoad: isFreshEpisodeLoad,
+                    mediaTipsEnabled: localPrefs.mediaTipsEnabled !== 'false',
+                    neverShowAgain: localPrefs.showHdrTranscodeWarning === 'false',
+                    sittingCovered: hdrSittingCoveredRef.current,
+                });
+
                 // --- HDR TOAST LOGIC ---
+                // QS-WI-011: these two toasts are unsolicited educational tips, so Media Tips
+                // governs them. The status REF always advances regardless, so transitions
+                // stay correct if tips are re-enabled mid-session.
+                const mediaTipsOn = localPrefs.mediaTipsEnabled !== 'false';
                 const isSourceHdr = plan.sourceIsHdr;
                 const hasSubtitles = selectedSubtitleTrack !== null && selectedSubtitleTrack !== -1;
 
                 if (isSourceHdr) {
                     if (!plan.isHdr && hasSubtitles) {
-                        // Transition to Tonemapping
+                        // Transition to Tonemapping. The ref still advances when the guardrail
+                        // prompt covers this load (the prompt already explains the tone-map),
+                        // so the later subtitles-off transition still toasts correctly.
                         if (lastToastStatusRef.current !== 'tonemapped') {
-                            setPlayerToast({
-                                message: "HDR tone-mapping applied for subtitles. HDR will be disabled while subtitles are active.",
-                                type: 'info'
-                            });
+                            if (!willPromptHdr && mediaTipsOn) {
+                                setPlayerToast({
+                                    message: "HDR tone-mapping applied for subtitles. HDR will be disabled while subtitles are active.",
+                                    type: 'info'
+                                });
+                            }
                             lastToastStatusRef.current = 'tonemapped';
                         }
                     } else if (plan.isHdr && !hasSubtitles) {
                         // Transition to HDR Passthrough
-                        if (lastToastStatusRef.current === 'tonemapped') {
+                        if (lastToastStatusRef.current === 'tonemapped' && mediaTipsOn) {
                             setPlayerToast({
                                 message: "Subtitles disabled. HDR passthrough re-enabled.",
                                 type: 'success'
@@ -749,7 +800,6 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                 }
 
                 const needsTranscode = plan.method !== 'DirectPlay';
-                const isFreshEpisodeLoad = lastLoadedItemIdRef.current !== item.id;
 
                 // Determine starting position
                 // IMPORTANT: For non-fresh loads, always prioritize the effective playback position
@@ -828,6 +878,17 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                     console.log(`[StreamPlan] Final URL: ${finalUrl}`);
                 } else {
                     setSeekOffset(0); // Reset offset for direct play
+                }
+
+                // QS-WI-005: pre-play HDR guardrail — HOLD playback when the computed plan
+                // would tone-map. Fires off the PLAN (never the file alone) and only on a
+                // fresh load. "block" (admin BlockHdrTranscode) always shows the dialog;
+                // "warn" is suppressed by the device-local "Never show again" pref or by an
+                // earlier answer within this unbroken auto-advance sitting (willPromptHdr
+                // was decided above, before the toast logic).
+                if (isMounted && willPromptHdr) {
+                    setHdrPrompt({ plan, url: finalUrl, needsTranscode });
+                    return;
                 }
 
                 if (isMounted) {
@@ -1210,6 +1271,9 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
         // Navigate to next episode (will resume from saved position)
         setShowNextEpisodeOverlay(false);
+        // QS-WI-005: hand the HDR-guardrail sitting across the remount — overlay-driven
+        // advances (countdown or click) continue the binge; manual navigation never does.
+        markAutoAdvance();
         navigate(`/play/${nextEpisodeInfo.episodeId}`);
     }, [nextEpisodeInfo, token, item.id, isTranscoding, streamId, navigate, invalidateContinueWatching]);
 
@@ -1245,8 +1309,48 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
 
         // Navigate to next episode with ?start=0 to force starting from beginning
         setShowNextEpisodeOverlay(false);
+        // QS-WI-005: same sitting hand-off as the resume path.
+        markAutoAdvance();
         navigate(`/play/${nextEpisodeInfo.episodeId}?start=0`);
     }, [nextEpisodeInfo, token, item.id, isTranscoding, streamId, navigate, invalidateContinueWatching]);
+
+    // ---- QS-WI-005: HDR guardrail prompt answers ----
+
+    /// Commit the held playback exactly as the normal plan path would have.
+    const resolveHdrPromptAndPlay = useCallback(() => {
+        if (!hdrPrompt) return;
+        setSrc(hdrPrompt.url);
+        setIsTranscoding(hdrPrompt.needsTranscode);
+        lastLoadedItemIdRef.current = item.id;
+        setHdrPrompt(null);
+    }, [hdrPrompt, item.id]);
+
+    const handleHdrPlayAnyway = useCallback(() => {
+        // One answer covers the rest of an unbroken auto-advance sitting.
+        acknowledgeSitting();
+        hdrSittingCoveredRef.current = true;
+        resolveHdrPromptAndPlay();
+    }, [resolveHdrPromptAndPlay]);
+
+    const handleHdrNeverShowAgain = useCallback(() => {
+        // Device-local, stored in the shared prefs blob so the Media Tips re-enable
+        // (QS-WI-011, Session 3) can reset it. Then plays, like "Play anyway".
+        updateLocalPref('showHdrTranscodeWarning', 'false');
+        acknowledgeSitting();
+        hdrSittingCoveredRef.current = true;
+        resolveHdrPromptAndPlay();
+    }, [updateLocalPref, resolveHdrPromptAndPlay]);
+
+    const handleHdrPlayVersion = useCallback((version: MediaVersion) => {
+        // An explicit user choice, never an auto-pick (standing owner decision).
+        setHdrPrompt(null);
+        navigate(`/play/${version.id}`, { replace: true });
+    }, [navigate]);
+
+    const handleHdrCancel = useCallback(() => {
+        setHdrPrompt(null);
+        navigate(playerBackTarget(item));
+    }, [navigate, item]);
 
     // Handle return to library
     const handleReturnToLibrary = useCallback(() => {
@@ -1970,6 +2074,29 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
         );
     }
 
+    // QS-WI-005: the pre-play HDR guardrail holds playback (src is not committed yet), so
+    // it must render BEFORE the src loading gate below — otherwise the hold would present
+    // as "Loading player..." forever.
+    if (hdrPrompt) {
+        return (
+            <div className="w-full h-full bg-black">
+                <HdrTranscodePrompt
+                    plan={{
+                        toneMapIsSoftware: hdrPrompt.plan.toneMapIsSoftware ?? false,
+                        hardwareAccelerationEnabled: hdrPrompt.plan.hardwareAccelerationEnabled ?? false,
+                        reasonCodes: hdrPrompt.plan.reasonCodes,
+                    }}
+                    versionOffer={pickSdrVersionOffer(item)}
+                    mode={hdrPrompt.plan.hdrTranscodePolicy === 'block' ? 'block' : 'warn'}
+                    onPlayAnyway={handleHdrPlayAnyway}
+                    onPlayVersion={handleHdrPlayVersion}
+                    onNeverShowAgain={handleHdrNeverShowAgain}
+                    onCancel={handleHdrCancel}
+                />
+            </div>
+        );
+    }
+
     if (!token || !src) {
         return (
             <div className="w-full h-full bg-black flex items-center justify-center">
@@ -2481,6 +2608,28 @@ export default function VideoPlayer({ item, src: initialSrc }: VideoPlayerProps)
                                             });
                                             if (!resp.ok) throw new Error(`stream plan request failed (${resp.status})`);
                                             const castPlan: StreamPlan = await resp.json();
+
+                                            // QS-WI-005 follow-up: the Chromecast receiver is SDR-only, so
+                                            // casting HDR always tone-maps. Under BlockHdrTranscode the
+                                            // server refuses the session anyway — fail here with the reason
+                                            // instead of a cryptic receiver stall. Under "warn", a mid-watch
+                                            // cast click is not a pre-play surface, so inform via toast
+                                            // rather than re-opening the guardrail dialog.
+                                            if (castPlan.toneMapPlanned && castPlan.hdrTranscodePolicy === 'block') {
+                                                setPlayerToast({
+                                                    message: 'This server doesn’t allow HDR-to-SDR converted playback, and casting requires converting this HDR video. Pick a non-HDR version to cast.',
+                                                    type: 'error',
+                                                });
+                                                return;
+                                            }
+                                            // QS-WI-011: an unsolicited tip — Media Tips governs it.
+                                            // The block toast above is refusal feedback, never gated.
+                                            if (castPlan.toneMapPlanned && localPrefs.mediaTipsEnabled !== 'false') {
+                                                setPlayerToast({
+                                                    message: 'This HDR video will be converted to SDR for the cast device — colors may look washed out.',
+                                                    type: 'info',
+                                                });
+                                            }
 
                                             // plan.url is "/api/..."; the receiver fetches it directly, so make
                                             // it absolute. It already carries ?token= for query-string auth.

@@ -506,7 +506,7 @@ export const UserListTable: React.FC = () => {
                                                     onClick={() => setStreamingModalUser(user)}
                                                     className="text-primary hover:text-primary/80 focus-visible:text-primary/80 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none underline rounded text-left"
                                                 >
-                                                    Edit Streaming Limit{user.maxStreamBitrateKbps > 0 ? ` (${user.maxStreamBitrateKbps} kbps)` : ''}
+                                                    Edit Streaming Limits{user.maxStreamBitrateKbps > 0 || user.remoteMaxStreamBitrateKbps > 0 || user.maxStreamResolution > 0 ? ' (set)' : ''}
                                                 </button>
                                             </div>
                                         </td>

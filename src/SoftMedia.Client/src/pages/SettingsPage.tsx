@@ -18,6 +18,7 @@ import { BackupCard } from '../components/admin/BackupCard';
 import { ScheduledTasksCard } from '../components/admin/ScheduledTasksCard';
 import { CacheUsageCard } from '../components/admin/CacheUsageCard';
 import { DuplicateVersionsCard } from '../components/admin/DuplicateVersionsCard';
+import { RemoteStreamingCard } from '../components/admin/RemoteStreamingCard';
 import { ActiveSessionsCard } from '../components/admin/ActiveSessionsCard';
 import { DlnaSettingsCard } from '../components/admin/DlnaSettingsCard';
 import { LibraryListTable } from '../components/library/LibraryListTable';
@@ -498,13 +499,17 @@ export default function SettingsPage() {
 
         // Explicit ordering for Streaming group
         if (groupName === 'Streaming') {
+            // QS-WI-001: the network caps live ONLY on the RemoteStreamingCard (rendered
+            // beside this group) — filtering them here prevents the duplicate-knob failure
+            // (P2) of the same setting appearing twice with different wording.
+            const remoteStreamingCardKeys = ['MaxStreamingBitrate', 'MaxStreamingBitrateLan', 'RemoteMaxResolution'];
+            groupSettings = groupSettings.filter(s => !remoteStreamingCardKeys.includes(s.key));
             const streamingOrder = [
                 'DefaultStreamingQuality',
                 'MaxTranscodeResolution',
                 'TranscodeCRF',
                 'PreserveHDR',
                 'ToneMappingAlgorithm',
-                'MaxStreamingBitrate',
                 'DefaultAudioChannels'
             ];
             groupSettings = groupSettings.sort((a, b) => {
@@ -915,21 +920,6 @@ export default function SettingsPage() {
                                     </p>
                                 </div>
 
-                            ) : setting.key === 'MaxStreamingBitrate' ? (
-                                <div className="flex items-center gap-3 max-w-md">
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        max="100000"
-                                        step="1000"
-                                        value={setting.value}
-                                        onChange={(e) => handleChange(setting.key, e.target.value)}
-                                        className="w-32 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-primary/50 focus:outline-none transition-colors"
-                                    />
-                                    <span className="text-sm text-gray-400">
-                                        {parseInt(setting.value) === 0 ? 'Unlimited' : `${(parseInt(setting.value) / 1000).toFixed(0)} Mbps`}
-                                    </span>
-                                </div>
                             ) : setting.key === 'MaxSimultaneousTranscodes' ? (
                                 <div className="flex items-center gap-3 max-w-md">
                                     <input
@@ -1100,11 +1090,14 @@ export default function SettingsPage() {
                         )}
 
                         {activeTab === 'playback-streaming' && (
-                            <div>
+                            <div className="space-y-8">
                                 <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
                                     <Play className="text-primary" /> Streaming Quality
                                 </h2>
                                 {renderSettingsGroup('Streaming')}
+                                {/* QS-WI-001: single surface for the network caps (keys are
+                                    filtered out of the generic group render above) */}
+                                <RemoteStreamingCard />
                             </div>
                         )}
 

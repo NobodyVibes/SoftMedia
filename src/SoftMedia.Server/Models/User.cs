@@ -65,4 +65,20 @@ public class User
     /// Admin-set. (P1-WI-003)
     /// </summary>
     public int? MaxStreamBitrateKbps { get; set; }
+
+    /// <summary>
+    /// Per-user REMOTE (off-LAN) streaming bitrate ceiling in kbps. When non-null and the
+    /// client is off-LAN it takes precedence over <see cref="MaxStreamBitrateKbps"/> and the
+    /// WAN cap. Override-wins like the base cap: it may exceed the server's network tier —
+    /// that is the feature ("this user's personal limit"). Null = inherit. (QS-WI-002)
+    /// </summary>
+    public int? RemoteMaxStreamBitrateKbps { get; set; }
+
+    /// <summary>
+    /// Per-user streaming resolution ceiling as a height in pixels (720/1080/2160...).
+    /// When non-null it REPLACES the server's network resolution cap (RemoteMaxResolution)
+    /// for this account — override-wins, so it may exceed that cap. The server-wide
+    /// MaxTranscodeResolution hardware guardrail still applies on top. Null = inherit. (QS-WI-002)
+    /// </summary>
+    public int? MaxStreamResolution { get; set; }
 }

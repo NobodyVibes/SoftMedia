@@ -17,6 +17,17 @@ export interface UserDto {
     twoFactorEnabled: boolean;
     /** R-WI-009: per-user max streaming bitrate in kbps (0 = unlimited). */
     maxStreamBitrateKbps: number;
+    /** QS-WI-002: remote (off-LAN) bitrate cap in kbps; beats the base cap when remote. 0 = inherit. */
+    remoteMaxStreamBitrateKbps: number;
+    /** QS-WI-002: resolution ceiling as a height (720/1080/2160...). 0 = inherit. */
+    maxStreamResolution: number;
+}
+
+/** QS-WI-002: the full streaming-limits trio — the PUT replaces all three. */
+export interface UpdateUserStreamingRequest {
+    maxStreamBitrateKbps: number;
+    remoteMaxStreamBitrateKbps: number;
+    maxStreamResolution: number;
 }
 
 export interface UpdateUserRoleRequest {
@@ -64,9 +75,10 @@ export const userService = {
         await api.put(`/users/${userId}/ratings`, { contentRatings });
     },
 
-    // R-WI-009: set the per-user streaming bitrate cap (kbps; 0 = unlimited). Admin-only.
-    async updateUserStreaming(userId: string, maxStreamBitrateKbps: number): Promise<void> {
-        await api.put(`/users/${userId}/streaming`, { maxStreamBitrateKbps });
+    // R-WI-009/QS-WI-002: set the per-user streaming limits (kbps/height; 0 = unlimited/inherit).
+    // Admin-only. Override-wins: a set value replaces the server's network caps for the account.
+    async updateUserStreaming(userId: string, limits: UpdateUserStreamingRequest): Promise<void> {
+        await api.put(`/users/${userId}/streaming`, limits);
     },
 
     async resetUserPassword(userId: string, newPassword: string): Promise<void> {

@@ -70,6 +70,8 @@ export interface ActiveSession {
     deviceType: 'Mobile' | 'Tablet' | 'Tv' | 'Cast' | 'Desktop' | 'Unknown' | null;
     /** Client address as the server saw it (IPv4-mapped IPv6 already unwrapped). */
     ipAddress: string | null;
+    /** QS-WI-003: the clamp winner from plan negotiation (e.g. "bitrate.wan-cap"), if any. */
+    limitReason?: string | null;
 }
 
 /** DV-WI-012 — one file-copy inside a duplicate version group. */

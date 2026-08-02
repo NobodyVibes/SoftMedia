@@ -1,25 +1,78 @@
-import { Globe, Music, Volume2, Wifi } from 'lucide-react';
+import { useState } from 'react';
+import { Globe, Lightbulb, Music, Volume2, Wifi } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { useLocalPreferences } from '../../hooks/useLocalPreferences';
 import { cn } from '../../lib/utils';
 import { SUBTITLE_COLORS } from '../../components/player/subtitleStyle';
+import { Modal } from '../../components/ui/Modal';
+import { accountService, type StreamingLimitsTierDto } from '../../services/accountService';
 
 interface ClientSettingsProps {
     subsection?: string;
+}
+
+// QS-WI-009 — display formatting for the read-only "what the server allows you" line.
+// 0 means unlimited for both fields (same convention as the server DTO).
+function formatTier(tier: StreamingLimitsTierDto): string {
+    const bitrate = tier.maxBitrateKbps > 0
+        ? `up to ${tier.maxBitrateKbps % 1000 === 0 ? tier.maxBitrateKbps / 1000 : (tier.maxBitrateKbps / 1000).toFixed(1)} Mbps`
+        : 'unlimited bitrate';
+    const resolution = tier.maxResolution > 0
+        ? (tier.maxResolution === 2160 ? '4K' : tier.maxResolution === 4320 ? '8K' : `${tier.maxResolution}p`)
+        : 'any resolution';
+    return `${bitrate}, ${resolution}`;
 }
 
 export default function ClientSettings({ subsection = 'general' }: ClientSettingsProps) {
     // Local preferences (Device-specific & User-isolated)
     const { preferences: localPrefs, updatePreference: updateLocalPref } = useLocalPreferences();
 
+    // QS-WI-011 — disabling Media Tips requires the confirm dialog FIRST (owner decision).
+    const [showTipsConfirm, setShowTipsConfirm] = useState(false);
+    const mediaTipsOn = localPrefs.mediaTipsEnabled !== 'false';
+
+    // QS-WI-009 — the read-only server-side ceilings ("what the server allows you").
+    const { data: serverLimits, isError: serverLimitsFailed } = useQuery({
+        queryKey: ['me', 'streaming-limits'],
+        queryFn: accountService.getStreamingLimits,
+        enabled: subsection === 'playback',
+        staleTime: 60_000,
+    });
+
+    const handleMediaTipsClick = () => {
+        if (mediaTipsOn) {
+            setShowTipsConfirm(true);
+            return;
+        }
+        // Re-enabling the group resets the finer-grained per-prompt "Never show again"
+        // flags (QS-WI-011) — today that is the HDR guardrail's.
+        updateLocalPref('mediaTipsEnabled', 'true');
+        updateLocalPref('showHdrTranscodeWarning', 'true');
+    };
+
     if (subsection === 'playback') {
         return (
             <div className="space-y-6">
                 <div className="bg-white/5 rounded-xl p-6 border border-white/10">
-                    <div className="flex items-center gap-3 mb-6">
+                    <div className="flex items-center gap-3 mb-2">
                         <Wifi className="w-5 h-5 text-purple-400" />
                         <h2 className="text-lg font-semibold text-white">Streaming Quality</h2>
                         <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded-full">This device</span>
                     </div>
+                    {/* QS-WI-009 — the model in one line: the client asks, the server clamps. */}
+                    <p className="text-sm text-gray-400 mb-2">
+                        What this device asks for. The server applies its own limits on top — see below what your account allows.
+                    </p>
+                    {/* Informational only — the limits are enforced server-side regardless, so
+                        when the endpoint is unreachable the line disappears instead of lying
+                        or sitting on "checking…" forever. */}
+                    {!serverLimitsFailed && (
+                        <p className="text-xs text-gray-500 mb-6">
+                            {serverLimits
+                                ? `What the server allows you — at home: ${formatTier(serverLimits.lan)} · away: ${formatTier(serverLimits.remote)}. Set by your administrator.`
+                                : 'What the server allows you: checking…'}
+                        </p>
+                    )}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="flex flex-col gap-2">
@@ -35,6 +88,13 @@ export default function ClientSettings({ subsection = 'general' }: ClientSetting
                                 <option value="4k">4K</option>
                                 <option value="original">Original</option>
                             </select>
+                            {/* QS-WI-008 — the trustworthy-Auto sentence (plan wording, single-rendition reality). */}
+                            <p className="text-xs text-gray-500">
+                                Auto: the server picks direct play or remux when possible, else one transcode at
+                                the session's effective cap — no client-side bandwidth guessing, ever. If a stream
+                                buffers, use the player's Quality menu; "Why is this playing this way?" (in the
+                                player's More menu) explains what the stream is doing.
+                            </p>
                         </div>
 
                         <div className="flex flex-col gap-2">
@@ -159,6 +219,85 @@ export default function ClientSettings({ subsection = 'general' }: ClientSetting
                         </div>
                     </div>
                 </div>
+
+                {/* QS-WI-011 — Media Tips: ONE device-local toggle for unsolicited playback
+                    tips (today: the pre-play HDR conversion warning). User-invoked
+                    diagnostics ("Why is this playing this way?") and admin rules (blocked
+                    HDR transcodes) are never affected. */}
+                <div className="bg-white/5 rounded-xl p-6 border border-white/10">
+                    <div className="flex items-center gap-3 mb-6">
+                        <Lightbulb className="w-5 h-5 text-purple-400" />
+                        <h2 className="text-lg font-semibold text-white">Media Tips</h2>
+                        <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded-full">This device</span>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-white/5 rounded-lg px-4 py-3">
+                        <div>
+                            <span className="text-white text-sm">Show Media Tips</span>
+                            <p className="text-xs text-gray-500">
+                                Proactive playback tips, like the warning before an HDR video is converted
+                                to SDR and similar in-player notices. Turning tips back on also restores
+                                any "Never show again" choices.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={mediaTipsOn}
+                            aria-label="Show Media Tips"
+                            onClick={handleMediaTipsClick}
+                            className={cn(
+                                "w-12 h-6 rounded-full transition-colors relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                                mediaTipsOn ? "bg-purple-500" : "bg-white/20"
+                            )}
+                        >
+                            <div className={cn(
+                                "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
+                                mediaTipsOn ? "left-7" : "left-1"
+                            )} />
+                        </button>
+                    </div>
+                </div>
+
+                {/* QS-WI-011 — the disable-confirm dialog (owner wording). closeOnBackdrop off
+                    so a stray click can't count as an answer. */}
+                <Modal
+                    isOpen={showTipsConfirm}
+                    onClose={() => setShowTipsConfirm(false)}
+                    title="Turn off Media Tips?"
+                    closeOnBackdrop={false}
+                >
+                    <div className="space-y-4">
+                        <p className="text-sm text-gray-300">
+                            Streaming and transcoding are complex, and most people don't realize what
+                            affects their playback. Leaving Media Tips on helps you diagnose hardware
+                            resource usage and playback quality issues as they happen.
+                        </p>
+                        <p className="text-sm text-gray-400">
+                            You can always ask for an explanation yourself: "Why is this playing this
+                            way?" in the player's More menu stays available either way.
+                        </p>
+                        <div className="flex justify-end gap-3 pt-2">
+                            <button
+                                type="button"
+                                onClick={() => setShowTipsConfirm(false)}
+                                className="px-4 py-2 rounded bg-primary hover:bg-primary/90 text-white transition-colors"
+                            >
+                                Keep tips on
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    updateLocalPref('mediaTipsEnabled', 'false');
+                                    setShowTipsConfirm(false);
+                                }}
+                                className="px-4 py-2 rounded text-gray-300 hover:bg-gray-700 transition-colors"
+                            >
+                                Turn off
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
             </div>
         );
     }

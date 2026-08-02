@@ -31,6 +31,11 @@ export interface ClientCapabilities {
     subtitleTrackIndex?: number | null;
     /** Unique identifier for this specific playback stream */
     streamId?: string;
+    /**
+     * True when Data Saver produced the maxBitrate/maxResolution ask, so the server's
+     * explainer names Data Saver (not a server cap) as the binding constraint (QS-WI-003).
+     */
+    dataSaver?: boolean;
 }
 
 
@@ -291,7 +296,7 @@ export function useMediaCapabilities(): {
  */
 export function createCapabilitiesWithOverrides(
     baseCapabilities: ClientCapabilities,
-    overrides: Partial<Pick<ClientCapabilities, 'maxBitrate' | 'maxResolution' | 'requestedQuality' | 'subtitleTrackIndex' | 'streamId'>>
+    overrides: Partial<Pick<ClientCapabilities, 'maxBitrate' | 'maxResolution' | 'requestedQuality' | 'subtitleTrackIndex' | 'streamId' | 'dataSaver'>>
 ): ClientCapabilities {
     return {
         ...baseCapabilities,
@@ -300,6 +305,7 @@ export function createCapabilitiesWithOverrides(
         requestedQuality: overrides.requestedQuality ?? baseCapabilities.requestedQuality,
         subtitleTrackIndex: overrides.subtitleTrackIndex ?? baseCapabilities.subtitleTrackIndex,
         streamId: overrides.streamId ?? baseCapabilities.streamId,
+        dataSaver: overrides.dataSaver ?? baseCapabilities.dataSaver ?? false,
     };
 }
 

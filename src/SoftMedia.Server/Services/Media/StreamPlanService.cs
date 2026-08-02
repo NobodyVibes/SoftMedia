@@ -13,18 +13,19 @@ public interface IStreamPlanService
     /// Compute the optimal stream plan for a media item given client capabilities.
     /// </summary>
     /// <param name="clientIp">Resolved client IP (post forwarded-headers). Used to pick
-    /// the LAN vs WAN bitrate ceiling. Null is treated as WAN (fail-safe).</param>
-    /// <param name="userMaxBitrateKbps">Per-user bitrate override; when set, takes
-    /// precedence over the network ceiling.</param>
+    /// the LAN vs WAN bitrate/resolution ceilings. Null is treated as WAN (fail-safe).</param>
+    /// <param name="userPolicy">Per-user streaming limits (QS-WI-002); when a cap is set it
+    /// takes precedence over the network ceiling (override-wins — it may exceed it).</param>
     Task<StreamPlan> ComputeStreamPlanAsync(
         Guid mediaId, MediaItem mediaItem, ClientCapabilities clientCaps, string token,
-        System.Net.IPAddress? clientIp = null, int? userMaxBitrateKbps = null);
+        System.Net.IPAddress? clientIp = null, UserStreamingPolicy? userPolicy = null);
 }
 
 public class StreamPlanService : IStreamPlanService
 {
     private readonly IFFmpegService _ffmpegService;
     private readonly ISettingsService _settingsService;
+    private readonly IOpenClToneMapProbe _openClProbe;
     private readonly ILogger<StreamPlanService> _logger;
 
     // AllowLists for security - only these codecs are valid (prevents command injection)
@@ -84,40 +85,52 @@ public class StreamPlanService : IStreamPlanService
     private const int MaxAllowedBitrate = 100_000; // 100 Mbps
     private const int MaxAllowedResolution = 4320; // 8K
 
-    public StreamPlanService(IFFmpegService ffmpegService, ISettingsService settingsService, ILogger<StreamPlanService> logger)
+    public StreamPlanService(IFFmpegService ffmpegService, ISettingsService settingsService,
+        IOpenClToneMapProbe openClProbe, ILogger<StreamPlanService> logger)
     {
         _ffmpegService = ffmpegService;
         _settingsService = settingsService;
+        _openClProbe = openClProbe;
         _logger = logger;
     }
 
     public async Task<StreamPlan> ComputeStreamPlanAsync(
         Guid mediaId, MediaItem mediaItem, ClientCapabilities clientCaps, string token,
-        System.Net.IPAddress? clientIp = null, int? userMaxBitrateKbps = null)
+        System.Net.IPAddress? clientIp = null, UserStreamingPolicy? userPolicy = null)
     {
         // ========== 1. Read server streaming settings ==========
-        // Network-aware bitrate ceiling: a per-user override wins; otherwise pick the
-        // LAN or WAN cap based on the client's network. 0 means "unlimited" for that tier.
+        // Network-aware bitrate ceiling: a per-user override wins (off-LAN the user's remote
+        // variant beats the base cap); otherwise pick the LAN or WAN cap based on the client's
+        // network. 0 means "unlimited" for that tier. Override-wins is deliberate and kept
+        // (§2 of the streaming-quality plan): a user cap REPLACES the tier and may exceed it.
         var isLan = NetworkClassifier.IsLan(clientIp);
         var wanBitrate = await _settingsService.GetSettingAsync("MaxStreamingBitrate", 20000);
         var lanBitrate = await _settingsService.GetSettingAsync("MaxStreamingBitrateLan", 0);
 
         int maxServerBitrate;
-        string? bitrateClampSource;
-        if (userMaxBitrateKbps is > 0)
+        string? bitrateClampSource; // human wording for StreamPlan.Reason
+        string? bitrateClampCode;   // QS-WI-003 structured winner code
+        var userBitrateCap = userPolicy?.EffectiveBitrateCap(isLan);
+        if (userBitrateCap is > 0)
         {
-            maxServerBitrate = userMaxBitrateKbps.Value;
-            bitrateClampSource = "user policy";
+            maxServerBitrate = userBitrateCap.Value;
+            var remoteVariant = !isLan && userPolicy!.RemoteMaxBitrateKbps is > 0;
+            bitrateClampSource = remoteVariant ? "user remote cap" : "user policy";
+            bitrateClampCode = remoteVariant
+                ? StreamReasonCodes.UserRemoteBitrateCap
+                : StreamReasonCodes.UserBitrateCap;
         }
         else if (isLan)
         {
             maxServerBitrate = lanBitrate;
             bitrateClampSource = lanBitrate > 0 ? "LAN cap" : null;
+            bitrateClampCode = lanBitrate > 0 ? StreamReasonCodes.LanBitrateCap : null;
         }
         else
         {
             maxServerBitrate = wanBitrate;
             bitrateClampSource = wanBitrate > 0 ? "WAN cap" : null;
+            bitrateClampCode = wanBitrate > 0 ? StreamReasonCodes.WanBitrateCap : null;
         }
         var forceDirectPlay = await _settingsService.GetSettingAsync("ForceDirectPlayWhenPossible", true);
         var defaultQuality = await _settingsService.GetSettingAsync("DefaultStreamingQuality", "auto");
@@ -161,6 +174,9 @@ public class StreamPlanService : IStreamPlanService
 
         // ========== 3. Sanitize capabilities and apply overrides ==========
         var sanitizedCaps = SanitizeCapabilities(clientCaps);
+        // The client's own ask before any server clamp — needed to attribute Data Saver as
+        // the binding constraint when no server cap bit (QS-WI-003).
+        var clientAskBitrate = sanitizedCaps.MaxBitrate;
 
         var bitrateWasClamped = false;
         if (maxServerBitrate > 0 && (sanitizedCaps.MaxBitrate <= 0 || sanitizedCaps.MaxBitrate > maxServerBitrate))
@@ -173,31 +189,68 @@ public class StreamPlanService : IStreamPlanService
         var bitrateNote = bitrateWasClamped && bitrateClampSource != null
             ? $"Bitrate limited to {maxServerBitrate} kbps by {bitrateClampSource}."
             : null;
-        // Structured parallel of the note for the client-side explainer (P2-WI-002).
-        var bitrateCode = bitrateWasClamped && bitrateClampSource != null
-            ? new StreamReasonCode(StreamReasonCodes.BitrateClamped, new Dictionary<string, string>
+        // Structured parallel of the note for the client-side explainer. QS-WI-003: the code
+        // itself names the winner (bitrate.user-cap / .user-remote-cap / .lan-cap / .wan-cap)
+        // so the client can localize it; "source" rides along for the debug panel.
+        var bitrateCode = bitrateWasClamped && bitrateClampCode != null
+            ? new StreamReasonCode(bitrateClampCode, new Dictionary<string, string>
             {
                 ["kbps"] = maxServerBitrate.ToString(),
-                ["source"] = bitrateClampSource, // "WAN cap" | "LAN cap" | "user policy"
+                ["source"] = bitrateClampSource!,
             })
             : null;
-        
+        // Data Saver binds when the client's own (flagged) ask survived the server clamp —
+        // then the ask, not a server cap, is the effective bitrate ceiling.
+        var dataSaverBinds = clientCaps.DataSaver && !bitrateWasClamped
+            && clientAskBitrate > 0 && clientAskBitrate < MaxAllowedBitrate;
+
         var effectiveQuality = !string.IsNullOrEmpty(clientCaps.RequestedQuality) && clientCaps.RequestedQuality != "auto"
             ? clientCaps.RequestedQuality
             : defaultQuality;
-            
+        var sessionQualityPicked = !string.IsNullOrEmpty(clientCaps.RequestedQuality) && clientCaps.RequestedQuality != "auto";
+
+        var qualityPickHeight = 0;
         if (effectiveQuality != "auto" && effectiveQuality != "original")
         {
-            var qualityResolution = ParseQualityToResolution(effectiveQuality);
-            if (qualityResolution > 0)
-                sanitizedCaps.MaxResolution = qualityResolution;
+            qualityPickHeight = ParseQualityToResolution(effectiveQuality);
+            if (qualityPickHeight > 0)
+                sanitizedCaps.MaxResolution = qualityPickHeight;
         }
-        
+
+        // QS-WI-001/002: the policy resolution ceiling. A per-user ceiling REPLACES the
+        // network (RemoteMaxResolution) tier — override-wins, mirroring the bitrate caps.
+        // The server-wide MaxTranscodeResolution below still clamps on top of either.
+        var policyResolutionCeiling = 0;
+        string? policyResolutionCode = null;
+        if (userPolicy?.MaxResolution is > 0)
+        {
+            policyResolutionCeiling = userPolicy.MaxResolution.Value;
+            policyResolutionCode = StreamReasonCodes.UserResolutionCeiling;
+        }
+        else if (!isLan)
+        {
+            var remoteMaxResolution = await _settingsService.GetSettingAsync("RemoteMaxResolution", "original");
+            var remoteHeight = string.IsNullOrEmpty(remoteMaxResolution) || remoteMaxResolution is "original" or "auto"
+                ? 0
+                : ParseQualityToResolution(remoteMaxResolution);
+            if (remoteHeight > 0)
+            {
+                policyResolutionCeiling = remoteHeight;
+                policyResolutionCode = StreamReasonCodes.RemoteResolutionCeiling;
+            }
+        }
+        if (policyResolutionCeiling > 0 &&
+            (sanitizedCaps.MaxResolution <= 0 || sanitizedCaps.MaxResolution > policyResolutionCeiling))
+        {
+            sanitizedCaps.MaxResolution = policyResolutionCeiling;
+        }
+
+        var serverMaxHeight = 0;
         if (maxTranscodeResolution != "original" && maxTranscodeResolution != "auto")
         {
-            var maxTranscodeHeight = ParseQualityToResolution(maxTranscodeResolution);
-            if (maxTranscodeHeight > 0 && (sanitizedCaps.MaxResolution <= 0 || sanitizedCaps.MaxResolution > maxTranscodeHeight))
-                sanitizedCaps.MaxResolution = maxTranscodeHeight;
+            serverMaxHeight = ParseQualityToResolution(maxTranscodeResolution);
+            if (serverMaxHeight > 0 && (sanitizedCaps.MaxResolution <= 0 || sanitizedCaps.MaxResolution > serverMaxHeight))
+                sanitizedCaps.MaxResolution = serverMaxHeight;
         }
         
         if (defaultAudioChannels != "auto")
@@ -235,6 +288,38 @@ public class StreamPlanService : IStreamPlanService
 
         // ========== 5. Decision Logic ==========
 
+        // QS-WI-003: when a resolution constraint actually bites (the source is larger than
+        // the final ceiling), name THE winner — the smallest configured ceiling that equals
+        // the final value. Ties prefer the user's own session pick (most actionable), then
+        // account/network policy, then the server-wide ceiling. When the binding constraint
+        // is the client device's own capability, no winner code is emitted and the generic
+        // resolution.exceeds-max from DetermineTranscodeReasonCodes stands.
+        StreamReasonCode? resolutionWinnerCode = null;
+        if (sourceResolution > 0 && sanitizedCaps.MaxResolution > 0 && sourceResolution > sanitizedCaps.MaxResolution)
+        {
+            var final = sanitizedCaps.MaxResolution;
+            if (qualityPickHeight > 0 && qualityPickHeight == final && sessionQualityPicked)
+                resolutionWinnerCode = new StreamReasonCode(StreamReasonCodes.SessionQualityOverride,
+                    new Dictionary<string, string> { ["quality"] = effectiveQuality });
+            else if (policyResolutionCeiling > 0 && policyResolutionCeiling == final)
+                resolutionWinnerCode = new StreamReasonCode(policyResolutionCode!,
+                    new Dictionary<string, string> { ["max"] = $"{policyResolutionCeiling}p" });
+            else if (serverMaxHeight > 0 && serverMaxHeight == final)
+                resolutionWinnerCode = new StreamReasonCode(StreamReasonCodes.ServerResolutionCeiling,
+                    new Dictionary<string, string> { ["max"] = $"{serverMaxHeight}p" });
+        }
+
+        // QS-WI-003 SourceIsSmaller: the session asked for MORE than the source has — the
+        // honest answer to "why is my 4K pick playing at 1080p" is the file itself.
+        var sourceSmallerCode = sessionQualityPicked && qualityPickHeight > 0
+            && sourceResolution > 0 && qualityPickHeight > sourceResolution
+            ? new StreamReasonCode(StreamReasonCodes.SourceIsSmaller, new Dictionary<string, string>
+            {
+                ["requested"] = effectiveQuality,
+                ["source"] = $"{sourceResolution}p",
+            })
+            : null;
+
         // Original-bitrate paths (direct play AND remux) serve the source uncapped —
         // both must be refused when the source exceeds the effective bitrate ceiling
         // so playback falls through to Transcode (which applies `-maxrate`).
@@ -248,7 +333,7 @@ public class StreamPlanService : IStreamPlanService
         {
             var direct = CreateDirectPlayPlan(mediaId, mediaItem, sourceVideoCodec, sourceAudioCodec, sourceContainer, sourceIsHdr, sourceResolution, token);
             direct.ReasonCodes.Add(new StreamReasonCode(StreamReasonCodes.DirectPlaySupported));
-            return AppendNote(direct, bitrateNote, bitrateCode);
+            return AppendNote(direct, bitrateNote, bitrateCode, sourceSmallerCode);
         }
 
         // Check 2: Remux — same ceiling rule (a stream-copy has no `-maxrate` either).
@@ -258,7 +343,7 @@ public class StreamPlanService : IStreamPlanService
             var remux = CreateRemuxPlan(mediaId, mediaItem, sourceVideoCodec, sourceAudioCodec, sourceIsHdr, sourceResolution, sanitizedCaps, token);
             remux.ReasonCodes.Add(new StreamReasonCode(StreamReasonCodes.RemuxContainer,
                 new Dictionary<string, string> { ["container"] = sourceContainer }));
-            return AppendNote(remux, bitrateNote, bitrateCode);
+            return AppendNote(remux, bitrateNote, bitrateCode, sourceSmallerCode);
         }
 
         // Fallback: Transcode
@@ -267,41 +352,106 @@ public class StreamPlanService : IStreamPlanService
             outputCodecSetting, effectivePreserveHdr, sourceIsHdr, enableAV1,
             sourceAudioCodec, probe.AudioChannels ?? 0, bitrateCapped: maxServerBitrate > 0);
         transcode.ReasonCodes.AddRange(
-            DetermineTranscodeReasonCodes(sourceVideoCodec, sourceAudioCodec, sourceIsHdr, sourceResolution, sanitizedCaps));
+            DetermineTranscodeReasonCodes(sourceVideoCodec, sourceAudioCodec, sourceContainer, sourceIsHdr, sourceResolution, sanitizedCaps));
+
+        // ===== QS-WI-005: HDR guardrail facts — keyed off the PLAN, never the file alone. =====
+        // A tone-map is planned exactly when the profile builder's pipeline authority says so
+        // for the NEGOTIATED values (the same call it makes at ffmpeg start), so the pre-play
+        // prompt can never disagree with the pipeline that actually runs.
+        if (sourceIsHdr && !transcode.IsHdr)
+        {
+            var hwAccel = await _settingsService.GetSettingAsync("HardwareAcceleration", "none");
+            var subtitleBurnIn = clientCaps.SubtitleTrackIndex.HasValue;
+            var openClAvailable = hwAccel.ToLowerInvariant() is "intel" or "amd"
+                && await _openClProbe.IsAvailableAsync();
+            var pipeline = TranscodeProfileBuilder.SelectToneMapPipeline(
+                hwAccel, sourceIsHdr: true, preserveHdr: transcode.TranscodePreserveHdr,
+                outputVideoCodec: transcode.TranscodeCodec ?? "h264",
+                subtitleBurnIn: subtitleBurnIn, openClToneMapAvailable: openClAvailable);
+            if (pipeline != ToneMapPipeline.None)
+            {
+                transcode.ToneMapPlanned = true;
+                transcode.ToneMapPipeline = pipeline switch
+                {
+                    ToneMapPipeline.Cuda => "cuda",
+                    ToneMapPipeline.OpenCl => "opencl",
+                    _ => "software",
+                };
+                transcode.ToneMapIsSoftware = pipeline == ToneMapPipeline.Software;
+                transcode.HardwareAccelerationEnabled = !string.Equals(hwAccel, "none", StringComparison.OrdinalIgnoreCase);
+
+                // "block" always wins; null = both guardrail settings off.
+                var blockHdr = await _settingsService.GetSettingAsync("BlockHdrTranscode", false);
+                var warnHdr = await _settingsService.GetSettingAsync("WarnOnHdrTranscode", true);
+                transcode.HdrTranscodePolicy = blockHdr ? "block" : warnHdr ? "warn" : null;
+
+                // QS-WI-004: when the generic "device can't play HDR" code doesn't apply, name
+                // the tone-map's ACTUAL cause — subtitle burn-in (explicitly), server policy,
+                // or an 8-bit output codec.
+                if (!transcode.ReasonCodes.Any(c => c.Code == StreamReasonCodes.HdrTonemap))
+                {
+                    if (forceToneMappingForSubtitles && preserveHdrSetting && sanitizedCaps.SupportsHdr)
+                    {
+                        transcode.ReasonCodes.Add(new StreamReasonCode(StreamReasonCodes.HdrTonemapSubtitles));
+                        transcode.ReasonCodes.Add(new StreamReasonCode(StreamReasonCodes.SubtitleBurnIn));
+                    }
+                    else if (!preserveHdrSetting)
+                    {
+                        transcode.ReasonCodes.Add(new StreamReasonCode(StreamReasonCodes.HdrTonemapServerPolicy));
+                    }
+                    else
+                    {
+                        transcode.ReasonCodes.Add(new StreamReasonCode(StreamReasonCodes.HdrTonemapCodec,
+                            new Dictionary<string, string> { ["codec"] = transcode.TranscodeCodec ?? "h264" }));
+                    }
+                }
+            }
+        }
+        if (resolutionWinnerCode != null)
+        {
+            // QS-WI-003: a named policy/session winner replaces the generic "exceeds your
+            // limit" line — one plain sentence naming the winner, not two near-duplicates.
+            transcode.ReasonCodes.RemoveAll(c => c.Code == StreamReasonCodes.ResolutionExceedsMax);
+            transcode.ReasonCodes.Add(resolutionWinnerCode);
+        }
+        if (dataSaverBinds)
+        {
+            transcode.ReasonCodes.Add(new StreamReasonCode(StreamReasonCodes.DataSaverBitrateCap,
+                new Dictionary<string, string> { ["kbps"] = sanitizedCaps.MaxBitrate.ToString() }));
+        }
         if (!fitsCeiling)
         {
             // B-01: the debug panel should say WHY a direct-playable source transcodes.
             transcode.ReasonCodes.Add(new StreamReasonCode(StreamReasonCodes.BitrateCapForcesTranscode,
                 new Dictionary<string, string> { ["capKbps"] = sanitizedCaps.MaxBitrate.ToString() }));
         }
-        return AppendNote(transcode, bitrateNote, bitrateCode);
+        return AppendNote(transcode, bitrateNote, bitrateCode, sourceSmallerCode);
     }
 
-    /// Appends a non-null note to the plan's Reason (space-separated) and, when present,
-    /// the structured bitrate-clamp code. Surfaces the bandwidth-clamp source without
-    /// disturbing the primary transcode rationale.
-    private static StreamPlan AppendNote(StreamPlan plan, string? note, StreamReasonCode? code = null)
+    /// Appends a non-null note to the plan's Reason (space-separated) and any non-null
+    /// structured codes. Surfaces the clamp sources without disturbing the primary
+    /// transcode rationale.
+    private static StreamPlan AppendNote(StreamPlan plan, string? note, params StreamReasonCode?[] codes)
     {
         if (!string.IsNullOrEmpty(note))
             plan.Reason = string.IsNullOrEmpty(plan.Reason) ? note : $"{plan.Reason} {note}";
-        if (code != null)
-            plan.ReasonCodes.Add(code);
+        foreach (var code in codes)
+        {
+            if (code != null)
+                plan.ReasonCodes.Add(code);
+        }
         return plan;
     }
     
     /// <summary>
-    /// Parse quality string like "720p", "1080p", "4k" to resolution height.
+    /// Parse a quality label ("720p", "1080p", "4k", …) to a resolution height; 0 = no cap.
+    /// Delegates to the shared QualityLabels authority (unified 2026-08-02): this parser
+    /// previously knew only 720p/1080p/4k/2160p, so a "1440p" (or 480p/8k) session pick or
+    /// ceiling setting was silently ignored here while the plan-less /stream gate
+    /// (TranscodeController.ResolutionRank) enforced it.
     /// </summary>
     private static int ParseQualityToResolution(string quality)
-    {
-        return quality.ToLowerInvariant() switch
-        {
-            "720p" => 720,
-            "1080p" => 1080,
-            "4k" or "2160p" => 2160,
-            _ => 0
-        };
-    }
+        => QualityLabels.HeightOrNull(quality) ?? 0;
     
     /// <summary>
     /// Parse audio channel preference to channel count.
@@ -333,6 +483,7 @@ public class StreamPlanService : IStreamPlanService
             MaxBitrate = caps.MaxBitrate <= 0 ? MaxAllowedBitrate : Math.Clamp(caps.MaxBitrate, 1000, MaxAllowedBitrate),
             MaxResolution = caps.MaxResolution <= 0 ? MaxAllowedResolution : Math.Clamp(caps.MaxResolution, 480, MaxAllowedResolution),
             SupportsHdr = caps.SupportsHdr,
+            DataSaver = caps.DataSaver,
             StreamId = caps.StreamId
         };
     }
@@ -539,8 +690,12 @@ public class StreamPlanService : IStreamPlanService
             url += $"&bitrate={caps.MaxBitrate}";
         }
 
-        // Determine if output will be HDR
-        var outputIsHdr = preserveHdr && sourceIsHdr && caps.SupportsHdr;
+        // Determine if output will be HDR. QS-WI-005 honesty fix: the profile builder
+        // overrides PreserveHDR to tone-mapping when the negotiated codec is 8-bit h264
+        // (SR-WI-023 #5) — the plan must say SDR up front instead of promising HDR the
+        // pipeline will never deliver (the guardrail keys off this).
+        var outputIsHdr = preserveHdr && sourceIsHdr && caps.SupportsHdr
+            && TranscodeProfileBuilder.CodecCanCarryHdr(targetVideoCodec);
         if (outputIsHdr)
         {
             url += "&hdr=true";
@@ -588,13 +743,24 @@ public class StreamPlanService : IStreamPlanService
         if (caps.MaxResolution > 0 && resolution > caps.MaxResolution)
             reasons.Add($"Resolution {resolution}p exceeds client max {caps.MaxResolution}p");
 
+        if (reasons.Count == 0 && ContainerForcedTranscode(container, caps))
+            reasons.Add($"Container '{container}' not supported for direct streaming");
+
         return reasons.Count > 0 ? string.Join("; ", reasons) : "Transcoding required";
     }
+
+    /// QS-WI-004: true when nothing else explains the transcode and the container can't be
+    /// direct-played for this client — the container alone forced the re-encode (e.g. a
+    /// codec-compatible source whose tracks can't be repackaged into fMP4-HLS either).
+    private static bool ContainerForcedTranscode(string container, ClientCapabilities caps)
+        => !string.IsNullOrEmpty(container)
+           && !DirectPlayContainers.Contains(container)
+           && !caps.SupportedContainers.Contains(container);
 
     /// Structured parallel of <see cref="DetermineTranscodeReason"/> — same conditions,
     /// emitted as machine-readable codes + params for the client-side explainer (P2-WI-002).
     private List<StreamReasonCode> DetermineTranscodeReasonCodes(
-        string videoCodec, string audioCodec, bool isHdr, int resolution, ClientCapabilities caps)
+        string videoCodec, string audioCodec, string container, bool isHdr, int resolution, ClientCapabilities caps)
     {
         var codes = new List<StreamReasonCode>();
 
@@ -614,7 +780,14 @@ public class StreamPlanService : IStreamPlanService
                 new Dictionary<string, string> { ["resolution"] = $"{resolution}p", ["max"] = $"{caps.MaxResolution}p" }));
 
         if (codes.Count == 0)
-            codes.Add(new StreamReasonCode(StreamReasonCodes.TranscodeRequired));
+        {
+            // QS-WI-004: codecs and constraints are all fine — name the container as the
+            // culprit when it is (closed-enum audit), instead of the generic catch-all.
+            codes.Add(ContainerForcedTranscode(container, caps)
+                ? new StreamReasonCode(StreamReasonCodes.ContainerUnsupported,
+                    new Dictionary<string, string> { ["container"] = container })
+                : new StreamReasonCode(StreamReasonCodes.TranscodeRequired));
+        }
 
         return codes;
     }

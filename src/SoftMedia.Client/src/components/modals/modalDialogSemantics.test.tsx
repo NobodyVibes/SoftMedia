@@ -56,6 +56,8 @@ const userRow: UserDto = {
     usedInviteCode: null,
     twoFactorEnabled: false,
     maxStreamBitrateKbps: 0,
+    remoteMaxStreamBitrateKbps: 0,
+    maxStreamResolution: 0,
 };
 
 function renderWithQuery(ui: React.ReactElement) {
@@ -94,7 +96,7 @@ describe('modal dialog semantics (SR-WI-051)', () => {
 
     it('StreamingModal is a labelled dialog', () => {
         renderWithQuery(<StreamingModal isOpen={true} onClose={() => {}} user={userRow} />);
-        expectDialog(/streaming limit for alice/i);
+        expectDialog(/streaming limits for alice/i);
     });
 
     it('LibraryAccessModal is a labelled dialog', async () => {

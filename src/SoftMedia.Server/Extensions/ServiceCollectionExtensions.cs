@@ -435,6 +435,7 @@ public static class ServiceCollectionExtensions
         // Media & Transcoding Services
         services.AddScoped<IFFmpegService, FFmpegService>();
         services.AddScoped<IStreamPlanService, StreamPlanService>();
+        services.AddScoped<IUserStreamingPolicyProvider, UserStreamingPolicyProvider>(); // QS-WI-002: single read path for per-user caps
         services.AddScoped<IAudioStreamPlanService, AudioStreamPlanService>();
         services.AddSingleton<IProcessController, ProcessController>();
         services.AddSingleton<ITranscodeSessionManager, TranscodeSessionManager>();
@@ -461,6 +462,7 @@ public static class ServiceCollectionExtensions
         
         services.AddScoped<ISubtitleService, SubtitleService>();
         services.AddScoped<ITranscodeProfileBuilder, TranscodeProfileBuilder>();
+        services.AddSingleton<IOpenClToneMapProbe, OpenClToneMapProbe>(); // QS-WI-012: one cached ffmpeg probe per server run
         services.AddScoped<IHlsManifestService, HlsManifestService>();
         services.AddScoped<IRecommendationService, RecommendationService>();
         services.AddScoped<IContinueWatchingService, ContinueWatchingService>();

@@ -108,6 +108,14 @@ public class SettingsService : ISettingsService
             new() { Key = "ToneMappingAlgorithm", Value = "hable", Group = "Streaming", Description = "HDR to SDR conversion: hable, reinhard, mobius." },
             new() { Key = "MaxStreamingBitrate", Value = "20000", Group = "Streaming", Description = "Maximum bitrate (kbps) for remote (WAN) streaming. 0 = unlimited." },
             new() { Key = "MaxStreamingBitrateLan", Value = "0", Group = "Streaming", Description = "Maximum bitrate (kbps) for local (LAN) streaming. 0 = unlimited." },
+            // QS-WI-001 — remote resolution ceiling beside the WAN bitrate cap. "original" = no cap.
+            // Per-user streaming limits override both remote caps (override-wins, QS-WI-002).
+            new() { Key = "RemoteMaxResolution", Value = "original", Group = "Streaming", Description = "Maximum resolution for remote (WAN) streams (720p, 1080p, 4k, original). VPN/Tailscale (CGNAT) clients count as home and are not capped." },
+            // QS-WI-005 — the HDR-transcode guardrail. Warn: clients show a pre-play prompt
+            // whenever the computed plan would tone-map (HDR → SDR). Block: the prompt only
+            // offers an SDR version (when one exists) or cancel — never "play anyway".
+            new() { Key = "WarnOnHdrTranscode", Value = "true", Group = "Streaming", Description = "Warn users before playing HDR video that must be converted to SDR (colors wash out; the conversion can be CPU-intensive). Users can dismiss the warning per device." },
+            new() { Key = "BlockHdrTranscode", Value = "false", Group = "Streaming", Description = "Prevent HDR-to-SDR converted playback entirely: the player only offers a non-HDR version of the title (when one exists) or cancel. Off by default." },
             new() { Key = "DefaultStreamingQuality", Value = "auto", Group = "Streaming", Description = "Default quality for new streams (auto, 720p, 1080p, 4k, original)." },
             new() { Key = "DefaultAudioChannels", Value = "auto", Group = "Streaming", Description = "Default audio channel preference (auto, stereo, 5.1, 7.1)." },
             new() { Key = "MaxAudioStreamingBitrate", Value = "0", Group = "Streaming", Description = "Maximum audio transcode bitrate (kbps). 0 = unlimited. Common: 128, 192, 256, 320." },

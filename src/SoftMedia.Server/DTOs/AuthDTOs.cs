@@ -57,14 +57,18 @@ public record TotpConfirmResponse(List<string> RecoveryCodes);
 public record TotpStatusResponse(bool Enabled);
 public record TotpDisableRequest(string Password, string Code);
 
-public record UserDto(Guid Id, string Username, UserRole Role, string MaxRating, DateTime CreatedAt, bool IsBanned, bool IsApproved, bool IsRejected, Dictionary<string, string> ContentRatings, string FirstName, string LastName, bool CreatedByAdmin, string? UsedInviteCode, bool MustChangePassword, bool TwoFactorEnabled, int MaxStreamBitrateKbps);
+// QS-WI-002 appended the remote bitrate + resolution limits (0 = unlimited/inherit, like the base cap).
+public record UserDto(Guid Id, string Username, UserRole Role, string MaxRating, DateTime CreatedAt, bool IsBanned, bool IsApproved, bool IsRejected, Dictionary<string, string> ContentRatings, string FirstName, string LastName, bool CreatedByAdmin, string? UsedInviteCode, bool MustChangePassword, bool TwoFactorEnabled, int MaxStreamBitrateKbps, int RemoteMaxStreamBitrateKbps = 0, int MaxStreamResolution = 0);
 
 // User Management DTOs
 public record UpdateUserRoleRequest(string Role);
 
 // R-WI-009: admin-only per-user streaming bitrate cap (kbps; 0 = unlimited). Enforced since
 // P1-WI-003 but previously settable only by direct DB edit.
-public record UpdateUserStreamingRequest(int MaxStreamBitrateKbps);
+// QS-WI-002: remote bitrate variant (applies only off-LAN; beats the base cap there) and a
+// resolution ceiling (height in pixels). 0/null = unlimited/inherit. Override-wins semantics:
+// a set value replaces the server's network caps for this account and may exceed them.
+public record UpdateUserStreamingRequest(int MaxStreamBitrateKbps, int? RemoteMaxStreamBitrateKbps = null, int? MaxStreamResolution = null);
 
 public record ApproveUserRequest(bool IsApproved);
 

@@ -26,6 +26,7 @@ public class TranscodeDebugServiceTests
     private readonly Mock<ISettingsService> _settings = new();
     private readonly Mock<IStreamPlanService> _streamPlan = new();
     private readonly Mock<IBinaryLocationService> _binaries = new();
+    private readonly Mock<IOpenClToneMapProbe> _openClProbe = new();
 
     private TranscodeDebugService BuildService()
     {
@@ -35,7 +36,7 @@ public class TranscodeDebugServiceTests
 
         _streamPlan.Setup(p => p.ComputeStreamPlanAsync(
                 It.IsAny<Guid>(), It.IsAny<MediaItem>(), It.IsAny<ClientCapabilities>(), It.IsAny<string>(),
-                It.IsAny<System.Net.IPAddress?>(), It.IsAny<int?>()))
+                It.IsAny<System.Net.IPAddress?>(), It.IsAny<UserStreamingPolicy?>()))
             .ReturnsAsync(new StreamPlan { Method = PlaybackMethod.Transcode, VideoCodec = "h264" });
 
         var repo = new Mock<IMediaRepository>();
@@ -54,6 +55,7 @@ public class TranscodeDebugServiceTests
             _settings.Object,
             _streamPlan.Object,
             _binaries.Object,
+            _openClProbe.Object,
             scopeFactory.Object,
             NullLogger<TranscodeDebugService>.Instance);
     }

@@ -15,7 +15,10 @@ public sealed record PersistedStreamPlan(
     bool PreserveHdr,
     bool AudioCopy = false,
     string? AudioCodec = null,
-    int AudioChannels = 0);
+    int AudioChannels = 0,
+    // QS-WI-003: the winning clamp reason code from plan negotiation (e.g. "bitrate.wan-cap"),
+    // so the admin Now Playing card can show WHY a session is capped. Null = nothing clamped.
+    string? LimitReasonCode = null);
 
 /// <summary>
 /// Per-session store of the negotiated stream plan, keyed by (mediaId, userId, sid).

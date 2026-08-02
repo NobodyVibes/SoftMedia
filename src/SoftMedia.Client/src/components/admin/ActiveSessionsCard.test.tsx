@@ -154,6 +154,17 @@ describe('ActiveSessionsCard', () => {
         expect(screen.getByText('Phone')).toBeInTheDocument();
     });
 
+    it('QS-WI-003: the Quality cell tooltip names the clamp that bound the session', async () => {
+        mocked.getActiveSessions.mockResolvedValue([
+            { ...transcodeRow, limitReason: 'bitrate.wan-cap' },
+        ]);
+        renderCard();
+
+        const quality = await screen.findByText(/720p · h264 · 3000 kbps/);
+        expect(quality.closest('span[title]')).toHaveAttribute('title', 'bitrate.wan-cap');
+        expect(screen.getByText('*')).toBeInTheDocument(); // visible marker that a limit applied
+    });
+
     it('reports an unknown device honestly instead of guessing a form factor', async () => {
         mocked.getActiveSessions.mockResolvedValue([
             { ...directPlayRow, deviceType: null, ipAddress: null },

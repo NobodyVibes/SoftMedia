@@ -7,6 +7,88 @@ from 1.0 onward.
 ## [Unreleased]
 
 ### Added
+- **"Media Tips" toggle (per device).** One switch under Settings → Client → Playback
+  governs the proactive playback tips SoftMedia volunteers on its own: the pre-play
+  "HDR will be converted" warning, the in-player HDR notices ("HDR tone-mapping applied
+  for subtitles" / "HDR passthrough re-enabled"), and the HDR heads-up when starting a
+  cast; future unsolicited tips will join it.
+  Turning it off asks for confirmation first (streaming and transcoding are complex,
+  and the tips exist to help diagnose hardware load and quality issues); turning it
+  back on also restores any per-prompt "Never show again" dismissals so the tips
+  actually return. Deliberately *never* affected: the user-invoked "Why is this
+  playing this way?" explainer (you asked for it, so it always answers), the admin's
+  `BlockHdrTranscode` dialog (an admin rule — also enforced server-side, so no client
+  toggle could bypass it anyway), and any error or refusal feedback such as the
+  "server doesn't allow HDR conversion" cast message — suppressing the explanation of
+  why something failed helps no one.
+- **"What the server allows you" on the client settings page.** The Streaming Quality
+  screen is now worded around the actual model — *what this device asks for* — and
+  shows a read-only line with your account's effective server ceilings at home and
+  away (bitrate + resolution), backed by a new `GET /api/v1/me/streaming-limits`
+  endpoint that mirrors the plan arbitration exactly (per-user override-wins limits,
+  the remote-only network ceilings, and the server-wide conversion ceiling on top), so
+  the display can never drift from what enforcement does. The Auto quality option now
+  documents its honest contract in place: the server picks direct play or remux when
+  possible, else one transcode at your effective cap — no client-side bandwidth
+  guessing, ever; if a stream buffers, the Quality menu is the lever and the explainer
+  says what the stream is doing.
+- **Pre-play HDR warning ("HDR will be converted").** When a playback plan would convert
+  HDR to SDR (tone-mapping), the player now asks before starting instead of silently
+  serving washed-out colors: the prompt explains the quality cost, adds an honest
+  resource line only when the conversion will actually run on the CPU (worded
+  differently when the server has no hardware acceleration at all), and names the
+  cause — your device, the server's HDR setting, subtitle burn-in, or an 8-bit output
+  format — using the same localized reasons as the "Why is this playing this way?"
+  panel. When the title has a non-HDR copy in its version group, the prompt *offers*
+  "Play the ⟨1080p⟩ version" (it never switches automatically). Buttons: Play anyway /
+  Play the SDR version / Never show again (device-local, never pre-selected). Binge
+  sessions stay pleasant: episode auto-advance re-uses your answer for the rest of the
+  sitting; the next manual play asks again. Two new server settings govern it:
+  `WarnOnHdrTranscode` (default on) and `BlockHdrTranscode` (default off — when on, the
+  prompt only offers the SDR version or cancel, and the per-device dismissal does not
+  bypass it). `BlockHdrTranscode` is also enforced server-side: a transcode session that
+  would convert HDR to SDR is refused (403) even if a client ignores the plan's policy —
+  repackaging (remux), direct play, and genuine HDR passthrough are unaffected. Casting
+  is covered too: the Chromecast receiver is SDR-only, so casting HDR shows a clear
+  message under block (instead of a cryptic receiver stall) and a heads-up toast under
+  warn.
+- **GPU tone-mapping for Intel and AMD (OpenCL).** HDR→SDR conversion previously ran on
+  the GPU only with NVIDIA (CUDA); with Intel or AMD acceleration the tone-map ran
+  entirely on the CPU. The transcoder now runs it through OpenCL (`tonemap_opencl`) on
+  Intel/AMD setups — decode stays software (frames hop through system memory once), but
+  the expensive tone-map math moves onto the GPU, with the hardware encoder unchanged.
+  A one-time startup probe verifies the machine's OpenCL runtime actually works; when it
+  doesn't, the universal software `zscale/tonemap` fallback engages exactly as before.
+  The pre-play HDR warning derives its "runs on the CPU" line from the pipeline actually
+  selected, so it reflects this automatically.
+- **Transcode-cause taxonomy completed.** Two culprits that previously hid behind the
+  generic "requires conversion" line are now named explicitly in the explainer: the
+  container ("the ⟨mkv⟩ file format can't be streamed to this device as-is") and
+  subtitle burn-in. HDR tone-mapping now always names its actual cause: device
+  incapability, server policy (`PreserveHDR` off), subtitle burn-in, or an output codec
+  that can't carry HDR. All strings localized (en + es).
+- **"Remote streaming" card on the admin Settings page (Streaming Quality tab)** — one
+  plain-language surface for the network streaming limits: the remote (WAN) bitrate cap,
+  the optional home (LAN) bitrate cap, and a new **remote resolution limit**
+  (`RemoteMaxResolution`, default: no limit) that applies only to streams from outside
+  the home network. The raw settings no longer appear as generic entries in the Streaming
+  group, so each knob exists exactly once. The card's help text spells out the caveat
+  that VPN/Tailscale (CGNAT) clients count as home-network. Shipped defaults are
+  unchanged (20 Mbps remote / unlimited LAN).
+- **Per-user remote bitrate and resolution limits.** The user editor's streaming modal now
+  sets three limits per account: max bitrate, max *remote* bitrate (applies only off-LAN
+  and beats the base cap there), and a max resolution. Semantics are override-wins and now
+  stated in the UI: a set limit *replaces* the server's network caps for that account —
+  including allowing more than the server-wide remote cap ("this user's personal limit").
+  Enforced at plan time, on plan-less transcode requests, and on the direct `/stream`
+  endpoint (which also gained a resolution gate).
+- **Every quality clamp now names its winner.** The player's "Why is this playing this
+  way?" panel reports exactly which limit bound a stream, in plain localized language:
+  your account's limit, your account's remote limit, the server's home/remote network
+  limits, your own Data Saver mode, your session quality pick, the server's conversion
+  ceiling — or "the file is smaller than what you asked for" when nothing limited it.
+  The player debug panel shows the full structured decision chain, and the admin
+  "Now Playing" card marks capped sessions with the same reason code as a tooltip.
 - **Duplicate Versions card on the admin Settings page** — lists every movie and episode
   that exists as more than one file (quality/language variants or accidental copies) with
   per-copy quality label, size, and watched state. Copies are now tracked as *versions of
@@ -59,6 +141,33 @@ from 1.0 onward.
 - **"Most Played" and "Recently Played" library sorts** for Movie and TV grids. TV grids
   aggregate episode plays up to the series; never-played items sort last.
 
+### Changed
+- **Uncapped transcodes now get a sane bitrate ceiling.** When nothing negotiated a
+  bitrate limit (no server/network/per-user cap, no client ask), transcodes previously
+  ran CRF-only and could spike far past what any player needs (grainy 4K HDR sources
+  especially). A documented per-resolution ladder now supplies a generous CVBR ceiling
+  (h264: 2.5/5/9/14/22 Mbps for 480p/720p/1080p/1440p/4K; hevc/av1 at 60%) — CRF remains
+  the quality driver and any negotiated cap replaces these defaults outright. Audited
+  against Apple HLS authoring guidance and Jellyfin/Plex community practice; not a new
+  knob (quality/speed still steer via `TranscodeCRF`/`TranscodePreset`).
+- **Stream plans no longer promise HDR they can't deliver.** With `PreserveHDR` on but an
+  8-bit h264 output negotiated, the plan used to claim HDR while the encoder tone-mapped
+  anyway; the plan now reports SDR up front (and the new pre-play warning names the
+  codec as the cause).
+- **Stream-plan API additions:** plans now carry the HDR-guardrail facts
+  (`toneMapPlanned`, `toneMapPipeline` = `cuda`/`opencl`/`software`, `toneMapIsSoftware`,
+  `hardwareAccelerationEnabled`, `hdrTranscodePolicy` = `warn`/`block`), new reason codes
+  (`container.unsupported`, `subtitle.burn-in`, `hdr.tonemap.subtitles`,
+  `hdr.tonemap.server-policy`, `hdr.tonemap.codec`), and the player debug panel's
+  decision block gained `toneMapPipeline`.
+- **Stream-plan reason codes (API):** the generic `bitrate.clamped` code is no longer
+  emitted; plans now carry one code per clamp winner (`bitrate.user-cap`,
+  `bitrate.user-remote-cap`, `bitrate.lan-cap`, `bitrate.wan-cap`, `bitrate.data-saver`)
+  plus new resolution/quality codes (`resolution.user-ceiling`, `resolution.remote-ceiling`,
+  `resolution.server-ceiling`, `quality.session-override`, `source.is-smaller`). Clients
+  rendering unknown codes fall back to the plan's free-form `reason` string, and the web
+  app keeps its `bitrate.clamped` translation for older servers.
+
 ### Security
 - **Artwork now requires authentication.** Posters, backdrops, episode stills, cast
   headshots and playlist covers under `/cache/images` were served to anyone on the
@@ -95,6 +204,19 @@ from 1.0 onward.
   the server-wide resolution/codec ceilings; the hero rotation now honours content-rating ceilings.
 
 ### Fixed
+- **Quality labels now mean the same thing everywhere.** Two label parsers had drifted:
+  the plan arbitration only recognized 720p/1080p/4k, while the direct-stream gate also
+  knew 480p/1440p/8k — so a 1440p session pick was silently ignored (played uncapped),
+  and a resolution ceiling hand-set to "1440p" was enforced on one path but not the
+  other. One shared label→height authority (`QualityLabels`) now backs plan
+  arbitration, the stream gates, and the new streaming-limits display, so 480p, 1440p
+  and 8K picks/ceilings are honored consistently.
+- **Downscaling now works for every negotiated resolution.** The transcoder's scale
+  filters only recognized the admin-setting labels (720p/1080p/4k); the resolutions
+  negotiated per session are numeric strings ("1440p", "2160p"…), so e.g. a 4K quality
+  pick on an 8K source produced no downscale at all. One shared label→width map now
+  backs the software, CUDA, and OpenCL scale paths (480p through 8K), and the new
+  transcode bitrate ladder resolves the same labels.
 - **"More from this collection" no longer lists a duplicate copy of the movie you're
   viewing as a separate entry.** Collection strips, collection pages, and the collection
   list all count and show logical films — one entry per title however many files it has,

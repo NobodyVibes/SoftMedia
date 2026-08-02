@@ -22,6 +22,15 @@ export interface LocalPreferences {
     subtitleEdgeStyle: string;  // 'none' | 'outline' | 'shadow'
     // Photo slideshow entrance transition (per-device, like all viewing prefs)
     slideshowTransition: string; // 'none' | 'fade' | 'zoom' | 'slide'
+    // QS-WI-005 — HDR guardrail "Never show again" (device-local). 'false' = dismissed.
+    // The Media Tips group re-enable (QS-WI-011) resets this back to 'true'.
+    // Never suppresses the admin BlockHdrTranscode dialog.
+    showHdrTranscodeWarning: string; // 'true' | 'false'
+    // QS-WI-011 — the "Media Tips" group toggle. Governs UNSOLICITED educational surfaces
+    // only (today: the QS-WI-005 pre-play HDR prompt). User-invoked diagnostics (the
+    // "Why is this playing this way?" explainer) and the admin BlockHdrTranscode dialog
+    // are NEVER affected by this flag — by definition, not by luck (plan §7).
+    mediaTipsEnabled: string; // 'true' | 'false'
 }
 
 const BASE_PREFERENCES_KEY = 'softmedia_preferences';
@@ -42,6 +51,8 @@ const defaultPreferences: LocalPreferences = {
     subtitleBgOpacity: '0.75',
     subtitleEdgeStyle: 'none',
     slideshowTransition: 'fade',
+    showHdrTranscodeWarning: 'true',
+    mediaTipsEnabled: 'true',
 };
 
 /**

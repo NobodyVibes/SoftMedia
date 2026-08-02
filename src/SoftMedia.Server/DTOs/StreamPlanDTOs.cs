@@ -63,6 +63,13 @@ public class ClientCapabilities
     public string? RequestedQuality { get; set; } = null;
 
     /// <summary>
+    /// True when the client's Data Saver mode produced the MaxBitrate/MaxResolution ask,
+    /// so the server can name Data Saver (not a server cap) as the binding constraint in
+    /// the stream-reason explainer (QS-WI-003). Informational only — never loosens a cap.
+    /// </summary>
+    public bool DataSaver { get; set; } = false;
+
+    /// <summary>
     /// Index of the subtitle track to be burned in (if any).
     /// </summary>
     public int? SubtitleTrackIndex { get; set; } = null;
@@ -150,6 +157,39 @@ public class StreamPlan
     /// </summary>
     public string Reason { get; set; } = string.Empty;
 
+    // --- QS-WI-005: HDR guardrail facts (pre-play prompt keys off the PLAN, never the file) ---
+
+    /// <summary>
+    /// True when this plan will convert an HDR source to SDR (tone-map). Always false for
+    /// DirectPlay/Remux and for HDR passthrough transcodes.
+    /// </summary>
+    public bool ToneMapPlanned { get; set; }
+
+    /// <summary>
+    /// The tone-map pipeline the profile builder will actually select for this plan:
+    /// "cuda" | "opencl" | "software". Null when no tone-map is planned. Derived from
+    /// <c>TranscodeProfileBuilder.SelectToneMapPipeline</c> — the single pipeline authority —
+    /// never from a hardcoded vendor list, so it stays truthful as hardware pipelines land.
+    /// </summary>
+    public string? ToneMapPipeline { get; set; }
+
+    /// <summary>True when the planned tone-map runs on the CPU (the "software" pipeline).</summary>
+    public bool ToneMapIsSoftware { get; set; }
+
+    /// <summary>
+    /// True when the server has any hardware acceleration configured. Only populated when a
+    /// tone-map is planned; the guardrail uses it to word the CPU-load line ("no hardware
+    /// acceleration configured" vs "runs partly on the CPU").
+    /// </summary>
+    public bool HardwareAccelerationEnabled { get; set; }
+
+    /// <summary>
+    /// The server's HDR-transcode guardrail policy for this plan: "warn" | "block".
+    /// Null when no tone-map is planned or warnings are disabled (WarnOnHdrTranscode off
+    /// and BlockHdrTranscode off). "block" always wins over "warn".
+    /// </summary>
+    public string? HdrTranscodePolicy { get; set; }
+
     /// <summary>
     /// Structured, machine-readable reasons (P2-WI-002). The client translates each
     /// <see cref="StreamReasonCode.Code"/> to a localized human sentence for the
@@ -216,9 +256,58 @@ public static class StreamReasonCodes
     public const string HdrTonemap = "hdr.tonemap";
     public const string ResolutionExceedsMax = "resolution.exceeds-max";
     public const string TranscodeRequired = "transcode.required";
+    /// LEGACY (P2-WI-002): replaced by the per-winner bitrate codes below (QS-WI-003) and no
+    /// longer emitted. The constant stays so the vocabulary history is greppable; the client
+    /// keeps its i18n string for older servers.
     public const string BitrateClamped = "bitrate.clamped";
     /// B-01 — the source's original bitrate exceeds the effective cap, so the
     /// original-bitrate paths (direct play / remux) are refused and playback
     /// transcodes with `-maxrate` instead.
     public const string BitrateCapForcesTranscode = "bitrate.cap-forces-transcode";
+
+    // --- QS-WI-003: one code per clamp winner, so the explainer can name exactly which
+    // --- policy bound the stream (and localize it) instead of interpolating English.
+    /// The account's admin-set bitrate cap bound the stream. Params: kbps.
+    public const string UserBitrateCap = "bitrate.user-cap";
+    /// The account's admin-set REMOTE bitrate cap bound the stream (off-LAN only). Params: kbps.
+    public const string UserRemoteBitrateCap = "bitrate.user-remote-cap";
+    /// The server's LAN tier cap bound the stream. Params: kbps.
+    public const string LanBitrateCap = "bitrate.lan-cap";
+    /// The server's WAN (remote) tier cap bound the stream. Params: kbps.
+    public const string WanBitrateCap = "bitrate.wan-cap";
+    /// The client's own Data Saver ask is the binding bitrate constraint. Params: kbps.
+    public const string DataSaverBitrateCap = "bitrate.data-saver";
+    /// The session's Quality-menu pick (or the device's default quality) set the delivered
+    /// resolution. Params: quality.
+    public const string SessionQualityOverride = "quality.session-override";
+    /// The account's admin-set resolution ceiling bound the stream. Params: max.
+    public const string UserResolutionCeiling = "resolution.user-ceiling";
+    /// The server's RemoteMaxResolution ceiling bound the stream (off-LAN only). Params: max.
+    public const string RemoteResolutionCeiling = "resolution.remote-ceiling";
+    /// The server-wide MaxTranscodeResolution ceiling bound the stream. Params: max.
+    public const string ServerResolutionCeiling = "resolution.server-ceiling";
+    /// Nothing limited the stream below the source: the quality asked for exceeds what the
+    /// source file actually has. Params: requested, source.
+    public const string SourceIsSmaller = "source.is-smaller";
+
+    // --- QS-WI-004: transcode-cause taxonomy audit. The enum is CLOSED — every transcode
+    // --- trigger has a named code (video codec, audio codec, container, subtitle burn-in,
+    // --- bitrate cap, resolution cap, HDR tone-mapping) so the client never needs to parse
+    // --- free-form English. New culprits get a new constant here, never an ad-hoc string.
+
+    /// The source container can't be direct-played or remuxed for this client even though
+    /// the codecs are fine — the container alone forces the re-encode. Params: container.
+    public const string ContainerUnsupported = "container.unsupported";
+    /// The selected subtitles will be burned into the picture by this transcode (named
+    /// explicitly per QS-WI-004 — burn-in was the classic silently-unexplained transcode).
+    public const string SubtitleBurnIn = "subtitle.burn-in";
+    /// HDR is converted to SDR because subtitle burn-in requires drawing on tone-mapped
+    /// frames — the client and server could otherwise have kept HDR end-to-end.
+    public const string HdrTonemapSubtitles = "hdr.tonemap.subtitles";
+    /// HDR is converted to SDR because the server's PreserveHDR setting is off (policy, not
+    /// a client limitation).
+    public const string HdrTonemapServerPolicy = "hdr.tonemap.server-policy";
+    /// HDR is converted to SDR because the negotiated output codec (8-bit h264) cannot carry
+    /// HDR, even though client and server would both allow passthrough. Params: codec.
+    public const string HdrTonemapCodec = "hdr.tonemap.codec";
 }

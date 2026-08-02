@@ -93,4 +93,78 @@ public class UsersControllerStreamingTests : IDisposable
         var dto = Assert.Single(users, u => u.Id == _userId);
         Assert.Equal(3000, dto.MaxStreamBitrateKbps);
     }
+
+    // ---------- QS-WI-002: remote bitrate variant + resolution ceiling ----------
+
+    [Fact]
+    public async Task UpdateUserStreaming_SetsRemoteAndResolutionLimits()
+    {
+        var result = await NewController().UpdateUserStreaming(_userId,
+            new UpdateUserStreamingRequest(3000, RemoteMaxStreamBitrateKbps: 8000, MaxStreamResolution: 1080));
+
+        Assert.IsType<OkResult>(result);
+        var user = (await _context.Users.FindAsync(_userId))!;
+        Assert.Equal(3000, user.MaxStreamBitrateKbps);
+        Assert.Equal(8000, user.RemoteMaxStreamBitrateKbps);
+        Assert.Equal(1080, user.MaxStreamResolution);
+    }
+
+    [Fact]
+    public async Task UpdateUserStreaming_ZeroOrOmitted_ClearsRemoteAndResolution()
+    {
+        await NewController().UpdateUserStreaming(_userId,
+            new UpdateUserStreamingRequest(3000, 8000, 1080));
+
+        // Explicit zeros clear; a request omitting the new fields (older client) clears too —
+        // the PUT is a full replace of the streaming-limits trio, matching the base cap.
+        var result = await NewController().UpdateUserStreaming(_userId,
+            new UpdateUserStreamingRequest(3000, 0, 0));
+
+        Assert.IsType<OkResult>(result);
+        var user = (await _context.Users.FindAsync(_userId))!;
+        Assert.Null(user.RemoteMaxStreamBitrateKbps);
+        Assert.Null(user.MaxStreamResolution);
+    }
+
+    [Fact]
+    public async Task UpdateUserStreaming_NegativeRemote_Returns400()
+    {
+        var result = await NewController().UpdateUserStreaming(_userId,
+            new UpdateUserStreamingRequest(0, RemoteMaxStreamBitrateKbps: -5));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task UpdateUserStreaming_UnknownResolution_Returns400()
+    {
+        var result = await NewController().UpdateUserStreaming(_userId,
+            new UpdateUserStreamingRequest(0, MaxStreamResolution: 999));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task UpdateUserStreaming_ClampsAbsurdRemoteValue()
+    {
+        await NewController().UpdateUserStreaming(_userId,
+            new UpdateUserStreamingRequest(0, RemoteMaxStreamBitrateKbps: 5_000_000));
+
+        Assert.Equal(100_000, (await _context.Users.FindAsync(_userId))!.RemoteMaxStreamBitrateKbps);
+    }
+
+    [Fact]
+    public async Task GetUsers_ExposesTheNewLimits()
+    {
+        await NewController().UpdateUserStreaming(_userId,
+            new UpdateUserStreamingRequest(3000, 8000, 2160));
+
+        var result = await NewController().GetUsers();
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var users = Assert.IsAssignableFrom<IEnumerable<UserDto>>(ok.Value);
+        var dto = Assert.Single(users, u => u.Id == _userId);
+        Assert.Equal(8000, dto.RemoteMaxStreamBitrateKbps);
+        Assert.Equal(2160, dto.MaxStreamResolution);
+    }
 }

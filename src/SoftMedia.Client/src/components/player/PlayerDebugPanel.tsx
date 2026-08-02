@@ -61,6 +61,8 @@ interface DebugInfo {
     selectedSubtitleTrack?: number | null;
     sessionDirectory?: string;
     probedAt?: string;
+    /** QS-WI-003: the plan's structured decision chain (clamp winners, transcode causes). */
+    reasonCodes?: { code: string; params?: Record<string, string> }[];
 }
 
 interface PlayerDebugPanelProps {
@@ -297,6 +299,24 @@ export function PlayerDebugPanel({ mediaId, token, subtitleTrack, clientCapabili
                                     </Section>
                                 )}
                             </div>
+
+                            {/* Decision chain (QS-WI-003): every clamp/cause code the planner emitted */}
+                            {debugInfo.reasonCodes && debugInfo.reasonCodes.length > 0 && (
+                                <div className="mt-4">
+                                    <Section title="6. Decision Chain" color="cyan">
+                                        {debugInfo.reasonCodes.map((rc, i) => (
+                                            <div key={i} className="flex flex-wrap items-baseline gap-2">
+                                                <span className="font-mono text-xs text-cyan-300">{rc.code}</span>
+                                                {rc.params && Object.keys(rc.params).length > 0 && (
+                                                    <span className="font-mono text-xs text-gray-500">
+                                                        {Object.entries(rc.params).map(([k, v]) => `${k}=${v}`).join(' ')}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </Section>
+                                </div>
+                            )}
 
                             {/* File Path */}
                             {debugInfo.probe?.filePath && (

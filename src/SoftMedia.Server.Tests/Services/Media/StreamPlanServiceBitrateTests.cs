@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using SoftMedia.Server.DTOs;
@@ -52,7 +52,7 @@ public class StreamPlanServiceBitrateTests
         settings.Setup(s => s.GetSettingAsync("EnableAV1Encoding", It.IsAny<bool>())).ReturnsAsync(false);
         settings.Setup(s => s.GetSettingAsync("MaxTranscodeResolution", It.IsAny<string>())).ReturnsAsync("original");
 
-        return new StreamPlanService(ffmpeg.Object, settings.Object, NullLogger<StreamPlanService>.Instance);
+        return new StreamPlanService(ffmpeg.Object, settings.Object, new Mock<IOpenClToneMapProbe>().Object, NullLogger<StreamPlanService>.Instance);
     }
 
     private static ClientCapabilities Caps(int requestedBitrate) => new()
@@ -101,18 +101,18 @@ public class StreamPlanServiceBitrateTests
         settings.Setup(s => s.GetSettingAsync("EnableAV1Encoding", It.IsAny<bool>())).ReturnsAsync(false);
         settings.Setup(s => s.GetSettingAsync("MaxTranscodeResolution", It.IsAny<string>())).ReturnsAsync("original");
 
-        return new StreamPlanService(ffmpeg.Object, settings.Object, NullLogger<StreamPlanService>.Instance);
+        return new StreamPlanService(ffmpeg.Object, settings.Object, new Mock<IOpenClToneMapProbe>().Object, NullLogger<StreamPlanService>.Instance);
     }
 
     [Fact]
     public async Task DirectPlayableSource_AboveTheUserCap_IsForcedToTranscode()
     {
-        // B-01: direct play serves the ORIGINAL bitrate — the last uncapped path.
+        // B-01: direct play serves the ORIGINAL bitrate â€” the last uncapped path.
         // A 20 Mbps source under a 3000 kbps user cap must transcode (with -maxrate).
         var svc = BuildServiceWithProbeBitrate(bitrateBps: 20_000_000);
         var plan = await svc.ComputeStreamPlanAsync(
             Guid.NewGuid(), DirectPlayableItem(), Caps(0), "tok",
-            clientIp: IPAddress.Parse("192.168.1.50"), userMaxBitrateKbps: 3000);
+            clientIp: IPAddress.Parse("192.168.1.50"), userPolicy: new UserStreamingPolicy(3000, null, null));
 
         Assert.Equal(PlaybackMethod.Transcode, plan.Method);
         Assert.Contains(plan.ReasonCodes, c => c.Code == StreamReasonCodes.BitrateCapForcesTranscode);
@@ -124,7 +124,7 @@ public class StreamPlanServiceBitrateTests
         var svc = BuildServiceWithProbeBitrate(bitrateBps: 2_000_000); // 2 Mbps < 3000 kbps cap
         var plan = await svc.ComputeStreamPlanAsync(
             Guid.NewGuid(), DirectPlayableItem(), Caps(0), "tok",
-            clientIp: IPAddress.Parse("192.168.1.50"), userMaxBitrateKbps: 3000);
+            clientIp: IPAddress.Parse("192.168.1.50"), userPolicy: new UserStreamingPolicy(3000, null, null));
 
         Assert.Equal(PlaybackMethod.DirectPlay, plan.Method);
     }
@@ -172,7 +172,7 @@ public class StreamPlanServiceBitrateTests
         var svc = BuildService(wanKbps: 10000, lanKbps: 0);
         var plan = await svc.ComputeStreamPlanAsync(
             Guid.NewGuid(), ForcedTranscodeItem(), Caps(20000), "tok",
-            clientIp: IPAddress.Parse("203.0.113.9"), userMaxBitrateKbps: 3000);
+            clientIp: IPAddress.Parse("203.0.113.9"), userPolicy: new UserStreamingPolicy(3000, null, null));
 
         Assert.Contains("user policy", plan.Reason);
         Assert.Contains("3000", plan.Reason);
@@ -209,21 +209,24 @@ public class StreamPlanServiceBitrateTests
     [Fact]
     public async Task ClampedTranscode_EmitsStructuredBitrateCode_WithSourceAndKbps()
     {
+        // QS-WI-003: the code itself names the winner ("bitrate.wan-cap" replaced the old
+        // generic "bitrate.clamped"); "source" still rides along for the debug panel.
         var svc = BuildService(wanKbps: 10000, lanKbps: 0);
         var plan = await svc.ComputeStreamPlanAsync(
             Guid.NewGuid(), ForcedTranscodeItem(), Caps(20000), "tok",
             clientIp: IPAddress.Parse("203.0.113.9"));
 
-        var clamp = plan.ReasonCodes.FirstOrDefault(c => c.Code == "bitrate.clamped");
+        var clamp = plan.ReasonCodes.FirstOrDefault(c => c.Code == StreamReasonCodes.WanBitrateCap);
         Assert.NotNull(clamp);
         Assert.Equal("10000", clamp!.Params["kbps"]);
         Assert.Equal("WAN cap", clamp.Params["source"]);
+        Assert.DoesNotContain(plan.ReasonCodes, c => c.Code == StreamReasonCodes.BitrateClamped);
     }
 
     // --- R-WI-003: remux must not bypass the bitrate cap ---
 
-    // h264/aac in mkv → codec-compatible but container needs remux. Client supports the codecs but
-    // only the mp4 container, so DirectPlay is out and Remux is the natural choice — unless the
+    // h264/aac in mkv â†’ codec-compatible but container needs remux. Client supports the codecs but
+    // only the mp4 container, so DirectPlay is out and Remux is the natural choice â€” unless the
     // source bitrate exceeds the cap, in which case a copy would blow it and Transcode must win.
     private static MediaItem RemuxItem() => new()
     {
@@ -250,13 +253,13 @@ public class StreamPlanServiceBitrateTests
         settings.Setup(s => s.GetSettingAsync("PreserveHDR", It.IsAny<bool>())).ReturnsAsync(false);
         settings.Setup(s => s.GetSettingAsync("EnableAV1Encoding", It.IsAny<bool>())).ReturnsAsync(false);
         settings.Setup(s => s.GetSettingAsync("MaxTranscodeResolution", It.IsAny<string>())).ReturnsAsync("original");
-        return new StreamPlanService(ffmpeg.Object, settings.Object, NullLogger<StreamPlanService>.Instance);
+        return new StreamPlanService(ffmpeg.Object, settings.Object, new Mock<IOpenClToneMapProbe>().Object, NullLogger<StreamPlanService>.Instance);
     }
 
     [Fact]
     public async Task Remux_Chosen_WhenSourceBitrateWithinCap()
     {
-        var svc = BuildRemuxService(wanKbps: 8000, sourceBitrateBps: 3_000_000); // 3 Mbps ≤ 8 Mbps cap
+        var svc = BuildRemuxService(wanKbps: 8000, sourceBitrateBps: 3_000_000); // 3 Mbps â‰¤ 8 Mbps cap
         var plan = await svc.ComputeStreamPlanAsync(
             Guid.NewGuid(), RemuxItem(), Caps(20000), "tok",
             clientIp: IPAddress.Parse("203.0.113.9"));
@@ -309,7 +312,7 @@ public class StreamPlanServiceBitrateTests
         settings.Setup(s => s.GetSettingAsync("PreserveHDR", It.IsAny<bool>())).ReturnsAsync(false);
         settings.Setup(s => s.GetSettingAsync("EnableAV1Encoding", It.IsAny<bool>())).ReturnsAsync(false);
         settings.Setup(s => s.GetSettingAsync("MaxTranscodeResolution", It.IsAny<string>())).ReturnsAsync("original");
-        return new StreamPlanService(ffmpeg.Object, settings.Object, NullLogger<StreamPlanService>.Instance);
+        return new StreamPlanService(ffmpeg.Object, settings.Object, new Mock<IOpenClToneMapProbe>().Object, NullLogger<StreamPlanService>.Instance);
     }
 
     private static MediaItem AudioItem(string audioCodec) => new()
@@ -327,7 +330,7 @@ public class StreamPlanServiceBitrateTests
     [Fact]
     public async Task Audio_Copies_Ac3_5_1_WhenClientSupportsAc3()
     {
-        // AC3 5.1 source + AC3-capable client → copy (surround preserved with no re-encode).
+        // AC3 5.1 source + AC3-capable client â†’ copy (surround preserved with no re-encode).
         var svc = BuildForcedTranscodeAudioService("ac3", 6);
         var plan = await svc.ComputeStreamPlanAsync(
             Guid.NewGuid(), AudioItem("ac3"), SurroundCaps(), "tok", clientIp: IPAddress.Parse("10.0.0.1"));
@@ -341,14 +344,14 @@ public class StreamPlanServiceBitrateTests
     [Fact]
     public async Task Audio_EncodesInsteadOfCopy_WhenBitrateCapped()
     {
-        // AC3 5.1 copyable source, but a bitrate cap is in effect (WAN 8000) → the plan must ENCODE
-        // (bounded ≤448k) rather than copy the source audio at its uncapped original bitrate
+        // AC3 5.1 copyable source, but a bitrate cap is in effect (WAN 8000) â†’ the plan must ENCODE
+        // (bounded â‰¤448k) rather than copy the source audio at its uncapped original bitrate
         // (diff-review MEDIUM). Surround is still preserved as AC3 5.1.
         var svc = BuildForcedTranscodeAudioService("ac3", 6, wanKbps: 8000);
         var plan = await svc.ComputeStreamPlanAsync(
             Guid.NewGuid(), AudioItem("ac3"), SurroundCaps(), "tok", clientIp: IPAddress.Parse("203.0.113.9"));
 
-        Assert.False(plan.TranscodeAudioCopy); // capped → encode, not copy
+        Assert.False(plan.TranscodeAudioCopy); // capped â†’ encode, not copy
         Assert.Equal("ac3", plan.TranscodeAudioCodec);
         Assert.Equal(6, plan.TranscodeAudioChannels);
     }
@@ -357,7 +360,7 @@ public class StreamPlanServiceBitrateTests
     public async Task Audio_EncodesAc3_5_1_ForMultichannelSource_ClientCannotCopy()
     {
         // DTS 5.1 can't be copied (not fMP4/TS-safe) but the client wants surround + supports AC3
-        // → encode AC3 5.1 rather than downmix to stereo.
+        // â†’ encode AC3 5.1 rather than downmix to stereo.
         var svc = BuildForcedTranscodeAudioService("dts", 6);
         var plan = await svc.ComputeStreamPlanAsync(
             Guid.NewGuid(), AudioItem("dts"), SurroundCaps(), "tok", clientIp: IPAddress.Parse("10.0.0.1"));
@@ -370,7 +373,7 @@ public class StreamPlanServiceBitrateTests
     [Fact]
     public async Task Audio_StereoAac_ForStereoSource_NonMuxableCodec()
     {
-        // Vorbis stereo: can't copy (not TS/fMP4-safe), not multichannel → stereo AAC.
+        // Vorbis stereo: can't copy (not TS/fMP4-safe), not multichannel â†’ stereo AAC.
         var svc = BuildForcedTranscodeAudioService("vorbis", 2);
         var caps = new ClientCapabilities
         {
@@ -388,7 +391,7 @@ public class StreamPlanServiceBitrateTests
     [Fact]
     public async Task Transcode_NotRemux_WhenAudioCodecNotFmp4Muxable()
     {
-        // Vorbis direct-plays in webm/mkv, but ffmpeg's fMP4 muxer has no tag for it — a stream-copy
+        // Vorbis direct-plays in webm/mkv, but ffmpeg's fMP4 muxer has no tag for it â€” a stream-copy
         // into fMP4-HLS would fail at mux time. The planner must transcode, not remux (R-WI-003 review).
         var svc = BuildRemuxService(wanKbps: 0, sourceBitrateBps: 3_000_000, audioCodec: "vorbis");
         var item = RemuxItem();
@@ -396,7 +399,7 @@ public class StreamPlanServiceBitrateTests
         var caps = new ClientCapabilities
         {
             VideoCodecs = ["h264"],
-            AudioCodecs = ["vorbis"], // client CAN decode vorbis — but it's still not fMP4-remuxable
+            AudioCodecs = ["vorbis"], // client CAN decode vorbis â€” but it's still not fMP4-remuxable
             SupportedContainers = ["mp4"],
             MaxBitrate = 20000,
             MaxAudioChannels = 2,

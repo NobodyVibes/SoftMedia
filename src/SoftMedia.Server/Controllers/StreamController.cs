@@ -32,6 +32,7 @@ public class StreamController : ControllerBase
     private readonly Services.Media.IExtrasService _extras;
     private readonly IMediaRepository _mediaRepository;
     private readonly IStreamSecurityService _streamSecurity;
+    private readonly Services.Media.IUserStreamingPolicyProvider _userStreamingPolicy;
 
     public StreamController(
         IMediaService mediaService,
@@ -40,7 +41,8 @@ public class StreamController : ControllerBase
         ILogger<StreamController> logger,
         Services.Media.IExtrasService extras,
         IMediaRepository mediaRepository,
-        IStreamSecurityService streamSecurity)
+        IStreamSecurityService streamSecurity,
+        Services.Media.IUserStreamingPolicyProvider userStreamingPolicy)
     {
         _mediaService = mediaService;
         _streamRegistry = streamRegistry;
@@ -49,6 +51,7 @@ public class StreamController : ControllerBase
         _extras = extras;
         _mediaRepository = mediaRepository;
         _streamSecurity = streamSecurity;
+        _userStreamingPolicy = userStreamingPolicy;
     }
 
     /// <summary>
@@ -121,10 +124,10 @@ public class StreamController : ControllerBase
                 || streamInfo.ContentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase);
             if (isVideo && Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var capUserId))
             {
-                var capKbps = await _context.Users
-                    .Where(u => u.Id == capUserId)
-                    .Select(u => u.MaxStreamBitrateKbps)
-                    .FirstOrDefaultAsync();
+                // QS-WI-002: network-aware — off-LAN the user's remote cap variant wins.
+                var isLan = Services.Infrastructure.NetworkClassifier.IsLan(HttpContext.Connection.RemoteIpAddress);
+                var policy = await _userStreamingPolicy.GetAsync(capUserId);
+                var capKbps = policy.EffectiveBitrateCap(isLan);
                 if (capKbps is > 0)
                 {
                     var effectiveBps = streamInfo.Bitrate is > 0 ? streamInfo.Bitrate.Value : 0L;
@@ -161,6 +164,28 @@ public class StreamController : ControllerBase
                             statusCode: StatusCodes.Status403Forbidden,
                             title: "Bitrate limit exceeded",
                             detail: "This item exceeds your streaming bitrate limit — use the transcoded stream.");
+                    }
+                }
+
+                // QS-WI-002: same bypass-hardening for the per-user RESOLUTION ceiling — the
+                // plan path refuses direct play above it (the transcode downscales), so a
+                // legit client never lands here; only a plan-skipping request does. Unprobed
+                // rows (no Height) keep the historical allow-through, like the bitrate gate.
+                if (policy.MaxResolution is > 0)
+                {
+                    var sourceHeight = await _context.MediaItems
+                        .Where(m => m.Id == id)
+                        .Select(m => m.Height)
+                        .FirstOrDefaultAsync();
+                    if (sourceHeight is > 0 && sourceHeight > policy.MaxResolution)
+                    {
+                        _logger.LogWarning(
+                            "Direct play refused for {MediaId}: source {SourceHeight}p exceeds user resolution cap {CapHeight}p",
+                            id, sourceHeight, policy.MaxResolution);
+                        return Problem(
+                            statusCode: StatusCodes.Status403Forbidden,
+                            title: "Resolution limit exceeded",
+                            detail: "This item exceeds your streaming resolution limit — use the transcoded stream.");
                     }
                 }
             }

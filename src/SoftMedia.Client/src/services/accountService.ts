@@ -32,6 +32,18 @@ export interface ContentLimitsDto {
     isAdmin: boolean;
 }
 
+/** QS-WI-009: one network tier's effective streaming ceilings; 0 = unlimited. */
+export interface StreamingLimitsTierDto {
+    maxBitrateKbps: number;
+    maxResolution: number;
+}
+
+/** The caller's effective streaming ceilings at home (LAN) and away (remote). */
+export interface StreamingLimitsDto {
+    lan: StreamingLimitsTierDto;
+    remote: StreamingLimitsTierDto;
+}
+
 export const accountService = {
     /**
      * R-WI-011: fetch the current user's EFFECTIVE content limits (computed server-side with
@@ -39,6 +51,16 @@ export const accountService = {
      */
     getContentLimits: async (): Promise<ContentLimitsDto> => {
         const response = await api.get<ContentLimitsDto>('/account/content-limits');
+        return response.data;
+    },
+
+    /**
+     * QS-WI-009: the caller's EFFECTIVE streaming ceilings per network tier, computed
+     * server-side by mirroring the StreamPlanService arbitration (override-wins per-user
+     * policy included) — the settings page displays it, it never drifts from enforcement.
+     */
+    getStreamingLimits: async (): Promise<StreamingLimitsDto> => {
+        const response = await api.get<StreamingLimitsDto>('/me/streaming-limits');
         return response.data;
     },
 

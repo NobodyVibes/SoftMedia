@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using SoftMedia.Server.DTOs;
@@ -11,11 +11,11 @@ using Xunit;
 
 namespace SoftMedia.Server.Tests.Services.Media;
 
-/// CC-WI-002 — the Chromecast-tuned plan. The client sends the Default-Media-Receiver
-/// capability profile (H.264 + AAC, ≤1080p, HLS/MP4; see CHROMECAST_CAPABILITIES in
+/// CC-WI-002 â€” the Chromecast-tuned plan. The client sends the Default-Media-Receiver
+/// capability profile (H.264 + AAC, â‰¤1080p, HLS/MP4; see CHROMECAST_CAPABILITIES in
 /// VideoPlayer.tsx). These pin the resulting plan to something every Cast generation can
-/// decode — transcoding only what must be transcoded, direct-playing what's already
-/// compatible — and confirm the per-network/per-user bitrate cap still applies to a cast.
+/// decode â€” transcoding only what must be transcoded, direct-playing what's already
+/// compatible â€” and confirm the per-network/per-user bitrate cap still applies to a cast.
 public class StreamPlanServiceCastTests
 {
     /// Mirror of the client CHROMECAST_CAPABILITIES profile.
@@ -64,7 +64,7 @@ public class StreamPlanServiceCastTests
         settings.Setup(s => s.GetSettingAsync("EnableAV1Encoding", It.IsAny<bool>())).ReturnsAsync(false);
         settings.Setup(s => s.GetSettingAsync("MaxTranscodeResolution", It.IsAny<string>())).ReturnsAsync("original");
 
-        return new StreamPlanService(ffmpeg.Object, settings.Object, NullLogger<StreamPlanService>.Instance);
+        return new StreamPlanService(ffmpeg.Object, settings.Object, new Mock<IOpenClToneMapProbe>().Object, NullLogger<StreamPlanService>.Instance);
     }
 
     [Theory]
@@ -80,11 +80,11 @@ public class StreamPlanServiceCastTests
             clientIp: IPAddress.Parse("192.168.1.5"));
 
         Assert.Equal(PlaybackMethod.Transcode, plan.Method);
-        Assert.Equal("h264", plan.VideoCodec);     // never hevc/av1 — the DMR can't decode those
+        Assert.Equal("h264", plan.VideoCodec);     // never hevc/av1 â€” the DMR can't decode those
         Assert.Equal("aac", plan.AudioCodec);
         Assert.Equal("hls", plan.Container);
         Assert.Equal("1080p", plan.Resolution);    // 4K source capped to 1080p
-        // The receiver fetches this exact URL — assert the params, anchored so a future
+        // The receiver fetches this exact URL â€” assert the params, anchored so a future
         // "codec=h264_nvenc"-style value couldn't satisfy a loose substring.
         Assert.Matches(@"[?&]codec=h264(&|$)", plan.Url);
         Assert.Matches(@"[?&]resolution=1080p(&|$)", plan.Url);
@@ -93,7 +93,7 @@ public class StreamPlanServiceCastTests
     [Fact]
     public async Task CastCaps_CompatibleSource_DirectPlays_NotNeedlesslyTranscoded()
     {
-        // H.264 + AAC in MP4 at 1080p is exactly what the Default Media Receiver plays natively —
+        // H.264 + AAC in MP4 at 1080p is exactly what the Default Media Receiver plays natively â€”
         // forcing a transcode here would waste CPU. This is the most important positive path.
         var svc = BuildService("h264", sourceResolution: "1080p", sourceAudioCodec: "aac");
 
@@ -109,7 +109,7 @@ public class StreamPlanServiceCastTests
     public async Task CastProfile_DrivesDecision_DistinctFromFullyCapableClient()
     {
         // Same HEVC/MKV source: a fully-capable browser direct-plays it; the Chromecast profile
-        // must transcode to H.264. Proves the capability profile — not a coincidental default —
+        // must transcode to H.264. Proves the capability profile â€” not a coincidental default â€”
         // drives the plan.
         var svc = BuildService("hevc", sourceResolution: "2160p", sourceAudioCodec: "aac");
         var item = Source("hevc", container: "mkv", resolution: "2160p", audioCodec: "aac");

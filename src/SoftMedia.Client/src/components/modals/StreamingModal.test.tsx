@@ -32,6 +32,8 @@ const userRow: UserDto = {
     usedInviteCode: null,
     twoFactorEnabled: false,
     maxStreamBitrateKbps: 3000,
+    remoteMaxStreamBitrateKbps: 8000,
+    maxStreamResolution: 1080,
 };
 
 function renderModal(props: { user: UserDto | null; isOpen?: boolean }) {
@@ -58,30 +60,52 @@ describe('StreamingModal', () => {
         expect(container.textContent).toBe('');
     });
 
-    it('pre-fills the user\'s current cap', () => {
+    it('pre-fills all three current limits (QS-WI-002)', () => {
         renderModal({ user: userRow });
-        expect(screen.getByRole('spinbutton')).toHaveValue(3000);
+        const [base, remote] = screen.getAllByRole('spinbutton');
+        expect(base).toHaveValue(3000);
+        expect(remote).toHaveValue(8000);
+        expect(screen.getByRole('combobox')).toHaveValue('1080');
     });
 
-    it('saves the entered bitrate on Save', async () => {
+    it('saves the full limits trio on Save', async () => {
         renderModal({ user: userRow });
 
-        fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '5000' } });
+        const [base, remote] = screen.getAllByRole('spinbutton');
+        fireEvent.change(base, { target: { value: '5000' } });
+        fireEvent.change(remote, { target: { value: '2000' } });
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '2160' } });
         fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
         await waitFor(() =>
-            expect(mockedUserService.updateUserStreaming).toHaveBeenCalledWith('user-1', 5000),
+            expect(mockedUserService.updateUserStreaming).toHaveBeenCalledWith('user-1', {
+                maxStreamBitrateKbps: 5000,
+                remoteMaxStreamBitrateKbps: 2000,
+                maxStreamResolution: 2160,
+            }),
         );
     });
 
-    it('saves 0 (unlimited)', async () => {
+    it('saves zeros (unlimited/inherit)', async () => {
         renderModal({ user: userRow });
 
-        fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '0' } });
+        const [base, remote] = screen.getAllByRole('spinbutton');
+        fireEvent.change(base, { target: { value: '0' } });
+        fireEvent.change(remote, { target: { value: '0' } });
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '0' } });
         fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
         await waitFor(() =>
-            expect(mockedUserService.updateUserStreaming).toHaveBeenCalledWith('user-1', 0),
+            expect(mockedUserService.updateUserStreaming).toHaveBeenCalledWith('user-1', {
+                maxStreamBitrateKbps: 0,
+                remoteMaxStreamBitrateKbps: 0,
+                maxStreamResolution: 0,
+            }),
         );
+    });
+
+    it('states the override-wins semantic in the help copy', () => {
+        renderModal({ user: userRow });
+        expect(screen.getByText(/override the server's network caps/i)).toBeInTheDocument();
     });
 });

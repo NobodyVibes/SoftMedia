@@ -334,6 +334,10 @@ following updates:
   ~46 commits ahead. If the operator pushes from another clone or to another
   repository, this check cannot see it — otherwise, a `git push origin main --tags`
   is due, and everything since 2026-07-21 currently exists only on this machine.
+  **RESOLVED later the same day:** `git push origin main --tags` from this clone
+  succeeded on the first try (`6cc2a2a..4beb3ee` + the `v0.9.0-rc1` tag; verified via
+  ls-remote) — the credentials were fine all along, the pushes had simply not been run
+  from this clone. Remote is in sync as of Session 5a.
 - **Corrected in this pass:** header status line (all §6 questions were resolved
   2026-07-21, not pending); NR-WI-003's "operator action still open" note (the same-day
   live check already confirmed admin/admin123 dead — recorded in the 2026-07-21 log,

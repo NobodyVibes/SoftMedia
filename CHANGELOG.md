@@ -7,6 +7,14 @@ from 1.0 onward.
 ## [Unreleased]
 
 ### Added
+- **The server now hosts the web app.** Deploy the built client into the server with
+  `npm run deploy:server` (in `src/SoftMedia.Client`) and `http://your-server:5011` *is*
+  SoftMedia — no second process, and deep links (`/media/…`, `/settings/…`) load the app
+  directly. API, hub, and cache paths keep their exact JSON/404 behavior (an unknown API
+  route never answers with the HTML shell), the deploy never touches the `wwwroot/cache`
+  runtime data, and the Vite dev workflow is completely unchanged. This is also what
+  makes the server's security headers actually protect the app — headers only guard
+  pages the server itself serves.
 - **"Media Tips" toggle (per device).** One switch under Settings → Client → Playback
   governs the proactive playback tips SoftMedia volunteers on its own: the pre-play
   "HDR will be converted" warning, the in-player HDR notices ("HDR tone-mapping applied
@@ -169,6 +177,18 @@ from 1.0 onward.
   app keeps its `bitrate.clamped` translation for older servers.
 
 ### Security
+- **The browser security policy (CSP) is now enforcing, not just observing.** The policy
+  that was shipped in report-only mode is enforced by default now that the server hosts
+  the web app (headers only protect pages the server serves). Verified live under
+  enforcement across sign-in, home, HLS playback with tone-mapping, the HDR prompt, the
+  PDF and EPUB readers, settings, and device pairing — with one real bug found and fixed
+  in the process: the Google Cast SDK loads follow-up scripts over plain `http://` when
+  the page itself is served over HTTP (the normal LAN setup), which the old
+  `https://`-only rule silently blocked; the Cast source is now scheme-relative (on
+  HTTPS deployments the browser's mixed-content blocking still forbids insecure scripts,
+  so nothing is weakened there). Rollback if ever needed: `Security:EnforceCsp=false`.
+  One caveat for installed PWA clients: header changes reach them when the service
+  worker updates its cached app shell, not instantly.
 - **Artwork now requires authentication.** Posters, backdrops, episode stills, cast
   headshots and playlist covers under `/cache/images` were served to anyone on the
   network; they now require the same reduced-privilege media token the player already

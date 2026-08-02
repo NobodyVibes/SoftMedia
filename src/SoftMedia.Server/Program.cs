@@ -404,6 +404,40 @@ app.UseStaticFiles();
 app.MapControllers();
 app.MapHub<MediaHub>("/hubs/media");
 
+// Server-hosted SPA (NR-WI-015 prerequisite, 2026-08-02): when the built client is
+// deployed into wwwroot (`npm run deploy:server` in src/SoftMedia.Client), any path
+// that no API route, hub, or real static file claimed falls back to index.html so links
+// (/media/{id}, /settings/...) load the app — single-origin hosting is what makes the
+// CSP header actually reach the document (Vite dev serves its own HTML without them).
+// API-shaped prefixes are excluded so unknown API/hub/cache/swagger paths keep their
+// plain 404 (anti-probe + client error handling both rely on it). Without an
+// index.html in wwwroot the fallback answers 404, i.e. exactly the pre-SPA behavior —
+// dev setups that only ever run Vite are unaffected.
+app.MapFallback(async context =>
+{
+    var path = context.Request.Path;
+    if (path.StartsWithSegments("/api") || path.StartsWithSegments("/hubs")
+        || path.StartsWithSegments("/cache") || path.StartsWithSegments("/swagger"))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    var webRoot = app.Environment.WebRootPath;
+    var indexPath = string.IsNullOrEmpty(webRoot) ? null : Path.Combine(webRoot, "index.html");
+    if (indexPath == null || !File.Exists(indexPath))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    // The shell must revalidate on every load (hashed assets under /assets are the
+    // long-lived part) so client updates propagate without a hard refresh.
+    context.Response.Headers.CacheControl = "no-cache";
+    context.Response.ContentType = "text/html; charset=utf-8";
+    await context.Response.SendFileAsync(indexPath);
+});
+
 // SR-WI-061 verification hook: a deliberately-unhandled exception route so the
 // global handler's RFC 7807 contract stays integration-testable. Never mapped in
 // Production (Development + the test harness's "Testing" environment only).

@@ -1,7 +1,7 @@
 # Native-App Readiness — Verified Findings & Implementation Plan
 
-**Version:** 1.2.0 *(2026-08-02: accuracy review — see §8 final entry; 1.1.0 2026-07-21: Phase C / Docker deferred by maintainer — see §4 note)*
-**Status:** Active — Sessions 1, 2, 4 complete; remaining: Session 5 (NR-WI-015/016, operator present) + deferred Phase C. All §6 questions were resolved 2026-07-21.
+**Version:** 1.3.0 *(2026-08-02 later: Session 5 SPLIT 5a/5b — 5a executed, see §8 final entry; 1.2.0: accuracy review; 1.1.0 2026-07-21: Phase C / Docker deferred by maintainer — see §4 note)*
+**Status:** Native-prep COMPLETE. Sessions 1, 2, 4 and 5a done; remaining items are PARKED with explicit triggers (§8 5a entry): 5b hardware/release verification (no cast device / TV / second physical device exists, and no release is being cut while the maintainer preps the codebase for client apps) + deferred Phase C Docker. Client-app work may begin.
 **Date:** 2026-07-21
 **Owner:** Project Maintainer
 **Branch at time of writing:** `security/hardening-wave-2` (56 commits ahead of `main`, working tree clean)
@@ -241,8 +241,8 @@ All questions were resolved 2026-07-21. The maintainer directed "complete photo 
 | NR-WI-012 | **Complete** (2026-07-21) | `session-4/settings-polish` | Webhooks group rendered with SSRF-warning copy |
 | NR-WI-013 | **Complete** (2026-07-21) | `security/hardening-wave-2` (uncommitted at completion; see §8) | Finish path; +19 server tests; see item body |
 | NR-WI-014 | **Complete** (2026-07-21) | `session-4/settings-polish` | Filesystem-probed extras (no schema) + scanner companion-skip; see §8 |
-| NR-WI-015 | Not Started | | Operator required |
-| NR-WI-016 | Not Started | | Operator required |
+| NR-WI-015 | ◑ **5a complete** (2026-08-02) | `main` | Hardware-free portion DONE: server-hosted SPA built (prerequisite — CSP never reached the document before), CSP audited under ENFORCEMENT in a live browser and flipped on (gstatic scheme bug found+fixed), Quick Connect paired live end-to-end, T13.2 re-scoped to its own session, L-24 decided (accepted residual). Cast/DLNA/second-physical-device passes → 5b parked register (§8). |
+| NR-WI-016 | **Parked** (2026-08-02) | | Trigger: first client app ships, or a public release is planned. The QA-doc refresh happens then (six plans landed since the checklists were written). No value in a 1.0 tag while the codebase is being prepped for clients. |
 
 ## 8. Session Log
 
@@ -325,10 +325,6 @@ following updates:
   exists. One addition when reactivating: the bundled/installed ffmpeg MUST include the
   OpenCL filters (`tonemap_opencl` etc.) — QS-WI-012 relies on them for Intel/AMD HDR
   tone-mapping (jellyfin-ffmpeg ships them; a distro ffmpeg may not).
-- **Corrected in this pass:** header status line (all §6 questions were resolved
-  2026-07-21, not pending); NR-WI-003's "operator action still open" note (the same-day
-  live check already confirmed admin/admin123 dead — recorded in the 2026-07-21 log,
-  table note now matches).
 - **Remote sync gap (precisely scoped, verified via live `git ls-remote` 2026-08-02):**
   the Session-1 403 push failure WAS resolved the same day — this clone's reflog shows
   one successful push on 2026-07-21 17:05, and `NobodyVibes/SoftMedia` holds the
@@ -338,3 +334,64 @@ following updates:
   ~46 commits ahead. If the operator pushes from another clone or to another
   repository, this check cannot see it — otherwise, a `git push origin main --tags`
   is due, and everything since 2026-07-21 currently exists only on this machine.
+- **Corrected in this pass:** header status line (all §6 questions were resolved
+  2026-07-21, not pending); NR-WI-003's "operator action still open" note (the same-day
+  live check already confirmed admin/admin123 dead — recorded in the 2026-07-21 log,
+  table note now matches).
+### 2026-08-02 (later) — Session 5a executed: hardware-free closeout; 5b parked with triggers
+
+Maintainer clarified: no cast device, no TV, no phone app, and the current mission is
+prepping the server for future client apps (no release imminent). Session 5 was split:
+**5a = everything closable with a browser (executed below); 5b = the parked register.**
+
+**5a work (all live-verified in a scratch-sandbox server + real browser):**
+- **Server-hosted SPA (new, prerequisite discovered during this session):** the server
+  never served the client — wwwroot held only `cache/`, so the wave-2 CSP header NEVER
+  reached the actual app document (Vite serves its own HTML). Landed: `MapFallback` SPA
+  hosting in Program.cs (API/hubs/cache/swagger prefixes keep plain 404s; no index.html
+  deployed = exact pre-SPA behavior, dev workflow untouched), `npm run deploy:server`
+  (manifest-tracked copy of dist → wwwroot; `wwwroot/cache` never touched),
+  `SpaHostingTests` (9 facts: fallback, API-404 preservation, CSP header presence,
+  enforcing-vs-report-only per config). This is also what Phase C's Docker spec silently
+  assumed existed — reactivating Phase C no longer has a hidden gap.
+- **CSP flipped to ENFORCING** (`Security:EnforceCsp=true` in appsettings) after a full
+  live audit of the server-hosted build under enforcement: login, home (SignalR ws,
+  media-token images, service worker), HLS tone-mapped playback (blob media), HDR
+  prompt, PDF reader (pdf.js blob worker), EPUB reader (srcdoc iframe), settings,
+  account. ONE real violation found and fixed: the Cast SDK chain-loads framework
+  scripts over `http://www.gstatic.com` on http-served pages — the https-anchored
+  source blocked them; now scheme-less (`www.gstatic.com`; https deployments lose
+  nothing — mixed-content blocking precedes CSP). Re-audited clean. CAVEAT recorded:
+  the PWA service worker serves the precached index.html WITH its cached headers, so
+  header changes reach installed PWA clients only when the SW updates — fresh contexts
+  get them immediately.
+- **Quick Connect live pairing PASS** (the "second device" is any API client — no phone
+  needed): initiate → 6-char code → logged-in web session's "Link a Device" card looked
+  it up (device IP + time + warning copy shown) → Authorize → device poll received
+  access+refresh tokens → second poll 404 (single-use claim). Web login page has no
+  device-side entry by design (that side belongs to TV/native apps).
+- **T13.2 decision:** NOT bolted onto this pass — it is an auth-store refactor (token in
+  memory + silent cookie-refresh on reload) that deserves a dedicated session with
+  regression tests. Recorded in the wave-2 register; CSP enforcement meanwhile shrinks
+  the XSS window it defends against.
+- **L-24 decision: accepted residual risk** (demoted admin keeps the scan-admins hub
+  group until reconnect; group carries admin-only scan telemetry, not media; Join*
+  re-checks per call). Revisit only if hub groups ever carry sensitive payloads.
+
+**5b — PARKED register (single collection point for the hardware/release IOUs):**
+- *Trigger: a Chromecast/DLNA TV/second physical device exists* — Cast live pass
+  (incl. token-gated artwork from AA, HDR block/warn cast toasts from QS,
+  version-switch-while-casting interlock from DV, and the scheme-less-gstatic Cast
+  load on a REAL receiver), DLNA-to-TV pass, Quick Connect on a physical device,
+  lock-screen artwork QA (AA).
+- *Trigger: first client app ships OR a public release is planned* — NR-WI-016
+  (manual-QA doc refresh covering everything since 2026-05-30, full QA sweep,
+  fresh-install-from-docs check, v1.0.0 cut), plus the two QS interactive checks
+  accepted on unit coverage (binge prompts-once; explainer under tips-off).
+- *Trigger: non-Windows deployment or release announcement* — Phase C Docker
+  (NR-WI-008/009; note: ffmpeg in the image must ship OpenCL filters per QS-WI-012).
+- *Own session, any time* — T13.2 token-in-memory.
+
+**With 5a done, this plan's mission — a server ready for client applications — is
+complete.** Per §4, client work may begin: desktop (mpv shell, P4-014) before mobile
+(P4-002 stays on the PWA until proven insufficient).

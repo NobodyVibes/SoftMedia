@@ -4,10 +4,17 @@ public static class SecurityHeadersExtensions
 {
     /// <summary>
     /// Content-Security-Policy for the SPA (audit wave-2 WS-13). Tuned for SoftMedia's actual
-    /// sources (verified against the Vite production build):
-    ///   - <c>script-src 'self' https://www.gstatic.com</c> — the bundle is same-origin (no inline
+    /// sources (verified against the Vite production build; re-verified 2026-08-02 against the
+    /// server-hosted build with enforcement on):
+    ///   - <c>script-src 'self' www.gstatic.com</c> — the bundle is same-origin (no inline
     ///     script), plus the Google Cast Web Sender SDK (<c>cast_sender.js</c>) that index.html
     ///     loads from gstatic for the casting feature; without gstatic an enforcing CSP breaks Cast.
+    ///     The gstatic source is deliberately SCHEME-LESS: on an http LAN deployment (SoftMedia's
+    ///     normal mode) the Cast extension chain-loads its framework scripts over
+    ///     <c>http://www.gstatic.com</c>, which an <c>https://</c>-anchored source blocks (found
+    ///     live in the 2026-08-02 enforcement audit). A scheme-less host-source matches the page's
+    ///     scheme — and on an https deployment the browser's mixed-content blocking already forbids
+    ///     http scripts before CSP is consulted, so nothing is loosened there.
     ///   - <c>style-src 'self' 'unsafe-inline'</c> — framer-motion injects inline styles at runtime;
     ///     Tailwind ships external CSS.
     ///   - <c>img-src</c>/<c>media-src</c> <c>data:</c>/<c>blob:</c> — hls.js / react-pdf (pdf.js)
@@ -24,14 +31,14 @@ public static class SecurityHeadersExtensions
     /// </summary>
     private const string ContentSecurityPolicy =
         "default-src 'self'; " +
-        "script-src 'self' https://www.gstatic.com; " +
+        "script-src 'self' www.gstatic.com; " +
         "style-src 'self' 'unsafe-inline'; " +
-        "img-src 'self' data: blob: https://www.gstatic.com; " +
+        "img-src 'self' data: blob: www.gstatic.com; " +
         "media-src 'self' blob:; " +
         "font-src 'self' data:; " +
-        "connect-src 'self' ws: wss: https://www.gstatic.com; " +
+        "connect-src 'self' ws: wss: www.gstatic.com; " +
         "worker-src 'self' blob:; " +
-        "frame-src 'self' https://www.gstatic.com; " +
+        "frame-src 'self' www.gstatic.com; " +
         "object-src 'none'; " +
         "base-uri 'self'; " +
         "form-action 'self'; " +

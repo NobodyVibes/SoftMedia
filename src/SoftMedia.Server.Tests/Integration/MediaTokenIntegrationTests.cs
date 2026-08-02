@@ -205,14 +205,17 @@ public class MediaTokenIntegrationTests : IntegrationTestBase
         Assert.Equal("nosniff", resp.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.Equal("SAMEORIGIN", resp.Headers.GetValues("X-Frame-Options").Single());
 
-        // Audit wave-2 WS-13: CSP ships report-only by default (Security:EnforceCsp unset in tests),
-        // so it is observed but never blocks — and the enforcing header must NOT be present.
-        Assert.True(resp.Headers.Contains("Content-Security-Policy-Report-Only"));
-        Assert.False(resp.Headers.Contains("Content-Security-Policy"));
-        var csp = resp.Headers.GetValues("Content-Security-Policy-Report-Only").Single();
+        // Audit wave-2 WS-13, flipped 2026-08-02: CSP now ships ENFORCING by default
+        // (Security:EnforceCsp=true in appsettings after the live server-hosted-SPA audit) —
+        // and the report-only header must NOT also be present.
+        Assert.True(resp.Headers.Contains("Content-Security-Policy"));
+        Assert.False(resp.Headers.Contains("Content-Security-Policy-Report-Only"));
+        var csp = resp.Headers.GetValues("Content-Security-Policy").Single();
         Assert.Contains("default-src 'self'", csp);
-        // The Google Cast SDK (cast_sender.js) loads from gstatic — the policy must allow it so an
-        // enforcing CSP doesn't break casting (verified against the built index.html).
-        Assert.Contains("script-src 'self' https://www.gstatic.com", csp);
+        // The Google Cast SDK (cast_sender.js) loads from gstatic — the source is SCHEME-LESS
+        // because the SDK chain-loads its framework over http:// on http-served LAN pages
+        // (found live in the 2026-08-02 enforcement audit; https deployments lose nothing —
+        // mixed-content blocking precedes CSP).
+        Assert.Contains("script-src 'self' www.gstatic.com", csp);
     }
 }

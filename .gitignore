@@ -109,3 +109,7 @@ music_diagnostic.ps1
 /debug_args.txt
 /probe_output.json
 /src/SoftMedia.Server/probe_output.json
+
+# Server-hosted SPA deploy target (build artifacts from 'npm run deploy:server' +
+# runtime cache) - never commit; the client's src is the source of truth.
+src/SoftMedia.Server/wwwroot/

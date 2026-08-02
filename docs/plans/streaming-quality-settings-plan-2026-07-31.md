@@ -1,6 +1,62 @@
 # Streaming Quality & Device Settings Plan — 2026-07-31 (rev. 2, post-review)
 
-> **STATUS: SESSIONS 1-3 COMPLETE. Session 4 (QS-WI-010 verification) pending.**
+> **STATUS: ALL SESSIONS (1-4) COMPLETE — PLAN DONE 2026-08-02.**
+>
+> **SESSION 4 COMPLETE (QS-WI-010 — 2026-08-02).**
+> Gates: server suite 2192/0 (includes 14 new matrix facts), client build clean,
+> client 633/633 (unchanged — Session 4 touched no client code).
+> - **Arbitration matrix**: StreamPlanServiceArbitrationMatrixTests — factor
+>   COMBINATIONS (ask × session override × Data Saver × user base/remote caps incl.
+>   above-WAN override × LAN/WAN × user/remote/server resolution ceilings), each
+>   asserting the delivered plan facts AND the winner code, plus absence of the losing
+>   codes (a wrong winner can't hide behind a right value). Cross-dimension rows pin
+>   bitrate + resolution winners named TOGETHER, and Data Saver surviving a generous
+>   user override.
+> - **LiveVerify PASSED** — full checklist against a real running server + real ffmpeg
+>   + the real web client in a real browser:
+>   - HDR10 fixture built per §7 (libx265 10-bit, smpte2084/bt2020 + master-display
+>     SEI; ffprobe-verified BEFORE trusting results) with an SDR 1080p sibling in one
+>     per-title folder; scan grouped them (shared VersionGroupId, HdrFormat=HDR10 on
+>     the 4K), library grid showed ONE card.
+>   - Guardrail plan facts per hwaccel, live: none → pipeline=software/isSoftware=true;
+>     nvidia → cuda/false; intel → opencl/false (the OpenCL probe genuinely ran and
+>     passed on this box). Reason codes: video.codec.unsupported + hdr.tonemap.
+>   - Browser (Vite dev + Chrome): the pre-play prompt rendered with the quality line,
+>     the no-hwaccel resource wording, the cause line, and the "Play the 1080p
+>     version" offer (clicking it navigated to the SDR sibling). Cancel returned to
+>     the detail page (hierarchical back-nav).
+>   - Media Tips full loop, live: disable requires the confirm dialog (owner wording,
+>     focus-managed Modal); tips OFF suppressed the warn prompt (playback went
+>     straight to transcode); "Never show again" honored; re-enable RESET it — the
+>     prompt returned after an off→on cycle. Settings screen showed the reworded copy
+>     + the live "what the server allows you" line fed by the new endpoint.
+>   - WAN classification via X-Forwarded-For 203.0.113.9: bitrate.wan-cap kbps=20000
+>     emitted; loopback (LAN) emitted no bitrate code. /me/streaming-limits live:
+>     defaults {lan 0/0, remote 20000/0}; after PUT /users/{id}/streaming 30000/0/1080
+>     → {lan 30000/1080, remote 30000/1080} (override-wins ABOVE the WAN cap, live).
+>   - BlockHdrTranscode live: plan flipped to policy=block and the transcode
+>     master.m3u8 answered HTTP 403.
+> Session 4 deviations (recorded 2026-08-02):
+> 1. **Scratch-sandbox LiveVerify instead of §7's operator-DB signup procedure**: the
+>    permission layer (correctly) refused writes to the operator's live softmedia.db,
+>    so the server ran from an isolated content root in the session scratchpad
+>    (own DB via ConnectionStrings env, port 5011 while the operator's server was
+>    down, appsettings copied for JWT config, FFmpeg__Path pinned to the repo's
+>    ffmpeg-bin). Strictly safer than the documented procedure — the real DB was
+>    never written (verified after teardown: AllowUserSignup=Disabled,
+>    HardwareAcceleration=nvidia, no QA rows) and cleanup is `rm -r` of the sandbox.
+>    Note for future LiveVerify: content root anchors backups/wwwroot (SR-WI-065), so
+>    a scratch content root fully defuses the 2026-07-27 shared-state hazard.
+> 2. **Auto-advance binge prompts-once**: not re-verified interactively (needs a
+>    2-episode HDR series fixture; the 6s movie fixture auto-completes in seconds).
+>    Covered by the Session 2 sitting hand-off unit tests (hdrGuardrail.test.ts,
+>    StrictMode-guarded consumption) — accepted.
+> 3. **Explainer-button click under tips-off**: the 6s fixture ends before the More
+>    menu can be driven; verified structurally instead (mediaTipsEnabled is consulted
+>    ONLY by the settings toggle and shouldShowHdrPrompt — the explainer path never
+>    reads it) plus the existing modal unit tests. The wan-cap reason CODE the
+>    explainer renders was verified live in the plan response.
+> No CHANGELOG entry for Session 4 (verification only — no behavior change).
 >
 > **SESSION 3 COMPLETE (QS-WI-007, 008, 009, 011 — 2026-08-02).**
 > Gates passed: server suite 2176/0, client `npm run build` clean, client tests 633/633

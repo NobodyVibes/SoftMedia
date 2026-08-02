@@ -329,9 +329,12 @@ following updates:
   2026-07-21, not pending); NR-WI-003's "operator action still open" note (the same-day
   live check already confirmed admin/admin123 dead — recorded in the 2026-07-21 log,
   table note now matches).
-- **STANDING BLOCKER RE-SURFACED: nothing has been pushed since 2026-07-21.** Local
-  `main` is 45 commits ahead of `origin/main` (verified today) — the §8 Session-1 note
-  about the 403 push failure (git identity `nobody9711` vs repo `NobodyVibes/SoftMedia`)
-  was never resolved. All work of the last two weeks exists only on this machine;
-  resolving the credential mismatch and pushing is an operator action and arguably the
-  most urgent item on this plan.
+- **Remote sync gap (precisely scoped, verified via live `git ls-remote` 2026-08-02):**
+  the Session-1 403 push failure WAS resolved the same day — this clone's reflog shows
+  one successful push on 2026-07-21 17:05, and `NobodyVibes/SoftMedia` holds the
+  rewritten history through `6cc2a2a`. However, no push from THIS clone has reached
+  that remote since: as of this review the remote has main at `6cc2a2a` (2026-07-21),
+  no other branches, and no tags (`v0.9.0-rc1` is local-only), while local main is
+  ~46 commits ahead. If the operator pushes from another clone or to another
+  repository, this check cannot see it — otherwise, a `git push origin main --tags`
+  is due, and everything since 2026-07-21 currently exists only on this machine.

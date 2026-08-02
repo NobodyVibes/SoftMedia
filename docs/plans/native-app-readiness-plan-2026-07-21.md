@@ -1,7 +1,7 @@
 # Native-App Readiness — Verified Findings & Implementation Plan
 
-**Version:** 1.1.0 *(2026-07-21: Phase C / Docker deferred by maintainer — see §4 note)*
-**Status:** Active — awaiting maintainer sign-off on §6 open questions
+**Version:** 1.2.0 *(2026-08-02: accuracy review — see §8 final entry; 1.1.0 2026-07-21: Phase C / Docker deferred by maintainer — see §4 note)*
+**Status:** Active — Sessions 1, 2, 4 complete; remaining: Session 5 (NR-WI-015/016, operator present) + deferred Phase C. All §6 questions were resolved 2026-07-21.
 **Date:** 2026-07-21
 **Owner:** Project Maintainer
 **Branch at time of writing:** `security/hardening-wave-2` (56 commits ahead of `main`, working tree clean)
@@ -229,7 +229,7 @@ All questions were resolved 2026-07-21. The maintainer directed "complete photo 
 |------|--------|-----------------|-------|
 | NR-WI-001 | **Complete** (2026-07-21) | `main` @ ff to `18119c1`; tag `v0.9.0-rc1` after closeout merge | Direct merge per Q1; suites verified pre-merge |
 | NR-WI-002 | **Complete** (2026-07-21) | `session-1/wave-2-closeout` | T6.5 + T6.6 + test-infra fix + **L-18 CLOSED** (not re-deferred); details in §8 |
-| NR-WI-003 | **Complete** (2026-07-21) | n/a (local files) | login.json/token.json deleted; first-run already forces password change (`DbInitializer` seeds `MustChangePassword=true`, enforced server-side). **Operator action still open: if the admin password is still `admin123`, change it.** |
+| NR-WI-003 | **Complete** (2026-07-21) | n/a (local files) | login.json/token.json deleted; first-run already forces password change (`DbInitializer` seeds `MustChangePassword=true`, enforced server-side). Operator action CLOSED same day: live check confirmed `admin/admin123` no longer authenticates (password already rotated). |
 | NR-WI-004 | **Complete** (2026-07-21) | `session-2/client-onboarding` | Dual route + alias; both prefixes tested for auth parity |
 | NR-WI-005 | **Complete** (2026-07-21) | `session-2/client-onboarding` | `tokenDelivery:"body"` on login/2fa; body refresh/logout; 7 new integration tests |
 | NR-WI-006 | **Complete** (2026-07-21) | `session-2/client-onboarding` | Quick Connect: opt-in setting, service + endpoints + rate policy + web card; 14 tests |
@@ -294,3 +294,44 @@ Branch `session-4/settings-polish` off `main`. NR-WI-010/011/012/014 landed (013
 - **Caught by the repo's own a11y guard:** the extras modal's click-away `<div onClick>` backdrop failed `a11yGuards.test.ts`; reworked to the house pattern (explicit close button + Escape handler, no click-away divs).
 - **Verification:** Session-4 targeted tests 15/15 (ExtrasService probe/jail/scanner-skip, System endpoints authz, RuntimeLogLevel/ring buffer); full server suite green (see commit); client build clean, 262/262.
 - **Next:** Session 5 (Phase E — operator present): CSP enforce decision, Cast/DLNA/Quick Connect live passes, manual QA sweep, `v1.0.0` cut. Docker (Phase C) remains deferred.
+
+### 2026-08-02 — Accuracy review (no session executed; plan re-verified against current code)
+
+Requested review of whether the remaining items are still accurate after everything that
+landed since 2026-07-21 (scan/metadata remediation SM-WI-001..081, background-ffmpeg BG
+plan, metadata-cache follow-ups MC-WI-001..010, artwork auth AA-WI-001..011, duplicate
+versions DV-WI-001..024, streaming quality QS-WI-001..012). Verdict: **the remaining
+work items are still valid — nothing was silently completed or invalidated** — with the
+following updates:
+
+- **NR-WI-015 still accurate and still open.** Verified today: `Security:EnforceCsp`
+  remains opt-in default-false (Program.cs ~281, report-only shipped); the wave-2
+  register still lists the CSP flip + T13.2 token-in-memory as the operator-gated
+  remainder, and L-24 as a low-value decision (further reduced by L-18's admin-group
+  scoping). **The live-pass list has GROWN since this item was written** — Session 5
+  should also cover: Chromecast with token-gated artwork (AA plan left
+  Chromecast/lock-screen interactive QA pending), the cast HDR block/warn toasts and
+  version-switch-while-casting interlock (QS/DV, no cast device was available), and the
+  two streaming-quality interactive checks accepted on unit coverage (auto-advance binge
+  prompts-once; explainer under Media-Tips-off) — see the QS plan STATUS for details.
+- **NR-WI-016 still accurate; its inputs aged.** `manual-qa-2026-05-30.md` +
+  the `manual-qa-2026-07-21-addendum.md` both predate photos/extras/Quick Connect QA
+  additions AND the six plans listed above — the item's "update it first" instruction
+  now covers a much larger delta (versions/one-card collapse, HDR guardrail + Media
+  Tips, artwork tokens, streaming limits, remote caps). Suites cited in §1 (~1070/237)
+  are now 2192 server / 633 client.
+- **Phase C (deferred) specs still valid**: no Dockerfile/compose exists (verified);
+  `BinaryLocationService` still probes the jellyfin-ffmpeg apt path; `/api/v1/health`
+  exists. One addition when reactivating: the bundled/installed ffmpeg MUST include the
+  OpenCL filters (`tonemap_opencl` etc.) — QS-WI-012 relies on them for Intel/AMD HDR
+  tone-mapping (jellyfin-ffmpeg ships them; a distro ffmpeg may not).
+- **Corrected in this pass:** header status line (all §6 questions were resolved
+  2026-07-21, not pending); NR-WI-003's "operator action still open" note (the same-day
+  live check already confirmed admin/admin123 dead — recorded in the 2026-07-21 log,
+  table note now matches).
+- **STANDING BLOCKER RE-SURFACED: nothing has been pushed since 2026-07-21.** Local
+  `main` is 45 commits ahead of `origin/main` (verified today) — the §8 Session-1 note
+  about the 403 push failure (git identity `nobody9711` vs repo `NobodyVibes/SoftMedia`)
+  was never resolved. All work of the last two weeks exists only on this machine;
+  resolving the credential mismatch and pushing is an operator action and arguably the
+  most urgent item on this plan.
